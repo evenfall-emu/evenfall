@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="368" height="96" viewBox="0 0 46 12" role="img" aria-labelledby="title">
+  <title id="title">evenfall</title>
+  <g fill="#FFF0C8" fill-rule="evenodd" transform="translate(2 2)">
+    <path d="M1 3h3v1h1v2H1v1h4v1H1V7H0V4h1zM1 4v1h3V4z"/>
+    <path transform="translate(6)" d="M0 3h1v3h1v1h1V6h1V3h1v3H4v1H3v1H2V7H1V6H0z"/>
+    <path transform="translate(12)" d="M1 3h3v1h1v2H1v1h4v1H1V7H0V4h1zM1 4v1h3V4z"/>
+    <path transform="translate(18)" d="M0 3h4v1h1v4H4V4H1v4H0z"/>
+    <path transform="translate(24)" d="M2 0h3v1H2v2h2v1H2v4H1V4H0V3h1V1h1z"/>
+    <path transform="translate(30)" d="M1 3h3v1h1v4H1V7H0V5h4V4H1zM1 6v1h3V6z"/>
+    <path transform="translate(36)" d="M0 0h1v7h1v1H0z"/>
+    <path transform="translate(40)" d="M0 0h1v7h1v1H0z"/>
+  </g>
+</svg>
