@@ -68,7 +68,7 @@ function Shell() {
     <>
       <header className="app-header">
         <Link to="/" className="brand">
-          ZiGBA
+          ZIGBA
         </Link>
         <nav>
           <Link to="/">Player</Link>

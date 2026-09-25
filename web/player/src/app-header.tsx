@@ -24,7 +24,7 @@ export function AppHeader({
         disabled={busy}
         onClick={() => onNavigate("home")}
       >
-        ZiGBA
+        ZIGBA
       </button>
       <nav aria-label="Main navigation">
         {(["home", "player", "library"] as const).map((destination) => (

@@ -50,6 +50,7 @@ test("Home is the default and preserves a playing session across navigation", as
 
   await page.getByRole("button", { name: "Enter player" }).click();
   await expect(page.locator(".app-header")).toHaveCount(1);
+  await expect(page.locator(".app-wordmark")).toHaveText("ZIGBA");
   await expect(page.locator(".player-tools")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Player", exact: true }),
@@ -138,4 +139,9 @@ test("shared navigation fits mobile when pixel fonts cannot load", async ({
   await expect(
     page.getByRole("button", { name: "Library", exact: true }),
   ).toHaveAttribute("aria-current", "page");
+});
+
+test("Dev / Debug uses the same uppercase wordmark", async ({ page }) => {
+  await page.goto("/debug.html");
+  await expect(page.locator(".app-header .brand")).toHaveText("ZIGBA");
 });
