@@ -146,7 +146,7 @@ addresses, sign-in tokens or save contents.
 ## Contact
 
 Send privacy questions and requests about your data to
-[martin@ursid.ai](mailto:martin@ursid.ai).
+[privacy@evenfall-emu.org](mailto:privacy@evenfall-emu.org).
 
 ## Changes
 
