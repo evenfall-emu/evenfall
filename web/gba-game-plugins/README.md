@@ -48,9 +48,9 @@ enough: a different revision of the same game is not recognized.
 
 Elite Redux 2.65 Beta1, other revisions and other pokeemerald-expansion hacks
 are not enabled automatically; each needs a reviewed build manifest. Retail
-Pokémon games have no profile yet, and unknown ROMs keep the generic player.
-[`docs/profiles.md`](docs/profiles.md) records how every address and layout
-was verified, and what remains unavailable.
+Pokémon games have no profile, and unknown ROMs keep the generic player.
+[`docs/profiles.md`](docs/profiles.md) records the evidence behind every
+address and layout, and what remains unavailable.
 
 ## In the player
 
@@ -66,16 +66,19 @@ const installed: readonly GamePlugin[] = [pokemonPlugin];
 `pokemonPlugin` lists the headless game definitions and lazily loads two sets
 of layouts with their styles: dashboards for the main player
 ([`ui/dashboards.ts`](ui/dashboards.ts), [`ui/dashboard.css`](ui/dashboard.css))
-and the Dev / Debug HUD ([`ui/huds.ts`](ui/huds.ts), [`ui/hud.css`](ui/hud.css)).
-Removing the import, the array entry and the `@evenfall/gba-pokemon` dependency in
-`frontend/package.json` builds a player without any Pokémon code.
+and the Dev / Debug HUD ([`ui/huds.ts`](ui/huds.ts),
+[`ui/hud.css`](ui/hud.css)).
+Removing the import, the array entry and the `@evenfall/gba-pokemon`
+dependency in `frontend/package.json` builds a player without any Pokémon
+code.
 
 Opening a supported ROM selects the three-column dashboard automatically:
 team and PC roster on the left, the player in the center, and the selected
 Pokémon's inspector on the right. Team cards support click and Arrow/Home/End;
 selection follows identity through reordering and resets on a new timeline,
-and search includes PC storage. Play refreshes observations up to 20 times a
-second; pause keeps the last reading and Frame +1 refreshes it.
+and search includes PC storage. While the game runs, observations refresh up
+to 20 times a second; pausing keeps the last reading, and stepping a frame in
+Dev / Debug refreshes it.
 
 - The inspector shows names, ROM portraits, types, abilities (one or many,
   including locked innates, persistent suppression and extra Hell-mode
@@ -103,9 +106,9 @@ inspector shows a dash.
 ## As a library
 
 `@evenfall/gba-pokemon` exports the headless game definitions and decoders
-([`src/`](src/)); `@evenfall/gba-pokemon/ui` exports the plugin and its React panels
-([`ui/`](ui/)). Both are TypeScript sources consumed through npm workspaces;
-the package is private and not published to npm.
+([`src/`](src/)); `@evenfall/gba-pokemon/ui` exports the plugin and its React
+panels ([`ui/`](ui/)). Both are TypeScript sources consumed through npm
+workspaces; the package is private and not published to npm.
 
 ```ts
 import { BridgeHost } from "@evenfall/gba/bridge";
@@ -119,7 +122,8 @@ store.subscribe(() => {
 ```
 
 `createEliteReduxGame(builds)` accepts further verified `EliteReduxBuild`
-manifests; see the [profile notes](docs/profiles.md#elite-redux-265-one-layout-family-exact-build-manifests).
+manifests; see the
+[Elite Redux profile](docs/profiles.md#elite-redux-265-beta2).
 
 ## Tests
 
@@ -138,13 +142,14 @@ before use:
 | Variable | File |
 |---|---|
 | `ZIGBA_HNS_ROM` | Heart & Soul 1.2.1 raw ROM |
-| `ZIGBA_HNS_STATE`, `ZIGBA_HNS_BATTLE` | `game2.state` and `battle.state` ([hashes](docs/profiles.md#heart--soul-121-profile-evidence)) |
+| `ZIGBA_HNS_STATE`, `ZIGBA_HNS_BATTLE` | `game2.state` and `battle.state` ([hashes](docs/profiles.md#test-fixtures)) |
 | `ZIGBA_REDUX_ROM` | Elite Redux 2.65 Beta2 raw ROM |
-| `ZIGBA_REDUX_STATE`, `ZIGBA_REDUX_STAGE_STATE` | `redux.state` and `redux-stage-buff.state` ([hashes](docs/profiles.md#release-evidence)) |
+| `ZIGBA_REDUX_STATE`, `ZIGBA_REDUX_STAGE_STATE` | `redux.state` and `redux-stage-buff.state` ([hashes](docs/profiles.md#test-fixtures)) |
 
 No ROM, save or state is committed, and none is needed for the default suites.
 
 ## License
 
-AGPL-3.0-or-later, like the rest of ZiGBA. See the [disclaimer](#disclaimer) above and
-the repository's [third-party notices](../../THIRD_PARTY_NOTICES.md).
+AGPL-3.0-or-later, like the rest of ZiGBA. See the
+[disclaimer](#disclaimer) above and the repository's
+[third-party notices](../../THIRD_PARTY_NOTICES.md).

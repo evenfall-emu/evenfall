@@ -1,209 +1,198 @@
 # ZiGBA catalog and account server
 
-This package hosts the metadata-only catalog API and optional Discord/magic-link
-accounts for ZiGBA. It stores game, release-version, base-ROM identity,
-source-provenance and optional external image URL metadata, authentication
-records, and private per-account cloud progress backups.
-It does **not** provide a ROM/BIOS/patch or image-blob hosting API. Signing in
-does not grant catalog management rights.
+This package is the backend of the hosted ZiGBA player: a metadata-only game
+catalog, optional Discord and magic-link accounts, and private per-account
+cloud backups of game progress. The player works without it; sign-in and
+cloud backups report themselves unavailable when their bindings or secrets
+are missing.
 
-The Worker uses [Hono](https://hono.dev/) and Drizzle's Cloudflare D1 adapter.
-The root Worker serves `/api/*` through this package before Static Assets and
-continues to serve the UI from `.dist/cloudflare` for all other paths.
+The server stores game, release-version, base-ROM identity, source-provenance
+and optional external image-URL metadata, authentication records, and
+compressed save states and battery saves. It does **not** host ROMs, BIOS
+images, patches or image files. Signing in does not grant catalog management
+rights.
+
+The Worker uses [Hono](https://hono.dev/), Drizzle's Cloudflare D1 adapter,
+[Better Auth](https://www.better-auth.com/) 1.7.5 and an R2 bucket. One
+Worker serves the whole site: `/api/*` runs through this package first, and
+every other path is served from the player's Static Assets in
+`.dist/cloudflare` (see [`frontend/README.md`](../frontend/README.md)).
+
+| Path | Contents |
+|---|---|
+| [`src/index.ts`](src/index.ts) | Worker entry, catalog routes, management guard, auth mounting |
+| [`src/catalog.ts`](src/catalog.ts), [`src/schema.ts`](src/schema.ts), [`src/seed.ts`](src/seed.ts) | Catalog queries, Drizzle schema, seed data |
+| [`src/auth.ts`](src/auth.ts), [`src/auth-schema.ts`](src/auth-schema.ts) | Better Auth configuration and generated tables |
+| [`src/cloud-saves.ts`](src/cloud-saves.ts) | Cloud progress, quick slots, account deletion and the cleanup cron |
+| [`migrations/`](migrations/) | Generated D1 migrations |
+| [`wrangler.jsonc`](wrangler.jsonc) | Local-development Wrangler configuration |
 
 ## Data model
 
 - `games`: stable ID, unique internal name, display name, optional summary and
   HTTP(S) image URL.
 - `versions`: stable ID, owning game, unique per-game internal name, globally
-  unique exact **playable output ROM SHA-256**, display label, optional required
-  base, and optional source repository/revision. A game can have many versions.
+  unique exact **playable output ROM SHA-256**, display label, optional
+  required base, and optional source repository and revision. A game can have
+  many versions.
 - `bases`: stable ID, unique internal name, display label, and nullable unique
   exact **playable base ROM SHA-256**.
 
 Foreign keys relate versions to games and required bases. Lowercase 64-digit
 SHA-256 formatting is checked both at the HTTP boundary and in SQLite.
 
-The seeded `Pokémon Emerald (US)` base deliberately has `sha256: null`. The
-repository establishes the two supported patched-output hashes but does not
-establish an exact playable Emerald base-ROM SHA-256. Guessing one, copying a
-ZIP hash, or treating a label as proof would create false install matches. API
-responses therefore report this base as `verified: false`; clients must never
-match an install against a null base hash.
+A base whose exact playable ROM hash has not been established keeps
+`sha256: null` and is reported as `verified: false`. Clients must never match
+an install against a null base hash: guessing a hash, copying a ZIP hash or
+treating a label as proof would create false install matches. The seeded
+`Pokémon Emerald (US)` base is such a case.
 
-## HTTP API
+## Catalog API
 
 All responses are JSON except successful deletes (`204`). IDs use lowercase
-letters/digits with `-` or `.` separators; separators cannot lead, trail, or
-repeat.
+letters and digits with `-` or `.` separators; separators cannot lead, trail
+or repeat.
 
-| Method | Route               | Contract                                                |
-| ------ | ------------------- | ------------------------------------------------------- |
-| `GET`  | `/api/games`        | `{ games: GameSummary[] }`, including `versionCount`    |
-| `GET`  | `/api/games/:id`    | `{ game }`, including versions and their required bases |
-| `GET`  | `/api/versions`     | `{ versions }` with required-base metadata              |
-| `GET`  | `/api/versions/:id` | `{ version }`                                           |
-| `GET`  | `/api/bases`        | `{ bases }`, each with derived `verified`               |
-| `GET`  | `/api/bases/:id`    | `{ base }`                                              |
+| Method | Route | Response |
+|---|---|---|
+| `GET` | `/api/games` | `{ games: GameSummary[] }`, including `versionCount` |
+| `GET` | `/api/games/:id` | `{ game }`, including versions and their required bases |
+| `GET` | `/api/versions` | `{ versions }` with required-base metadata |
+| `GET` | `/api/versions/:id` | `{ version }` |
+| `GET` | `/api/bases` | `{ bases }`, each with derived `verified` |
+| `GET` | `/api/bases/:id` | `{ base }` |
 
-Management is intentionally small: `PUT` and `DELETE` at
-`/api/admin/games/:id`, `/api/admin/versions/:id`, and
-`/api/admin/bases/:id`, plus `POST /api/admin/seed`. `PUT` is a validated,
-full-record upsert. Bodies are strict JSON; unknown fields, malformed IDs,
-non-HTTP(S) URLs, bad hashes, and broken foreign-key relations are rejected.
+Management is deliberately small: `PUT` and `DELETE` at
+`/api/admin/games/:id`, `/api/admin/versions/:id` and `/api/admin/bases/:id`,
+plus `POST /api/admin/seed`. `PUT` is a validated, full-record upsert. Bodies
+are strict JSON; unknown fields, malformed IDs, non-HTTP(S) URLs, bad hashes
+and broken foreign-key relations are rejected.
 
 Every management request requires `Authorization: Bearer <ADMIN_SECRET>`.
-Management fails closed with `503` when the Worker secret is absent, and any
+Management fails closed with `503` when the Worker secret is absent. A
 request carrying an `Origin` other than the request URL's origin is rejected
-even when the bearer token is valid. Requests without `Origin` remain usable by
-trusted command-line release tooling. No mutable catalog route is public.
+even with a valid token; requests without `Origin` remain usable from
+command-line tooling. No mutable catalog route is public. Seeding is
+explicit: ordinary reads and Worker startup never seed.
 
-## Account authentication
+## Accounts
 
-Better Auth 1.7.5 handles `/api/auth/*` through the existing same-origin Worker.
-`user`, `account`, `session`, `verification`, and `rate_limit` are generated
-Drizzle/D1 tables, separate from catalog metadata.
+Better Auth handles `/api/auth/*` on the same origin. `user`, `account`,
+`session`, `verification` and `rate_limit` are generated Drizzle tables in
+D1, separate from catalog metadata.
 
-- Discord requests only `identify email` and requires a verified email address.
-  Verified same-email accounts can link; different-email automatic linking is
-  disabled. OAuth tokens are encrypted with the auth secret.
-- Magic links expire after five minutes, are hashed in D1, and are single-use,
-  including concurrent verification. Mail comes from `ZiGBA <EMAIL_FROM>`
-  through the native Cloudflare Email Sending binding, restricted to that sender.
-  Email sign-in returns `503 email_unavailable` without both the `EMAIL`
-  binding and `EMAIL_FROM`.
-- Database-backed request limits are three per IP per minute. Atomic recipient
-  limits are three per 15 minutes and ten per day, normalized case-insensitively.
-  These are fixed windows beginning with the first request, not sliding windows;
-  suppressed requests can consume the other window's request budget.
-  Recipient throttling and delivery failures return the same generic success.
-- Sessions last seven days, refresh after one day, and use host-only `HttpOnly`,
-  `SameSite=Lax` cookies (`Secure` in production). No client-side session cache
-  is enabled; sign-out revokes the database session.
-- Unsafe requests require the exact configured Origin. Callback destinations
-  are checked before email delivery. All auth responses use `Cache-Control:
-  no-store` and `Referrer-Policy: no-referrer`.
+- **Discord** requests only `identify email` and requires a verified email
+  address. Accounts with the same verified email can link; linking accounts
+  with different emails is disabled. OAuth tokens are encrypted with the auth
+  secret.
+- **Magic links** expire after five minutes, are stored hashed in D1, and are
+  single-use, including under concurrent verification. Mail is sent as
+  `ZiGBA <EMAIL_FROM>` through the Cloudflare Email Sending binding, which is
+  restricted to that sender. Without both the `EMAIL` binding and
+  `EMAIL_FROM`, email sign-in returns `503 email_unavailable`.
+- **Rate limits** are stored in D1: three magic-link requests per IP per
+  minute, and per recipient (normalized case-insensitively) three per 15
+  minutes and ten per day, enforced atomically. These are fixed windows that
+  begin with the first request, not sliding windows, and a suppressed request
+  can still consume the other window's budget. Recipient throttling and
+  delivery failures return the same generic success.
+- **Sessions** last seven days, refresh after one day, and use host-only
+  `HttpOnly`, `SameSite=Lax` cookies, `Secure` over HTTPS. There is no
+  client-side session cache; sign-out revokes the database session.
+- **Origins.** Unsafe requests require the exact configured origin, and
+  callback destinations are checked before any email is sent. Auth responses
+  carry `Cache-Control: no-store` and `Referrer-Policy: no-referrer`; cloud
+  save responses are `no-store` too.
 
-Secrets fail closed. `BETTER_AUTH_SECRET` must contain at least 32 characters;
-generate at least 32 random bytes. `BETTER_AUTH_URL` must be an exact HTTPS
-origin (no path or trailing slash) or the fixed local origin
-`http://127.0.0.1:5173`; anything else, including an unset value, disables
+Configuration fails closed. `BETTER_AUTH_SECRET` must contain at least 32
+characters; generate at least 32 random bytes. `BETTER_AUTH_URL` must be an
+exact HTTPS origin (no path or trailing slash) or the local origin
+`http://127.0.0.1:5173`. Anything else, including an unset value, disables
 sign-in and cloud saves with `503`. Each instance trusts only its own
 configured origin.
 
-## Private cloud progress
+## Cloud progress
 
-`GET`, `HEAD`, and `PUT /api/saves/:hash/:playthroughId/:kind` use the raw playable
-ROM SHA-256, a UUID playthrough ID (or reserved `default`), and `resume` or
-`battery`. [Quick slots](#cloud-quick-slots) use `.../quick/:slot` instead.
-Better Auth verifies every session; every request must include
-`X-Zigba-Account` matching that session, and the server derives the
-private R2 key from the authenticated user ID. All responses are `no-store`.
-There are no public bucket URLs: keep `r2.dev` access disabled and attach no
-custom domain to the bucket. The deployment config binds `SAVES` to a bucket
-with jurisdiction `eu`; local Wrangler simulates storage. EU R2 storage does
-not establish EU-only processing for Workers, D1, email or logs.
+### Save objects
 
-`GET /api/saves?cursor=...` provides account-private resume discovery.
-It returns `{saves, cursor, usage: {playthroughs, limit: 100}}`; usage counts
-registered playthroughs, including battery-only runs. Each entry contains the
-exact ROM `hash`, `playthroughId`, private `playthroughName`, catalog-resolved
-`title` (hash-prefix fallback), `capturedAt` in epoch milliseconds, and ISO
-`uploadedAt` from R2. The same authentication,
-account header and `no-store` rules apply to this exact route. Each page lists
-at most 100 R2 objects, filters out battery saves, and may therefore contain no
-resumes while still returning a continuation cursor. Clients must consume all
-pages before selecting the latest upload: R2 key order is not upload order.
-No snapshot bodies, ROM bytes, bucket URLs or other accounts' keys are returned.
-Legacy three-segment R2 backups appear as `default` with name `First adventure`;
-GET/HEAD and new-format PUT to that ID use the legacy object when it exists.
-Old three-segment HTTP PUT URLs are no longer accepted. A legacy run claims a
-quota slot on its first new-format PUT, not on discovery. Thus `usage` can
-underreport legacy-only backups until written; old backups are not proactively
-backfilled. Installations with legacy data should account for this gap
-before asserting an absolute 100-run historical cap.
-Titles come from exact catalog ROM hashes, then optional private upload
-metadata, then a hash prefix for older unknown ROMs.
+`GET`, `HEAD` and `PUT /api/saves/:hash/:playthroughId/:kind` address one
+backup: `hash` is the raw playable ROM SHA-256, `playthroughId` a UUID or the
+reserved `default`, and `kind` either `resume` (a save state) or `battery` (an
+in-game save). [Quick slots](#quick-slots) use `.../quick/:slot`.
 
-PUT requires the exact configured Origin, `application/octet-stream`, and gzip
-bytes without an HTTP `Content-Encoding`. Headers identify a UUID revision,
-capture timestamp and compressed SHA-256 (`X-Zigba-Revision`,
-`X-Zigba-Captured-At`, `X-Zigba-Digest`). Create with `If-None-Match: *`; replace
-only with a known quoted `If-Match` ETag. An atomic R2 conditional write rejects
-stale versions with 412. Same-revision/same-digest retries are idempotent;
-revision reuse with different bytes is 409. GET/HEAD return those metadata
-headers plus `ETag` and `X-Zigba-Uploaded-At` (the server-confirmed upload time);
-PUT returns `{etag, revision, uploadedAt}`.
+- Better Auth verifies the session on every request, and every request must
+  send `X-Zigba-Account` matching it. The server derives the R2 key
+  `<user>/<hash>/<playthroughId>/<kind>` from the authenticated user ID, so a
+  client can never name another account's object.
+- For `default`, an existing object at `<user>/<hash>/<kind>` (without the
+  playthrough segment) is read and replaced in place; otherwise the
+  four-segment key is used.
+- There are no public bucket URLs: keep `r2.dev` access disabled and attach
+  no custom domain to the bucket.
 
-New clients also send optional `X-Zigba-Title`: `encodeURIComponent` of a private
-game label, limited to 160 Unicode code points with no control characters. It
-is stored alongside the checkpoint, never exposed through the public catalog.
-Older clients may omit it; replacing an object without a title preserves its
-existing title. This field does not change the revision/ETag conflict contract.
+`PUT` requires the exact configured `Origin`, `Content-Type:
+application/octet-stream`, and gzip bytes sent without an HTTP
+`Content-Encoding`. Headers identify the upload:
 
-`X-Zigba-Playthrough-Name` is optional `encodeURIComponent` text, at most 160
-Unicode code points with no control characters. The server uses `Playthrough`
-when absent (`First adventure` for `default`). D1 atomically admits the first
-valid PUT for each `(account, hash, playthroughId)` while the account has fewer
-than 100 registered runs. Resume and battery for the same ID share one slot;
-updates to a registered run work at 100. The 101st run receives HTTP 409
-`{error: {code: "playthrough_limit", message: ...}}`. A validated attempt can
-reserve a slot even if its conditional R2 write later fails; offline-only runs
-consume no cloud slot. Device-local saves remain independent of sync errors.
+| Header | Meaning |
+|---|---|
+| `X-Zigba-Revision` | UUID of this revision |
+| `X-Zigba-Captured-At` | Capture time, epoch milliseconds |
+| `X-Zigba-Digest` | SHA-256 of the compressed body |
+| `X-Zigba-Title` | Optional private game label, `encodeURIComponent` text of at most 160 code points without control characters |
+| `X-Zigba-Playthrough-Name` | Optional playthrough name, same encoding and limit; defaults to `Playthrough` (`First adventure` for `default`) |
 
-`DELETE /api/account` requires a current cookie session, matching
-`X-Zigba-Account`, and the exact configured `Origin`. It first durably inserts
-an independent `account_deletions` tombstone (opaque user ID and timestamps,
-no email or title), closing new cloud admissions, then removes the user and
-cascading sessions/OAuth accounts, pending email links, account-scoped rate
-limits, playthrough records and `account_limits`. Success is HTTP 202
-`{accountDeleted:true,cloudDeletion:"pending"}`. The response does **not** claim
-that all R2 data has already been deleted; device-local data is untouched.
+Create with `If-None-Match: *`; replace only with a known quoted `If-Match`
+ETag. An atomic R2 conditional write rejects stale versions with `412`.
+Retrying the same revision with the same digest is idempotent; reusing a
+revision with different bytes is `409 revision_conflict`. `GET` and `HEAD`
+return the metadata headers plus `ETag` and `X-Zigba-Uploaded-At`, the
+server-confirmed upload time; `PUT` returns `{etag, revision, uploadedAt}`.
+Replacing an object without a title keeps its stored title. The title is
+private to the account and never exposed through the catalog.
 
-An immediate best-effort sweep deletes every R2 key under the account prefix,
-including quick slots and old/unknown layouts, across pages. A five-minute cron
-repairs a crash after the tombstone but before auth removal, and retries R2
-failures. Jobs are swept every five minutes for the first hour and daily later.
-Even empty sweeps never retire tombstones: a previously issued R2 PUT can
-finish after an empty sweep, even if its Worker then dies. The next scheduled
-sweep removes it. Tombstones are retained indefinitely for this reason; an
-operational review is required before changing retention or cron cadence.
-If auth removal fails before the 202, the route returns retryable HTTP 503
-`deletion_pending` while the tombstone remains gated and cron continues work.
-Newly created Better Auth users receive fresh IDs, never the erased prefix.
-R2/D1 are not transactional, so cloud erasure is eventually consistent, not
-instantaneous; if cron stops running, pending blobs can remain until repaired.
+### Discovery
 
-Compressed bodies and decoded resume/quick states are limited to 2 MiB. Their
-bytes must start with the state magic; this is format screening, not a complete
-state or copyright validator. Battery saves must use a supported size, up to
-128 KiB. The existing D1 rate-limit table enforces 120 PUT attempts and 20 MiB
-of received compressed bodies per account/hour, including retries and quick
-slots. These are fixed windows starting at the first request, not sliding
-windows. Invalid/rejected work can consume budgets. Apply
-`0002_slim_blazing_skull.sql` before deploying this Worker;
-the migration adds the retained tombstones and quota registry. There is no individual
-cloud-run deletion yet.
+`GET /api/saves?cursor=...` lists the account's resume backups, with the same
+authentication, account header and `no-store` rules. It returns
+`{saves, cursor, usage: {playthroughs, limit: 100}}`. Each entry has the ROM
+`hash`, `playthroughId`, private `playthroughName`, a `title`, `capturedAt`
+in epoch milliseconds and ISO `uploadedAt` from R2. Titles come from the
+catalog's exact ROM hashes first, then the private upload title, then a hash
+prefix.
 
-The [player](../frontend/README.md#offline-play-and-cloud-progress) defaults cloud
-backups on for signed-in accounts, supports a device/account opt-out, and
-coalesces offline work; it also owns
-[quick-slot reconciliation](../frontend/README.md#quick-slot-sync). Local saves
-and source-of-truth resume snapshots remain independent of network success.
-New keys allow multiple runs per ROM, not cross-release save forwarding.
+Each page lists at most 100 R2 objects and filters out battery saves, so a
+page can contain no resumes and still return a continuation cursor. Clients
+must read every page before choosing the latest upload, because R2 key order
+is not upload order. No snapshot bodies, ROM bytes, bucket URLs or other
+accounts' keys are returned.
 
-### Cloud quick slots
+### Playthrough quota
 
-`GET`, `HEAD`, and `PUT /api/saves/:hash/:playthroughId/quick/:slot` store one
-state per numbered slot under R2 key `<user>/<hash>/<playthroughId>/quick/<slot>`
-(never the legacy three-segment namespace). Authentication, `X-Zigba-Account`,
-Origin, gzip bodies, metadata headers, conditional writes, idempotent retries,
-`409 revision_conflict`, `412` and the upload budgets are exactly those of
-`resume`. Decoded bytes must start with the state magic and fit 2 MiB;
-otherwise the PUT fails with `400 invalid_quick` or `413 decoded_too_large`.
-The first quick PUT of a run claims that run's single registry entry, like a
-resume or battery PUT. All kinds of one run share it, so quick slots never
-consume additional playthrough quota. `GET /api/saves` does not list them.
+An account can register 100 playthroughs across all games. D1 atomically
+admits the first valid `PUT` for each `(account, hash, playthroughId)` while
+the account is under the limit; resume, battery and quick-slot objects of one
+run share its registration, and updates to a registered run always work. The
+101st run receives `409 {error: {code: "playthrough_limit", message}}`. A
+validated attempt can register a run even if its conditional R2 write then
+fails. Runs that never upload consume nothing, and device-local saves are
+independent of sync errors.
+
+`usage.playthroughs` counts registered runs, including battery-only ones. An
+object stored at the three-segment `default` key counts only after a `PUT`
+through the playthrough route registers it, so `usage` can undercount on
+instances that hold such objects.
+
+### Quick slots
+
+`GET`, `HEAD` and `PUT /api/saves/:hash/:playthroughId/quick/:slot` store one
+save state per numbered slot under `<user>/<hash>/<playthroughId>/quick/<slot>`.
+Authentication, `X-Zigba-Account`, `Origin`, gzip bodies, metadata headers,
+conditional writes, idempotent retries, `409 revision_conflict`, `412` and the
+upload budgets are exactly those of `resume`. Decoded bytes must start with
+the state magic and fit 2 MiB; otherwise the `PUT` fails with
+`400 invalid_quick` or `413 decoded_too_large`. Quick slots never consume
+additional playthrough quota, and `GET /api/saves` does not list them.
 
 `GET /api/saves/:hash/:playthroughId/quick` returns
 `{slots: [{slot, revision, digest, capturedAt, etag, uploadedAt}], limit}` for
@@ -212,9 +201,9 @@ Clients use it to discover a run's slots on a new device and to notice a slot
 replaced elsewhere. Invalid hashes, IDs or slot numbers (`0`, leading zeros,
 more than two digits) are `400 invalid_save_key`.
 
-Slots are numbered `1..limit` per playthrough. The default limit, 10, is the
-`QUICK_SLOT_DEFAULT` constant in `src/cloud-saves.ts`; changing it is a code
-release. An operator can override one account in D1:
+Slots are numbered `1..limit` per playthrough. The default limit is 10
+(`QUICK_SLOT_DEFAULT` in [`src/cloud-saves.ts`](src/cloud-saves.ts)). An
+operator can override one account in D1:
 
 ```sql
 INSERT INTO account_limits (user_id, quick_slots) VALUES ('<user id>', 20)
@@ -222,17 +211,57 @@ INSERT INTO account_limits (user_id, quick_slots) VALUES ('<user id>', 20)
 ```
 
 `quick_slots` accepts 0-99 (0 disables quick-slot uploads); `NULL` or no row
-uses the default. There is no HTTP management route. A PUT beyond the limit
-returns HTTP 409 `{error: {code: "quick_slot_limit", message, limit}}` before
-consuming upload budget. Lowering a limit keeps existing higher slots readable
-and listed, but they can no longer be replaced. Account deletion removes the
-override row and the sweep removes every quick-slot object.
+uses the default. There is no HTTP route for this. A `PUT` beyond the limit
+returns `409 {error: {code: "quick_slot_limit", message, limit}}` before
+consuming upload budget. Lowering a limit keeps higher existing slots
+readable and listed, but they cannot be replaced.
 
-Migration `0003_quick_slot_limits.sql` adds `account_limits`. It is additive;
-apply it before deploying a Worker with these routes, because quota checks and
-account deletion read that table.
+### Limits
 
-## Local development and tests
+- Compressed bodies, and decoded resume and quick-slot states, are limited to
+  2 MiB. Decoded states must start with the ZiGBA state magic; this screens
+  the format but does not validate the whole state or its content.
+- Battery saves must have a supported save size (512 B, 8, 32, 64 or
+  128 KiB).
+- Each account may make 120 `PUT` attempts and upload 20 MiB of compressed
+  bodies per hour, counting retries and quick slots. The windows are fixed,
+  start with the first request, and are consumed by rejected work too.
+
+### Account deletion
+
+`DELETE /api/account` requires a current cookie session, a matching
+`X-Zigba-Account` and the exact configured `Origin`.
+
+1. It durably inserts an `account_deletions` tombstone (the opaque user ID
+   and timestamps; no email or title), which closes new cloud admissions for
+   that account.
+2. It removes the user with its sessions and OAuth accounts, pending email
+   links, account-scoped rate limits, playthrough registrations and
+   `account_limits` row, and returns
+   `202 {accountDeleted: true, cloudDeletion: "pending"}`. If this step
+   fails, the route returns a retryable `503 deletion_pending` while the
+   tombstone keeps the account gated.
+3. An immediate best-effort sweep deletes every R2 key under the account
+   prefix, across pages, including quick slots and any other layout.
+
+The five-minute cron trigger repairs a crash between steps 1 and 2 and
+retries R2 failures. It sweeps each tombstone every five minutes for the
+first hour and daily afterwards. Tombstones are never retired, even after an
+empty sweep, because an R2 `PUT` issued before deletion can complete later;
+the next sweep removes it. Review the cron cadence and retention together
+before changing either. New Better Auth users receive fresh IDs, never an
+erased prefix.
+
+R2 and D1 are not transactional together, so cloud erasure is eventually
+consistent: the `202` does not claim that all R2 data is gone, and if the
+cron stops, pending objects remain until it runs again. Device-local data is
+untouched.
+
+The player's side of these contracts (default-on backups, the opt-out,
+offline coalescing and quick-slot reconciliation) is described in
+[`frontend/README.md`](../frontend/README.md).
+
+## Local development
 
 From the repository root:
 
@@ -241,79 +270,80 @@ npm ci
 npm run check -w server
 npm test -w server
 npm run db:migrate:local -w server
-npm run dev -w server
+npm run dev -w server          # Wrangler on http://127.0.0.1:8787
 ```
 
-`server/wrangler.jsonc` is a development-only configuration. Its D1 database ID
-and R2 bucket name are placeholders: `wrangler dev` and `--local` migrations
-simulate both under the ignored `server/.wrangler/` and never contact a
-deployed database or bucket. Do not run that configuration with `--remote`;
-deployment uses the root `wrangler.jsonc`.
+`server/wrangler.jsonc` is a development-only configuration. Its D1 database
+ID and R2 bucket name are placeholders: `wrangler dev` and `--local`
+migrations simulate both under the ignored `server/.wrangler/` and never
+contact a deployed database or bucket. Never run that configuration with
+`--remote`; deployment uses the root `wrangler.jsonc`.
 
-For login, use **exactly `http://127.0.0.1:5173`**, not `localhost`, port 8787,
+For login, open exactly `http://127.0.0.1:5173`, not `localhost`, port 8787
 or the static Python server. Vite proxies `/api` to Wrangler on port 8787, so
-the browser's cookies and OAuth callbacks stay same-origin. Start Vite in a
-second terminal with `npm run dev -w frontend`; build the SDK first if
-needed (`zig build web-sdk`).
+cookies and OAuth callbacks stay same-origin. Start Vite in a second terminal
+with `npm run dev -w frontend`, after `zig build web-sdk` if the SDK's WASM
+has not been built.
 
-To test Discord sign-in locally, use your own Discord application: set its
-client ID as `DISCORD_CLIENT_ID` in `server/wrangler.jsonc` and, in Discord's
-Developer Portal under OAuth2 > Redirects, register:
+Put local secrets in the ignored `server/.dev.vars`, never in a `VITE_`
+variable, and restart Wrangler after changing it. Never reuse a local auth
+secret in production.
+
+```dotenv
+BETTER_AUTH_SECRET=<independent local value, e.g. from openssl rand -hex 32>
+DISCORD_CLIENT_SECRET=<your Discord application secret>
+ADMIN_SECRET=<development-only catalog management secret>
+```
+
+To test Discord sign-in, use your own Discord application: set its client ID
+as `DISCORD_CLIENT_ID` in `server/wrangler.jsonc`, and register this redirect
+in the Discord Developer Portal under OAuth2 > Redirects:
 
 ```text
 http://127.0.0.1:5173/api/auth/callback/discord
 ```
 
-Put local secrets in the ignored `server/.dev.vars`, never a `VITE_` variable:
+Open **Account** on Home or in the Player/Library header. Discord uses the
+real provider, so completing its consent screen is a manual test. Email is
+simulated: Wrangler prints capture paths, and text messages appear under
+`server/.wrangler/tmp/email/*/email-text/`. Open the newest file and paste
+its link into the same browser within five minutes. No real inbox is
+contacted and no Cloudflare email quota is used. Keep `remote: true` off the
+email binding for routine tests, and do not share captured links.
 
-```dotenv
-BETTER_AUTH_SECRET=<independent local value generated with openssl rand -hex 32>
-DISCORD_CLIENT_SECRET=<your Discord application secret>
-```
-
-Restart Wrangler after changing `.dev.vars`. Never reuse a local auth secret in
-production.
-
-Open **Account** on Home or in the Player/Library header. Discord uses the real
-provider; completing its consent screen is a manual test. Email is **simulated**
-by default: Wrangler prints capture paths, and text messages appear beneath
-`server/.wrangler/tmp/email/*/email-text/`. Open the newest text file and paste
-its link into the same browser within five minutes. No real inbox is contacted
-and no Cloudflare email quota is consumed. Do not commit or share those links.
-Keep `remote: true` off this binding for routine local tests.
-
-Put a development-only `ADMIN_SECRET=...` in `server/.dev.vars`; it is ignored
-by git. Then seed explicitly (ordinary reads and Worker startup never seed):
+To load the catalog seed locally:
 
 ```sh
-curl -X POST http://localhost:8787/api/admin/seed \
+curl -X POST http://127.0.0.1:8787/api/admin/seed \
   -H 'Authorization: Bearer <development-secret>'
 ```
 
-Tests use disposable Miniflare D1 databases and apply generated SQL migrations.
-They exercise catalog reads/writes, idempotent seeding, validation, missing
+### Tests
+
+The tests use disposable Miniflare D1 databases with the generated
+migrations applied, and check native Workers responses under workerd. They
+cover catalog reads and writes, idempotent seeding, validation, missing
 bindings, auth configuration, cookies, concurrent single-use verification,
-expiry, sign-out, origin/redirect rejection, concurrent limits and window
+expiry, sign-out, origin and redirect rejection, concurrent limits and window
 boundaries, email failures, Discord linking and OAuth state, cloud saves,
-quotas and account erasure. Native Workers responses are checked under
-workerd, not only Node's Request/Response implementation. Tests do not send
-real mail or contact Discord; only those external services are mocked. They do
-not write a database or credentials into the checkout. Miniflare is pinned to
-the version bundled by Wrangler; its official v4-options converter keeps the
-test setup small. npm may report advisories in Vitest and Drizzle Kit's
-development tooling; the bundled Worker does not include them. Do not expose
-their UI/development servers on public interfaces.
+quotas and account erasure. Only the external services are mocked: no real
+mail is sent and Discord is never contacted. Tests write no database or
+credentials into the checkout.
+
+Vitest and Drizzle Kit are development tools and are not bundled into the
+Worker; do not expose their UI or development servers on public interfaces.
 
 ## Schema changes
 
-After changing `src/schema.ts`, generate and review a migration:
+After changing [`src/schema.ts`](src/schema.ts), generate and review a
+migration:
 
 ```sh
 npm run db:generate -w server
 ```
 
-For a Better Auth/plugin upgrade, regenerate its schema first from the
-binding-free generator configuration (run inside `server/`):
+For a Better Auth or plugin upgrade, regenerate its schema first from the
+binding-free generator configuration, inside `server/`:
 
 ```sh
 npx --yes auth@1.7.5 generate --config ./auth-schema.config.ts \
@@ -321,93 +351,99 @@ npx --yes auth@1.7.5 generate --config ./auth-schema.config.ts \
 npm run db:generate
 ```
 
-Do not edit a migration after it has been applied to a deployed database; add
-the next migration. Remote migrations are a separate, explicit step, never part
-of the ordinary build or deploy:
+Never edit a migration that has been applied to a deployed database; add the
+next one. Remote migrations are a separate, explicit step, never part of the
+build or deploy:
 
 ```sh
 npm run db:migrate:remote -w server
 ```
 
-Apply them, review the result, and only then deploy code that depends on them.
-Prefer backward-compatible (additive) migrations so the currently deployed
-Worker stays valid between the two steps.
+Apply them, review the result, and only then deploy code that depends on
+them. Prefer additive migrations, so the deployed Worker stays valid between
+the two steps.
 
-## Seed provenance
+## Seed data
 
-`src/seed.ts` is explicit and idempotent. It seeds two games and only the exact
-locally registered supported releases:
+[`src/seed.ts`](src/seed.ts) is explicit and idempotent. It seeds two games
+and the exact releases that have registered profiles in
+[`@evenfall/gba-pokemon`](../games/pokemon/README.md):
 
-| Version                       | Output ROM SHA-256                                                 | Source revision                                                              |
-| ----------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| Heart & Soul 1.2.1            | `7c4f90c8b68b64d4639a37306d5302a11cd4d7c44005114ec2faa2b28b210c3d` | `PokemonHnS-Development/pokemonHnS@4aa8fa894db4c890b3d1100abd6aab50f44c22b1` |
-| Elite Redux 2.65 Beta2 (1048) | `d86e6ac909e4abdef9159ed20b75a684a9b2ee2fe874f388122e00a5749d2d37` | `Elite-Redux/eliteredux-source@06da575972cfed20d471f8bb5b90ea9e4736b16a`     |
+| Version | Output ROM SHA-256 | Source revision |
+|---|---|---|
+| Heart & Soul 1.2.1 | `7c4f90c8b68b64d4639a37306d5302a11cd4d7c44005114ec2faa2b28b210c3d` | `PokemonHnS-Development/pokemonHnS@4aa8fa894db4c890b3d1100abd6aab50f44c22b1` |
+| Elite Redux 2.65 Beta2 (1048) | `d86e6ac909e4abdef9159ed20b75a684a9b2ee2fe874f388122e00a5749d2d37` | `Elite-Redux/eliteredux-source@06da575972cfed20d471f8bb5b90ea9e4736b16a` |
 
-These are raw playable ROM output identities from the registered profiles, not
-release ZIP or patch hashes. No distributable catalog images were established,
-so both seeded `imageUrl` values are null.
+These are raw playable ROM identities, not release ZIP or patch hashes. No
+distributable catalog images exist for them, so both `imageUrl` values are
+null.
 
 ## Deployment
 
-One Worker serves the whole site: `/api/*` runs this package first, and every
-other path is served from the player's Static Assets. The root `wrangler.jsonc`
-describes the official `zigba.ursid.ai` instance. It deliberately contains no
-Cloudflare account ID: Wrangler takes it from `CLOUDFLARE_ACCOUNT_ID` (or from
-`wrangler login` when you have a single account), and non-interactive deploys
-use a scoped `CLOUDFLARE_API_TOKEN`. Keep tokens out of the repository.
+The root [`wrangler.jsonc`](../wrangler.jsonc) describes the official hosted
+instance. It contains no Cloudflare account ID: Wrangler takes the account
+from `CLOUDFLARE_ACCOUNT_ID` (or from `wrangler login` when you have a single
+account), and non-interactive deploys use a scoped `CLOUDFLARE_API_TOKEN`.
+Keep tokens out of the repository.
 
 ```sh
-bash tools/build-cloudflare.sh     # tests, then a ReleaseSafe build into .dist/cloudflare
-npm run deploy -w frontend   # wrangler deploy --config ../wrangler.jsonc
+bash tools/build-cloudflare.sh   # tests, then a ReleaseSafe build into .dist/cloudflare
+npm run deploy -w frontend       # wrangler deploy --config ../wrangler.jsonc
 ```
 
-The build script runs `npm ci`, type-checking and tests for every workspace,
-compiles the WASM core with a pinned Zig, and publishes only `.dist/cloudflare`
-(see the [player deployment notes](../frontend/README.md#cloudflare-deployment)).
-It never migrates or seeds a database. A Git-connected Cloudflare Workers
-Builds project can run the same two commands as its build and deploy steps.
+The build script runs `npm ci`, type-checking and tests for the workspaces,
+compiles the WASM core with a pinned Zig, and publishes only
+`.dist/cloudflare`; see [`frontend/README.md`](../frontend/README.md). It
+never migrates or seeds a database. A Git-connected Cloudflare Workers Builds
+project can run the same two commands as its build and deploy steps.
 
 Catalog management stays disabled unless the `ADMIN_SECRET` Worker secret is
-intentionally configured (never as a Wrangler var or a checked-in file):
+deliberately set, never as a Wrangler variable or a checked-in file:
 
 ```sh
 npx wrangler secret put ADMIN_SECRET --config wrangler.jsonc
 ```
 
-An authorized operator may then run `POST /api/admin/seed` once; it is not part
-of every deployment and does not run on public requests.
+An authorized operator may then call `POST /api/admin/seed` once; seeding is
+not part of a deployment.
 
-The D1 location hint and EU R2 jurisdiction are not an EU-only residency
-guarantee for D1, Workers, email processing or logs; do not promise EU-only
-processing from this configuration alone. The official instance's user-facing
-data practices are described in [`PRIVACY.md`](../PRIVACY.md).
+The D1 location hint and the EU jurisdiction of the R2 bucket do not make
+processing EU-only: Workers, D1, email and logs are not covered by the bucket
+jurisdiction, so do not promise EU-only processing from this configuration.
+The official instance's data practices are described in
+[`PRIVACY.md`](../PRIVACY.md).
 
 ### Self-hosting
 
-To run your own instance, replace every instance-specific value before the
-first deploy:
+Replace every instance-specific value in the root `wrangler.jsonc` and the
+build environment before the first deploy:
 
-| Value             | Where                                                            | Notes                                                                                                    |
-| ----------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Worker name       | `name` in `wrangler.jsonc`                                       | Any unused Worker name in your account.                                                                  |
-| Domain            | `routes[].pattern`                                               | A custom domain on a zone in your account. Keep `workers_dev` and `preview_urls` off.                    |
-| Auth origin       | `vars.BETTER_AUTH_URL`                                           | Exactly `https://<your domain>`: an HTTPS origin with no path or trailing slash.                         |
-| Discord client ID | `vars.DISCORD_CLIENT_ID`                                         | Your Discord application; register `https://<your domain>/api/auth/callback/discord`.                    |
-| Email sender      | `vars.EMAIL_FROM`, `send_email[].allowed_sender_addresses`       | An address on a domain onboarded to Cloudflare Email Sending. Remove both to disable email sign-in.      |
-| D1 database       | `d1_databases[].database_name`, `database_id`                    | Create with `wrangler d1 create <name>`; update the name in `db:migrate:remote` if it differs.           |
-| R2 bucket         | `r2_buckets[].bucket_name`                                       | Create with `wrangler r2 bucket create <name> --jurisdiction eu`; keep public access off.                |
-| Analytics         | `VITE_POSTHOG_KEY`, `VITE_POSTHOG_HOST`, `VITE_POSTHOG_HOSTNAME` | Build-time; `tools/build-cloudflare.sh` defaults to the official instance. Export yours or empty values. |
-| Privacy notice    | `PRIVACY.md`, `VITE_PRIVACY_URL`                                 | Published as `/privacy.txt`. Replace it with your notice, or point `VITE_PRIVACY_URL` elsewhere.         |
+| Value | Where | Notes |
+|---|---|---|
+| Worker name | `name` | Any unused Worker name in your account. |
+| Domain | `routes[].pattern` | A custom domain on a zone in your account. Keep `workers_dev` and `preview_urls` off. |
+| Auth origin | `vars.BETTER_AUTH_URL` | Exactly `https://<your domain>`: an HTTPS origin with no path or trailing slash. |
+| Discord client ID | `vars.DISCORD_CLIENT_ID` | Your Discord application; register `https://<your domain>/api/auth/callback/discord`. |
+| Email sender | `vars.EMAIL_FROM`, `send_email[].allowed_sender_addresses` | An address on a domain onboarded to Cloudflare Email Sending. Remove both to disable email sign-in. |
+| D1 database | `d1_databases[].database_name`, `database_id` | Create with `wrangler d1 create <name>`; update the name in the `db:migrate:remote` script if it differs. |
+| R2 bucket | `r2_buckets[].bucket_name` | Create with `wrangler r2 bucket create <name> --jurisdiction eu`; keep public access off. |
+| Analytics | `VITE_POSTHOG_KEY`, `VITE_POSTHOG_HOST`, `VITE_POSTHOG_HOSTNAME` | Build-time; `tools/build-cloudflare.sh` defaults to the official instance. Export your own or empty values. |
+| Privacy notice | `PRIVACY.md`, `VITE_PRIVACY_URL` | Published as `/privacy.txt`. Replace it with your notice, or point `VITE_PRIVACY_URL` elsewhere. |
 
 Then, with Wrangler authenticated against your account:
 
-1. Set the required secrets `BETTER_AUTH_SECRET` (at least 32 random bytes, for
-   example `openssl rand -hex 32`) and `DISCORD_CLIENT_SECRET` with
+1. Set the required secrets `BETTER_AUTH_SECRET` (at least 32 random bytes,
+   for example `openssl rand -hex 32`) and `DISCORD_CLIENT_SECRET` with
    `npx wrangler secret put <NAME> --config wrangler.jsonc`.
 2. Apply all migrations with `npm run db:migrate:remote -w server`.
 3. Build and deploy with the two commands above.
 
 Keep the five-minute cron trigger: it finishes account deletions and removes
-late uploads (see [private cloud progress](#private-cloud-progress)). The player
-works without the API; sign-in and cloud backups report themselves unavailable
-when their bindings or secrets are missing.
+late uploads (see [account deletion](#account-deletion)).
+
+## Open questions
+
+- Individual cloud playthroughs cannot be deleted; only whole-account
+  deletion removes cloud data.
+- Tombstone retention and the sweep cadence are coupled; there is no policy
+  for retiring tombstones.
