@@ -765,8 +765,14 @@ test("new console controls and persistent quick slots work", async ({
   await expect(page.locator(".console-notice")).toContainText(
     "Saved slot 10 on this device",
   );
-  await page.keyboard.press("Control+Digit0");
-  await expect(page.locator(".console-notice")).toContainText("Loaded slot 10");
+  // Quick-slot keys are ignored until the save finishes committing.
+  await expect(async () => {
+    await page.keyboard.press("Control+Digit0");
+    await expect(page.locator(".console-notice")).toContainText(
+      "Loaded slot 10",
+      { timeout: 1000 },
+    );
+  }).toPass();
   expect(await snapshotHash(page)).toBe(saved);
   await page.getByRole("button", { name: "Playback speed" }).click();
   await page
