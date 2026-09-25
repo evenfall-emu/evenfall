@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { build } from "vite";
 import { dashboardCss, fixtureBuild, playerCss } from "./support";
 import { resolve } from "node:path";
@@ -112,7 +112,21 @@ test.beforeAll(async () => {
       },
     },
   });
+  await writeFile(
+    resolve(outDir, "index.html"),
+    '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="fixture.css"></head><body><script type="module" src="fixture.js"></script></body></html>',
+  );
 });
+
+async function mountFixture(page: Page) {
+  await page.goto("/trainer-search-test/index.html");
+  await page.waitForFunction(() => "mountTrainerFixture" in window);
+  await page.evaluate(() =>
+    (
+      window as typeof window & { mountTrainerFixture: () => void }
+    ).mountTrainerFixture(),
+  );
+}
 
 test.afterAll(() =>
   Promise.all([
@@ -128,18 +142,7 @@ test("trainer search selects exact variants, refreshes context, and yields to ba
     throw error;
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto("/debug.html");
-  await page.addStyleTag({ url: "/trainer-search-test/fixture.css" });
-  await page.addScriptTag({
-    type: "module",
-    url: "/trainer-search-test/fixture.js",
-  });
-  await page.waitForFunction(() => "mountTrainerFixture" in window);
-  await page.evaluate(() =>
-    (
-      window as typeof window & { mountTrainerFixture: () => void }
-    ).mountTrainerFixture(),
-  );
+  await mountFixture(page);
 
   const input = page.getByRole("combobox", { name: "Search trainers" });
   await expect(input).toBeVisible();
@@ -260,22 +263,7 @@ test("trainer search visual and dismissal states", async ({ page }) => {
     throw error;
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto("/debug.html");
-  // The fixture uses the production stylesheet, not the debug app's global styles.
-  await page
-    .locator('link[rel="stylesheet"], style')
-    .evaluateAll((nodes) => nodes.forEach((node) => node.remove()));
-  await page.addStyleTag({ url: "/trainer-search-test/fixture.css" });
-  await page.addScriptTag({
-    type: "module",
-    url: "/trainer-search-test/fixture.js",
-  });
-  await page.waitForFunction(() => "mountTrainerFixture" in window);
-  await page.evaluate(() =>
-    (
-      window as typeof window & { mountTrainerFixture: () => void }
-    ).mountTrainerFixture(),
-  );
+  await mountFixture(page);
   const input = page.getByRole("combobox", { name: "Search trainers" });
   await input.fill("Alex");
   await expect(page.getByRole("option")).toHaveCount(2);

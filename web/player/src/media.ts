@@ -37,10 +37,7 @@ export class VideoOutput {
   private canvas?: HTMLCanvasElement;
   private pixels?: Uint16Array;
   private animation?: number;
-  constructor(
-    private readonly recycle: (pixels: Uint16Array) => void,
-    private readonly onWork: (ms: number) => void = () => {},
-  ) {}
+  constructor(private readonly recycle: (pixels: Uint16Array) => void) {}
   send(canvas: HTMLCanvasElement, pixels: Uint16Array) {
     if (this.pixels) this.recycle(this.pixels);
     this.canvas = canvas;
@@ -52,12 +49,10 @@ export class VideoOutput {
     const pixels = this.pixels!,
       canvas = this.canvas!;
     this.pixels = this.canvas = undefined;
-    const started = performance.now();
     try {
       draw(canvas, pixels);
     } finally {
       this.recycle(pixels);
-      this.onWork(performance.now() - started);
     }
   };
   flush() {
@@ -82,26 +77,6 @@ export function download(data: BlobPart | Uint8Array, name: string) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-export function screenshot(pixels: ArrayLike<number>) {
-  const canvas = document.createElement("canvas");
-  canvas.width = 240;
-  canvas.height = 160;
-  draw(canvas, pixels);
-  canvas.toBlob((blob) => {
-    if (blob) download(blob, "screenshot.png");
-  });
-}
-export const json = (v: unknown) =>
-  JSON.stringify(
-    v,
-    (_, x) =>
-      typeof x === "bigint"
-        ? String(x)
-        : ArrayBuffer.isView(x)
-          ? Array.from(x as unknown as number[])
-          : x,
-    2,
-  );
 
 /** Owns presentation only. Emulated audio production and drains stay in the Worker. */
 export class AudioOutput {
@@ -110,8 +85,6 @@ export class AudioOutput {
   muted = false;
   volume = 1;
   onRecycle?: (samples: Int16Array) => void;
-  underruns = 0;
-  overruns = 0;
   private gain?: GainNode;
   private speed = 1;
   private sources = new Set<AudioBufferSourceNode>();
@@ -165,10 +138,6 @@ export class AudioOutput {
           });
           this.node.port.onmessage = ({ data }) => {
             if (data.recycled) this.onRecycle?.(new Int16Array(data.recycled));
-            if (typeof data.underruns === "number")
-              this.underruns = data.underruns;
-            if (typeof data.overruns === "number")
-              this.overruns = data.overruns;
           };
           this.node.port.postMessage({ speed: Math.min(2, this.speed) });
           this.node.connect(this.gain!);

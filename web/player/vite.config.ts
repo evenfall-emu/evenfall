@@ -31,7 +31,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         player: resolve(import.meta.dirname, "index.html"),
-        debug: resolve(import.meta.dirname, "debug.html"),
         validation: resolve(import.meta.dirname, "validation.html"),
       },
     },

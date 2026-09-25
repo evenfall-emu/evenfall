@@ -201,8 +201,7 @@ it("presents only the newest frame per refresh and returns every owned buffer", 
     const ctx = { createImageData: () => image, putImageData: vi.fn() };
     const canvas = { getContext: () => ctx } as unknown as HTMLCanvasElement;
     const recycled: Uint16Array[] = [];
-    const work = vi.fn();
-    const video = new VideoOutput((pixels) => recycled.push(pixels), work);
+    const video = new VideoOutput((pixels) => recycled.push(pixels));
     const frames = Array.from({ length: 8 }, (_, i) =>
       new Uint16Array(38400).fill(i === 7 ? 0x7fff : 0),
     );
@@ -217,7 +216,6 @@ it("presents only the newest frame per refresh and returns every owned buffer", 
     expect([...image.data.slice(0, 4)]).toEqual([255, 255, 255, 255]);
     expect(recycled).toHaveLength(8);
     frames.forEach((frame, i) => expect(recycled[i]).toBe(frame));
-    expect(work).toHaveBeenCalledOnce();
 
     // No refresh while hidden: replacing frames still retains only one.
     for (const frame of frames) video.send(canvas, frame);

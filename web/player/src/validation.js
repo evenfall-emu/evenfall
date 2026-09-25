@@ -1,7 +1,10 @@
-// Browser-native integration test. Optional fixtures are served only when named
-// explicitly on tools/serve-web.py's command line; no game is bundled here.
+// Browser-native SDK integration test. Optional fixtures are served only when
+// named explicitly on tools/serve-web.py's command line; no game is bundled here.
 import { Emulator, CYCLES_PER_FRAME as F } from '@evenfall/gba';
 import audioWorkletUrl from '@evenfall/gba/audio-worklet?url&no-inline';
+import { acquireSaveLock } from './storage.js';
+// Browser tests drive the bundled SDK and the save lock through these hooks.
+Object.assign(window, { zigbaValidation: { Emulator, acquireSaveLock } });
 const results = [];
 const output = document.getElementById('result');
 function assert(value, message) { if (!value) throw new Error(message); }
@@ -12,32 +15,23 @@ async function until(predicate, label) {
   throw new Error(`Timeout: ${label}`);
 }
 const sha = async bytes => [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(x => x.toString(16).padStart(2, '0')).join('');
+let emulator;
 try {
-  const frame = document.querySelector('iframe');
-  const width = Number(new URL(location.href).searchParams.get('width'));
-  if (Number.isInteger(width) && width >= 320 && width <= 2000) frame.style.width = `${width}px`;
-  await until(() => frame.contentWindow.emulator && frame.contentDocument.querySelector('footer')?.textContent === 'Open a game to begin.', 'player initialization');
-  const win = frame.contentWindow, doc = frame.contentDocument;
-  assert(doc.documentElement.scrollWidth <= doc.documentElement.clientWidth, 'Player overflows its viewport horizontally');
-  record(`PASS responsive layout: ${doc.documentElement.clientWidth}px viewport, no horizontal overflow`);
-  const emulator = win.emulator;
+  emulator = await Emulator.create();
   const errors = [];
-  win.addEventListener('error', e => errors.push(e.message));
-  win.addEventListener('unhandledrejection', e => errors.push(String(e.reason)));
+  window.addEventListener('error', e => errors.push(e.message));
+  window.addEventListener('unhandledrejection', e => errors.push(String(e.reason)));
+  emulator.addEventListener('error', e => errors.push(e.detail.message));
+  // Return presentation buffers to the worker, as a player does.
+  emulator.addEventListener('frame', ({ detail }) => emulator.recyclePresentation(detail.pixels, detail.audio));
   const fixture = new URL(location.href).searchParams.get('fixture');
   const image = fixture
     ? new Uint8Array(await fetch(`/__fixtures__/${encodeURIComponent(fixture)}`).then(r => { if (!r.ok) throw new Error('Fixture unavailable'); return r.arrayBuffer(); }))
     : new Uint8Array([0xfe, 0xff, 0xff, 0xea]);
   const zipped = image[0] === 0x50 && image[1] === 0x4b;
-  const playButton = () => doc.querySelector('.transport .primary');
-  const romInput = doc.querySelector('.page-title input[type=file]');
-  const files = new win.DataTransfer();
-  files.items.add(new win.File([image], `${fixture ?? 'Loop'}.${zipped ? 'zip' : 'gba'}`));
-  romInput.files = files.files;
-  romInput.dispatchEvent(new win.Event('change', { bubbles: true }));
-  await until(() => !playButton().disabled && doc.querySelector('footer').textContent.startsWith('Ready.'), 'ROM import');
-  let state = await emulator.inspect();
-  record(`PASS player ROM import: ${state.romHash}, save=${state.saveType}`);
+  let state = await emulator.load(image, { zipped });
+  assert(state.cycle === 0n && !state.fault, state.fault ?? 'ROM did not load at reset');
+  record(`PASS ROM load${zipped ? ' from ZIP' : ''}: ${state.romHash}, save=${state.saveType}`);
   const start = state.cycle;
   const dueNow = await emulator.runUntil(start, [{ at: start, keys: 4 }]);
   assert(dueNow.inputsConsumed === 1 && dueNow.cycle === start, 'Due-now input was not applied without advancing time');
@@ -86,13 +80,12 @@ try {
   const rendered = await rendering;
   assert(rendered.getChannelData(0).some(x => x > 0) && rendered.getChannelData(1).some(x => x < 0), 'AudioWorklet did not render stereo PCM');
   record('PASS AudioWorklet stereo rendering');
-  doc.querySelector('.screen-wrap canvas').focus();
-  win.dispatchEvent(new win.KeyboardEvent('keydown', { code: 'KeyX', bubbles: true }));
-  await wait(50);
-  assert((new DataView((await emulator.readMemory(0x04000130, 2)).buffer).getUint16(0, true) & 1) === 0, 'Keyboard A not applied');
-  win.dispatchEvent(new win.Event('blur')); await wait(50);
-  assert((new DataView((await emulator.readMemory(0x04000130, 2)).buffer).getUint16(0, true) & 1) === 1, 'Blur left key held');
-  record('PASS keyboard mapping and focus-loss release');
+  const keyinput = async () => new DataView((await emulator.readMemory(0x04000130, 2)).buffer).getUint16(0, true);
+  await emulator.setKeys(1);
+  assert((await keyinput() & 1) === 0, 'A was not applied to KEYINPUT');
+  await emulator.setKeys(0);
+  assert((await keyinput() & 1) === 1, 'Released A remained held');
+  record('PASS key input and release through KEYINPUT');
   if (fixture && new URL(location.href).searchParams.has('replay')) {
     const inputs = [{ at: 1250n * F, keys: 8 }, { at: 1255n * F, keys: 0 }, { at: 1400n * F, keys: 1 }, { at: 1405n * F, keys: 0 }];
     let consumed = 0;
@@ -103,29 +96,28 @@ try {
     const end = await emulator.inspect();
     record(`PASS 2200-frame replay: cycle=${end.cycle}, PC=${end.nextInstructionAddress.toString(16)}, inputs=${consumed}, framebuffer=${await sha((await emulator.frame()).buffer)}`);
   }
-  // Exercise the reference player's actual controls; autoplay is allowed only
-  // by the headless test launch flag, not by production code.
+  // Realtime play and pause in the worker, paced by the browser's clock.
   const old = (await emulator.inspect()).cycle;
   const costs = [];
-  const measure = ({ detail }) => { if (detail.workMs > 0) costs.push(detail.workMs); };
+  let frames = 0;
+  const measure = ({ detail }) => { frames++; if (detail.workMs > 0) costs.push(detail.workMs); };
   emulator.addEventListener('frame', measure);
-  playButton().click();
-  await until(() => playButton().textContent === 'Pause', 'play');
+  await emulator.play();
+  await until(() => frames > 0, 'play');
   await wait(2000);
-  playButton().click();
-  await until(() => playButton().textContent === 'Play', 'pause');
+  await emulator.pause();
   const paused = await emulator.inspect(); assert(paused.cycle > old, 'Realtime playback did not advance');
   emulator.removeEventListener('frame', measure);
   await wait(100); assert((await emulator.inspect()).cycle === paused.cycle, 'Pause did not stop execution');
   costs.sort((a, b) => a - b);
-  record(`PASS realtime play/pause controls: ${costs.length} frames, worker emulation/resampling p95=${costs[Math.floor(costs.length * 0.95)]?.toFixed(2)} ms`);
+  record(`PASS realtime play/pause controls: ${frames} frames, worker emulation/resampling p95=${costs[Math.floor(costs.length * 0.95)]?.toFixed(2)} ms`);
   assert(!errors.length, errors.join('\n'));
-  assert(doc.documentElement.scrollWidth <= doc.documentElement.clientWidth, 'Loaded player overflows its viewport horizontally');
   record(`PASS browser integration complete; framebuffer SHA-256=${await sha((await emulator.frame()).buffer)}`);
   document.title = 'ZiGBA browser validation · PASS';
   output.dataset.result = 'pass';
 } catch (error) {
   record(`FAIL ${error.stack ?? error}`); document.title = 'ZiGBA browser validation · FAIL'; output.dataset.result = 'fail';
 } finally {
+  await emulator?.dispose().catch(() => {});
   await fetch(`/__validation_result__?token=${window.validationToken}`, { method: 'POST', body: output.textContent });
 }

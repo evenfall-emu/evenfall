@@ -10,7 +10,7 @@ import {
 } from "../src/library";
 describe("library storage", () => {
   const ref = (hash: string) => ({ hash, playthroughId: "default" });
-  it("upgrades v1, deduplicates imports, removes entries without deleting saves", async () => {
+  it("upgrades v1, deduplicates imports and keeps the previous save", async () => {
     await deleteDB("zigba-local");
     const old = await openDB("zigba-local", 1, {
       upgrade(db) {
@@ -44,15 +44,10 @@ describe("library storage", () => {
     ]);
     expect(await lib.db!.getAll("games")).toEqual(await lib.list());
     expect(await lib.rom("abc")).toEqual(new Uint8Array([1]));
-    await lib.rename("abc", "Renamed");
-    expect((await lib.list())[0].title).toBe("Renamed");
     await lib.save(ref("abc"), new Uint8Array([43]));
     expect((await lib.db!.get("saves", ["abc", "default"])).previous).toEqual(
       new Uint8Array([42]),
     );
-    await lib.remove("abc");
-    expect(await lib.list()).toHaveLength(0);
-    expect(await lib.rom("abc")).toBeUndefined();
     expect(await lib.getSave(ref("abc"))).toEqual(new Uint8Array([43]));
     lib.close();
   });
@@ -115,8 +110,12 @@ describe("library storage", () => {
       data: new Uint8Array([42]),
       previous: new Uint8Array([41]),
     });
-    expect(await lib.scenarios()).toEqual([{ name: "Retained scenario" }]);
-    expect(await lib.reports()).toEqual([{ note: "Retained report" }]);
+    expect(await lib.db!.getAll("scenarios")).toEqual([
+      { name: "Retained scenario" },
+    ]);
+    expect(await lib.db!.getAll("reports")).toEqual([
+      { note: "Retained report" },
+    ]);
 
     // A selection updates recency without writing another ROM-sized value.
     const put = vi.spyOn(IDBObjectStore.prototype, "put");
@@ -137,10 +136,8 @@ describe("library storage", () => {
       lastPlayed: 3,
       activePlaythroughId: "default",
     });
-    await lib.remove("first");
-    expect(await lib.rom("first")).toBeUndefined();
-    // An explicitly retained scenario asset is independent of the library ROM.
-    expect(await lib.asset("first")).toEqual(first);
+    // A retained asset keeps its own record, independent of the library ROM.
+    expect(await lib.db!.get("assets", "first")).toEqual(first);
     expect(await lib.getSave(ref("first"))).toEqual(new Uint8Array([42]));
     lib.close();
   });
@@ -358,18 +355,6 @@ describe("library storage", () => {
       },
     });
     expect((await lib.list())[0].resumeSavedAt).toBe(200);
-    await lib.remove("game");
-    expect(await lib.getResume(ref("game"))).toBeDefined();
-    expect(await lib.asset("quick-state:game:1")).toEqual(new Uint8Array([99]));
-    await lib.put({
-      hash: "game",
-      title: "Game",
-      rom: new Uint8Array([1]),
-      lastPlayed: 11,
-    });
-    await lib.deleteSave(ref("game"));
-    expect(await lib.getResume(ref("game"))).toBeUndefined();
-    expect((await lib.list())[0].resumeSavedAt).toBeUndefined();
     expect(await lib.asset("quick-state:game:1")).toEqual(new Uint8Array([99]));
     lib.close();
   });
@@ -427,7 +412,7 @@ describe("library storage", () => {
     expect(await lib.cloudJobs("bob")).toEqual([]);
     lib.close();
   });
-  it("isolates two runs of one ROM including history, jobs, acknowledgements and deletion", async () => {
+  it("isolates two runs of one ROM including history, jobs and acknowledgements", async () => {
     await deleteDB("zigba-local");
     const lib = await openLibrary();
     await lib.put({
@@ -478,14 +463,6 @@ describe("library storage", () => {
         (j) => j.playthroughId === "default" && j.kind === "battery",
       )?.baseEtag,
     ).toBeUndefined();
-    await lib.deleteSave(second);
-    expect(await lib.getSave(second)).toBeUndefined();
-    expect(await lib.getSave(first)).toEqual(new Uint8Array([11]));
-    expect((await lib.cloudJobs("alice")).map((j) => j.playthroughId)).toEqual([
-      "default",
-      "default",
-    ]);
-    expect((await lib.list())[0].resumeSavedAt).toBeUndefined();
     await lib.selectPlaythrough(first);
     expect((await lib.list())[0].resumeSavedAt).toBe(
       (await lib.getResume(first))?.savedAt,

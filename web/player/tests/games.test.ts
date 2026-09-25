@@ -33,13 +33,11 @@ const first = game("fixture/first", "a".repeat(64));
 const second = game("fixture/second", "b".repeat(64));
 const FirstDashboard = () => null;
 const SecondDashboard = () => null;
-const FirstHud = () => null;
 const plugins: GamePlugin[] = [
   {
     id: "first-package",
     games: [first],
     dashboards: async () => ({ [first.id]: FirstDashboard }),
-    huds: async () => ({ [first.id]: FirstHud }),
   },
   {
     id: "second-package",
@@ -65,22 +63,24 @@ describe("game plugin registry", () => {
     expect(registry.gameForRom("b".repeat(64))).toBe(second);
   });
 
-  it("loads only the requested kind; plugins may omit a kind", async () => {
-    const registry = createGameRegistry(plugins);
-    await registry.load("huds");
-    expect(registry.layoutForRom("dashboards", "a".repeat(64))).toBeNull();
-    expect(registry.layoutForRom("huds", "a".repeat(64))?.Layout).toBe(
-      FirstHud,
+  it("leaves the generic player for a plugin without layouts", async () => {
+    const third = game("fixture/third", "d".repeat(64));
+    const registry = createGameRegistry([
+      ...plugins,
+      { id: "headless-package", games: [third] },
+    ]);
+    await registry.load("dashboards");
+    expect(registry.gameForRom("d".repeat(64))).toBe(third);
+    expect(registry.layoutForRom("dashboards", "d".repeat(64))).toBeNull();
+    expect(registry.layoutForRom("dashboards", "a".repeat(64))?.Layout).toBe(
+      FirstDashboard,
     );
-    expect(registry.layoutForRom("huds", "b".repeat(64))).toBeNull();
-    expect(registry.anyLayout("huds")?.game).toBe(first);
   });
 
   it("works with no installed plugins", async () => {
     const registry = createGameRegistry([]);
     await registry.load("dashboards");
     expect(registry.layoutForRom("dashboards", "a".repeat(64))).toBeNull();
-    expect(registry.anyLayout("huds")).toBeNull();
   });
 
   it("rejects ambiguous builds and layouts for foreign games", async () => {

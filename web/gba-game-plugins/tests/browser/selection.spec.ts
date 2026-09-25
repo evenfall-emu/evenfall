@@ -1,12 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { build } from "vite";
-import {
-  dashboardCss,
-  debugCss,
-  fixtureBuild,
-  hudCss,
-  playerCss,
-} from "./support";
+import { dashboardCss, fixtureBuild, playerCss } from "./support";
 import { resolve } from "node:path";
 import { rm, writeFile } from "node:fs/promises";
 
@@ -26,7 +20,6 @@ test.beforeAll(async () => {
     import React, { useState } from "react";
     import { createRoot } from "react-dom/client";
     import { PokemonDashboard } from ${JSON.stringify(resolve("ui/pokemon-dashboard.tsx"))};
-    import { PartyColumn } from ${JSON.stringify(resolve("ui/game-layout.tsx"))};
     import ${JSON.stringify(playerCss)};
     import ${JSON.stringify(dashboardCss)};
     const stats = { hp: 12, attack: 23, defense: 34, speed: 45, specialAttack: 56, specialDefense: 67 };
@@ -40,23 +33,19 @@ test.beforeAll(async () => {
     function Fixture() {
       const [party, setParty] = useState(initial);
       const [timeline, setTimeline] = useState(1);
-      const [selectedId, select] = useState("Beta");
       window.selectionFixture = {
         reverse: () => setParty((p) => [...p].reverse()),
         reset: () => setTimeline((t) => t + 1),
         duplicates: () => setParty([member("Twin one", 0, "twin"), member("Twin two", 1, "twin")]),
       };
       const sample = { timeline, sequence: 1, cycle: 1n, romHash: "fixture" };
-      return location.search.includes("party")
-        ? <><PartyColumn title="Party" party={party.map((p) => ({ ...p, name: p.nickname }))}
-            selectedId={selectedId} onSelect={(p) => select(p.id)} /><button>After party</button></>
-        : <div className="console-app"><PokemonDashboard gameName="Selection fixture"
-            party={{ status: "ready", sample, data: { party } }}
-            storage={{ status: "ready", data: { boxes: [{ pokemon: [member("PC Pikachu", 0)] }] } }}
-            battle={{ status: "ready", data: { active: true, kind: "wild", playerParty: party,
-              opponentParty: [member("Enemy", 0)], battlers: [{ side: "player", partySlot: 1 }] } }}
-            context={{ status: "idle" }} resources={undefined}
-          ><div className="game-display">Synthetic game screen</div></PokemonDashboard></div>;
+      return <div className="console-app"><PokemonDashboard gameName="Selection fixture"
+          party={{ status: "ready", sample, data: { party } }}
+          storage={{ status: "ready", data: { boxes: [{ pokemon: [member("PC Pikachu", 0)] }] } }}
+          battle={{ status: "ready", data: { active: true, kind: "wild", playerParty: party,
+            opponentParty: [member("Enemy", 0)], battlers: [{ side: "player", partySlot: 1 }] } }}
+          context={{ status: "idle" }} resources={undefined}
+        ><div className="game-display">Synthetic game screen</div></PokemonDashboard></div>;
     }
     createRoot(document.getElementById("root")).render(<Fixture />);
   `,
@@ -162,60 +151,4 @@ test("roster keeps spatial wrapping, identity, filtering and responsive panels",
   await page.setViewportSize({ width: 1440, height: 1000 });
   await expect(page.locator(".dashboard-team")).toBeVisible();
   await expect(page.locator(".dashboard-info")).toBeVisible();
-});
-
-test("linear party selection wraps and survives reordering", async ({
-  page,
-}) => {
-  page.on("pageerror", (error) => {
-    throw error;
-  });
-  await page.goto("/selection-test/index.html?party");
-  // PartyColumn belongs to the Lab; load only its stylesheet for this surface.
-  await page
-    .locator('link[rel="stylesheet"]')
-    .evaluateAll((nodes) => nodes.forEach((node) => node.remove()));
-  await page.addStyleTag({ path: debugCss });
-  await page.addStyleTag({ path: hudCss });
-  const cards = page
-    .getByRole("radiogroup", { name: "Current team" })
-    .getByRole("radio");
-  await expect(cards).toHaveCount(5);
-  await expect(cards.nth(1)).toBeChecked();
-  await expect(page.locator('.creature-select[tabindex="0"]')).toHaveCount(1);
-  await cards.nth(1).focus();
-  for (const [key, index] of [
-    ["ArrowDown", 2],
-    ["ArrowRight", 3],
-    ["ArrowDown", 4],
-    ["ArrowDown", 0],
-    ["ArrowUp", 4],
-    ["ArrowLeft", 3],
-  ] as const) {
-    await page.keyboard.press(key);
-    await expect(cards.nth(index)).toBeFocused();
-    await expect(cards.nth(index)).toBeChecked();
-    await expect(cards.nth(index).locator(".creature-cell")).toHaveClass(
-      /selected/,
-    );
-  }
-  // Base UI follows radio semantics: Home/End do not select, Tab leaves the group.
-  await page.keyboard.press("Home");
-  await page.keyboard.press("End");
-  await expect(cards.nth(3)).toBeFocused();
-  await expect(cards.nth(3)).toBeChecked();
-  await page.keyboard.press("Tab");
-  await expect(page.getByRole("button", { name: "After party" })).toBeFocused();
-  await page.keyboard.press("Shift+Tab");
-  await expect(cards.nth(3)).toBeFocused();
-  await page.evaluate(() => window.selectionFixture.reverse());
-  await expect(cards.first()).toContainText("Epsilon");
-  await expect(page.locator(".creature-cell.selected")).toContainText("Delta");
-  await expect(cards.nth(1)).toBeChecked();
-  await cards.nth(1).press("ArrowDown");
-  await expect(cards.nth(2)).toBeChecked();
-  await cards.nth(1).click();
-  await page.screenshot({
-    path: `../../artifacts/selection-${process.env.SELECTION_STAGE ?? "after"}-party.png`,
-  });
 });

@@ -536,7 +536,7 @@ function App() {
       player.latest = await player.emulator.loadState(
         new Uint8Array(await file.arrayBuffer()),
       );
-      player.update({ cpu: player.latest, message: "State loaded" });
+      player.update({ message: "State loaded" });
       await player.checkpointState();
     } finally {
       player.update({ changing: false });
@@ -1074,15 +1074,6 @@ function App() {
                         </div>
                       );
                     })}
-                    <hr />
-                    <a
-                      href="./debug.html"
-                      target="_blank"
-                      rel="noopener"
-                      onClick={() => act(() => player.pause())}
-                    >
-                      Dev / Debug player ↗
-                    </a>
                   </Popover.Popup>
                 </Popover.Positioner>
               </Popover.Portal>

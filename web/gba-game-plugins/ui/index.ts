@@ -7,11 +7,10 @@ export type { GameLayoutProps, GameLayouts } from "./layout";
 
 /**
  * Registration for the ZiGBA player's game registry (frontend/src/games.ts).
- * Layout modules and their CSS load only on the page that renders them.
+ * Layout modules and their CSS load on demand, in their own chunks.
  */
 export const pokemonPlugin = {
   id: "@evenfall/gba-pokemon",
   games: [heartNSoul, eliteRedux],
   dashboards: () => import("./dashboards").then((module) => module.dashboards),
-  huds: () => import("./huds").then((module) => module.huds),
 };

@@ -498,10 +498,11 @@ Coverage by suite:
   `redux.state`, and decode item 1 (MASTER BALL / Master Ball) in each game
   to a 24x24 image with nonempty alpha whose artwork reference carries the
   matched ROM hash.
-- [`hns-live.spec.ts`](../tests/browser/hns-live.spec.ts) runs the
-  production player with `game2.state`: names, HP, artwork dimensions, move
-  categories, click and keyboard selection, invalidation on reload, and
-  desktop and mobile layouts.
+- The Heart & Soul party test in
+  [`console.spec.ts`](../tests/browser/console.spec.ts) runs the main player
+  with `game2.state`: names, HP, artwork dimensions, move categories, click
+  and keyboard selection, invalidation on reload, and desktop and mobile
+  layouts.
 - The shared console browser test with the Redux fixtures checks four-ability
   rendering, descriptions on focus and touch, the native-aspect canvas,
   desktop and mobile overflow, ROM artwork, Easy and Ace totals, Hell

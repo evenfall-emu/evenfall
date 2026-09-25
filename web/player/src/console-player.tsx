@@ -30,7 +30,7 @@ export async function quickState(slot: number, restore: boolean) {
       const quick = await player.library.getQuickSlot(ref, slot);
       if (!quick) throw new Error(`Quick slot ${slot} is empty.`);
       player.latest = await player.emulator.loadState(quick.data);
-      player.update({ cpu: player.latest, message: `Loaded slot ${slot}` });
+      player.update({ message: `Loaded slot ${slot}` });
       await player.checkpointState();
     } else {
       ({ queued } = await player.library.saveQuickSlot(

@@ -1,19 +1,58 @@
-import { test, expect } from "@playwright/test";
-import type { Emulator as SdkEmulator } from "@evenfall/gba";
+import { test, expect, type Page } from "@playwright/test";
+import type { Emulator as SdkEmulator, Scenario } from "@evenfall/gba";
 
-/** Hooks that /debug.html exposes for console and browser tests. */
-type DebugHooks = {
-  zigbaDebug: {
+/** Hooks that /validation.html exposes for SDK and storage tests. */
+type ValidationHooks = {
+  zigbaValidation: {
     Emulator: typeof SdkEmulator;
     acquireSaveLock(key: string): Promise<(() => void) | null>;
   };
 };
-// Existing developer workflows now live at the separate debug entry point.
 const rom = {
   name: "Loop.gba",
   mimeType: "application/octet-stream",
   buffer: Buffer.from([42, 0, 160, 227, 254, 255, 255, 234]),
 };
+async function ready(page: Page) {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Enter player" }).click();
+  await expect(page.getByRole("button", { name: "Add game" })).toBeEnabled();
+}
+async function openRom(page: Page, file: typeof rom) {
+  await page.getByLabel("Open ROM", { exact: true }).setInputFiles(file);
+  await expect(
+    page.getByRole("heading", {
+      name: file.name.replace(/\.[^.]+$/, ""),
+      exact: true,
+    }),
+  ).toBeVisible();
+}
+const playing = (page: Page) =>
+  page.evaluate(() => window.player.state.playing);
+const exportedSave = (page: Page) =>
+  page.evaluate(async () => (await window.player.emulator.exportSave())[0]);
+const register = (page: Page, index: number) =>
+  page.evaluate(
+    async (index) => (await window.player.emulator.inspect()).registers[index],
+    index,
+  );
+const frames = (page: Page) =>
+  page.evaluate(async () =>
+    Number((await window.player.emulator.inspect()).frames),
+  );
+/** The SDK harness page; its load event waits for the validation run. */
+async function sdkPage(page: Page) {
+  await page.goto("/validation.html");
+  await expect(page.locator("#result")).not.toHaveText("RUNNING");
+}
+/** A cartridge with an SRAM signature whose code runs before the signature. */
+function sramRom(code: number[]) {
+  const bytes = Buffer.alloc(272);
+  code.forEach((n, i) => bytes.writeUInt32LE(n, i * 4));
+  bytes.write("SRAM_V110", 256);
+  return bytes;
+}
+
 test("fast-forward presents selected complete images while advancing every emulated frame", async ({
   page,
 }) => {
@@ -28,13 +67,9 @@ test("fast-forward presents selected complete images while advancing every emula
       return original.apply(this, args);
     } as typeof original;
   });
-  await page.goto("/debug.html");
-  await expect(page.getByRole("status").last()).toContainText("Open a game");
-  await page.getByLabel("Open game").setInputFiles(rom);
-  await expect(
-    page.getByRole("heading", { name: "Loop", exact: true }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await ready(page);
+  await openRom(page, rom);
+  await expect.poll(() => playing(page)).toBe(true);
   const counts = await page.evaluate(async () => {
     const host = window as unknown as {
       emulator: import("@evenfall/gba").Emulator;
@@ -66,82 +101,16 @@ test("fast-forward presents selected complete images while advancing every emula
   expect(counts.audioSamples).toBe(0);
   expect(counts.draws).toBeGreaterThan(0);
   expect(counts.draws).toBeLessThanOrEqual(counts.frames + 2);
-  await page.getByRole("button", { name: "Pause", exact: true }).click();
+  await page.evaluate(() => window.player.pause());
 });
 
-test("import, play, refresh, checkpoint, isolated Lab, capture and narrow layout", async ({
-  page,
-}) => {
-  const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto("/debug.html");
-  await expect(page.getByRole("status").last()).toContainText("Open a game");
-  await page.screenshot({ path: "test-results/empty-desktop.png" });
-  await page.getByLabel("Open game").setInputFiles(rom);
-  await expect(
-    page.getByRole("heading", { name: "Loop", exact: true }),
-  ).toBeVisible();
-  await page.screenshot({ path: "test-results/loaded-desktop.png" });
-  await page.getByRole("button", { name: "Play", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Pause", exact: true }),
-  ).toBeVisible();
-  await page.keyboard.press("KeyX");
-  await page.screenshot({ path: "test-results/playing-desktop.png" });
-  await page.getByRole("button", { name: "Pause", exact: true }).click();
-  await page.getByText("Checkpoints & exports", { exact: true }).click();
-  await page.getByLabel("Checkpoint name").fill("First checkpoint");
-  await page.getByRole("button", { name: "Mark checkpoint" }).click();
-  await page.getByRole("button", { name: "Prepare scenario" }).click();
-  await expect(
-    page.getByRole("button", { name: "Download manifest" }),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "Lab", exact: true }).click();
-  await page.getByRole("button", { name: "Loop", exact: true }).click();
-  await page.getByRole("button", { name: "Run scenario", exact: true }).click();
-  await expect(
-    page.getByRole("status").filter({ hasText: /^passed$/ }),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "Player", exact: true }).click();
-  await page.getByRole("button", { name: "Capture bug", exact: true }).click();
-  await page.getByLabel("What happened?").fill("Testing capture");
-  await page.getByRole("button", { name: "Retain capture" }).click();
-  await expect(
-    page.getByRole("button", { name: "Download failure bundle" }),
-  ).toBeVisible();
-  await page.screenshot({ path: "test-results/capture-desktop.png" });
-  await page.getByRole("button", { name: "Close", exact: true }).click();
-  await page.reload();
-  await expect(
-    page.getByRole("button", { name: "Loop", exact: true }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Loop", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "Loop", exact: true }),
-  ).toBeVisible();
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.reload();
-  await expect(page.getByRole("status").last()).toContainText("Open a game");
-  await page.screenshot({ path: "test-results/empty-mobile.png" });
-  await page.getByRole("button", { name: "Library", exact: true }).click();
-  await page.screenshot({ path: "test-results/library-mobile.png" });
-  await page.getByRole("button", { name: "Loop", exact: true }).click();
-  await page.getByRole("button", { name: "Close", exact: true }).click();
-  await page.screenshot({ path: "test-results/loaded-mobile.png" });
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= window.innerWidth,
-    ),
-  ).toBe(true);
-  expect(errors).toEqual([]);
-});
 test("worker cancellation, fault capture and save locking across tabs", async ({
   page,
   context,
 }) => {
-  await page.goto("/debug.html");
+  await sdkPage(page);
   const result = await page.evaluate(async () => {
-    const { Emulator } = (window as unknown as DebugHooks).zigbaDebug;
+    const { Emulator } = (window as unknown as ValidationHooks).zigbaValidation;
     const a = await Emulator.create();
     const b = await Emulator.create();
     const rom = new Uint8Array([42, 0, 160, 227, 254, 255, 255, 234]);
@@ -171,15 +140,17 @@ test("worker cancellation, fault capture and save locking across tabs", async ({
   });
   expect(result).toEqual({ status: "cancelled", same: true, captured: true });
   await page.evaluate(async () => {
-    const { acquireSaveLock } = (window as unknown as DebugHooks).zigbaDebug;
+    const { acquireSaveLock } = (window as unknown as ValidationHooks)
+      .zigbaValidation;
     (window as unknown as { release: () => void }).release =
       (await acquireSaveLock("lock-test"))!;
   });
   const second = await context.newPage();
-  await second.goto("/debug.html");
+  await sdkPage(second);
   expect(
     await second.evaluate(async () => {
-      const { acquireSaveLock } = (window as unknown as DebugHooks).zigbaDebug;
+      const { acquireSaveLock } = (window as unknown as ValidationHooks)
+        .zigbaValidation;
       return (await acquireSaveLock("lock-test")) === null;
     }),
   ).toBe(true);
@@ -187,8 +158,8 @@ test("worker cancellation, fault capture and save locking across tabs", async ({
   await expect
     .poll(() =>
       second.evaluate(async () => {
-        const { acquireSaveLock } = (window as unknown as DebugHooks)
-          .zigbaDebug;
+        const { acquireSaveLock } = (window as unknown as ValidationHooks)
+          .zigbaValidation;
         const release = await acquireSaveLock("lock-test");
         release?.();
         return !!release;
@@ -196,17 +167,127 @@ test("worker cancellation, fault capture and save locking across tabs", async ({
     )
     .toBe(true);
 });
+
+test("a recorded session replays in an isolated worker, and a failed assertion captures a replayable failure", async ({
+  page,
+}) => {
+  const { createHash } = await import("node:crypto");
+  const manifest: Scenario = {
+    version: 1,
+    name: "Assertion fixture",
+    assets: {
+      rom: {
+        path: "rom.gba",
+        sha256: createHash("sha256").update(rom.buffer).digest("hex"),
+      },
+    },
+    config: {
+      boot: "hle",
+      saveType: "none",
+      rtc: false,
+      rtcEpoch: "0",
+      sampleRate: 48000,
+    },
+    inputs: [],
+    checkpoints: [
+      {
+        name: "r0 check",
+        at: "1000",
+        expect: { cpu: { registers: { "0": 43 } } },
+      },
+    ],
+    limits: {
+      maxCycles: "1000",
+      maxRuns: 100,
+      chunkCycles: "70224",
+      maxAudioBytes: 1048576,
+    },
+  };
+  await sdkPage(page);
+  const result = await page.evaluate(async (manifest) => {
+    const { Emulator } = (window as unknown as ValidationHooks).zigbaValidation;
+    const rom = new Uint8Array([42, 0, 160, 227, 254, 255, 255, 234]);
+    // Each run gets its own worker, as a host keeps tests off the live session.
+    const isolated = async <T>(run: (worker: SdkEmulator) => Promise<T>) => {
+      const worker = await Emulator.create();
+      try {
+        return await run(worker);
+      } finally {
+        worker.terminate();
+      }
+    };
+    const session = await Emulator.create();
+    try {
+      await session.load(rom, { rtc: false });
+      await session.runUntil(1000n);
+      await session.checkpoint("First checkpoint");
+      await session.runUntil(2000n);
+      const recorded = await session.exportScenario("Loop");
+      const replayed = await isolated((worker) =>
+        worker.runScenario(recorded.manifest, recorded.assets),
+      );
+      const manual = await session.capture("Testing capture");
+      const failed = await isolated((worker) =>
+        worker.runScenario(manifest, { rom }),
+      );
+      const baseline = structuredClone(manifest);
+      for (const checkpoint of baseline.checkpoints) delete checkpoint.expect;
+      const unasserted = await isolated((worker) =>
+        worker.runScenario(baseline, { rom }),
+      );
+      const reproduced = await isolated(async (worker) => {
+        await worker.load(rom, {
+          ...manifest.config,
+          rtcEpoch: BigInt(manifest.config.rtcEpoch),
+        });
+        return worker.replay(failed.capture!);
+      });
+      return {
+        recorded: recorded.manifest.checkpoints.map(({ name }) => name),
+        replayed: replayed.status,
+        manual: {
+          format: manual.format,
+          framebuffer: manual.artifacts.framebuffer?.length,
+        },
+        failed: failed.status,
+        failures: failed.failures,
+        capture: failed.capture?.format,
+        unasserted: unasserted.status,
+        checkpoint: unasserted.checkpoints?.[0]?.name,
+        reproduced: reproduced.status,
+      };
+    } finally {
+      session.terminate();
+    }
+  }, manifest);
+  expect(result.recorded).toContain("First checkpoint");
+  expect(result).toMatchObject({
+    replayed: "passed",
+    manual: { format: "zigba-failure", framebuffer: 240 * 160 },
+    failed: "failed",
+    capture: "zigba-failure",
+    unasserted: "passed",
+    checkpoint: "r0 check",
+    reproduced: "passed",
+  });
+  expect(result.failures?.join("\n")).toContain(
+    "r0 check: r0 expected 43, got 42",
+  );
+});
+
 test("battery save survives v1 upgrade, gameplay, refresh and duplicate ZIP import", async ({
   page,
 }) => {
-  const bytes = Buffer.alloc(272);
-  [0xe3a0040e, 0xe3a0102a, 0xe5c01000, 0xeafffffe].forEach((n, i) =>
-    bytes.writeUInt32LE(n, i * 4),
-  );
-  bytes.write("SRAM_V110", 256);
+  // Reads the boot-time SRAM byte into r2, then writes 42 to it.
+  const bytes = sramRom([
+    0xe3a0040e, 0xe5d02000, 0xe3a0102a, 0xe5c01000, 0xeafffffe,
+  ]);
   const { createHash } = await import("node:crypto");
   const hash = createHash("sha256").update(bytes).digest("hex");
-  await page.goto("/debug.html");
+  await page.goto("/");
+  await expect
+    .poll(() => page.evaluate(() => window.player?.state.ready))
+    .toBe(true);
   await page.evaluate(async () => {
     const req = indexedDB.deleteDatabase("zigba-local");
     await new Promise<void>((resolve, reject) => {
@@ -214,7 +295,7 @@ test("battery save survives v1 upgrade, gameplay, refresh and duplicate ZIP impo
       req.onerror = () => reject(req.error);
     });
   });
-  // Seed the previous application's exact record shape before opening the new UI.
+  // Seed the first storage version's exact record shape before the player opens it.
   await page.evaluate(async (hash) => {
     const req = indexedDB.open("zigba-local", 1);
     req.onupgradeneeded = () => req.result.createObjectStore("saves");
@@ -232,62 +313,25 @@ test("battery save survives v1 upgrade, gameplay, refresh and duplicate ZIP impo
     db.close();
   }, hash);
   await page.reload();
-  await expect(page.getByRole("status").last()).toContainText("Open a game");
-  await page.getByLabel("Open game").setInputFiles({
+  await page.getByRole("button", { name: "Enter player" }).click();
+  await openRom(page, {
     name: "Save.gba",
     mimeType: "application/octet-stream",
     buffer: bytes,
   });
-  await expect(
-    page.getByRole("button", { name: "Play", exact: true }),
-  ).toBeEnabled();
-  expect(
-    await page.evaluate(async () => {
-      return (
-        await (
-          window as unknown as {
-            emulator: { exportSave(): Promise<Uint8Array> };
-          }
-        ).emulator.exportSave()
-      )[0];
-    }),
-  ).toBe(17);
-  await page.getByRole("button", { name: "Frame +1" }).click();
-  await expect(
-    page.getByRole("button", { name: "Play", exact: true }),
-  ).toBeEnabled();
-  await expect
-    .poll(() =>
-      page.evaluate(async () => {
-        return (
-          await (
-            window as unknown as {
-              emulator: { exportSave(): Promise<Uint8Array> };
-            }
-          ).emulator.exportSave()
-        )[0];
-      }),
-    )
-    .toBe(42);
+  await expect.poll(() => register(page, 2)).toBe(17);
+  await expect.poll(() => exportedSave(page)).toBe(42);
   // Pause flushes the save before a controlled reload.
-  await page.getByRole("button", { name: "Capture bug", exact: true }).click();
-  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await page.evaluate(() => window.player.pause());
   await page.reload();
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.getByRole("button", { name: "Resume adventure" }).click();
   await expect(
-    page.getByRole("button", { name: "Play", exact: true }),
-  ).toBeEnabled();
-  expect(
-    await page.evaluate(async () => {
-      return (
-        await (
-          window as unknown as {
-            emulator: { exportSave(): Promise<Uint8Array> };
-          }
-        ).emulator.exportSave()
-      )[0];
-    }),
-  ).toBe(42);
+    page.getByRole("heading", { name: "Save", exact: true }),
+  ).toBeVisible();
+  // Reset boots from the stored battery save, so the game reads its own write.
+  await page.getByRole("button", { name: /^Reset/ }).click();
+  await expect.poll(() => register(page, 2)).toBe(42);
+  expect(await exportedSave(page)).toBe(42);
   const { crc32 } = await import("node:zlib");
   const name = Buffer.from("Save.gba");
   const local = Buffer.alloc(30);
@@ -320,32 +364,26 @@ test("battery save survives v1 upgrade, gameplay, refresh and duplicate ZIP impo
     },
     [...Buffer.concat([local, name, bytes, central, name, end])],
   );
-  await page.locator("main").dispatchEvent("drop", { dataTransfer: zipDrop });
-  await zipDrop.dispose();
-  await expect(
-    page.getByRole("button", { name: "Play", exact: true }),
-  ).toBeEnabled();
-  expect(await page.locator(".game").count()).toBe(1);
-  await expect(page.locator(".save-status")).toContainText("Autosave active");
-  await page.locator(".game summary").click();
   await page
-    .getByRole("button", { name: "Delete progress", exact: true })
-    .click();
+    .locator(".console-app")
+    .dispatchEvent("drop", { dataTransfer: zipDrop });
+  await zipDrop.dispose();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.player.state.games.map((game) => [game.hash, game.title]),
+      ),
+    )
+    .toEqual([[hash, "Save"]]);
   await expect(
-    page.getByRole("button", { name: "Play", exact: true }),
-  ).toBeEnabled();
-  expect(
-    await page.evaluate(async () => {
-      return (
-        await (
-          window as unknown as {
-            emulator: { exportSave(): Promise<Uint8Array> };
-          }
-        ).emulator.exportSave()
-      )[0];
-    }),
-  ).toBe(255);
+    page.getByRole("heading", { name: "Save", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".save-indicator")).toContainText(
+    "Autosave active",
+  );
+  await expect.poll(() => exportedSave(page)).toBe(42);
 });
+
 test("storage failure leaves game and export controls available", async ({
   page,
 }) => {
@@ -356,57 +394,38 @@ test("storage failure leaves game and export controls available", async ({
       },
     });
   });
-  await page.goto("/debug.html");
-  await expect(page.locator(".save-status")).toContainText(
-    "Storage unavailable",
+  await ready(page);
+  // An SRAM cartridge that never writes its save.
+  await openRom(page, {
+    name: "Progress.gba",
+    mimeType: "application/octet-stream",
+    buffer: sramRom([0xeafffffe]),
+  });
+  await expect(page.locator(".save-indicator")).toContainText(
+    "Save unavailable",
   );
-  await page.getByText("Boot options", { exact: true }).click();
-  await page.getByLabel("Save type").selectOption("sram");
-  await page.getByLabel("Open game").setInputFiles(rom);
+  await page.getByRole("button", { name: "More options" }).click();
   await expect(
-    page.getByRole("button", { name: "Play", exact: true }),
+    page.getByRole("button", { name: "Export battery save", exact: true }),
   ).toBeEnabled();
-  await page.getByText("Checkpoints & exports", { exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Export save", exact: true }),
-  ).toBeEnabled();
-  await page.getByLabel("Import save", { exact: true }).setInputFiles({
+  await page.getByLabel("Import battery save", { exact: true }).setInputFiles({
     name: "Progress.sav",
     mimeType: "application/octet-stream",
     buffer: Buffer.alloc(32768, 17),
   });
-  await expect(
-    page.getByRole("button", { name: "Play", exact: true }),
-  ).toBeEnabled();
-  await expect
-    .poll(() =>
-      page.evaluate(async () => {
-        const emulator = (
-          window as unknown as {
-            emulator: import("@evenfall/gba").Emulator;
-          }
-        ).emulator;
-        return (await emulator.exportSave())[0];
-      }),
-    )
-    .toBe(17);
-  await page.getByRole("button", { name: "Frame +1" }).click();
-  await expect(
-    page.getByRole("button", { name: "Play", exact: true }),
-  ).toBeEnabled();
-  expect(
-    await page.evaluate(async () =>
-      String(
-        (
-          await (
-            window as unknown as {
-              emulator: { inspect(): Promise<{ cycle: bigint }> };
-            }
-          ).emulator.inspect()
-        ).cycle,
-      ),
-    ),
-  ).not.toBe("0");
+  await expect.poll(() => exportedSave(page)).toBe(17);
+  await expect.poll(() => frames(page)).toBeGreaterThan(0);
+  await page.getByRole("button", { name: "More options" }).click();
+  const downloading = page.waitForEvent("download");
+  await page
+    .getByRole("button", { name: "Export battery save", exact: true })
+    .click();
+  const exported = await (await downloading).createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of exported) chunks.push(chunk as Buffer);
+  const save = Buffer.concat(chunks);
+  expect(save.length).toBe(32768);
+  expect(save.every((byte) => byte === 17)).toBe(true);
 });
 
 test("v2 library migrates to metadata and reads only the selected ROM", async ({
@@ -421,8 +440,10 @@ test("v2 library migrates to metadata and reads only the selected ROM", async ({
     rom: [...bytes],
     lastPlayed: index + 1,
   }));
-  await page.goto("/debug.html");
-  await expect(page.getByRole("status").last()).toContainText("Open a game");
+  await page.goto("/");
+  await expect
+    .poll(() => page.evaluate(() => window.player?.state.ready))
+    .toBe(true);
   await page.evaluate(async (games) => {
     await new Promise<void>((resolve, reject) => {
       const request = indexedDB.deleteDatabase("zigba-local");
@@ -460,12 +481,12 @@ test("v2 library migrates to metadata and reads only the selected ROM", async ({
     (window as unknown as { romReads: string[] }).romReads = reads;
   });
   await page.reload();
+  await page.getByRole("button", { name: "Browse library" }).click();
   await expect(
-    page.getByRole("button", { name: "Game 1", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Game 2", exact: true }),
-  ).toBeVisible();
+    page.getByRole("list", { name: "Games" }).getByRole("heading", {
+      level: 3,
+    }),
+  ).toHaveText(["Game 2", "Game 1"]);
   const reads = () =>
     page.evaluate(() => (window as unknown as { romReads: string[] }).romReads);
   expect(await reads()).toEqual([]);
@@ -490,189 +511,59 @@ test("v2 library migrates to metadata and reads only the selected ROM", async ({
     { size: 8, containsRom: false },
     { size: 8, containsRom: false },
   ]);
-  await page.getByRole("button", { name: "Game 2", exact: true }).click();
+  await page.getByRole("button", { name: "View Game 2", exact: true }).click();
+  await page
+    .getByRole("region", { name: "Game details" })
+    .getByRole("button", { name: /^(Play|Continue) Game 2$/ })
+    .click();
+  await expect(page.getByLabel(/^Game screen/)).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Game 2", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Frame +1" }).click();
-  await expect(
-    page.getByRole("button", { name: "Play", exact: true }),
-  ).toBeEnabled();
+  await expect.poll(() => register(page, 0)).toBe(43);
   expect(await reads()).toEqual([games[1].hash]);
-  expect(
-    await page.evaluate(async () => {
-      const emulator = (
-        window as unknown as {
-          emulator: import("@evenfall/gba").Emulator;
-        }
-      ).emulator;
-      return (await emulator.inspect()).registers[0];
-    }),
-  ).toBe(43);
-  const entry = page
-    .locator(".game")
-    .filter({ has: page.getByRole("button", { name: "Game 2", exact: true }) });
-  await entry.locator("summary").click();
-  await page.getByLabel("Rename Game 2", { exact: true }).fill("Renamed");
-  await entry.getByRole("button", { name: "Rename", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Renamed", exact: true }),
-  ).toBeVisible();
-  expect(await reads()).toEqual([games[1].hash]);
-  await page
-    .locator(".game")
-    .filter({ has: page.getByRole("button", { name: "Renamed", exact: true }) })
-    .getByRole("button", { name: "Remove game", exact: true })
-    .click();
-  await expect(
-    page.getByRole("button", { name: "Renamed", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Game 1", exact: true }),
-  ).toBeVisible();
-  expect(await reads()).toEqual([games[1].hash]);
-});
-
-test("direct Lab route inspects a failed assertion, records a baseline and replays failure", async ({
-  page,
-}, testInfo) => {
-  const { createHash } = await import("node:crypto");
-  const manifest = {
-    version: 1,
-    name: "Assertion fixture",
-    assets: {
-      rom: {
-        path: "rom.gba",
-        sha256: createHash("sha256").update(rom.buffer).digest("hex"),
-      },
-    },
-    config: {
-      boot: "hle",
-      saveType: "none",
-      rtc: false,
-      rtcEpoch: "0",
-      sampleRate: 48000,
-    },
-    inputs: [],
-    checkpoints: [
-      {
-        name: "r0 check",
-        at: "1000",
-        expect: { cpu: { registers: { "0": 43 } } },
-      },
-    ],
-    limits: {
-      maxCycles: "1000",
-      maxRuns: 100,
-      chunkCycles: "70224",
-      maxAudioBytes: 1048576,
-    },
-  };
-  const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto("/debug.html#/lab");
-  await expect(
-    page.getByRole("heading", { name: "Scenarios", exact: true }),
-  ).toBeVisible();
-  await page.getByLabel("Import manifest or failure").setInputFiles({
-    name: "scenario.json",
-    mimeType: "application/json",
-    buffer: Buffer.from(JSON.stringify(manifest)),
-  });
-  await page.getByLabel("Choose rom").setInputFiles(rom);
-  await page.getByRole("button", { name: "Run scenario", exact: true }).click();
-  await expect(
-    page.getByRole("status").filter({ hasText: /^failed$/ }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("r0 check: r0 expected 43, got 42", { exact: false }),
-  ).toBeVisible();
-  await page.screenshot({
-    path: testInfo.outputPath("lab-failure-desktop.png"),
-    fullPage: true,
-  });
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({
-    path: testInfo.outputPath("lab-failure-mobile.png"),
-    fullPage: true,
-  });
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
-  const downloadPromise = page.waitForEvent("download");
-  await page
-    .getByRole("button", { name: "Download failure bundle", exact: true })
-    .click();
-  const failure = await downloadPromise;
-  const failurePath = testInfo.outputPath("failure.json");
-  await failure.saveAs(failurePath);
-  await page
-    .getByRole("button", { name: "Record baseline", exact: true })
-    .click();
-  await expect(
-    page.getByRole("heading", {
-      name: "Assertion fixture — regression baseline",
-      exact: true,
-    }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Run scenario", exact: true }).click();
-  await expect(
-    page.getByRole("status").filter({ hasText: /^passed$/ }),
-  ).toBeVisible();
-  await page
-    .getByLabel("Import manifest or failure")
-    .setInputFiles(failurePath);
-  await page
-    .getByRole("button", { name: "Replay failure", exact: true })
-    .click();
-  await expect(
-    page.getByRole("status").filter({ hasText: /^passed$/ }),
-  ).toBeVisible();
-  expect(errors).toEqual([]);
 });
 
 test("keyboard focus, focus loss, touch release and visibility pause", async ({
   page,
 }) => {
-  await page.goto("/debug.html");
-  await expect(page.getByRole("status").last()).toContainText("Open a game");
-  await page.getByLabel("Open game").setInputFiles(rom);
-  await expect(
-    page.getByRole("button", { name: "Play", exact: true }),
-  ).toBeEnabled();
+  await ready(page);
+  await openRom(page, rom);
+  await expect.poll(() => playing(page)).toBe(true);
   const keys = () =>
     page.evaluate(async () => {
-      const bytes = await (
-        window as unknown as {
-          emulator: { readMemory(a: number, n: number): Promise<Uint8Array> };
-        }
-      ).emulator.readMemory(0x04000130, 2);
+      const bytes = await window.player.emulator.readMemory(0x04000130, 2);
       return 1023 ^ (bytes[0] | (bytes[1] << 8));
     });
-  await page.locator("canvas").first().focus();
+  await page.getByLabel(/^Game screen/).focus();
   await page.keyboard.down("KeyX");
   await expect.poll(keys).toBe(1);
   await page.evaluate(() => window.dispatchEvent(new Event("blur")));
   await expect.poll(keys).toBe(0);
   await page.keyboard.up("KeyX");
-  await page.getByLabel("Search games").fill("x");
+  await page.evaluate(() => {
+    const input = document.createElement("input");
+    input.setAttribute("aria-label", "Typing fixture");
+    document.body.append(input);
+  });
+  await page.getByLabel("Typing fixture").fill("x");
   await page.keyboard.press("KeyX");
   expect(await keys()).toBe(0);
+  await page.getByLabel("Typing fixture").evaluate((node) => node.remove());
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "Close", exact: true }).click();
-  const a = page.getByRole("button", { name: "A", exact: true });
+  await page.getByRole("button", { name: "How to play", exact: true }).click();
+  await page.getByRole("button", { name: "Show touch controls" }).click();
+  await page.getByRole("button", { name: "Close dialog" }).click();
+  const a = page
+    .getByLabel("Touch controls", { exact: true })
+    .getByRole("button", { name: "A", exact: true });
   const box = await a.boundingBox();
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
   await page.mouse.down();
   await expect.poll(keys).toBe(1);
   await page.mouse.up();
   await expect.poll(keys).toBe(0);
-  await page.getByRole("button", { name: "Play", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Pause", exact: true }),
-  ).toBeVisible();
+  await expect.poll(() => playing(page)).toBe(true);
   await page.evaluate(() => {
     Object.defineProperty(document, "hidden", {
       configurable: true,
@@ -680,9 +571,8 @@ test("keyboard focus, focus loss, touch release and visibility pause", async ({
     });
     document.dispatchEvent(new Event("visibilitychange"));
   });
-  await expect(
-    page.getByRole("button", { name: "Play", exact: true }),
-  ).toBeVisible();
+  await expect.poll(() => playing(page)).toBe(false);
+  await expect(page.locator(".pause-overlay")).toBeVisible();
 });
 
 test("nonzero wave audio reaches the bounded browser output and sound can be muted", async ({
@@ -745,14 +635,13 @@ test("nonzero wave audio reaches the bounded browser output and sound can be mut
       return start.apply(this, args);
     };
   });
-  await page.goto("/debug.html");
-  await expect(page.getByRole("status").last()).toContainText("Open a game");
-  await page.getByLabel("Open game").setInputFiles({
+  await ready(page);
+  await openRom(page, {
     name: "Wave.gba",
     mimeType: "application/octet-stream",
     buffer: bytes,
   });
-  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await expect.poll(() => playing(page)).toBe(true);
   await expect
     .poll(() =>
       page.evaluate(
@@ -762,16 +651,14 @@ test("nonzero wave audio reaches the bounded browser output and sound can be mut
       ),
     )
     .toBe(true);
-  await page.getByRole("button", { name: "Sound on", exact: true }).click();
+  await page.getByRole("button", { name: "Mute sound", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Sound off", exact: true }),
+    page.getByRole("button", { name: "Unmute sound", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: "Pause", exact: true }).click();
+  await page.evaluate(() => window.player.pause());
 });
 
-test("legacy browser SDK validation remains runnable against the new player", async ({
-  page,
-}) => {
+test("browser SDK validation passes", async ({ page }) => {
   await page.goto("/validation.html");
   await expect(page.locator("#result")).toHaveAttribute("data-result", "pass", {
     timeout: 30000,
@@ -790,23 +677,15 @@ test("player detects RTC cartridges and pins the current boot clock in exports",
   const bytes = Buffer.alloc(256);
   bytes.writeUInt32LE(0xeafffffe, 0);
   bytes.write("AXVE", 0xac);
-  await page.goto("/debug.html");
-  await expect(page.getByRole("status").last()).toContainText("Open a game");
+  await ready(page);
   const before = Math.floor(Date.now() / 1000);
-  await page.getByLabel("Open game").setInputFiles({
+  await openRom(page, {
     name: "Clock.gba",
     mimeType: "application/octet-stream",
     buffer: bytes,
   });
-  await expect(
-    page.getByRole("button", { name: "Play", exact: true }),
-  ).toBeEnabled();
   const config = await page.evaluate(async () => {
-    const emulator = (
-      window as unknown as {
-        emulator: import("@evenfall/gba").Emulator;
-      }
-    ).emulator;
+    const emulator = window.player.emulator;
     return {
       cpu: await emulator.inspect(),
       config: (await emulator.exportScenario()).manifest.config,
@@ -818,244 +697,125 @@ test("player detects RTC cartridges and pins the current boot clock in exports",
   expect(Number(config.config.rtcEpoch)).toBeLessThanOrEqual(
     Math.floor(Date.now() / 1000),
   );
-  await page.getByText("Boot options", { exact: true }).click();
-  await page.getByLabel("Cartridge clock", { exact: true }).selectOption("off");
-  await page.getByLabel("Fixed clock epoch (UTC seconds)").fill("946684800");
-  await page.getByRole("button", { name: "Clock", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Play", exact: true }),
-  ).toBeEnabled();
-  const pinned = await page.evaluate(async () => {
-    const emulator = (
-      window as unknown as {
-        emulator: import("@evenfall/gba").Emulator;
-      }
-    ).emulator;
-    return (await emulator.exportScenario()).manifest.config;
-  });
-  expect(pinned.rtc).toBe(false);
-  expect(pinned.rtcEpoch).toBe("946684800");
-  await page.getByLabel("Cartridge clock", { exact: true }).selectOption("on");
-  await page.getByRole("button", { name: "Clock", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Play", exact: true }),
-  ).toBeEnabled();
-  expect(
-    await page.evaluate(
-      async () =>
-        (
-          await (
-            window as unknown as {
-              emulator: import("@evenfall/gba").Emulator;
-            }
-          ).emulator.inspect()
-        ).rtcEnabled,
-    ),
-  ).toBe(true);
 });
 
-test("main area accepts dropped ROMs and exposes one-second performance diagnostics", async ({
+test("boot options override cartridge clock detection and pin a fixed epoch", async ({
   page,
-}, testInfo) => {
-  await page.goto("/debug.html");
-  await expect(page.getByRole("status").last()).toContainText("Open a game");
-  const stats = page.getByLabel("Player performance");
-  await expect(stats).toContainText("0.0 FPS");
-  const drop = async (name: string, bytes: Buffer) => {
-    const transfer = await page.evaluateHandle(
-      ({ name, bytes }) => {
-        const dt = new DataTransfer();
-        dt.items.add(new File([new Uint8Array(bytes)], name));
-        return dt;
-      },
-      { name, bytes: [...bytes] },
-    );
-    await page
-      .locator("main")
-      .dispatchEvent("dragenter", { dataTransfer: transfer });
-    await expect(page.locator(".drop-hint")).toBeVisible();
-    await page
-      .locator("canvas")
-      .first()
-      .dispatchEvent("drop", { dataTransfer: transfer });
-    await expect(page.locator(".drop-hint")).toHaveCount(0);
-    await transfer.dispose();
-  };
-  await drop("Bad.txt", rom.buffer);
-  await expect(page.getByRole("status").last()).toContainText("Drop one .gba");
-  await expect(
-    page.getByRole("button", { name: "Play", exact: true }),
-  ).toBeDisabled();
-  await drop("Dropped.GBA", rom.buffer);
+}) => {
+  const bytes = Buffer.alloc(256);
+  bytes.writeUInt32LE(0xeafffffe, 0);
+  bytes.write("AXVE", 0xac);
+  await sdkPage(page);
+  const result = await page.evaluate(
+    async (bytes) => {
+      const { Emulator } = (window as unknown as ValidationHooks)
+        .zigbaValidation;
+      const emulator = await Emulator.create();
+      try {
+        const rom = new Uint8Array(bytes);
+        await emulator.load(rom, { rtc: false, rtcEpoch: 946684800n });
+        const pinned = (await emulator.exportScenario()).manifest.config;
+        const off = (await emulator.inspect()).rtcEnabled;
+        await emulator.load(rom, { rtc: true });
+        return { pinned, off, on: (await emulator.inspect()).rtcEnabled };
+      } finally {
+        emulator.terminate();
+      }
+    },
+    [...bytes],
+  );
+  expect(result.pinned.rtc).toBe(false);
+  expect(result.pinned.rtcEpoch).toBe("946684800");
+  expect(result.off).toBe(false);
+  expect(result.on).toBe(true);
+});
+
+test("the player imports and plays a dropped ROM", async ({ page }) => {
+  await ready(page);
+  const transfer = await page.evaluateHandle(
+    (bytes) => {
+      const dt = new DataTransfer();
+      dt.items.add(new File([new Uint8Array(bytes)], "Dropped.GBA"));
+      return dt;
+    },
+    [...rom.buffer],
+  );
+  const app = page.locator(".console-app");
+  await app.dispatchEvent("dragenter", { dataTransfer: transfer });
+  await expect(page.locator(".drop-message")).toBeVisible();
+  await page
+    .getByLabel(/^Game screen/)
+    .dispatchEvent("drop", { dataTransfer: transfer });
+  await expect(page.locator(".drop-message")).toHaveCount(0);
+  await transfer.dispose();
   await expect(
     page.getByRole("heading", { name: "Dropped", exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Play", exact: true }),
-  ).toBeEnabled();
-  await page.getByRole("button", { name: "Play", exact: true }).click();
-  await expect
-    .poll(async () => Number(await page.getByTestId("fps").textContent()))
-    .toBeGreaterThan(0);
-  await expect
-    .poll(async () => Number(await page.getByTestId("frame-ms").textContent()))
-    .toBeGreaterThan(0);
-  const cadence = await page.evaluate(async () => {
-    const emulator = (
-      window as unknown as {
-        emulator: import("@evenfall/gba").Emulator;
-      }
-    ).emulator;
-    let frames = 0;
-    const states = new Set<string>();
-    const changes: number[] = [];
-    const listener = (event: Event) => {
-      frames++;
-      states.add(String((event as CustomEvent).detail.state.cycle));
-    };
-    const observer = new MutationObserver(() =>
-      changes.push(performance.now()),
-    );
-    observer.observe(document.querySelector(".performance")!, {
-      subtree: true,
-      characterData: true,
-    });
-    emulator.addEventListener("frame", listener);
-    await new Promise((resolve) => setTimeout(resolve, 2300));
-    emulator.removeEventListener("frame", listener);
-    observer.disconnect();
-    return {
-      frames,
-      states: states.size,
-      intervals: changes.slice(1).map((t, i) => t - changes[i]),
-      updates: changes.length,
-    };
-  });
-  expect(cadence.frames).toBeGreaterThan(10);
-  expect(cadence.states).toBeLessThanOrEqual(4);
-  expect(cadence.updates).toBeGreaterThanOrEqual(1);
-  expect(cadence.updates).toBeLessThanOrEqual(3);
-  for (const interval of cadence.intervals)
-    expect(interval).toBeGreaterThan(850);
-  await page.screenshot({
-    path: testInfo.outputPath("performance-desktop.png"),
-  });
-  await page.getByRole("button", { name: "Fullscreen", exact: true }).click();
-  await expect
-    .poll(() => page.evaluate(() => !!document.fullscreenElement))
-    .toBe(true);
-  await expect(stats).toBeInViewport();
-  await page.screenshot({
-    path: testInfo.outputPath("performance-fullscreen.png"),
-  });
-  await page.evaluate(() => document.exitFullscreen());
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  // Performance belongs to the player, not a floating viewport overlay that
-  // would cover game-specific panels when the player scrolls out of view.
-  await expect(stats).not.toBeInViewport();
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "Close", exact: true }).click();
-  await expect(stats).toBeInViewport();
-  await page.screenshot({
-    path: testInfo.outputPath("performance-mobile.png"),
-  });
-  await page.getByRole("button", { name: "Pause", exact: true }).click();
-  await expect(page.getByTestId("fps")).toHaveText("0.0");
-  await expect(page.getByTestId("frame-ms")).toHaveText("0.00");
+  await expect.poll(() => playing(page)).toBe(true);
+  const started = await frames(page);
+  await expect.poll(() => frames(page)).toBeGreaterThan(started);
+  expect(
+    await page.evaluate(async () =>
+      window.player.state.games.map((game) => game.title),
+    ),
+  ).toEqual(["Dropped"]);
+  await page.evaluate(() => window.player.pause());
 });
 
-test("visible key guide, speed slider and hold-Tab boost preserve focus and machine timing", async ({
+test("speed choices and hold-Tab boost change pacing, not machine timing", async ({
   page,
-}, testInfo) => {
-  await page.goto("/debug.html");
-  await expect(page.getByRole("status").last()).toContainText("Open a game");
-  const guide = page.getByLabel("Keyboard controls");
-  await expect(guide).toBeVisible();
-  for (const name of ["Move", "Start", "Select", "Hold for 16×"])
-    await expect(guide).toContainText(name);
-  const speed = page.getByRole("slider", { name: "Speed", exact: true });
-  await expect(speed).toHaveValue("1");
-  await speed.focus();
-  await page.keyboard.press("Home");
-  await expect(speed).toHaveValue("0.5");
-  await page.getByLabel("Open game").setInputFiles(rom);
-  await page.getByRole("button", { name: "Play", exact: true }).click();
-  const frames = () =>
-    page.evaluate(async () =>
-      Number(
-        (
-          await (
-            window as unknown as {
-              emulator: import("@evenfall/gba").Emulator;
-            }
-          ).emulator.inspect()
-        ).frames,
-      ),
-    );
-  const start = await frames();
-  await page.waitForTimeout(500);
-  const slow = (await frames()) - start;
-  await speed.fill("1");
+}) => {
+  await ready(page);
+  await openRom(page, rom);
+  await expect.poll(() => playing(page)).toBe(true);
+  const speed = page.getByRole("button", { name: "Playback speed" });
+  const choose = async (value: string) => {
+    await speed.click();
+    await page.getByRole("button", { name: new RegExp(`^${value}×`) }).click();
+    await expect(speed).toHaveText(`${value}×`);
+    await expect(
+      page.getByRole("dialog", { name: "Playback speed" }),
+    ).toHaveCount(0);
+  };
+  const measure = async () => {
+    const start = await frames(page);
+    await page.waitForTimeout(500);
+    return (await frames(page)) - start;
+  };
+  const canvas = page.getByLabel(/^Game screen/);
+  await choose("0.5");
   await page.waitForTimeout(100);
-  const normalStart = await frames();
-  await page.waitForTimeout(500);
-  const normal = (await frames()) - normalStart;
-  await page.locator("canvas").first().focus();
+  const slow = await measure();
+  await choose("1");
+  await page.waitForTimeout(100);
+  const normal = await measure();
+  await canvas.focus();
   await page.keyboard.down("Tab");
-  await expect(page.getByLabel("Effective speed")).toHaveText("16× BOOST");
-  const boostedStart = await frames();
-  await page.waitForTimeout(500);
-  const boosted = (await frames()) - boostedStart;
+  await expect(speed).toHaveText("16×");
+  const boosted = await measure();
   expect(slow).toBeGreaterThan(0);
   expect(normal).toBeGreaterThan(slow * 1.4);
   expect(boosted).toBeGreaterThan(slow * 2);
   expect(boosted).toBeGreaterThan(normal * 1.5);
   await page.keyboard.up("Tab");
-  await expect(page.getByLabel("Effective speed")).toHaveText("1×");
-  await speed.fill("4");
-  await expect(page.getByLabel("Effective speed")).toHaveText("4×");
-  const sliderStart = await frames();
-  await page.waitForTimeout(500);
-  expect((await frames()) - sliderStart).toBeGreaterThan(normal * 1.5);
-  await speed.fill("0.5");
-  await page.locator("canvas").first().focus();
-  await expect(page.getByLabel("Effective speed")).toHaveText("0.5×");
+  await expect(speed).toHaveText("1×");
+  await choose("4");
+  await page.waitForTimeout(100);
+  expect(await measure()).toBeGreaterThan(normal * 1.5);
+  await choose("0.5");
+  await canvas.focus();
   await page.keyboard.down("Tab");
+  await expect(speed).toHaveText("16×");
   await page.evaluate(() => window.dispatchEvent(new Event("blur")));
-  await expect(page.getByLabel("Effective speed")).toHaveText("0.5×");
+  await expect(speed).toHaveText("0.5×");
   await page.keyboard.up("Tab");
-  await page.getByLabel("Search games").focus();
-  await page.keyboard.down("Tab");
-  await expect(page.getByLabel("Effective speed")).toHaveText("0.5×");
-  await page.keyboard.up("Tab");
-  await expect(page.getByLabel("Search games")).not.toBeFocused();
-  await page.locator("canvas").first().focus();
-  await page.keyboard.down("Tab");
-  await page.getByRole("link", { name: "Lab", exact: true }).click();
-  await page.keyboard.up("Tab");
-  await page.getByRole("link", { name: "Player", exact: true }).click();
-  await expect(page.getByLabel("Effective speed")).toHaveText("0.5×");
-  await expect(
-    page.getByRole("button", { name: "Play", exact: true }),
-  ).toBeVisible();
-  await speed.focus();
-  await page.keyboard.press("End");
-  await expect(speed).toHaveValue("16");
-  await expect(page.getByLabel("Effective speed")).toHaveText("16×");
-  await guide.scrollIntoViewIfNeeded();
-  await page.screenshot({ path: testInfo.outputPath("controls-desktop.png") });
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "Close", exact: true }).click();
-  await guide.scrollIntoViewIfNeeded();
-  await page.screenshot({ path: testInfo.outputPath("controls-mobile.png") });
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
+  expect(await playing(page)).toBe(true);
+});
+
+test("playback speed never changes emulated results", async ({ page }) => {
+  await sdkPage(page);
   const parity = await page.evaluate(async () => {
-    const { Emulator } = (window as unknown as DebugHooks).zigbaDebug;
+    const { Emulator } = (window as unknown as ValidationHooks).zigbaValidation;
     const a = await Emulator.create(),
       b = await Emulator.create();
     try {
@@ -1091,9 +851,9 @@ test("visible key guide, speed slider and hold-Tab boost preserve focus and mach
 test("recycles worker presentation buffers across play, pause and save restoration", async ({
   page,
 }) => {
-  await page.goto("/debug.html");
+  await sdkPage(page);
   const result = await page.evaluate(async () => {
-    const { Emulator } = (window as unknown as DebugHooks).zigbaDebug;
+    const { Emulator } = (window as unknown as ValidationHooks).zigbaValidation;
     const emulator = await Emulator.create();
     const errors: string[] = [];
     emulator.addEventListener("error", (event: Event) =>

@@ -17,20 +17,18 @@ export type GameLayouts = Readonly<
   Record<string, ComponentType<GameLayoutProps>>
 >;
 
-export type GameLayoutKind = "dashboards" | "huds";
+export type GameLayoutKind = "dashboards";
 
 /**
  * A game package's contribution to the player. Games are headless,
  * exact-build definitions from `@evenfall/gba/bridge`; layouts load on demand
- * with their styles, so each page only pays for what it renders.
+ * with their styles.
  */
 export interface GamePlugin {
   readonly id: string;
   readonly games: readonly GameIdentity[];
   /** Main player layouts, rendered around the player for a matching ROM. */
   readonly dashboards?: () => Promise<GameLayouts>;
-  /** Dev / Debug HUD layouts (`/debug.html#/hud`). */
-  readonly huds?: () => Promise<GameLayouts>;
 }
 
 export interface GameLayout {
@@ -42,7 +40,6 @@ export function createGameRegistry(plugins: readonly GamePlugin[]) {
   const games = plugins.flatMap((plugin) => plugin.games);
   const loaded: Record<GameLayoutKind, GameLayout[]> = {
     dashboards: [],
-    huds: [],
   };
   // Exact build identity selects a game; titles and filenames never do.
   const gameForRom = (romHash: string | undefined) =>
@@ -71,10 +68,6 @@ export function createGameRegistry(plugins: readonly GamePlugin[]) {
     layoutForRom(kind: GameLayoutKind, romHash: string | undefined) {
       const game = gameForRom(romHash);
       return loaded[kind].find((layout) => layout.game === game) ?? null;
-    },
-    /** The first loaded layout, for diagnostics on unsupported ROMs. */
-    anyLayout(kind: GameLayoutKind): GameLayout | null {
-      return loaded[kind][0] ?? null;
     },
   };
 }

@@ -278,9 +278,6 @@ test("console autoplays, routes keys outside the canvas, and keeps help and typi
   );
   await page.keyboard.up("Tab");
   await page.getByLabel("Typing fixture").evaluate((node) => node.remove());
-  await expect(
-    page.getByRole("link", { name: "Lab", exact: true }),
-  ).toHaveCount(0);
   await page.getByRole("button", { name: "How to play", exact: true }).click();
   const help = page.getByRole("dialog", { name: "How to play", exact: true });
   await expect(help).toBeVisible();
@@ -723,7 +720,7 @@ test("Home cancels an in-flight rewind without restoring or restarting play", as
   expect(await snapshotHash(page)).toBe(paused);
 });
 
-test("new console is isolated from developer UI; controls and persistent quick slots work", async ({
+test("new console controls and persistent quick slots work", async ({
   page,
 }) => {
   const errors: string[] = [];
@@ -736,18 +733,6 @@ test("new console is isolated from developer UI; controls and persistent quick s
     fullPage: true,
   });
   await page.setViewportSize({ width: 1280, height: 720 });
-  await expect(
-    page.locator(
-      ".page-title,.transport,.key-guide,.save-status,.library,.tools,footer",
-    ),
-  ).toHaveCount(0);
-  expect(
-    await page
-      .locator('link[rel="stylesheet"]')
-      .evaluateAll((links) =>
-        links.some((link) => (link as HTMLLinkElement).href.includes("debug-")),
-      ),
-  ).toBe(false);
   await page.getByLabel("Open ROM", { exact: true }).setInputFiles(loop);
   await expect(
     page.getByRole("heading", { name: "Loop", exact: true }),

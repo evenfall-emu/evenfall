@@ -664,7 +664,6 @@ kbd {
   padding: 5px 8px;
 }
 .toolbar-menu > button,
-.toolbar-menu > a,
 .menu-file {
   display: block;
   width: 100%;

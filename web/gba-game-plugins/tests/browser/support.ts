@@ -13,7 +13,5 @@ export const fixtureBuild = {
 
 /** The player's page styles, which these panels are drawn on top of. */
 export const playerCss = resolve("../../frontend/src/console.css");
-export const debugCss = resolve("../../frontend/src/debug.css");
-/** This package's styles for the main-player dashboards and the debug HUD. */
+/** This package's styles for the main-player dashboards. */
 export const dashboardCss = resolve("ui/dashboard.css");
-export const hudCss = resolve("ui/hud.css");

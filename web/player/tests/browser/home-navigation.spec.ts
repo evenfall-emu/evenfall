@@ -140,8 +140,3 @@ test("shared navigation fits mobile when pixel fonts cannot load", async ({
     page.getByRole("button", { name: "Library", exact: true }),
   ).toHaveAttribute("aria-current", "page");
 });
-
-test("Dev / Debug uses the same uppercase wordmark", async ({ page }) => {
-  await page.goto("/debug.html");
-  await expect(page.locator(".app-header .brand")).toHaveText("ZIGBA");
-});

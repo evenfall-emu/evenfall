@@ -22,7 +22,7 @@ test.beforeAll(async () => {
 });
 test.afterAll(() => rm(outDir, { recursive: true, force: true }));
 async function openFixture(page: Page) {
-  // No player/debug entrypoint or styles: only the fixture's own console CSS.
+  // No player entrypoint or styles: only the fixture's own console CSS.
   await page.route("**/tooltip-fixture", (route) =>
     route.fulfill({
       contentType: "text/html",

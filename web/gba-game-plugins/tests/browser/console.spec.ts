@@ -489,6 +489,125 @@ test("new HnS console reads the real wild battle and clears opponents on timelin
   expect(errors).toEqual([]);
 });
 
+test("HnS 1.2.1 game2: real names, artwork, moves, selection and timeline replacement", async ({
+  page,
+}) => {
+  const rom = process.env.ZIGBA_HNS_ROM;
+  const state = process.env.ZIGBA_HNS_STATE;
+  test.skip(
+    !rom || !state,
+    "Set ZIGBA_HNS_ROM and ZIGBA_HNS_STATE to the documented local fixtures",
+  );
+  expect(sha(await readFile(rom!))).toBe(
+    "7c4f90c8b68b64d4639a37306d5302a11cd4d7c44005114ec2faa2b28b210c3d",
+  );
+  expect(sha(await readFile(state!))).toBe(
+    "71817992f9053560808493c79c3e65b5acba2b4499375cc52d76806b2107fb5f",
+  );
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.setViewportSize({ width: 1672, height: 941 });
+  await ready(page);
+  await page.getByLabel("Open ROM", { exact: true }).setInputFiles(rom!);
+  await expect(page.locator('[data-game-layout="pokemon"]')).toBeVisible();
+  await importState(page, state!);
+  const team = page.getByRole("complementary", {
+    name: "Your Pokémon",
+    exact: true,
+  });
+  const cards = team.getByRole("list", { name: "Current team" });
+  await expect(cards.getByRole("listitem")).toHaveCount(3);
+  for (const [slot, name, hp] of [
+    [0, "Totodile", "29 / 33"],
+    [1, "Pidgey", "16 / 16"],
+    [2, "Hoppip", "14 / 14"],
+  ] as const) {
+    await expect(cards.getByRole("listitem").nth(slot)).toContainText(name);
+    await expect(cards.getByRole("listitem").nth(slot)).toContainText(hp);
+  }
+  const details = team.getByRole("region", { name: "Selected Pokémon" });
+  await expect(details.locator(".selected-name h3")).toHaveAttribute(
+    "title",
+    /^MODEST nature/,
+  );
+  await expect(details).toContainText("TORRENT");
+  await expect(
+    details.getByRole("button", { name: "Move: Scratch" }),
+  ).toBeVisible();
+  const waterGun = details
+    .getByRole("row")
+    .filter({ has: page.getByRole("button", { name: "Move: Water Gun" }) });
+  await expect(waterGun.locator(".move-category")).toHaveAttribute(
+    "aria-label",
+    "special",
+  );
+  await expect(cards.locator("img")).toHaveCount(3);
+  await expect
+    .poll(() =>
+      cards
+        .locator("img")
+        .evaluateAll((images) =>
+          images.every(
+            (image) => (image as HTMLImageElement).naturalWidth === 64,
+          ),
+        ),
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      details
+        .locator(".selected-summary img")
+        .evaluate((image) => (image as HTMLImageElement).naturalWidth),
+    )
+    .toBe(64);
+  // IVs and EVs are in each stat's details; the starter has a perfect value.
+  const training: string[] = [];
+  for (const stat of await details
+    .getByRole("group", { name: "Stats" })
+    .getByRole("button")
+    .all()) {
+    await stat.focus();
+    await expect(page.getByRole("tooltip")).toBeVisible();
+    training.push((await page.getByRole("tooltip").textContent()) ?? "");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
+  }
+  expect(training).toHaveLength(6);
+  expect(training.join("\n")).toMatch(/(IV|EV)31(?!\d)/);
+  await page.evaluate(() => document.fonts.ready);
+  await page.screenshot({
+    path: "../../artifacts/hud/hns-game2-desktop.png",
+    fullPage: true,
+  });
+  await cards.getByRole("listitem").nth(1).getByRole("button").click();
+  await expect(details).toContainText("KEEN EYE");
+  await expect(
+    details.getByRole("button", { name: "Move: Tackle" }),
+  ).toBeVisible();
+  await page.keyboard.press("End");
+  await expect(details).toContainText("CHLOROPHYLL");
+  await expect(
+    details.getByRole("button", { name: "Move: Splash" }),
+  ).toBeVisible();
+  // Reload the same state: same Pokémon identity, different timeline => reset focus.
+  await importState(page, state!);
+  await expect(details).toContainText("TORRENT");
+  await runOneFrame(page);
+  await expect(cards.getByRole("listitem")).toHaveCount(3);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({
+    path: "../../artifacts/hud/hns-game2-mobile.png",
+    fullPage: true,
+  });
+  expect(errors).toEqual([]);
+});
+
 test("Elite Redux Pokédex links follow selection and open a separate tab", async ({
   page,
   context,

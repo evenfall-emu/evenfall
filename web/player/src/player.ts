@@ -1,6 +1,5 @@
 import {
   EmulatorSession,
-  TestLab,
   makeEmulator,
   runtime,
   type Session,
@@ -24,15 +23,8 @@ import {
   type QuickConflict,
 } from "./cloud";
 import { acquireSaveLock } from "./storage.js";
-import {
-  type Emulator,
-  type Snapshot,
-  type RecordingStatus,
-  type FailureBundle,
-  type LoadOptions,
-} from "@evenfall/gba";
+import { type Emulator, type Snapshot, type LoadOptions } from "@evenfall/gba";
 import { AudioOutput, VideoOutput } from "./media";
-import { FrameMetrics, type PerformanceStats } from "./performance";
 import { previousRewindCheckpoint } from "./rewind-model";
 export class Player {
   emulator!: Emulator;
@@ -54,13 +46,9 @@ export class Player {
   private resumeBlockedRef?: PlaythroughRef;
   private activeOptions: LoadOptions = {};
   options: LoadOptions = { saveType: "auto" };
-  private metrics = new FrameMetrics();
-  private video = new VideoOutput(
-    (pixels) => this.emulator.recyclePresentation(pixels),
-    (ms) => this.metrics.presentation(ms),
+  private video = new VideoOutput((pixels) =>
+    this.emulator.recyclePresentation(pixels),
   );
-  private pollingStatus = false;
-  private memoryBytes = 0;
   private rewindEpoch = 0;
   private rewindResume = false;
   private rewindBusy = false;
@@ -70,7 +58,6 @@ export class Player {
   touch = 0;
   gamepad = 0;
   sent = 0;
-  labActive = false;
   state: {
     ready: boolean;
     playing: boolean;
@@ -89,14 +76,6 @@ export class Player {
     playthrough?: Playthrough;
     playthroughs: Playthrough[];
     quickSlots: QuickSlotSummary[];
-    cpu?: Snapshot;
-    recording?: RecordingStatus;
-    performance: PerformanceStats & {
-      memoryBytes: number;
-      audioUnderruns: number | null;
-      audioOverruns: number | null;
-    };
-    capture?: FailureBundle;
   } = {
     ready: false,
     playing: false,
@@ -116,16 +95,6 @@ export class Player {
     runs: [],
     playthroughs: [],
     quickSlots: [],
-    performance: {
-      fps: 0,
-      frameMs: 0,
-      frameP95Ms: 0,
-      frameP99Ms: 0,
-      frameMaxMs: 0,
-      memoryBytes: 0,
-      audioUnderruns: null,
-      audioOverruns: null,
-    },
   };
   subscribe = (f: () => void) => {
     this.listeners.add(f);
@@ -167,24 +136,15 @@ export class Player {
     );
     this.emulator.addEventListener("frame", (e) => {
       const d = (e as CustomEvent).detail;
-      const started = performance.now();
       if (this.canvas) this.video.send(this.canvas, d.pixels);
       else this.emulator.recyclePresentation(d.pixels);
       this.audio.send(d.audio);
       this.latest = d.state;
-      this.memoryBytes = d.memoryBytes;
-      if (this.state.playing)
-        this.metrics.frame(
-          d.workMs +
-            (performance.now() - started) / (d.emulatedWorkFrames ?? 1),
-          d.emulatedWorkFrames ?? 1,
-        );
     });
     this.emulator.addEventListener("clear", (event) => {
       // Preserve the last accepted image on pause before retiring its buffers.
       this.video.flush();
       this.audio.clear();
-      this.metrics.reset();
       const timeline = (event as CustomEvent).detail.timeline as string | null;
       if (
         this.state.rewindTimeline &&
@@ -196,11 +156,6 @@ export class Player {
           message: "Rewind history changed. Open the timeline again.",
         });
       }
-    });
-    this.emulator.addEventListener("capture", (e) => {
-      const bundle = (e as CustomEvent).detail.bundle as FailureBundle;
-      this.update({ capture: bundle });
-      void this.library.retain("reports", bundle).catch(this.error);
     });
     this.emulator.addEventListener("stopped", (e) => {
       this.releaseKeys();
@@ -228,29 +183,8 @@ export class Player {
         ? "Games and saves stay in this browser."
         : "Storage unavailable. Export your saves.",
     });
-    const statusTimer = setInterval(() => {
-      if (this.pollingStatus || this.state.changing) return;
-      this.pollingStatus = true;
-      const game = this.state.game;
-      const performance = {
-        ...this.metrics.sample(),
-        memoryBytes: this.memoryBytes,
-        audioUnderruns: this.audio.node ? this.audio.underruns : null,
-        audioOverruns: this.audio.node ? this.audio.overruns : null,
-      };
-      void (game ? this.emulator.recording() : Promise.resolve(undefined))
-        .then((recording) => {
-          if (this.state.game !== game || this.state.changing) return;
-          this.update({ cpu: this.latest, recording, performance });
-        })
-        .catch(this.error)
-        .finally(() => {
-          this.pollingStatus = false;
-        });
-    }, 1000);
     const saveTimer = setInterval(() => void this.persist(), 5000);
     this.session.onClose(() => {
-      clearInterval(statusTimer);
       clearInterval(saveTimer);
     });
   }
@@ -531,7 +465,7 @@ export class Player {
         this.lastInputAt = 0;
         this.lastResumeCycle = undefined;
         this.resumeBlockedRef = undefined;
-        this.update({ cpu: this.latest, resumeFailed: false });
+        this.update({ resumeFailed: false });
         await this.persist(true, remote.accountId);
         if (this.persistenceError)
           throw new Error(
@@ -662,7 +596,6 @@ export class Player {
         playthrough: undefined,
         playthroughs: [],
         quickSlots: [],
-        cpu: snapshot,
         playing: false,
         saveMessage: `Storage unavailable: ${String(error)}. Export your save to keep progress.`,
         message: canPlayWithoutStorage
@@ -709,7 +642,6 @@ export class Player {
     this.update({
       game,
       playthrough,
-      cpu,
       playing: false,
       message: "Ready. Press Play.",
     });
@@ -751,10 +683,6 @@ export class Player {
       await storageFailure(error, this.latest);
       return;
     }
-    this.update({
-      cpu: this.latest,
-      recording: await this.emulator.recording(),
-    });
     void this.syncQuickSlots().catch(() => {});
     this.canvas?.focus();
   }
@@ -819,7 +747,6 @@ export class Player {
       this.latest = await this.emulator.loadState(generation.data);
       this.lastResumeCycle = this.latest.cycle;
       this.update({
-        cpu: this.latest,
         resumeFailed: false,
         message:
           generation === checkpoint
@@ -881,7 +808,7 @@ export class Player {
         );
         this.latest = await this.emulator.loadState(generation.data);
         this.lastResumeCycle = this.latest.cycle;
-        this.update({ cpu: this.latest, resumeFailed: false });
+        this.update({ resumeFailed: false });
       } else {
         await this.openInternal(
           game,
@@ -966,7 +893,6 @@ export class Player {
         );
         this.latest = await this.emulator.loadState(generation.data);
         this.lastResumeCycle = this.latest.cycle;
-        this.update({ cpu: this.latest });
       } else {
         await this.openInternal(
           game,
@@ -1017,10 +943,7 @@ export class Player {
       this.latest = await this.emulator.resetWithSave(battery);
       this.lastSaved = battery;
       this.lastResumeCycle = undefined;
-      this.update({
-        cpu: this.latest,
-        message: "Restarted with the current in-game save.",
-      });
+      this.update({ message: "Restarted with the current in-game save." });
       await this.emulator.setRewindConfig();
       if (wasPlaying) await this.play(true);
     } finally {
@@ -1046,7 +969,6 @@ export class Player {
       void this.emulator.setSpeed(this.effectiveSpeed).catch(this.error);
   }
   async play(ownedOperation = false) {
-    if (this.labActive) return;
     if (this.state.changing && !ownedOperation) return;
     if (this.state.resumeFailed || (!ownedOperation && this.resumeBlockedRef)) {
       this.update({
@@ -1062,7 +984,6 @@ export class Player {
     void audio.catch((error) =>
       this.error(`Sound unavailable: ${String(error)}. Playback continues.`),
     );
-    this.metrics.reset();
     await this.emulator.play();
     this.update({ playing: true, message: "Playing" });
     this.canvas?.focus();
@@ -1077,7 +998,6 @@ export class Player {
       !this.state.game ||
       this.state.changing ||
       this.state.rewindTimeline ||
-      this.labActive ||
       this.rewindBusy ||
       now - this.lastRewindAt < 300
     )
@@ -1106,7 +1026,6 @@ export class Player {
       this.audio.clear();
       this.releaseKeys();
       message = "Rewound to the previous checkpoint.";
-      this.update({ cpu });
       await this.persist(true);
     } catch (error) {
       this.error(error);
@@ -1125,8 +1044,7 @@ export class Player {
       !this.state.game ||
       this.state.changing ||
       this.state.rewindTimeline ||
-      this.rewindBusy ||
-      this.labActive
+      this.rewindBusy
     )
       return;
     const resume = this.state.playing;
@@ -1203,10 +1121,7 @@ export class Player {
         this.latest = await this.emulator.rewind(selection.steps);
         this.audio.clear();
         this.releaseKeys();
-        this.update({
-          cpu: this.latest,
-          message: "Rewind checkpoint restored.",
-        });
+        this.update({ message: "Rewind checkpoint restored." });
         await this.persist(true);
       }
     } finally {
@@ -1219,26 +1134,12 @@ export class Player {
       }
     }
   }
-  async frame() {
-    if (this.state.changing) return;
-    this.update({ changing: true });
-    try {
-      await this.pause(true);
-      const cpu = await this.emulator.inspect();
-      await this.emulator.runUntil(cpu.cycle + 280896n);
-      this.latest = await this.emulator.inspect();
-      this.update({ cpu: this.latest });
-    } finally {
-      this.update({ changing: false });
-    }
-  }
   keys() {
     if (
       !this.state.game ||
       this.state.changing ||
       this.state.rewinding ||
-      this.state.rewindTimeline ||
-      this.labActive
+      this.state.rewindTimeline
     )
       return;
     const keys = this.keyboard | this.touch | this.gamepad;
@@ -1253,71 +1154,9 @@ export class Player {
     this.keyboard = this.touch = this.gamepad = this.sent = 0;
     if (this.state.game) void this.emulator.setKeys(0).catch(this.error);
   }
-  async deleteProgress(ref: PlaythroughRef) {
-    if (this.state.changing) return;
-    if (!this.matches(ref)) {
-      const release = await acquireSaveLock(playthroughLockKey(ref));
-      if (!release) throw new Error("Save in use by another tab");
-      try {
-        await this.library.deleteSave(ref);
-      } finally {
-        release();
-      }
-      await this.refresh();
-      this.update({ message: "Progress deleted." });
-      return;
-    }
-    if (!this.releaseLock)
-      throw new Error(
-        "Another tab owns this save. Close it before deleting progress.",
-      );
-    this.update({ changing: true });
-    try {
-      await this.pause(true);
-      await this.saveTail;
-      this.persistenceEpoch++;
-      const rom = await this.emulator.exportRom();
-      await this.library.deleteSave(ref);
-      this.latest = await this.emulator.load(rom, this.activeOptions);
-      this.lastSaved = await this.emulator.exportSave();
-      this.lastResumeCycle = undefined;
-      this.resumeBlockedRef = undefined;
-      const game = this.state.game;
-      const withoutResume = game && { ...game, resumeSavedAt: undefined };
-      this.update({
-        cpu: this.latest,
-        resumeFailed: false,
-        ...(withoutResume
-          ? {
-              game: withoutResume,
-              games: this.state.games.map((item) =>
-                item.hash === ref.hash ? withoutResume : item,
-              ),
-            }
-          : {}),
-        saveMessage: "Progress deleted. Game restarted.",
-        message: "Ready. Press Play.",
-      });
-      await this.refresh();
-    } finally {
-      this.update({ changing: false });
-    }
-  }
-  async capture(note: string) {
-    await this.pause();
-    this.update({ capture: await this.emulator.capture(note) });
-  }
-  async enterLab() {
-    this.labActive = true;
-    await this.pause();
-  }
 }
 export const player = new Player();
 export const playerReady = player.init();
-export const getLab = async () => {
-  await playerReady;
-  return runtime.runPromise(TestLab);
-};
 void playerReady.catch(player.error);
 function saveOnHide() {
   // Commit locally before attempting the ordinary, activity/cadence-gated
@@ -1341,7 +1180,6 @@ export function gameInputBlocked(target: EventTarget | null) {
   return (
     !player.state.game ||
     player.state.changing ||
-    player.labActive ||
     player.state.rewindTimeline ||
     !player.canvas ||
     !!document.querySelector('dialog[open],[role="dialog"]') ||

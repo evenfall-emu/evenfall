@@ -43,7 +43,7 @@ enough: a different revision of the same game is not recognized.
 
 | Game | Build | Raw ROM SHA-256 | Player layout |
 |---|---|---|---|
-| Pokémon Heart & Soul (ROM hack) | 1.2.1 release | `7c4f90c8b68b64d4639a37306d5302a11cd4d7c44005114ec2faa2b28b210c3d` | dashboard and Dev / Debug HUD |
+| Pokémon Heart & Soul (ROM hack) | 1.2.1 release | `7c4f90c8b68b64d4639a37306d5302a11cd4d7c44005114ec2faa2b28b210c3d` | dashboard |
 | Pokémon Elite Redux (ROM hack) | 2.65 Beta2 | `d86e6ac909e4abdef9159ed20b75a684a9b2ee2fe874f388122e00a5749d2d37` | dashboard |
 
 Elite Redux 2.65 Beta1, other revisions and other pokeemerald-expansion hacks
@@ -63,22 +63,19 @@ import { pokemonPlugin } from "@evenfall/gba-pokemon/ui";
 const installed: readonly GamePlugin[] = [pokemonPlugin];
 ```
 
-`pokemonPlugin` lists the headless game definitions and lazily loads two sets
-of layouts with their styles: dashboards for the main player
-([`ui/dashboards.ts`](ui/dashboards.ts), [`ui/dashboard.css`](ui/dashboard.css))
-and the Dev / Debug HUD ([`ui/huds.ts`](ui/huds.ts),
-[`ui/hud.css`](ui/hud.css)).
-Removing the import, the array entry and the `@evenfall/gba-pokemon`
-dependency in `frontend/package.json` builds a player without any Pokémon
-code.
+`pokemonPlugin` lists the headless game definitions and lazily loads their
+dashboards with their styles ([`ui/dashboards.ts`](ui/dashboards.ts),
+[`ui/dashboard.css`](ui/dashboard.css)). Removing the import, the array entry
+and the `@evenfall/gba-pokemon` dependency in `frontend/package.json` builds a
+player without any Pokémon code.
 
 Opening a supported ROM selects the three-column dashboard automatically:
 team and PC roster on the left, the player in the center, and the selected
 Pokémon's inspector on the right. Team cards support click and Arrow/Home/End;
 selection follows identity through reordering and resets on a new timeline,
 and search includes PC storage. While the game runs, observations refresh up
-to 20 times a second; pausing keeps the last reading, and stepping a frame in
-Dev / Debug refreshes it.
+to 20 times a second; pausing keeps the last reading, and loading a state
+refreshes it.
 
 - The inspector shows names, ROM portraits, types, abilities (one or many,
   including locked innates, persistent suppression and extra Hell-mode

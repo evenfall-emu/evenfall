@@ -26,7 +26,13 @@ test.beforeAll(async () => {
 test.afterAll(() => rm(outDir, { recursive: true, force: true }));
 
 async function openFixture(page: Page) {
-  await page.goto("/debug.html");
+  await page.route("**/about-fixture", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: "<!doctype html><html><head></head><body></body></html>",
+    }),
+  );
+  await page.goto("/about-fixture");
   await page.addStyleTag({ path: resolve(outDir, "fixture.css") });
   await page.addScriptTag({
     type: "module",

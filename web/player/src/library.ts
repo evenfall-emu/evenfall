@@ -1,6 +1,6 @@
 import { Context, Data, Effect, Layer } from "effect";
 import { openDB, type IDBPDatabase, type IDBPTransaction } from "idb";
-import type { LoadOptions, ScenarioExport } from "@evenfall/gba";
+import type { LoadOptions } from "@evenfall/gba";
 export class StorageError extends Data.TaggedError("StorageError")<{
   cause: unknown;
 }> {
@@ -394,21 +394,6 @@ export class Library {
       return info;
     });
   }
-  async rename(hash: string, title: string) {
-    if (!title.trim()) throw new Error("Title required");
-    if (!this.db) throw new StorageError({ cause: this.error });
-    const tx = this.db.transaction("games", "readwrite");
-    const game = await tx.store.get(hash);
-    if (game) await tx.store.put({ ...game, title: title.trim() }, hash);
-    await tx.done;
-  }
-  async remove(hash: string) {
-    if (!this.db) throw new StorageError({ cause: this.error });
-    const tx = this.db.transaction(["games", "roms"], "readwrite");
-    await tx.objectStore("games").delete(hash);
-    await tx.objectStore("roms").delete(hash);
-    await tx.done;
-  }
   async save(
     ref: PlaythroughRef,
     data: Uint8Array,
@@ -506,36 +491,6 @@ export class Library {
       if (game?.activePlaythroughId === ref.playthroughId)
         await games.put({ ...game, resumeSavedAt: savedAt }, ref.hash);
       return savedAt;
-    });
-  }
-  async deleteSave(ref: PlaythroughRef) {
-    if (!this.db) throw new StorageError({ cause: this.error });
-    const tx = this.db.transaction(
-      ["games", "saves", "resumes", "cloud", "playthroughs"],
-      "readwrite",
-    );
-    await finishWrite(tx, async () => {
-      const run = await requireRun(tx, ref);
-      await tx.objectStore("saves").delete(runKey(ref));
-      await tx.objectStore("resumes").delete(runKey(ref));
-      // Quick slots survive a progress reset, so their sync bases do too.
-      for (const job of await tx
-        .objectStore("cloud")
-        .index("hash")
-        .getAll(ref.hash))
-        if (
-          job.playthroughId === ref.playthroughId &&
-          (job.kind === "resume" || job.kind === "battery")
-        )
-          await tx.objectStore("cloud").delete(cloudKey(job));
-      const { resumeSavedAt: _, ...withoutResume } = run;
-      await tx.objectStore("playthroughs").put(withoutResume, runKey(ref));
-      const games = tx.objectStore("games");
-      const game: Game | undefined = await games.get(ref.hash);
-      if (game?.activePlaythroughId === ref.playthroughId) {
-        const { resumeSavedAt: _resume, ...withoutProjection } = game;
-        await games.put(withoutProjection, ref.hash);
-      }
     });
   }
   async deletePlaythrough(ref: PlaythroughRef) {
@@ -952,26 +907,6 @@ export class Library {
           await tx.store.put({ ...current, prompted: etag }, key);
       }
     });
-  }
-  async retain(kind: "scenarios" | "reports", value: unknown) {
-    if (!this.db) throw new StorageError({ cause: this.error });
-    await this.db.put(kind, value, `${Date.now()}-${crypto.randomUUID()}`);
-  }
-  async scenarios() {
-    return this.db?.getAll("scenarios") ?? [];
-  }
-  async reports() {
-    return this.db?.getAll("reports") ?? [];
-  }
-  async remember(item: ScenarioExport) {
-    if (!this.db) throw new StorageError({ cause: this.error });
-    const tx = this.db.transaction(["assets", "scenarios"], "readwrite");
-    for (const [name, bytes] of Object.entries(item.assets))
-      await tx
-        .objectStore("assets")
-        .put(bytes, item.manifest.assets[name].sha256);
-    await tx.objectStore("scenarios").put(item.manifest, crypto.randomUUID());
-    await tx.done;
   }
   async asset(hash: string): Promise<Uint8Array | undefined> {
     return (await this.db?.get("assets", hash)) ?? (await this.rom(hash));

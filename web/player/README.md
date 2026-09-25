@@ -7,13 +7,12 @@ account or backend. When the [catalog and account server](../server/README.md)
 is available, signed-in players also get private cloud backups of their
 progress.
 
-The application has three entry points:
+The application has two entry points:
 
 | Page | Entry | Purpose |
 |---|---|---|
 | `/` | `index.html`, `src/main.tsx` | The player: Home, Player and Library |
-| `/debug.html` | `debug.html`, `src/debug-main.tsx` | Dev / Debug: diagnostic player, HUD and Lab |
-| `/validation.html` | `validation.html` | SDK validation harness used by browser tests |
+| `/validation.html` | `validation.html`, `src/validation.js` | SDK validation harness used by browser tests |
 
 The player consumes the [JavaScript SDK](../docs/sdk.md) as the
 `@evenfall/gba` workspace package, like any other application; Vite bundles
@@ -73,11 +72,6 @@ and persists progress before Discord can navigate away; closing it resumes a
 game that was running. Sign-in is optional, and an unavailable server never
 blocks local play. Signing in does not upload ROMs or library contents and
 grants no catalog rights.
-
-Dev / Debug lives at `/debug.html`, with its HUD at `/debug.html#/hud` and
-the Lab at `/debug.html#/lab`, and is reached through **More → Dev / Debug
-player** rather than the main navigation. It shares browser storage with the
-player, not an emulator session.
 
 ## Player controls
 
@@ -331,46 +325,29 @@ installation finishes.
 Game-specific panels are optional packages registered in
 [`src/games.ts`](src/games.ts). A plugin (`GamePlugin`) contributes headless,
 exact-build game definitions from
-[`@evenfall/gba/bridge`](../docs/game-bridges.md) plus two kinds of React
-layouts, keyed by game ID: **dashboards** for the player and **HUDs** for
-`/debug.html#/hud`. Each page loads its kind of layout, with the plugin's
-styles, before its first render, so a layout never swaps in under a running
-game. `resolveGame` selects a layout by raw-ROM SHA-256, never by filename;
-ambiguous matches are errors, and unknown ROMs keep the generic layout. A
-layout receives the self-contained player as `children` plus `playing`, and
-reads live data with `useBridge` inside the player's `BridgeProvider`.
-`main.tsx` and `debug-main.tsx` never import a game package.
+[`@evenfall/gba/bridge`](../docs/game-bridges.md) plus React **dashboards**,
+layouts keyed by game ID. The player loads every plugin's dashboards, with
+their styles, before its first render, so a layout never swaps in under a
+running game. `resolveGame` selects a layout by raw-ROM SHA-256, never by
+filename; ambiguous matches are errors, and unknown ROMs keep the generic
+layout. A layout receives the self-contained player as `children` plus
+`playing`, and reads live data with `useBridge` inside the player's
+`BridgeProvider`. `main.tsx` never imports a game package.
 
 The default build installs
 [`@evenfall/gba-pokemon`](../games/pokemon/README.md), which adds the
-Heart & Soul 1.2.1 and Elite Redux 2.65 Beta2 dashboards and the Heart & Soul
-HUD; its README describes those panels and their limits. To build without
-it, remove its import and `installed` entry from `games.ts` and its
-dependency from `package.json`. To add a game, export an object of the same
-`GamePlugin` shape from another workspace package and append it to
-`installed`.
+Heart & Soul 1.2.1 and Elite Redux 2.65 Beta2 dashboards; its README
+describes those panels and their limits. To build without it, remove its
+import and `installed` entry from `games.ts` and its dependency from
+`package.json`. To add a game, export an object of the same `GamePlugin` shape
+from another workspace package and append it to `installed`.
 
-## Dev / Debug
+## Developer tools
 
-The `debug-main.tsx` and `debug.css` entry holds the diagnostic tools that
-the player does not render: boot options (HLE or an external BIOS, save
-type, RTC), library rename and delete, screenshots, a performance overlay,
-failure recording, checkpoints, scenario export and isolated replay. Unlike
-the player, it opens games paused. Its HUD route shows a plugin's HUD for a
-matching ROM, or the first installed HUD as a diagnostic override. The page
-exposes `window.zigbaDebug` (`Emulator` and `acquireSaveLock`) for console
-use and browser tests.
-
-Failure recording keeps by default three snapshots, 16 MiB of snapshot
-payload, 4 MiB of estimated history and 4,096 operations. Guest faults retain
-evidence; when recording is off, missing replay history is reported
-explicitly. Scenario input journals freeze an exportable prefix at 1,024
-inputs, and a new segment starts from a portable state. Lab workers never
-write the player's battery save. Snapshot restore resets the host resampler,
-so exact continuous-audio checks require a cold boot. Recorded baselines
-detect regressions; they do not establish hardware correctness.
-
-Exported scenarios and failure captures run from the command line:
+The player has no scenario or failure-capture interface. The SDK's `Emulator`
+records gameplay, marks checkpoints, exports scenarios and captures failures,
+and a separate `Emulator` runs a scenario or replays a capture without
+touching a player's session. The same formats run from the command line:
 
 ```sh
 node tools/run-scenario.mjs path/to/scenario.json /tmp/zigba-result
@@ -397,8 +374,7 @@ variables are set in the build environment:
 publishes the repository's [`PRIVACY.md`](../PRIVACY.md) as `/privacy.txt`;
 export your own values, or empty ones, when deploying elsewhere.
 
-Debug pages, accounts, ROMs, gameplay, clicks, errors and recordings are
-never tracked. URL queries, fragments, referrers and other event properties
+Accounts, ROMs, gameplay, clicks, errors and recordings are never tracked. URL queries, fragments, referrers and other event properties
 are removed before sending. The page host and browser user agent are sent so
 PostHog can hash cookieless events with the request IP; PostHog stores no
 analytics cookie or browser identifier.
@@ -476,7 +452,9 @@ ZIGBA_TEST_PORT=8890 npm run test:browser -w frontend
 `zig build test-frontend` and `zig build test-browser` run these together with
 the [`@evenfall/gba-pokemon`](../games/pokemon/README.md#tests) suites. The
 browser suite serves `zig-out/web` on `ZIGBA_TEST_PORT` (default 8765) and
-covers the player, the Dev / Debug UI and the `/validation.html` SDK harness.
+covers the player and the `/validation.html` SDK harness, whose
+`window.zigbaValidation` hooks (`Emulator` and `acquireSaveLock`) also serve
+the SDK and save-lock tests.
 It uses `PLAYWRIGHT_CHROMIUM_EXECUTABLE` or `/usr/bin/chromium` when present;
 otherwise install a browser with `npx playwright install chromium`.
 

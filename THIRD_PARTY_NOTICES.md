@@ -11,7 +11,6 @@ it relies on without redistributing them.
 |---|---|---|---|
 | VT323 font | `frontend/src/assets/VT323-Regular.ttf` | The VT323 Project Authors | SIL OFL 1.1 ([text](frontend/src/assets/VT323-LICENSE.txt)) |
 | Pixelify Sans font | `frontend/src/assets/sunset/PixelifySans-*.ttf` | The Pixelify Sans Project Authors | SIL OFL 1.1 ([text](frontend/src/assets/sunset/OFL.txt)) |
-| 5×7 on-screen-display glyphs | `src/osd_font.zig` | "5x7.bdf" Misc-Fixed font, as distributed with u8g2 | Public domain |
 | Result-screen glyphs | `test/jsmolka_cases.zig` | [jsmolka/gba-tests](https://github.com/jsmolka/gba-tests) `lib/glyphs.asm`, Copyright (c) 2019 Julian Smolka | MIT |
 
 The JavaScript packages, player and server install their dependencies from
@@ -22,8 +21,6 @@ published `@evenfall/gba` package has no runtime dependencies.
 
 These are short factual tables, attributed where they are used:
 
-- `src/display_color.zig` re-expresses the default GBA color-correction profile
-  of mGBA 0.10.5 (MPL-2.0).
 - `src/rom_image.zig` lists a few save-type overrides on which mGBA 0.10.5 and
   NanoBoyAdvance's game database agree.
 
