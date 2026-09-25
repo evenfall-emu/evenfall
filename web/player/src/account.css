@@ -1,0 +1,61 @@
+.account-panel {
+  display: grid;
+  gap: 18px;
+  padding: 20px;
+  font-size: 1rem;
+  line-height: 1.3;
+}
+.account-panel > p:first-child {
+  color: var(--muted);
+}
+.account-panel button,
+.account-panel input {
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid #579fc3;
+  border-radius: 0;
+}
+.account-panel input {
+  width: 100%;
+  min-width: 0;
+  background: #05243e;
+}
+.account-panel form {
+  display: grid;
+  gap: 10px;
+}
+.account-panel .account-discord {
+  background: #344b71;
+  color: #fff0c8;
+}
+.account-divider {
+  color: var(--muted);
+  text-align: center;
+}
+.account-error {
+  color: #ffc5b0;
+}
+.account-notice {
+  padding: 12px;
+  border: 1px solid #83dbc9;
+  color: #a8eddb;
+}
+.account-email {
+  overflow-wrap: anywhere;
+}
+.account-delete {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid #b87d78;
+  padding-top: 16px;
+}
+.account-delete button:first-of-type,
+.account-panel .account-delete-button {
+  border-color: #c78b83;
+  color: #ffc5b0;
+}
+.account-privacy a {
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

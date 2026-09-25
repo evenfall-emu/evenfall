@@ -1,0 +1,108 @@
+.rewind-timeline {
+  position: absolute;
+  z-index: 30;
+  inset: auto 10px 10px;
+  padding: 12px;
+  border: 1px solid #62bddf;
+  background: linear-gradient(180deg, #0a1b24f7, #071217fc);
+  box-shadow:
+    0 8px 28px #000c,
+    inset 0 0 0 1px #173c4c;
+  color: #eaf7fb;
+}
+.rewind-timeline header,
+.rewind-timeline footer,
+.rewind-timeline header > div,
+.rewind-timeline footer > div {
+  display: flex;
+  align-items: center;
+}
+.rewind-timeline header,
+.rewind-timeline footer {
+  justify-content: space-between;
+  gap: 12px;
+}
+.rewind-timeline header > div {
+  gap: 12px;
+}
+.rewind-timeline header strong {
+  color: #6ed5ff;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.rewind-timeline header span,
+.rewind-timeline footer > span {
+  color: #9dbac5;
+  font-size: 0.72rem;
+}
+.rewind-timeline output {
+  border: 1px solid #6ed5ff;
+  padding: 1px 8px;
+  color: #b9ecff;
+  background: #06131a;
+}
+.rewind-thumbnails {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: center;
+  gap: 7px;
+  margin: 10px 0 7px;
+}
+.rewind-thumbnail {
+  position: relative;
+  overflow: hidden;
+  padding: 2px;
+  border-color: #315d6e;
+  background: #071319;
+}
+.rewind-thumbnail.selected {
+  border-color: #66d6ff;
+  box-shadow: 0 0 0 2px #1789b8;
+  transform: translateY(-2px);
+}
+.rewind-thumbnail canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3/2;
+  image-rendering: pixelated;
+  background: #0b2029;
+}
+.rewind-thumbnail > span {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #88a9b5;
+  font-size: 0.65rem;
+  background: #08171dd9;
+}
+.rewind-timeline input[type="range"] {
+  width: 100%;
+  margin: 0 0 8px;
+  accent-color: #5ed2ff;
+}
+.rewind-timeline footer > div {
+  gap: 7px;
+}
+.rewind-timeline footer button {
+  padding: 4px 9px;
+  font-size: 0.75rem;
+}
+.rewind-timeline footer kbd {
+  margin-left: 5px;
+}
+.rewind-timeline .rewind-commit {
+  border-color: #5ed2ff;
+  background: #17455a;
+}
+@media (max-width: 560px) {
+  .rewind-timeline {
+    inset: auto 5px 5px;
+    padding: 9px;
+  }
+  .rewind-timeline header span,
+  .rewind-timeline footer > span,
+  .rewind-timeline footer kbd {
+    display: none;
+  }
+}

@@ -1,0 +1,150 @@
+# @evenfall/gba-pokemon
+
+Unofficial Pokémon panels for the [ZiGBA player](../../frontend/README.md):
+the current party, PC storage, battle state, trainer previews and
+species details, read live from a running game. It is also a complete example
+of a game package built on the SDK's
+[game bridges](../../docs/game-bridges.md).
+
+## Disclaimer
+
+> **ZiGBA and this package are not affiliated with, endorsed by, or
+> sponsored by Nintendo, Creatures Inc., GAME FREAK inc. or The Pokémon
+> Company.** Pokémon and Pokémon character names are trademarks of Nintendo,
+> Creatures Inc. and GAME FREAK inc. The ROM hacks named below are
+> third-party works by their own authors and are not part of ZiGBA. This
+> package contains no game code, data or artwork: you must supply your own
+> legally obtained ROMs.
+
+## What it does
+
+When the player loads a supported ROM, this package decodes its data **at
+runtime from the user's own ROM and emulated memory**:
+
+- party, PC boxes and active battlers: species, nickname, level, HP,
+  ailments, nature, held item, abilities, moves with PP, stats with IVs, EVs
+  and battle stages;
+- species, move, ability and item names and descriptions, read from the ROM's
+  own tables (the "dex" data);
+- Pokémon, item and trainer sprites, decompressed from the ROM's graphics;
+- for Elite Redux, the difficulty-scaled teams of trainers, for previewing
+  upcoming battles.
+
+Nothing is bundled: no names, statistics, tables, sprites or other assets from
+any game are in this repository or its builds. Everything is read from the
+loaded ROM and discarded with the session. Observation is read-only; the
+package never writes game memory.
+
+## Supported builds
+
+Support is per **exact build**, identified by the SHA-256 of the raw ROM
+(the `.gba`, or the single ROM inside a ZIP). Title and header codes are not
+enough: a different revision of the same game is not recognized.
+
+| Game | Build | Raw ROM SHA-256 | Player layout |
+|---|---|---|---|
+| Pokémon Heart & Soul (ROM hack) | 1.2.1 release | `7c4f90c8b68b64d4639a37306d5302a11cd4d7c44005114ec2faa2b28b210c3d` | dashboard and Dev / Debug HUD |
+| Pokémon Elite Redux (ROM hack) | 2.65 Beta2 | `d86e6ac909e4abdef9159ed20b75a684a9b2ee2fe874f388122e00a5749d2d37` | dashboard |
+
+Elite Redux 2.65 Beta1, other revisions and other pokeemerald-expansion hacks
+are not enabled automatically; each needs a reviewed build manifest. Retail
+Pokémon games have no profile yet, and unknown ROMs keep the generic player.
+[`docs/profiles.md`](docs/profiles.md) records how every address and layout
+was verified, and what remains unavailable.
+
+## In the player
+
+The player's [game-plugin registry](../../frontend/README.md#game-plugins)
+installs this package through one import in
+[`frontend/src/games.ts`](../../frontend/src/games.ts):
+
+```ts
+import { pokemonPlugin } from "@evenfall/gba-pokemon/ui";
+const installed: readonly GamePlugin[] = [pokemonPlugin];
+```
+
+`pokemonPlugin` lists the headless game definitions and lazily loads two sets
+of layouts with their styles: dashboards for the main player
+([`ui/dashboards.ts`](ui/dashboards.ts), [`ui/dashboard.css`](ui/dashboard.css))
+and the Dev / Debug HUD ([`ui/huds.ts`](ui/huds.ts), [`ui/hud.css`](ui/hud.css)).
+Removing the import, the array entry and the `@evenfall/gba-pokemon` dependency in
+`frontend/package.json` builds a player without any Pokémon code.
+
+Opening a supported ROM selects the three-column dashboard automatically:
+team and PC roster on the left, the player in the center, and the selected
+Pokémon's inspector on the right. Team cards support click and Arrow/Home/End;
+selection follows identity through reordering and resets on a new timeline,
+and search includes PC storage. Play refreshes observations up to 20 times a
+second; pause keeps the last reading and Frame +1 refreshes it.
+
+- The inspector shows names, ROM portraits, types, abilities (one or many,
+  including locked innates, persistent suppression and extra Hell-mode
+  abilities), nature, held item with its ROM sprite, bounded descriptions,
+  stats with IVs/EVs, move category, power, priority and PP, friendship,
+  experience, HP and ailments. Hover, focus or tap an ability, move or item
+  for its details; Escape or an outside tap dismisses the tooltip.
+- In battle, active battlers supply live HP, stats, moves, items, types and
+  abilities, and the stat totals use the bridge's `stageAdjustedStats`, with
+  an arrow on boosted or lowered stats. These are stage-adjusted, not a full
+  damage calculation: ability, item, weather and move modifiers are excluded.
+- Condition colors are interface conventions, not ROM data: burn is orange,
+  paralysis yellow, freeze ice-blue, bleed red, sleep white, poison and
+  unknown ailments purple.
+- Elite Redux adds trainer previews for inactive battles and Pokédex links
+  for the selected Pokémon.
+
+Move-category icons are original inline SVG drawn for ZiGBA. Values the
+bridges cannot verify stay visibly unavailable with a reason: randomized
+party types and abilities, turn count, live battle weather, most map names
+and some rare shiny palettes. Spinda and Deoxys portraits and Japanese text
+are unsupported. PC records do not keep current PP, so the
+inspector shows a dash.
+
+## As a library
+
+`@evenfall/gba-pokemon` exports the headless game definitions and decoders
+([`src/`](src/)); `@evenfall/gba-pokemon/ui` exports the plugin and its React panels
+([`ui/`](ui/)). Both are TypeScript sources consumed through npm workspaces;
+the package is private and not published to npm.
+
+```ts
+import { BridgeHost } from "@evenfall/gba/bridge";
+import { heartNSoul } from "@evenfall/gba-pokemon";
+
+const store = new BridgeHost(emulator).observe(heartNSoul);
+store.subscribe(() => {
+  const party = store.getSnapshot().gameParty;
+  if (party.status === "ready") console.log(party.data.party.length);
+}, "gameParty");
+```
+
+`createEliteReduxGame(builds)` accepts further verified `EliteReduxBuild`
+manifests; see the [profile notes](docs/profiles.md#elite-redux-265-one-layout-family-exact-build-manifests).
+
+## Tests
+
+```sh
+npm run check -w games/pokemon      # TypeScript, including bridge.typecheck.tsx
+npm test -w games/pokemon           # decoders, catalogs, artwork, panels
+zig build web                       # then, against the built player:
+npm run test:browser -w games/pokemon
+```
+
+`zig build test-frontend` and `zig build test-browser` include these suites.
+Unit tests use synthetic records. Tests that need real games skip unless you
+point these variables at files you supply; they verify the documented hashes
+before use:
+
+| Variable | File |
+|---|---|
+| `ZIGBA_HNS_ROM` | Heart & Soul 1.2.1 raw ROM |
+| `ZIGBA_HNS_STATE`, `ZIGBA_HNS_BATTLE` | `game2.state` and `battle.state` ([hashes](docs/profiles.md#heart--soul-121-profile-evidence)) |
+| `ZIGBA_REDUX_ROM` | Elite Redux 2.65 Beta2 raw ROM |
+| `ZIGBA_REDUX_STATE`, `ZIGBA_REDUX_STAGE_STATE` | `redux.state` and `redux-stage-buff.state` ([hashes](docs/profiles.md#release-evidence)) |
+
+No ROM, save or state is committed, and none is needed for the default suites.
+
+## License
+
+AGPL-3.0-or-later, like the rest of ZiGBA. See the [disclaimer](#disclaimer) above and
+the repository's [third-party notices](../../THIRD_PARTY_NOTICES.md).
