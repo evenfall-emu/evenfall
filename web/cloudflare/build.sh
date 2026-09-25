@@ -69,7 +69,7 @@ cp tools/cloudflare-headers "$temporary/output/web/_headers"
 mkdir -p "$temporary/output/web/licenses"
 cp LICENSE "$temporary/output/web/licenses/ZiGBA.txt"
 cp frontend/src/assets/VT323-LICENSE.txt "$temporary/output/web/licenses/VT323.txt"
-cp frontend/src/assets/sunset/OFL.txt "$temporary/output/web/licenses/PixelifySans.txt"
+cp frontend/src/assets/fonts/PressStart2P-OFL.txt "$temporary/output/web/licenses/PressStart2P.txt"
 if [[ "$VITE_PRIVACY_URL" == ./privacy.txt ]]; then
     cp PRIVACY.md "$temporary/output/web/privacy.txt"
 fi
