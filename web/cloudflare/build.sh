@@ -38,14 +38,14 @@ npm test -w server
 npm run check -w web -w games/pokemon
 npm test -w games/pokemon -w frontend
 
-# Instance settings for the official zigba.ursid.ai deployment. These are
+# Instance settings for the official play.evenfall-emu.org deployment. These are
 # public values, not secrets. A self-hosted deployment exports its own values
 # before running this script; an empty value disables the feature. Analytics
 # are sent only from pages served on VITE_POSTHOG_HOSTNAME, so previews and
 # other hosts of this build stay silent. See frontend/README.md#analytics.
 export VITE_POSTHOG_KEY="${VITE_POSTHOG_KEY-phc_qRjgGwT22cQ2yYu8Zkgx2hc44NtrgRBeubAyXm9u9vCi}"
 export VITE_POSTHOG_HOST="${VITE_POSTHOG_HOST-https://eu.i.posthog.com}"
-export VITE_POSTHOG_HOSTNAME="${VITE_POSTHOG_HOSTNAME-zigba.ursid.ai}"
+export VITE_POSTHOG_HOSTNAME="${VITE_POSTHOG_HOSTNAME-play.evenfall-emu.org}"
 # The player links this privacy notice; ./privacy.txt publishes PRIVACY.md.
 export VITE_PRIVACY_URL="${VITE_PRIVACY_URL-./privacy.txt}"
 "$zig_bin" build web -Doptimize=ReleaseSafe --prefix "$temporary/output"

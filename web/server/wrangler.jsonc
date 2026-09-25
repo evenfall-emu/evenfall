@@ -12,10 +12,10 @@
   "vars": {
     "BETTER_AUTH_URL": "http://127.0.0.1:5173",
     "DISCORD_CLIENT_ID": "1551951883109666826",
-    "EMAIL_FROM": "noreply@ursid.ai"
+    "EMAIL_FROM": "noreply@evenfall-emu.org"
   },
   "send_email": [
-    { "name": "EMAIL", "allowed_sender_addresses": ["noreply@ursid.ai"] }
+    { "name": "EMAIL", "allowed_sender_addresses": ["noreply@evenfall-emu.org"] }
   ],
   "d1_databases": [
     {

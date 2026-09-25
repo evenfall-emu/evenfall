@@ -1,8 +1,8 @@
-# Privacy notice for zigba.ursid.ai
+# Privacy notice for play.evenfall-emu.org
 
 This notice describes what the official hosted ZiGBA instance at
-<https://zigba.ursid.ai> does with your data. It is written from the code in
-this repository: the player in `frontend/` and the Worker in `server/`.
+<https://play.evenfall-emu.org> does with your data. It is written from the
+code in this repository: the player in `frontend/` and the Worker in `server/`.
 
 Anyone can deploy their own copy of ZiGBA. A self-hosted instance is run by its
 operator, who is responsible for its configuration, analytics, providers and
@@ -23,7 +23,7 @@ privacy notice. This notice does not describe those instances.
 ## Stored only on your device
 
 The player keeps its data in your browser's IndexedDB and local storage for the
-zigba.ursid.ai origin:
+play.evenfall-emu.org origin:
 
 - imported ROMs, their SHA-256 hashes and titles, and when you last played;
 - in-game (battery) saves, resume checkpoints, quick-save slots and playthrough
@@ -40,7 +40,7 @@ you want to keep first. Deleting your account does not touch it.
 
 ## Analytics
 
-Production pages served from zigba.ursid.ai send page views to PostHog's EU
+Production pages served from play.evenfall-emu.org send page views to PostHog's EU
 cloud (`eu.i.posthog.com`). ZiGBA configures PostHog as follows:
 
 - Only a page-view event is sent when you open Home, Player or Library, with
@@ -55,8 +55,7 @@ cloud (`eu.i.posthog.com`). ZiGBA configures PostHog as follows:
 - Autocapture, session recording and feature flags are disabled, and any
   other event is dropped before sending. ROMs, game titles, gameplay and
   account information are never sent.
-- The Dev / Debug pages, local development and builds served from any other
-  hostname send nothing.
+- Local development and builds served from any other hostname send nothing.
 
 Retention of analytics events follows the PostHog project's settings.
 

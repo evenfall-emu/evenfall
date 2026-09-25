@@ -7,7 +7,7 @@ afterEach(() => {
   vi.resetModules();
 });
 
-function stubLocation(hostname = "zigba.ursid.ai") {
+function stubLocation(hostname = "play.evenfall-emu.org") {
   vi.stubGlobal("location", {
     hostname,
     host: hostname,
@@ -37,12 +37,12 @@ it("stays off without a build-time key and host, and honors the hostname guard",
   const official = {
     VITE_POSTHOG_KEY: "public-token",
     VITE_POSTHOG_HOST: "https://eu.i.posthog.com",
-    VITE_POSTHOG_HOSTNAME: "zigba.ursid.ai",
+    VITE_POSTHOG_HOSTNAME: "play.evenfall-emu.org",
   };
   for (const [settings, hostname] of [
-    [{}, "zigba.ursid.ai"],
-    [{ ...official, VITE_POSTHOG_KEY: "" }, "zigba.ursid.ai"],
-    [{ ...official, VITE_POSTHOG_HOST: "" }, "zigba.ursid.ai"],
+    [{}, "play.evenfall-emu.org"],
+    [{ ...official, VITE_POSTHOG_KEY: "" }, "play.evenfall-emu.org"],
+    [{ ...official, VITE_POSTHOG_HOST: "" }, "play.evenfall-emu.org"],
     [official, "127.0.0.1"],
     [official, "zigba.example"],
   ] as const) {
@@ -56,7 +56,7 @@ it("stays off without a build-time key and host, and honors the hostname guard",
     vi.resetModules();
   }
 
-  stubLocation("zigba.ursid.ai");
+  stubLocation("play.evenfall-emu.org");
   const enabled = await loadAnalytics(official);
   expect(enabled.analyticsEnabled).toBe(true);
   expect(enabled.posthog.init).toHaveBeenCalledWith(
@@ -104,8 +104,8 @@ it("allows only cookieless pageviews without session replay or autocapture", asy
       $session_id: "session",
       $window_id: "window",
       $current_url:
-        "https://zigba.ursid.ai/?account=1&error_description=private#private",
-      $host: "zigba.ursid.ai",
+        "https://play.evenfall-emu.org/?account=1&error_description=private#private",
+      $host: "play.evenfall-emu.org",
       $raw_user_agent: "Test browser UA",
       $referrer: "https://example.com/private",
       game: "private ROM title",
@@ -122,8 +122,8 @@ it("allows only cookieless pageviews without session replay or autocapture", asy
       view: "library",
       $session_id: "session",
       $window_id: "window",
-      $current_url: "https://zigba.ursid.ai/",
-      $host: "zigba.ursid.ai",
+      $current_url: "https://play.evenfall-emu.org/",
+      $host: "play.evenfall-emu.org",
       $raw_user_agent: "Test browser UA",
       $pathname: "/",
     },

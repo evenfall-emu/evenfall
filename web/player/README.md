@@ -405,9 +405,10 @@ analytics cookie or browser identifier.
 
 ## Cloudflare deployment
 
-The official instance, [zigba.ursid.ai](https://zigba.ursid.ai), is one
-Worker using Static Assets plus the catalog API: `/api/*` runs through Hono
-first, and other paths are static files. WASM, the emulator worker, audio and
+The official instance,
+[play.evenfall-emu.org](https://play.evenfall-emu.org), is one Worker using
+Static Assets plus the catalog API: `/api/*` runs through Hono first, and
+other paths are static files. WASM, the emulator worker, audio and
 IndexedDB run in the visitor's browser. Cloud saves use a private
 EU-jurisdiction R2 bucket with public access disabled. No ROMs or test
 fixtures are deployed. See the server's

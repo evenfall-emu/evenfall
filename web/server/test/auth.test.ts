@@ -16,7 +16,7 @@ import {
 import app from "../src/index";
 import { sweepDeletedAccounts } from "../src/cloud-saves";
 
-const origin = "https://zigba.ursid.ai";
+const origin = "https://play.evenfall-emu.org";
 let miniflare: Miniflare;
 let database: D1Database;
 let saves: Awaited<ReturnType<Miniflare["getR2Bucket"]>>;
@@ -37,7 +37,7 @@ function request(
     BETTER_AUTH_SECRET: "test-only-auth-secret-not-for-production-123456789",
     DISCORD_CLIENT_ID: "test-discord-client",
     DISCORD_CLIENT_SECRET: "test-discord-secret",
-    EMAIL_FROM: "noreply@ursid.ai",
+    EMAIL_FROM: "noreply@evenfall-emu.org",
     EMAIL: {
       async send(message: EmailMessage | EmailMessageBuilder) {
         messages.push(message as EmailMessageBuilder);
@@ -271,7 +271,7 @@ describe("account authentication", () => {
     expect(await response.json()).toEqual({ status: true });
     expect(messages).toHaveLength(1);
     expect(messages[0]).toMatchObject({
-      from: { email: "noreply@ursid.ai", name: "ZiGBA" },
+      from: { email: "noreply@evenfall-emu.org", name: "ZiGBA" },
       to: "player@example.com",
       subject: "Sign in to ZiGBA",
     });
@@ -376,7 +376,7 @@ describe("account authentication", () => {
     for (const callbackURL of [
       "https://attacker.example",
       "//attacker.example",
-      "https://zigba.ursid.ai.attacker.example",
+      "https://play.evenfall-emu.org.attacker.example",
     ]) {
       const response = await request(
         "/api/auth/sign-in/magic-link",
