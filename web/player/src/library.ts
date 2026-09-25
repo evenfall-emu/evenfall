@@ -925,8 +925,12 @@ export async function openLibrary() {
   const failure = new Promise<never>((_, reject) => {
     rejectBlocked = reject;
   });
-  const opened = openDB("zigba-local", 6, {
-    upgrade(db, oldVersion, _newVersion, tx) {
+  const opened = openDB("zigba-local", 7, {
+    upgrade(db) {
+      // Version 7 identifies games by the SHA-1 of the raw ROM instead of its
+      // SHA-256. Keys cannot be converted without rehashing every ROM, so an
+      // older database starts empty.
+      for (const name of [...db.objectStoreNames]) db.deleteObjectStore(name);
       for (const name of [
         "saves",
         "games",
@@ -936,125 +940,11 @@ export async function openLibrary() {
         "scenarios",
         "reports",
       ])
-        if (!db.objectStoreNames.contains(name)) db.createObjectStore(name);
-      if (!db.objectStoreNames.contains("cloud")) {
-        const cloud = db.createObjectStore("cloud");
-        cloud.createIndex("accountId", "accountId");
-        cloud.createIndex("hash", "hash");
-      }
-      const runs = db.createObjectStore("playthroughs");
-      runs.createIndex("hash", "hash");
-      // Keep all v1-v5 conversions in one version transaction. Cursor iteration
-      // avoids loading ROMs, saves and snapshots into one large JS allocation.
-      const migrate = async () => {
-        const games = tx.objectStore("games");
-        let cursor = await games.openCursor();
-        while (cursor) {
-          const old = cursor.value as Game & { rom?: Uint8Array };
-          const game =
-            oldVersion < 3 && old.rom ? metadata(old as GameImport) : old;
-          if (oldVersion < 3 && old.rom)
-            await tx.objectStore("roms").put(old.rom, cursor.primaryKey);
-          await runs.put(
-            {
-              hash: game.hash,
-              id: "default",
-              name: "Playthrough 1",
-              createdAt: game.lastPlayed,
-              lastPlayed: game.lastPlayed,
-              ...(game.resumeSavedAt === undefined
-                ? {}
-                : { resumeSavedAt: game.resumeSavedAt }),
-            },
-            [game.hash, "default"],
-          );
-          await cursor.update({ ...game, activePlaythroughId: "default" });
-          cursor = await cursor.continue();
-        }
-        for (const storeName of ["saves", "resumes"] as const) {
-          const store = tx.objectStore(storeName);
-          let entry = await store.openCursor();
-          while (entry) {
-            if (typeof entry.primaryKey !== "string") {
-              entry = await entry.continue();
-              continue;
-            }
-            const hash = entry.primaryKey as string;
-            if (!(await runs.get([hash, "default"]))) {
-              const savedAt =
-                storeName === "resumes"
-                  ? entry.value.savedAt
-                  : entry.value.updatedAt;
-              await runs.put(
-                {
-                  hash,
-                  id: "default",
-                  name: "Playthrough 1",
-                  createdAt: savedAt ?? 0,
-                  lastPlayed: savedAt ?? 0,
-                  ...(storeName === "resumes"
-                    ? { resumeSavedAt: savedAt }
-                    : {}),
-                },
-                [hash, "default"],
-              );
-            } else if (storeName === "resumes") {
-              const run: Playthrough = await runs.get([hash, "default"]);
-              if (run.resumeSavedAt === undefined)
-                await runs.put({ ...run, resumeSavedAt: entry.value.savedAt }, [
-                  hash,
-                  "default",
-                ]);
-            }
-            await store.put(entry.value, [hash, "default"]);
-            await entry.delete();
-            entry = await entry.continue();
-          }
-        }
-        const cloud = tx.objectStore("cloud");
-        let jobCursor = await cloud.openCursor();
-        while (jobCursor) {
-          const key = jobCursor.primaryKey;
-          if (Array.isArray(key) && key.length === 3) {
-            const job = jobCursor.value as CloudJob;
-            await cloud.put({ ...job, playthroughId: "default" }, [
-              job.accountId,
-              job.hash,
-              "default",
-              job.kind,
-            ]);
-            await jobCursor.delete();
-          }
-          jobCursor = await jobCursor.continue();
-        }
-        const assets = tx.objectStore("assets");
-        let assetCursor = await assets.openCursor();
-        while (assetCursor) {
-          const key = assetCursor.primaryKey;
-          if (typeof key === "string" && key.startsWith("quick-state:")) {
-            const match = /^quick-state:(.+):(\d+)$/.exec(key);
-            if (match) {
-              await assets.put(
-                assetCursor.value,
-                quickStateKey(
-                  { hash: match[1], playthroughId: "default" },
-                  Number(match[2]),
-                ),
-              );
-              await assetCursor.delete();
-            }
-          }
-          assetCursor = await assetCursor.continue();
-        }
-      };
-      void tx.done.catch(() => db.close());
-      void migrate().catch(() => {
-        try {
-          tx.abort();
-        } catch {
-          // A failed IndexedDB request may already have aborted the upgrade.
-        }
-      });
+        db.createObjectStore(name);
+      const cloud = db.createObjectStore("cloud");
+      cloud.createIndex("accountId", "accountId");
+      cloud.createIndex("hash", "hash");
+      db.createObjectStore("playthroughs").createIndex("hash", "hash");
     },
     blocked() {
       blocked = true;

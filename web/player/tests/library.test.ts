@@ -6,27 +6,19 @@ import {
   Library,
   quickStateKey,
   playthroughLockKey,
-  type CloudJob,
 } from "../src/library";
 describe("library storage", () => {
   const ref = (hash: string) => ({ hash, playthroughId: "default" });
-  it("upgrades v1, deduplicates imports and keeps the previous save", async () => {
+  it("deduplicates imports and keeps the previous save", async () => {
     await deleteDB("zigba-local");
-    const old = await openDB("zigba-local", 1, {
-      upgrade(db) {
-        db.createObjectStore("saves");
-      },
-    });
-    await old.put("saves", { data: new Uint8Array([42]), updatedAt: 1 }, "abc");
-    old.close();
     const lib = await openLibrary();
-    expect(await lib.getSave(ref("abc"))).toEqual(new Uint8Array([42]));
     await lib.put({
       hash: "abc",
       title: "First",
       rom: new Uint8Array([1]),
       lastPlayed: 1,
     });
+    await lib.save(ref("abc"), new Uint8Array([42]));
     await lib.put({
       hash: "abc",
       title: "Duplicate",
@@ -51,71 +43,26 @@ describe("library storage", () => {
     expect(await lib.getSave(ref("abc"))).toEqual(new Uint8Array([43]));
     lib.close();
   });
-  it("splits v2 ROMs from metadata without losing games, saves or scenario assets", async () => {
+  it("stores ROMs apart from metadata and scenario assets apart from library ROMs", async () => {
     await deleteDB("zigba-local");
-    const old = await openDB("zigba-local", 2, {
-      upgrade(db) {
-        for (const name of ["games", "saves", "assets", "scenarios", "reports"])
-          db.createObjectStore(name);
-      },
-    });
+    const lib = await openLibrary();
     const first = new Uint8Array([1, 2, 3]);
     const second = new Uint8Array([4, 5]);
-    await old.put(
-      "games",
-      { hash: "first", title: "Renamed", rom: first, lastPlayed: 1 },
-      "first",
-    );
-    await old.put(
-      "games",
-      { hash: "second", title: "Second", rom: second, lastPlayed: 2 },
-      "second",
-    );
-    await old.put(
-      "saves",
-      { data: new Uint8Array([42]), previous: new Uint8Array([41]) },
-      "first",
-    );
-    await old.put("assets", first, "first");
-    await old.put("scenarios", { name: "Retained scenario" }, "scenario");
-    await old.put("reports", { note: "Retained report" }, "report");
-    old.close();
-    const lib = await openLibrary();
-    expect(lib.db!.version).toBe(6);
-    expect(await lib.list()).toEqual([
-      {
-        hash: "second",
-        title: "Second",
-        romSize: 2,
-        lastPlayed: 2,
-        activePlaythroughId: "default",
-      },
-      {
-        hash: "first",
-        title: "Renamed",
-        romSize: 3,
-        lastPlayed: 1,
-        activePlaythroughId: "default",
-      },
-    ]);
+    await lib.put({ hash: "first", title: "First", rom: first, lastPlayed: 1 });
+    await lib.put({
+      hash: "second",
+      title: "Second",
+      rom: second,
+      lastPlayed: 2,
+    });
+    await lib.addAsset("first", first);
     expect(
       (await lib.db!.getAll("games")).every(
         (game) => !Object.hasOwn(game, "rom"),
       ),
     ).toBe(true);
     expect(await lib.rom("first")).toEqual(first);
-    expect(await lib.rom("second")).toEqual(second);
     expect(await lib.asset("second")).toEqual(second);
-    expect(await lib.db!.get("saves", ["first", "default"])).toEqual({
-      data: new Uint8Array([42]),
-      previous: new Uint8Array([41]),
-    });
-    expect(await lib.db!.getAll("scenarios")).toEqual([
-      { name: "Retained scenario" },
-    ]);
-    expect(await lib.db!.getAll("reports")).toEqual([
-      { note: "Retained report" },
-    ]);
 
     // A selection updates recency without writing another ROM-sized value.
     const put = vi.spyOn(IDBObjectStore.prototype, "put");
@@ -131,183 +78,38 @@ describe("library storage", () => {
     put.mockRestore();
     expect((await lib.list())[0]).toEqual({
       hash: "first",
-      title: "Renamed",
+      title: "First",
       romSize: 3,
       lastPlayed: 3,
       activePlaythroughId: "default",
     });
     // A retained asset keeps its own record, independent of the library ROM.
     expect(await lib.db!.get("assets", "first")).toEqual(first);
-    expect(await lib.getSave(ref("first"))).toEqual(new Uint8Array([42]));
     lib.close();
   });
-  it("keeps the old library intact when a ROM migration write fails", async () => {
+  it("starts a library keyed by ROM SHA-256 (version 6 and older) empty", async () => {
     await deleteDB("zigba-local");
-    const old = await openDB("zigba-local", 2, {
+    const old = await openDB("zigba-local", 6, {
       upgrade(db) {
-        db.createObjectStore("games");
-      },
-    });
-    const game = {
-      hash: "abc",
-      title: "Old",
-      rom: new Uint8Array([1]),
-      lastPlayed: 1,
-    };
-    await old.put("games", game, "abc");
-    const later = { ...game, hash: "xyz", rom: new Uint8Array([2]) };
-    await old.put("games", later, "xyz");
-    old.close();
-    const original = IDBObjectStore.prototype.put;
-    const put = vi
-      .spyOn(IDBObjectStore.prototype, "put")
-      .mockImplementation(function (this: IDBObjectStore, value, key) {
-        if (this.name === "roms" && key === "xyz")
-          throw new DOMException("No space", "QuotaExceededError");
-        return original.call(this, value, key);
-      });
-    try {
-      await expect(openLibrary()).rejects.toThrow();
-    } finally {
-      put.mockRestore();
-    }
-    const intact = await openDB("zigba-local", 2);
-    expect(await intact.getAll("games")).toEqual([game, later]);
-    expect(intact.objectStoreNames.contains("roms")).toBe(false);
-    intact.close();
-    const retried = await openLibrary();
-    expect(await retried.rom("abc")).toEqual(game.rom);
-    expect(await retried.rom("xyz")).toEqual(later.rom);
-    retried.close();
-  });
-  it("upgrades v5 saves, orphan progress, quick slots and in-flight cloud metadata atomically", async () => {
-    await deleteDB("zigba-local");
-    const old = await openDB("zigba-local", 5, {
-      upgrade(db) {
-        for (const name of [
-          "games",
-          "roms",
-          "saves",
-          "resumes",
-          "assets",
-          "scenarios",
-          "reports",
-        ])
+        for (const name of ["games", "roms", "saves", "assets", "scenarios"])
           db.createObjectStore(name);
-        const cloud = db.createObjectStore("cloud");
-        cloud.createIndex("accountId", "accountId");
-        cloud.createIndex("hash", "hash");
+        db.createObjectStore("cloud").createIndex("hash", "hash");
       },
     });
-    await old.put(
-      "games",
-      {
-        hash: "game",
-        title: "Game",
-        romSize: 1,
-        lastPlayed: 9,
-        resumeSavedAt: 5,
-      },
-      "game",
-    );
-    await old.put("roms", new Uint8Array([7]), "game");
-    await old.put(
-      "saves",
-      {
-        data: new Uint8Array([8]),
-        previous: new Uint8Array([6]),
-        updatedAt: 4,
-        cloudRevision: "battery-rev",
-      },
-      "game",
-    );
-    await old.put(
-      "resumes",
-      {
-        data: new Uint8Array([9]),
-        options: {},
-        cycle: "12",
-        savedAt: 5,
-        cloudRevision: "resume-rev",
-        previous: {
-          data: new Uint8Array([7]),
-          options: {},
-          cycle: "11",
-          savedAt: 3,
-        },
-      },
-      "game",
-    );
-    await old.put(
-      "saves",
-      { data: new Uint8Array([44]), updatedAt: 1 },
-      "orphan",
-    );
-    await old.put(
-      "resumes",
-      { data: new Uint8Array([45]), options: {}, cycle: "13", savedAt: 6 },
-      "orphan",
-    );
-    await old.put("assets", new Uint8Array([31]), "quick-state:game:2");
-    await old.put("cloud", { accountId: "alice", enabled: true }, "identity");
-    await old.put("cloud", false, "enabled:bob");
-    const job: Omit<CloudJob, "playthroughId"> = {
-      accountId: "alice",
-      hash: "game",
-      kind: "resume",
-      revision: "resume-rev",
-      capturedAt: 5,
-      lastInputAt: 4,
-      baseEtag: '"old"',
-      flight: { revision: "resume-rev", digest: "digest" },
-      attempts: 3,
-      retryAt: 11,
-    };
-    await old.put("cloud", job, ["alice", "game", "resume"]);
+    const hash = "a".repeat(64);
+    await old.put("games", { hash, title: "Old", romSize: 1 }, hash);
+    await old.put("roms", new Uint8Array([1]), hash);
+    await old.put("saves", { data: new Uint8Array([42]) }, [hash, "default"]);
+    await old.put("scenarios", { name: "Old scenario" }, "scenario");
     old.close();
-    const fail = vi.spyOn(IDBObjectStore.prototype, "put");
-    const original = fail.getMockImplementation()!;
-    fail.mockImplementation(function (this: IDBObjectStore, value, key) {
-      if (this.name === "assets" && String(key).startsWith("quick-state:["))
-        throw new DOMException("No space", "QuotaExceededError");
-      return original.call(this, value, key);
-    });
-    try {
-      await expect(openLibrary()).rejects.toThrow();
-    } finally {
-      fail.mockRestore();
-    }
-    const intact = await openDB("zigba-local", 5);
-    expect(await intact.get("saves", "game")).toMatchObject({
-      cloudRevision: "battery-rev",
-    });
-    expect(await intact.get("cloud", ["alice", "game", "resume"])).toEqual(job);
-    expect(await intact.get("assets", "quick-state:game:2")).toEqual(
-      new Uint8Array([31]),
-    );
-    intact.close();
     const lib = await openLibrary();
-    expect(await lib.getSave(ref("game"))).toEqual(new Uint8Array([8]));
-    expect(await lib.getSave(ref("orphan"))).toEqual(new Uint8Array([44]));
-    expect((await lib.getPlaythrough(ref("orphan")))?.resumeSavedAt).toBe(6);
-    expect((await lib.getResume(ref("game")))?.previous?.data).toEqual(
-      new Uint8Array([7]),
-    );
-    expect(await lib.asset(quickStateKey(ref("game"), 2))).toEqual(
-      new Uint8Array([31]),
-    );
-    expect(await lib.asset("quick-state:game:2")).toBeUndefined();
-    expect(await lib.rom("game")).toEqual(new Uint8Array([7]));
-    expect(await lib.cloudJobs("alice")).toEqual([
-      { ...job, playthroughId: "default" },
-    ]);
-    expect(await lib.cloudSource({ ...job, playthroughId: "default" })).toEqual(
-      new Uint8Array([9]),
-    );
-    expect(await lib.setCloudIdentity("bob")).toEqual({
-      accountId: "bob",
-      enabled: false,
-    });
+    expect(lib.db!.version).toBe(7);
+    expect(await lib.list()).toEqual([]);
+    expect(await lib.rom(hash)).toBeUndefined();
+    expect(await lib.getSave(ref(hash))).toBeUndefined();
+    expect(await lib.db!.getAll("scenarios")).toEqual([]);
+    expect(await lib.playthroughs(hash)).toEqual([]);
+    expect(await lib.cloudJobs("alice")).toEqual([]);
     lib.close();
   });
   it("reports unavailable storage explicitly", async () => {

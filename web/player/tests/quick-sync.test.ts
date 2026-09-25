@@ -12,7 +12,7 @@ import {
   type QuickRemote,
 } from "../src/library";
 
-const hash = "a".repeat(64);
+const hash = "a".repeat(40);
 const ref = { hash, playthroughId: "default" };
 const state = (marker: number) =>
   new Uint8Array([...new TextEncoder().encode("ZIGBAST1"), marker]);
@@ -82,7 +82,7 @@ class FakeCloud {
       return Response.json({ saves: [], cursor: null });
     const headers = new Headers(init.headers);
     const account = headers.get("X-Zigba-Account")!;
-    const listing = /^\/api\/saves\/[0-9a-f]{64}\/default\/quick$/.test(url);
+    const listing = /^\/api\/saves\/[0-9a-f]{40}\/default\/quick$/.test(url);
     if (listing)
       return Response.json({
         limit: 10,

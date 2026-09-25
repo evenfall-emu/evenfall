@@ -5,7 +5,7 @@ import { expect, test, type Page } from "@playwright/test";
 import type { Emulator } from "@evenfall/gba";
 
 const rom = Buffer.from([42, 0, 160, 227, 254, 255, 255, 234]);
-const hash = createHash("sha256").update(rom).digest("hex");
+const hash = createHash("sha1").update(rom).digest("hex");
 const file = {
   name: "Cloud adventure.gba",
   mimeType: "application/octet-stream",
@@ -296,7 +296,7 @@ sys.stdout.buffer.write(output.getvalue())
     ).toEqual([saved.cycle]);
     expect((await localResume(phone))?.cycle).toBe(saved.cycle);
     expect(control.uploads).toBe(0);
-    await phone.getByRole("button", { name: "ZiGBA home" }).click();
+    await phone.getByRole("button", { name: "evenfall home" }).click();
     await expect
       .poll(async () => (await localResume(phone))?.cycle)
       .not.toBe(saved.cycle);
@@ -308,7 +308,7 @@ sys.stdout.buffer.write(output.getvalue())
       .toBe(true);
     control.online = false;
     await phone.context().setOffline(true);
-    await phone.reload();
+    await phone.goto("/");
     await expect(
       phone.getByRole("button", { name: "Resume adventure" }),
     ).toBeEnabled();
@@ -332,7 +332,7 @@ test("existing device progress remains an explicit alternative to a cloud checkp
   await installLocal(page, local);
   const cloud = await checkpoint(page, "1234567");
   const control = await remote(page, cloud);
-  await page.reload();
+  await page.goto("/");
   await expect(
     page.getByRole("button", { name: "Resume adventure" }),
   ).toBeEnabled();
@@ -367,7 +367,7 @@ test("existing device progress remains an explicit alternative to a cloud checkp
   expect(control.downloads).toBe(0);
 });
 
-test("Home resumes the last local run, while Library and Player resolve the selected other run", async ({
+test("Home resumes the last local run, while Player resolves the selected other run", async ({
   page,
 }) => {
   const a = await checkpoint(page, "3456789");
@@ -390,7 +390,7 @@ test("Home resumes the last local run, while Library and Player resolve the sele
     { hash, b },
   );
   const control = await remote(page, await checkpoint(page, "1234567"));
-  await page.reload();
+  await page.goto("/");
   await expect(page.locator(".about-resume")).toContainText("Run B");
   await recordRestores(page);
   await page.getByRole("button", { name: "Resume adventure" }).click();
@@ -405,26 +405,8 @@ test("Home resumes the last local run, while Library and Player resolve the sele
   ).toEqual([b.cycle]);
   expect(control.downloads).toBe(0);
 
-  await page.getByRole("button", { name: "ZiGBA home" }).click();
-  await page.getByRole("button", { name: "Browse library" }).click();
-  await page.getByRole("button", { name: "View Local adventure" }).click();
-  await expect(page.locator(".library-playthroughs")).toContainText(
-    "Local run",
-  );
-  await expect(page.locator(".library-playthroughs")).toContainText("Run B");
-  await page.evaluate(() => document.fonts.ready);
-  await page.screenshot({
-    path: "../artifacts/cloud-resume/library-desktop.png",
-  });
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({
-    path: "../artifacts/cloud-resume/library-mobile.png",
-  });
-  await page.setViewportSize({ width: 1280, height: 720 });
-  await page
-    .locator(".library-playthroughs button")
-    .filter({ hasText: "Local run" })
-    .click();
+  await page.getByRole("combobox", { name: "Playthrough" }).click();
+  await page.getByRole("option", { name: "Local run" }).click();
   const dialog = page.getByRole("dialog", { name: "Resume from cloud" });
   await expect(dialog).toContainText("Local adventure · Local run");
   await dialog
@@ -486,7 +468,7 @@ test("an unchanged known cloud version never interrupts local resume, even when 
     });
     db.close();
   }, hash);
-  await page.reload();
+  await page.goto("/");
   await page.getByRole("button", { name: "Resume adventure" }).click();
   await expect(page.getByLabel(/^Game screen/)).toBeVisible();
   await expect(
@@ -510,7 +492,7 @@ test("a cloud checkpoint changed after the choice cannot replace local progress"
   const local = await checkpoint(page, "3456789");
   await installLocal(page, local);
   const control = await remote(page, await checkpoint(page));
-  await page.reload();
+  await page.goto("/");
   await page.getByRole("button", { name: "Resume adventure" }).click();
   const dialog = page.getByRole("dialog", { name: "Resume from cloud" });
   await expect(dialog).toBeVisible();
@@ -543,7 +525,7 @@ test("battery-only local progress remains an explicit alternative to cloud resto
     { hash, rom: Array.from(rom) },
   );
   const control = await remote(page, saved);
-  await page.reload();
+  await page.goto("/");
   await expect(page.locator(".about-resume")).toContainText("Battery only");
   await page.getByRole("button", { name: "Resume adventure" }).click();
   const dialog = page.getByRole("dialog", { name: "Resume from cloud" });
@@ -575,25 +557,26 @@ test("restoring another cloud playthrough keeps this device's existing run intac
   const cloud = await checkpoint(page, "1234567");
   const cloudId = "15b285c2-f844-451f-85e6-c5bbcc98dd09";
   await remote(page, cloud, cloudId);
-  await page.reload();
+  await page.goto("/");
   await expect(page.locator(".about-resume-detail")).toContainText(
     "On this device",
   );
+  await page.getByRole("button", { name: "Resume adventure" }).click();
+  const selected = page.getByRole("combobox", { name: "Playthrough" });
+  await expect(selected).toContainText("Local run");
   await recordRestores(page);
-  await page.getByRole("button", { name: "Browse library" }).click();
-  await page.getByRole("button", { name: "View Local adventure" }).click();
-  await page
-    .locator(".library-playthroughs button")
-    .filter({ hasText: "Cloud run" })
-    .click();
+  await selected.click();
+  await page.getByRole("option", { name: "Cloud run · cloud" }).click();
   await page.getByRole("button", { name: "Resume cloud checkpoint" }).click();
   await expect(page.getByLabel(/^Game screen/)).toBeVisible();
-  const selected = page.getByRole("combobox", { name: "Playthrough" });
   await expect(selected).toContainText("Cloud run");
   expect(
     await page.evaluate(() => window.player.activeRef!.playthroughId),
   ).toBe(cloudId);
-  expect(await localResume(page)).toEqual(local);
+  // The local run progressed while it played; the restore left it alone.
+  const kept = (await localResume(page))!;
+  expect(Number(kept.cycle)).toBeGreaterThanOrEqual(Number(local.cycle));
+  expect(kept.cycle).not.toBe(cloud.cycle);
   expect((await localResume(page, cloudId))?.cycle).toBe(cloud.cycle);
   await selected.click();
   await page.getByRole("option", { name: "Local run" }).click();
@@ -604,7 +587,7 @@ test("restoring another cloud playthrough keeps this device's existing run intac
         () => (window as unknown as { loadedCycles: string[] }).loadedCycles,
       ),
     )
-    .toEqual([cloud.cycle, local.cycle]);
+    .toEqual([cloud.cycle, kept.cycle]);
 });
 
 test("Player can choose a cloud-only playthrough of the loaded game", async ({
@@ -614,7 +597,7 @@ test("Player can choose a cloud-only playthrough of the loaded game", async ({
   await installLocal(page, local);
   const cloudId = "15b285c2-f844-451f-85e6-c5bbcc98dd09";
   await remote(page, await checkpoint(page), cloudId);
-  await page.reload();
+  await page.goto("/");
   await page.getByRole("button", { name: "Resume adventure" }).click();
   await expect(
     page.getByRole("combobox", { name: "Playthrough" }),
@@ -647,7 +630,7 @@ test("cloud restore preserves the running adventure when its local checkpoint fa
   const cloud = await checkpoint(page);
   const cloudId = "15b285c2-f844-451f-85e6-c5bbcc98dd09";
   const control = await remote(page, cloud, cloudId);
-  await page.reload();
+  await page.goto("/");
   await expect(page.getByLabel("Open ROM", { exact: true })).toBeEnabled();
   await page.getByLabel("Open ROM", { exact: true }).setInputFiles(file);
   await expect(page.getByRole("button", { name: "Reset" })).toBeEnabled();
@@ -700,7 +683,7 @@ for (const failure of ["incompatible checkpoint", "local storage failure"])
         ? { data: [1, 2, 3], cycle: "0" }
         : local,
     );
-    await page.reload();
+    await page.goto("/");
     await expect(page.locator(".about-resume-detail")).toContainText(
       "On this device",
     );
@@ -750,7 +733,7 @@ test("a different account at download time cannot launch the previously selected
 }) => {
   const saved = await checkpoint(page);
   const control = await remote(page, saved);
-  await page.reload();
+  await page.goto("/");
   await expect(
     page.getByRole("button", { name: "Resume adventure" }),
   ).toBeEnabled();

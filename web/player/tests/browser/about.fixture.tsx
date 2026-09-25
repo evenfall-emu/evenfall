@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { AboutPage } from "../../src/about";
-import "../../src/console.css";
+import "../../src/styles.css";
 
 function Fixture() {
   const [returned, setReturned] = useState(false);

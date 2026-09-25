@@ -29,8 +29,8 @@ const game = (id: string, romHash: string) =>
     },
   });
 
-const first = game("fixture/first", "a".repeat(64));
-const second = game("fixture/second", "b".repeat(64));
+const first = game("fixture/first", "a".repeat(40));
+const second = game("fixture/second", "b".repeat(40));
 const FirstDashboard = () => null;
 const SecondDashboard = () => null;
 const plugins: GamePlugin[] = [
@@ -49,30 +49,30 @@ const plugins: GamePlugin[] = [
 describe("game plugin registry", () => {
   it("selects layouts by exact build across installed plugins", async () => {
     const registry = createGameRegistry(plugins);
-    expect(registry.layoutForRom("dashboards", "a".repeat(64))).toBeNull();
+    expect(registry.layoutForRom("dashboards", "a".repeat(40))).toBeNull();
     await registry.load("dashboards");
-    expect(registry.layoutForRom("dashboards", "a".repeat(64))).toEqual({
+    expect(registry.layoutForRom("dashboards", "a".repeat(40))).toEqual({
       game: first,
       Layout: FirstDashboard,
     });
-    expect(registry.layoutForRom("dashboards", "b".repeat(64))?.Layout).toBe(
+    expect(registry.layoutForRom("dashboards", "b".repeat(40))?.Layout).toBe(
       SecondDashboard,
     );
-    expect(registry.layoutForRom("dashboards", "c".repeat(64))).toBeNull();
+    expect(registry.layoutForRom("dashboards", "c".repeat(40))).toBeNull();
     expect(registry.layoutForRom("dashboards", undefined)).toBeNull();
-    expect(registry.gameForRom("b".repeat(64))).toBe(second);
+    expect(registry.gameForRom("b".repeat(40))).toBe(second);
   });
 
   it("leaves the generic player for a plugin without layouts", async () => {
-    const third = game("fixture/third", "d".repeat(64));
+    const third = game("fixture/third", "d".repeat(40));
     const registry = createGameRegistry([
       ...plugins,
       { id: "headless-package", games: [third] },
     ]);
     await registry.load("dashboards");
-    expect(registry.gameForRom("d".repeat(64))).toBe(third);
-    expect(registry.layoutForRom("dashboards", "d".repeat(64))).toBeNull();
-    expect(registry.layoutForRom("dashboards", "a".repeat(64))?.Layout).toBe(
+    expect(registry.gameForRom("d".repeat(40))).toBe(third);
+    expect(registry.layoutForRom("dashboards", "d".repeat(40))).toBeNull();
+    expect(registry.layoutForRom("dashboards", "a".repeat(40))?.Layout).toBe(
       FirstDashboard,
     );
   });
@@ -80,16 +80,16 @@ describe("game plugin registry", () => {
   it("works with no installed plugins", async () => {
     const registry = createGameRegistry([]);
     await registry.load("dashboards");
-    expect(registry.layoutForRom("dashboards", "a".repeat(64))).toBeNull();
+    expect(registry.layoutForRom("dashboards", "a".repeat(40))).toBeNull();
   });
 
   it("rejects ambiguous builds and layouts for foreign games", async () => {
-    const clash = game("fixture/clash", "a".repeat(64));
+    const clash = game("fixture/clash", "a".repeat(40));
     const ambiguous = createGameRegistry([
       ...plugins,
       { id: "clash", games: [clash] },
     ]);
-    expect(() => ambiguous.gameForRom("a".repeat(64))).toThrow(
+    expect(() => ambiguous.gameForRom("a".repeat(40))).toThrow(
       "ROM matches multiple game definitions",
     );
     const foreign = createGameRegistry([

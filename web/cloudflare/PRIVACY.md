@@ -25,7 +25,7 @@ privacy notice. This notice does not describe those instances.
 The player keeps its data in your browser's IndexedDB and local storage for the
 play.evenfall-emu.org origin:
 
-- imported ROMs, their SHA-256 hashes and titles, and when you last played;
+- imported ROMs, their SHA-1 hashes and titles, and when you last played;
 - in-game (battery) saves, resume checkpoints, quick-save slots and playthrough
   names;
 - settings such as volume and the cloud-backup opt-out;
@@ -95,13 +95,15 @@ When enabled, the player uploads, per playthrough:
 - the latest in-game save,
 - the latest state in each quick-save slot,
 
-together with the playthrough name, the game's title label, the ROM's SHA-256
+together with the playthrough name, the game's title label, the ROM's SHA-1
 hash, capture time and a content digest. Uploads go to a private Cloudflare R2
 bucket created in the EU jurisdiction, under a key derived from your account ID.
 There are no public URLs to these objects. Only the most recent copy of each
 item is kept; there is no history. A registry of your playthroughs (account ID,
 ROM hash, playthrough ID and name) is kept in D1 to enforce the per-account
-limit of 100 playthroughs.
+limit of 100 playthroughs. The public game catalog shows, per game, only the
+total number of these playthroughs across all accounts, as a measure of
+popularity; no account, name or individual playthrough is identified.
 
 Backups are kept until they are replaced or your account is deleted. Deleting
 a playthrough on your device does not delete its cloud backup, and there is

@@ -4,12 +4,16 @@ import { Hono } from "hono";
 import type { MiddlewareHandler } from "hono";
 import { ZodError, type ZodType } from "zod";
 import {
+  CatalogRuleError,
   getBase,
   getGame,
   getVersion,
   listBases,
   listGames,
   listVersions,
+  putBase,
+  putGame,
+  putVersion,
 } from "./catalog";
 import { bases, games, versions } from "./schema";
 import * as schema from "./schema";
@@ -24,6 +28,8 @@ import {
 
 export interface Bindings extends AuthBindings, CloudSaveBindings {
   ADMIN_SECRET?: string;
+  /** The player's static build (Workers Static Assets). */
+  ASSETS?: Fetcher;
 }
 
 type AppEnv = { Bindings: Bindings };
@@ -187,30 +193,21 @@ app.post("/api/admin/seed", async (c) => {
 app.put("/api/admin/games/:id", async (c) => {
   const id = parseId(c.req.param("id"));
   const input = await parseJson(c, gameInput);
-  await database(c.env.DB!)
-    .insert(games)
-    .values({ id, ...input })
-    .onConflictDoUpdate({ target: games.id, set: input });
+  await putGame(database(c.env.DB!), id, input);
   return c.json({ game: await getGame(database(c.env.DB!), id) });
 });
 
 app.put("/api/admin/bases/:id", async (c) => {
   const id = parseId(c.req.param("id"));
   const input = await parseJson(c, baseInput);
-  await database(c.env.DB!)
-    .insert(bases)
-    .values({ id, ...input })
-    .onConflictDoUpdate({ target: bases.id, set: input });
+  await putBase(database(c.env.DB!), id, input);
   return c.json({ base: await getBase(database(c.env.DB!), id) });
 });
 
 app.put("/api/admin/versions/:id", async (c) => {
   const id = parseId(c.req.param("id"));
   const input = await parseJson(c, versionInput);
-  await database(c.env.DB!)
-    .insert(versions)
-    .values({ id, ...input })
-    .onConflictDoUpdate({ target: versions.id, set: input });
+  await putVersion(database(c.env.DB!), id, input);
   return c.json({ version: await getVersion(database(c.env.DB!), id) });
 });
 
@@ -235,6 +232,13 @@ app.delete("/api/admin/bases/:id", async (c) => {
   return c.body(null, 204);
 });
 
+// The player's pages are client-side routes that all load its index.html;
+// wrangler.jsonc sends them to the Worker first. Other paths stay 404s.
+for (const path of ["/library", "/library/:gameId", "/player"])
+  app.get(path, (c) =>
+    c.env.ASSETS ? c.env.ASSETS.fetch(new URL("/", c.req.url)) : c.notFound(),
+  );
+
 app.notFound((c) =>
   c.json({ error: { code: "not_found", message: "Route not found" } }, 404),
 );
@@ -249,6 +253,11 @@ app.onError((error, c) => {
           issues: error.issues,
         },
       },
+      400,
+    );
+  if (error instanceof CatalogRuleError)
+    return c.json(
+      { error: { code: "invalid_request", message: error.message } },
       400,
     );
   if (error instanceof SyntaxError)

@@ -37,14 +37,14 @@ package never writes game memory.
 
 ## Supported builds
 
-Support is per **exact build**, identified by the SHA-256 of the raw ROM
+Support is per **exact build**, identified by the SHA-1 of the raw ROM
 (the `.gba`, or the single ROM inside a ZIP). Title and header codes are not
 enough: a different revision of the same game is not recognized.
 
-| Game | Build | Raw ROM SHA-256 | Player layout |
+| Game | Build | Raw ROM SHA-1 | Player layout |
 |---|---|---|---|
-| Pokémon Heart & Soul (ROM hack) | 1.2.1 release | `7c4f90c8b68b64d4639a37306d5302a11cd4d7c44005114ec2faa2b28b210c3d` | dashboard |
-| Pokémon Elite Redux (ROM hack) | 2.65 Beta2 | `d86e6ac909e4abdef9159ed20b75a684a9b2ee2fe874f388122e00a5749d2d37` | dashboard |
+| Pokémon Heart & Soul (ROM hack) | 1.2.1 release | `a4be81f8330d7f223a3ab847c3da822fe6f8a2e0` | dashboard |
+| Pokémon Elite Redux (ROM hack) | 2.65 Beta2 | `f1323126bc043f3ce931bcc670957930559eb515` | dashboard |
 
 Elite Redux 2.65 Beta1, other revisions and other pokeemerald-expansion hacks
 are not enabled automatically; each needs a reviewed build manifest. Retail

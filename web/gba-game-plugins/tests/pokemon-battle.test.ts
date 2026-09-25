@@ -121,7 +121,7 @@ describe("Gen III live battle layout (synthetic)", () => {
   });
 });
 
-const hash = "7c4f90c8b68b64d4639a37306d5302a11cd4d7c44005114ec2faa2b28b210c3d";
+const hash = "a4be81f8330d7f223a3ab847c3da822fe6f8a2e0";
 const sample = {
   romHash: hash,
   timeline: "battle-fixture",
@@ -149,7 +149,7 @@ describe.skipIf(!romPath || !battlePath || !inactivePath)(
       ]);
       const sha = (bytes: Uint8Array) =>
         createHash("sha256").update(bytes).digest("hex");
-      expect(sha(rom)).toBe(hash);
+      expect(createHash("sha1").update(rom).digest("hex")).toBe(hash);
       expect(sha(battle)).toBe(
         "5515f43a8119632270b2f64a447917fd826bc7cf16655f3276bbb0f3c4d42e54",
       );

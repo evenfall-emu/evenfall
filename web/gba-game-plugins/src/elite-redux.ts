@@ -92,7 +92,7 @@ export interface EliteReduxBuild extends BuildProfile<typeof symbols265> {
 }
 export const eliteReduxBeta2: EliteReduxBuild = {
   layout: "redux-2.65",
-  romHash: "d86e6ac909e4abdef9159ed20b75a684a9b2ee2fe874f388122e00a5749d2d37",
+  romHash: "f1323126bc043f3ce931bcc670957930559eb515",
   source: {
     repository: "https://github.com/Elite-Redux/eliteredux-source",
     revision: "06da575972cfed20d471f8bb5b90ea9e4736b16a",

@@ -14,9 +14,11 @@ rights.
 
 The Worker uses [Hono](https://hono.dev/), Drizzle's Cloudflare D1 adapter,
 [Better Auth](https://www.better-auth.com/) 1.7.5 and an R2 bucket. One
-Worker serves the whole site: `/api/*` runs through this package first, and
-every other path is served from the player's Static Assets in
-`.dist/cloudflare` (see [`frontend/README.md`](../frontend/README.md)).
+Worker serves the whole site: `/api/*` and the player's page URLs
+(`/library`, `/library/<game ID>`, `/player`) run through this package
+first, the pages answering with the player's `index.html`, and every other
+path is served from the player's Static Assets in `.dist/cloudflare` (see
+[`frontend/README.md`](../frontend/README.md#pages-and-navigation)).
 
 | Path | Contents |
 |---|---|
@@ -29,23 +31,30 @@ every other path is served from the player's Static Assets in
 
 ## Data model
 
-- `games`: stable ID, unique internal name, display name, optional summary and
-  HTTP(S) image URL.
+- `games`: stable ID, unique internal name, display name, optional summary,
+  HTTP(S) image URL and franchise.
+- `game_tags`: a game's tags, unique per game ignoring case, in display order.
 - `versions`: stable ID, owning game, unique per-game internal name, globally
-  unique exact **playable output ROM SHA-256**, display label, optional
-  required base, and optional source repository and revision. A game can have
-  many versions.
-- `bases`: stable ID, unique internal name, display label, and nullable unique
-  exact **playable base ROM SHA-256**.
+  unique exact **playable output ROM SHA-1**, display label, optional
+  required base, and optional source repository and revision, release date
+  (`YYYY-MM-DD`), release notes and hosted patch. A patch is an HTTP(S) URL,
+  a format (`bps`, `ups` or `ips`) and a size in bytes, and needs a required
+  base; the base SHA-1 in and the output SHA-1 out verify it, so it carries
+  no digest of its own. A game can have many versions.
+- `version_save_compatibility`: for a version, the earlier versions of the
+  same game whose in-game saves are verified to load in it.
+- `bases`: stable ID, unique internal name, display label, and the unique
+  **SHA-1** and indexed **CRC32** of one No-Intro dump, as its DAT lists them.
+  BPS and UPS patch footers name their source ROM by CRC32; the SHA-1 decides
+  between dumps that share a CRC32.
 
-Foreign keys relate versions to games and required bases. Lowercase 64-digit
-SHA-256 formatting is checked both at the HTTP boundary and in SQLite.
-
-A base whose exact playable ROM hash has not been established keeps
-`sha256: null` and is reported as `verified: false`. Clients must never match
-an install against a null base hash: guessing a hash, copying a ZIP hash or
-treating a label as proof would create false install matches. The seeded
-`Pokémon Emerald (US)` base is such a case.
+Foreign keys relate versions to games and required bases, tags to games,
+and save compatibility to versions; deleting a game or version removes its
+rows there. Hash formatting
+(40 lowercase hex digits for SHA-1, 8 for CRC32) is checked both at the HTTP
+boundary and in SQLite. Game assets are identified by SHA-1 throughout ZiGBA,
+matching No-Intro, so a catalog hash compares directly with a player's ROM
+hash and with a DAT entry.
 
 ## Catalog API
 
@@ -55,18 +64,24 @@ or repeat.
 
 | Method | Route | Response |
 |---|---|---|
-| `GET` | `/api/games` | `{ games: GameSummary[] }`, including `versionCount` |
-| `GET` | `/api/games/:id` | `{ game }`, including versions and their required bases |
-| `GET` | `/api/versions` | `{ versions }` with required-base metadata |
+| `GET` | `/api/games` | `{ games: GameSummary[] }`, including `versionCount`, `tags` and `cloudPlaythroughs` |
+| `GET` | `/api/games/:id` | `{ game }`, including `tags`, `cloudPlaythroughs`, versions and their required bases |
+| `GET` | `/api/versions` | `{ versions }` with required-base metadata, `patch` and `saveCompatibleFrom` |
 | `GET` | `/api/versions/:id` | `{ version }` |
-| `GET` | `/api/bases` | `{ bases }`, each with derived `verified` |
+| `GET` | `/api/bases` | `{ bases }`, each with its `sha1` and `crc32` |
 | `GET` | `/api/bases/:id` | `{ base }` |
 
 Management is deliberately small: `PUT` and `DELETE` at
 `/api/admin/games/:id`, `/api/admin/versions/:id` and `/api/admin/bases/:id`,
-plus `POST /api/admin/seed`. `PUT` is a validated, full-record upsert. Bodies
-are strict JSON; unknown fields, malformed IDs, non-HTTP(S) URLs, bad hashes
-and broken foreign-key relations are rejected.
+plus `POST /api/admin/seed`. `PUT` is a validated, full-record upsert that
+also replaces a game's `tags` or a version's `saveCompatibleFrom`, atomically.
+Bodies are strict JSON; unknown fields, malformed IDs, non-HTTP(S) URLs, bad
+hashes and dates, a patch without a base, save compatibility with the same
+version or another game's, and broken foreign-key relations are rejected.
+
+`cloudPlaythroughs` counts the cloud-backup playthroughs, across all
+accounts, whose ROM SHA-1 is one of the game's version outputs. It is the
+catalog's measure of popularity and identifies no account.
 
 Every management request requires `Authorization: Bearer <ADMIN_SECRET>`.
 Management fails closed with `503` when the Worker secret is absent. A
@@ -116,7 +131,7 @@ configured origin.
 ### Save objects
 
 `GET`, `HEAD` and `PUT /api/saves/:hash/:playthroughId/:kind` address one
-backup: `hash` is the raw playable ROM SHA-256, `playthroughId` a UUID or the
+backup: `hash` is the raw playable ROM SHA-1, `playthroughId` a UUID or the
 reserved `default`, and `kind` either `resume` (a save state) or `battery` (an
 in-game save). [Quick slots](#quick-slots) use `.../quick/:slot`.
 
@@ -369,10 +384,14 @@ the two steps.
 and the exact releases that have registered profiles in
 [`@evenfall/gba-pokemon`](../games/pokemon/README.md):
 
-| Version | Output ROM SHA-256 | Source revision |
+| Version | Output ROM SHA-1 | Source revision |
 |---|---|---|
-| Heart & Soul 1.2.1 | `7c4f90c8b68b64d4639a37306d5302a11cd4d7c44005114ec2faa2b28b210c3d` | `PokemonHnS-Development/pokemonHnS@4aa8fa894db4c890b3d1100abd6aab50f44c22b1` |
-| Elite Redux 2.65 Beta2 (1048) | `d86e6ac909e4abdef9159ed20b75a684a9b2ee2fe874f388122e00a5749d2d37` | `Elite-Redux/eliteredux-source@06da575972cfed20d471f8bb5b90ea9e4736b16a` |
+| Heart & Soul 1.2.1 | `a4be81f8330d7f223a3ab847c3da822fe6f8a2e0` | `PokemonHnS-Development/pokemonHnS@4aa8fa894db4c890b3d1100abd6aab50f44c22b1` |
+| Elite Redux 2.65 Beta2 (1048) | `f1323126bc043f3ce931bcc670957930559eb515` | `Elite-Redux/eliteredux-source@06da575972cfed20d471f8bb5b90ea9e4736b16a` |
+
+Both require the `pokemon-emerald-us` base, No-Intro "Pokemon - Emerald
+Version (USA, Europe)": SHA-1 `f3ae088181bf583e55daf962a92bb46f4f1d07b7`,
+CRC32 `1f1c08fb`.
 
 These are raw playable ROM identities, not release ZIP or patch hashes. No
 distributable catalog images exist for them, so both `imageUrl` values are

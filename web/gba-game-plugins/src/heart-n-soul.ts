@@ -211,8 +211,7 @@ export const heartNSoul = definePreparedGame(({ rom, romHash }) => ({
   id: "pokemon/heart-n-soul",
   profiles: [
     {
-      romHash:
-        "7c4f90c8b68b64d4639a37306d5302a11cd4d7c44005114ec2faa2b28b210c3d",
+      romHash: "a4be81f8330d7f223a3ab847c3da822fe6f8a2e0",
       source: {
         repository: "https://github.com/PokemonHnS-Development/pokemonHnS",
         revision: "4aa8fa894db4c890b3d1100abd6aab50f44c22b1",

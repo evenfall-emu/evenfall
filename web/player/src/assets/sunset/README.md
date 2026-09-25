@@ -1,6 +1,6 @@
 # Sunset scene assets
 
-The About page's animated sunset is built from two images and a pixel font.
+The About page's animated sunset is built from two images.
 The images are original artwork made for ZiGBA with an image-generation tool
 and finished by hand on the pixel grid; they contain no ROM data or game
 sprites.
@@ -9,7 +9,6 @@ sprites.
 |---|---|
 | `coast.png` | 1672 × 941 background: sea, cliffs, a lighthouse and a distant castle |
 | `travelers.png` | 192 × 96 transparent atlas at the renderer's native pixel scale |
-| `PixelifySans-Regular.ttf`, `PixelifySans-Bold.ttf` | Pixelify Sans 400 and 700 from Google Fonts, under the SIL Open Font License ([`OFL.txt`](OFL.txt)) |
 
 The atlas holds three sprites, each drawn 1:1 on the 836 × 471 canvas, with
 binary alpha and no baked-in scenery or glow:
@@ -20,9 +19,9 @@ binary alpha and no baked-in scenery or glow:
 | golden star | `(120, 0, 18, 18)` |
 | airship, facing right along its flight path | `(120, 24, 52, 38)` |
 
-Pixelify Sans sets the "ZiGBA" header wordmark and the Library title initials.
-The hero text, supporting text, controls and player use VT323. In text ZiGBA
-is described as "ZiGBA — GBA emulator", never with a platform holder's brand.
+The hero text, supporting text, controls and player use VT323. The header's
+banner is a crop of `coast.png`. In text ZiGBA is described as
+"ZiGBA — GBA emulator", never with a platform holder's brand.
 
 ## Rendering
 

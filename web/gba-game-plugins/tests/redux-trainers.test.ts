@@ -118,7 +118,7 @@ describe.skipIf(!path)(
     let search: ReturnType<typeof createReduxTrainerSearch>;
     beforeAll(async () => {
       const bytes = new Uint8Array(await readFile(path!));
-      expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+      expect(createHash("sha1").update(bytes).digest("hex")).toBe(
         eliteReduxBeta2.romHash,
       );
       const rom = createMemoryReader([{ address: 0x08000000, bytes }]);

@@ -17,7 +17,7 @@ const sha = (bytes: Uint8Array) =>
 async function ready(page: Page) {
   await page.goto("/");
   await page.getByRole("button", { name: "Enter player" }).click();
-  await expect(page.getByRole("button", { name: "Add game" })).toBeEnabled();
+  await expect(page.getByLabel("Open ROM", { exact: true })).toBeEnabled();
 }
 async function importState(page: Page, path: string) {
   await page.getByRole("button", { name: "More options" }).click();
@@ -72,7 +72,7 @@ test("sound volume opens on hover or focus and persists independently of mute", 
     page.getByRole("button", { name: "Unmute sound" }),
   ).toHaveAttribute("aria-pressed", "true");
   await expect(slider).toHaveValue("1");
-  await page.reload();
+  await page.goto("/");
   await page.getByRole("button", { name: "Enter player" }).click();
   await page.getByRole("button", { name: "Mute sound" }).hover();
   await expect(slider).toHaveValue("1");
@@ -241,12 +241,14 @@ test("console autoplays, routes keys outside the canvas, and keeps help and typi
   await canvas.focus();
   await page.mouse.move(0, 0);
   await expect(page.locator(".screen-overlay")).toHaveCount(0);
-  await page.getByRole("button", { name: "ZiGBA home" }).focus();
+  await page.getByRole("button", { name: "evenfall home" }).focus();
   await page.keyboard.down("Tab");
   await expect(page.getByRole("button", { name: "Playback speed" })).toHaveText(
     "16×",
   );
-  await expect(page.getByRole("button", { name: "ZiGBA home" })).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "evenfall home" }),
+  ).toBeFocused();
   await page.keyboard.up("Tab");
   await expect(page.getByRole("button", { name: "Playback speed" })).toHaveText(
     "1×",
@@ -710,7 +712,7 @@ test("Home cancels an in-flight rewind without restoring or restarting play", as
   await page.waitForFunction(
     () => (window as unknown as { rewindPaused: boolean }).rewindPaused,
   );
-  await page.getByRole("button", { name: "ZiGBA home" }).click();
+  await page.getByRole("button", { name: "evenfall home" }).click();
   await expect(page.locator(".about-page")).toBeVisible();
   const paused = await snapshotHash(page);
   await page.evaluate(() =>
@@ -738,7 +740,9 @@ test("new console controls and persistent quick slots work", async ({
     page.getByRole("heading", { name: "Loop", exact: true }),
   ).toBeVisible();
   await expect(page.locator('[data-game-layout="generic"]')).toBeVisible();
-  await expect(page.getByRole("button", { name: "ZiGBA home" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "evenfall home" }),
+  ).toBeVisible();
   await expect(page.locator(".console-credit")).toHaveCount(0);
   await expect(page.getByText(/Made by/)).toHaveCount(0);
   await screenFillsColumn(page);
@@ -755,10 +759,14 @@ test("new console controls and persistent quick slots work", async ({
   await page.keyboard.press("Control+Digit2");
   await expect(page.locator(".console-notice")).toContainText("Loaded slot 2");
   expect(await snapshotHash(page)).toBe(saved);
-  await page.keyboard.press("Control+Digit4");
-  await expect(page.locator(".console-notice")).toContainText(
-    "Quick slot 4 is empty",
-  );
+  // The load's checkpoint may still be committing, which ignores the key.
+  await expect(async () => {
+    await page.keyboard.press("Control+Digit4");
+    await expect(page.locator(".console-notice")).toContainText(
+      "Quick slot 4 is empty",
+      { timeout: 1000 },
+    );
+  }).toPass();
   expect(await snapshotHash(page)).toBe(saved);
   // Digit0 addresses slot 10.
   await page.keyboard.press("Shift+Digit0");
@@ -789,17 +797,14 @@ test("new console controls and persistent quick slots work", async ({
   await canvas.focus();
   await page.keyboard.press("Space");
   await page.keyboard.press("Space");
-  await page.reload();
+  await page.goto("/");
   await expect(
     page.getByRole("button", { name: "Resume adventure" }),
   ).toBeEnabled();
   await page.getByRole("button", { name: "Resume adventure" }).click();
-  await expect(page.getByRole("button", { name: "Add game" })).toBeEnabled();
+  await expect(page.getByLabel("Open ROM", { exact: true })).toBeEnabled();
   await page.getByRole("button", { name: "Library", exact: true }).click();
-  await page
-    .getByRole("region", { name: "Game details" })
-    .getByRole("button", { name: "Continue Loop", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Player", exact: true }).click();
   await expect(page.getByRole("main", { name: "Library" })).toHaveCount(0);
   await canvas.focus();
   await page.keyboard.press("Space");
@@ -807,9 +812,7 @@ test("new console controls and persistent quick slots work", async ({
   await expect(page.locator(".console-notice")).toContainText("Loaded slot 2");
   expect(await snapshotHash(page)).toBe(saved);
   await page.getByRole("button", { name: "Library", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "Library", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("main", { name: "Library" })).toBeVisible();
   await page.keyboard.press("Shift+Digit4");
   await expect(page.locator(".console-notice")).not.toContainText(
     "Saved slot 4",

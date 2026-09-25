@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { player, playerReady } from "./player";
-import "./account.css";
 
 // Optional instance privacy notice supplied by the deployment build.
 const privacyUrl = import.meta.env.VITE_PRIVACY_URL;

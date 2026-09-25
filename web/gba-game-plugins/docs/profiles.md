@@ -10,7 +10,7 @@ in [`docs/game-bridges.md`](../../../docs/game-bridges.md).
 
 ## Evidence rules
 
-- A profile applies to one exact build, identified by the SHA-256 of the raw
+- A profile applies to one exact build, identified by the SHA-1 of the raw
   ROM. Titles, header codes and nearby revisions never match.
 - Addresses come from the identity-checked release binary: disassembly of
   the routine that uses a global, literal pools, ROM header pointers, and
@@ -130,7 +130,7 @@ The profile covers the **1.2.1 release ROM**, not arbitrary builds of the
 | Property | Value |
 |---|---|
 | Raw ROM size | 33,554,432 bytes |
-| Raw ROM SHA-256 | `7c4f90c8b68b64d4639a37306d5302a11cd4d7c44005114ec2faa2b28b210c3d` |
+| Raw ROM SHA-1 | `a4be81f8330d7f223a3ab847c3da822fe6f8a2e0` |
 | Raw ROM CRC32 | `96a8425b`, matching the official UPS patch's output checksum |
 | UPS patch SHA-256 | `c8e70f448b481d2980266ca8f021aa8b3c462f4e582cf80228ced4636c6154eb` |
 
@@ -179,7 +179,7 @@ Occurrence counts of a literal alone are not evidence of a root. To
 reproduce with a user-supplied, hash-checked raw ROM:
 
 ```sh
-sha256sum "$ROM"
+sha1sum "$ROM"
 arm-none-eabi-objdump -D -b binary -m arm -M force-thumb \
   --adjust-vma=0x08000000 --start-address=0x080b983c --stop-address=0x080b9888 "$ROM"
 arm-none-eabi-objdump -D -b binary -m arm -M force-thumb \
@@ -285,7 +285,7 @@ HP and level, and stage range.
 | Release | v2.65 Beta2, game version 1048 |
 | Release ZIP SHA-256 | `8c8ac8c6587abc85d1f7472df3adcf847f4d5eef99797a79ab6a14b614a7a432` |
 | Raw ROM size | 33,554,432 bytes |
-| Raw ROM SHA-256 | `d86e6ac909e4abdef9159ed20b75a684a9b2ee2fe874f388122e00a5749d2d37` |
+| Raw ROM SHA-1 | `f1323126bc043f3ce931bcc670957930559eb515` |
 
 ### Layout family and build manifests
 
@@ -473,15 +473,15 @@ therefore cannot be enabled from their title or header alone.
 ## Test fixtures
 
 Tests that need real games skip unless these variables point at
-user-supplied files, and they check the SHA-256 before use. None of these
-files is committed.
+user-supplied files, and they check each file's hash before use: SHA-1 for
+ROMs, SHA-256 for states. None of these files is committed.
 
-| Variable | File | SHA-256 | Decodes to |
+| Variable | File | Hash | Decodes to |
 |---|---|---|---|
-| `ZIGBA_HNS_ROM` | Heart & Soul 1.2.1 raw ROM | `7c4f90c8b68b64d4639a37306d5302a11cd4d7c44005114ec2faa2b28b210c3d` | |
+| `ZIGBA_HNS_ROM` | Heart & Soul 1.2.1 raw ROM | `a4be81f8330d7f223a3ab847c3da822fe6f8a2e0` | |
 | `ZIGBA_HNS_STATE` | `game2.state` | `71817992f9053560808493c79c3e65b5acba2b4499375cc52d76806b2107fb5f` | Overworld, no battle, 15 named empty PC boxes. Party: TOTODILE (species 158) Lv10 HP 29/33, MODEST, TORRENT, SCRATCH 32/35, LEER 30/30, WATER GUN 25/25; PIDGEY (16) Lv3 HP 16/16 with TACKLE and KEEN EYE; HOPPIP (187) Lv2 HP 14/14 with SPLASH and CHLOROPHYLL |
 | `ZIGBA_HNS_BATTLE` | `battle.state` | `5515f43a8119632270b2f64a447917fd826bc7cf16655f3276bbb0f3c4d42e54` | Single wild battle on Route 29: TOTODILE Lv10 HP 26/33 against HOPPIP Lv3 HP 16/16, neutral stages, stats 33/18/20/16/17/17 and 16/8/8/7/8/9; SCRATCH 30/35, LEER 30/30, WATER GUN 25/25 and SPLASH 40/40 |
-| `ZIGBA_REDUX_ROM` | Elite Redux 2.65 Beta2 raw ROM | `d86e6ac909e4abdef9159ed20b75a684a9b2ee2fe874f388122e00a5749d2d37` | |
+| `ZIGBA_REDUX_ROM` | Elite Redux 2.65 Beta2 raw ROM | `f1323126bc043f3ce931bcc670957930559eb515` | |
 | `ZIGBA_REDUX_STATE` | `redux.state` | `bf403592558c7a6cdc0deb493f8ab26f8796dfec829f0a2031fcbbc44af66d23` | Trainer battle on Easy with randomizers off: Frigibax Lv20 62/62 against Mudkip Lv20 58/58; rosters Frigibax/Klink/Aron/Goomy and Mudkip/Goomy; Frigibax has Mountaineer, Thermal Exchange, Heatproof and Freezing Point from live battle slots |
 | `ZIGBA_REDUX_STAGE_STATE` | `redux-stage-buff.state` | `d092f7bd0f323b1720321f16b72291753748c03fba63454fe8d19455ec7b472d` | Mudkip at Attack/Defense +1/+1: raw 41/31, totals 61/46; max HP 58 and Speed 29 unchanged |
 

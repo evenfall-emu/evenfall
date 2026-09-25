@@ -14,6 +14,12 @@ async function ready(page: Page) {
   ).toBeVisible();
 }
 
+// The shared header; Home, the landing page, has none.
+const header = (page: Page) =>
+  page.locator("header").filter({
+    has: page.getByRole("button", { name: "evenfall home" }),
+  });
+
 const frames = (page: Page) =>
   page.evaluate(async () =>
     Number(
@@ -29,7 +35,7 @@ test("Home is the default and preserves a playing session across navigation", as
   await ready(page);
 
   await expect(page.locator(".about-page")).toBeVisible();
-  await expect(page.locator(".app-header")).toHaveCount(0);
+  await expect(header(page)).toHaveCount(0);
   await expect(page.locator(".player-tools")).toBeHidden();
   await expect(
     page.getByRole("navigation", { name: "Main navigation" }),
@@ -49,22 +55,19 @@ test("Home is the default and preserves a playing session across navigation", as
   });
 
   await page.getByRole("button", { name: "Enter player" }).click();
-  await expect(page.locator(".app-header")).toHaveCount(1);
-  await expect(page.locator(".app-wordmark")).toHaveText("ZIGBA");
+  await expect(header(page)).toHaveCount(1);
   await expect(page.locator(".player-tools")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Player", exact: true }),
   ).toHaveAttribute("aria-current", "page");
-  await expect(
-    page.locator(".app-header").getByRole("button", { name: "Add game" }),
-  ).toBeEnabled();
+  await expect(page.getByLabel("Open ROM", { exact: true })).toBeEnabled();
   await page.getByLabel("Open ROM", { exact: true }).setInputFiles(loop);
   const canvas = page.getByLabel(/^Game screen/);
   await expect(canvas).toBeVisible();
   const started = await frames(page);
   await expect.poll(() => frames(page)).toBeGreaterThan(started);
 
-  await page.getByRole("button", { name: "ZiGBA home" }).click();
+  await page.getByRole("button", { name: "evenfall home" }).click();
   await expect(page.locator(".about-page")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Resume adventure" }),
@@ -74,7 +77,7 @@ test("Home is the default and preserves a playing session across navigation", as
   await page.waitForTimeout(150);
   expect(await frames(page)).toBe(paused);
 
-  await expect(page.locator(".app-header")).toHaveCount(0);
+  await expect(header(page)).toHaveCount(0);
   await expect(page.locator(".player-tools")).toBeHidden();
   await page.getByRole("button", { name: "Resume adventure" }).click();
   await expect(canvas).toBeVisible();
@@ -85,7 +88,7 @@ test("Home navigation remains usable on mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await ready(page);
 
-  await expect(page.locator(".app-header")).toHaveCount(0);
+  await expect(header(page)).toHaveCount(0);
   await expect(page.locator(".player-tools")).toBeHidden();
   expect(
     await page.evaluate(
@@ -102,14 +105,14 @@ test("Home navigation remains usable on mobile", async ({ page }) => {
   await expect(page.getByLabel(/^Game screen/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Library" })).toBeVisible();
   await page.getByRole("button", { name: "Library", exact: true }).click();
-  await expect(page.locator(".app-header")).toHaveCount(1);
+  await expect(header(page)).toHaveCount(1);
   await expect(
     page.getByRole("button", { name: "Library", exact: true }),
   ).toHaveAttribute("aria-current", "page");
   await expect(page.locator(".player-tools")).toBeHidden();
-  await page.getByRole("button", { name: "ZiGBA home" }).click();
+  await page.getByRole("button", { name: "evenfall home" }).click();
   await expect(page.locator(".about-page")).toBeVisible();
-  await expect(page.locator(".app-header")).toHaveCount(0);
+  await expect(header(page)).toHaveCount(0);
   await expect(page.locator(".player-tools")).toBeHidden();
 });
 
@@ -120,13 +123,13 @@ test("shared navigation fits mobile when pixel fonts cannot load", async ({
   await page.route("**/*.ttf", (route) => route.abort());
   await ready(page);
   await page.getByRole("button", { name: "Enter player" }).click();
-  await expect(page.locator(".app-header")).toBeVisible();
+  await expect(header(page)).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     360,
   );
-  for (const button of await page.locator(".app-header button").all()) {
+  for (const button of await header(page).getByRole("button").all()) {
     const bounds = await button.boundingBox();
     expect(bounds!.x).toBeGreaterThanOrEqual(0);
     expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(360);

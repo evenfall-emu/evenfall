@@ -8,8 +8,7 @@ import {
   HeartNSoulDashboard,
 } from "../ui/pokemon-dashboard";
 
-const hnsHash =
-  "7c4f90c8b68b64d4639a37306d5302a11cd4d7c44005114ec2faa2b28b210c3d";
+const hnsHash = "a4be81f8330d7f223a3ab847c3da822fe6f8a2e0";
 
 describe("player plugin", () => {
   it("registers exact builds only", () => {

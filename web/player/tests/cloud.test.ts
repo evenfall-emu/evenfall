@@ -8,7 +8,7 @@ let library: Library;
 let cloud: CloudSync;
 let status: CloudStatus;
 const listing = (hash: string, uploadedAt: string, capturedAt = 1) => ({
-  hash: hash.repeat(64),
+  hash: hash.repeat(40),
   playthroughId: "default",
   playthroughName: "First adventure",
   title: `Game ${hash}`,
@@ -134,7 +134,7 @@ it("discards an old account's delayed listing after switching accounts", async (
   release(old);
   await vi.waitFor(() => expect(old.bodyUsed).toBe(true));
   await new Promise((resolve) => setTimeout(resolve, 30));
-  expect(status.latest?.hash).toBe("b".repeat(64));
+  expect(status.latest?.hash).toBe("b".repeat(40));
   expect(fetcher).toHaveBeenCalledTimes(2);
   await cloud.setIdentity(null);
   expect(status.latest).toBeUndefined();
@@ -151,7 +151,7 @@ it("rejects a selected account's download before fetching bytes if the session c
   await vi.waitFor(() => expect(status.discovering).toBe(false));
   await expect(
     cloud.download(
-      { hash: "a".repeat(64), playthroughId: "default" },
+      { hash: "a".repeat(40), playthroughId: "default" },
       "resume",
       "alice",
     ),
@@ -176,7 +176,7 @@ it("downloads the selected playthrough rather than another run of the same game"
     (byte) => byte.toString(16).padStart(2, "0"),
   ).join("");
   const target = {
-    hash: "d".repeat(64),
+    hash: "d".repeat(40),
     playthroughId: "15b285c2-f844-451f-85e6-c5bbcc98dd09",
   };
   vi.stubGlobal("fetch", async (url: string) => {
@@ -241,7 +241,7 @@ it("keeps uploads off and offers retry when deletion loses its connection", asyn
 });
 
 it("forgets only cloud metadata after a confirmed account deletion, preserving the local run", async () => {
-  const ref = { hash: "f".repeat(64), playthroughId: "default" };
+  const ref = { hash: "f".repeat(40), playthroughId: "default" };
   let confirmed = false;
   vi.stubGlobal("navigator", {
     locks: {
@@ -283,7 +283,7 @@ it("forgets only cloud metadata after a confirmed account deletion, preserving t
 });
 
 it("uploads only the selected run with bounded private labels, without sending ROM bytes", async () => {
-  const hash = "c".repeat(64);
+  const hash = "c".repeat(40);
   const ref = { hash, playthroughId: "15b285c2-f844-451f-85e6-c5bbcc98dd09" };
   vi.stubGlobal("navigator", {
     onLine: true,
@@ -352,7 +352,7 @@ it("uploads only the selected run with bounded private labels, without sending R
 });
 
 it("keeps an over-quota run local while continuing backups of existing playthroughs", async () => {
-  const hash = "e".repeat(64);
+  const hash = "e".repeat(40);
   const existing = { hash, playthroughId: "default" };
   const extra = { hash, playthroughId: "15b285c2-f844-451f-85e6-c5bbcc98dd09" };
   vi.stubGlobal("navigator", {

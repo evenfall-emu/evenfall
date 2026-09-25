@@ -19,7 +19,9 @@ const BATTERY_SIZES = new Set([
   64 * 1024,
   128 * 1024,
 ]);
-const HASH = /^[0-9a-f]{64}$/;
+// Saves are keyed by the SHA-1 of the raw ROM; uploads carry a SHA-256 digest.
+const HASH = /^[0-9a-f]{40}$/;
+const DIGEST = /^[0-9a-f]{64}$/;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -84,9 +86,9 @@ export function registerCloudSaveRoutes(app: Hono<Env>): void {
       ? (
           await c.env
             .DB!.prepare(
-              `SELECT v.output_sha256 AS hash, g.display_name || ' · ' || v.display_name AS title
+              `SELECT v.output_sha1 AS hash, g.display_name || ' · ' || v.display_name AS title
            FROM versions v JOIN games g ON g.id = v.game_id
-           WHERE v.output_sha256 IN (${saves.map(() => "?").join(",")})`,
+           WHERE v.output_sha1 IN (${saves.map(() => "?").join(",")})`,
             )
             .bind(...saves.map((save) => save.hash))
             .all<{ hash: string; title: string }>()
@@ -350,7 +352,7 @@ async function putSave(
     !/^(0|[1-9][0-9]*)$/.test(capturedAt) ||
     !Number.isSafeInteger(Number(capturedAt)) ||
     !expectedDigest ||
-    !HASH.test(expectedDigest)
+    !DIGEST.test(expectedDigest)
   )
     return failure(
       c,

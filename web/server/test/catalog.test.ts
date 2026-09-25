@@ -114,7 +114,7 @@ describe("catalog API", () => {
     );
   });
 
-  it("returns exact release identity and an explicitly unverified base", async () => {
+  it("returns exact release identity and its No-Intro base", async () => {
     const response = await request("/api/games/heart-n-soul");
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
@@ -123,12 +123,11 @@ describe("catalog API", () => {
         imageUrl: null,
         versions: [
           {
-            outputSha256:
-              "7c4f90c8b68b64d4639a37306d5302a11cd4d7c44005114ec2faa2b28b210c3d",
+            outputSha1: "a4be81f8330d7f223a3ab847c3da822fe6f8a2e0",
             requiredBase: {
               id: "pokemon-emerald-us",
-              sha256: null,
-              verified: false,
+              sha1: "f3ae088181bf583e55daf962a92bb46f4f1d07b7",
+              crc32: "1f1c08fb",
             },
           },
         ],
@@ -198,10 +197,14 @@ describe("catalog API", () => {
         gameId: "heart-n-soul",
         internalName: "test-second-version",
         displayName: "Test second version",
-        outputSha256: "a".repeat(64),
+        outputSha1: "a".repeat(40),
         requiredBaseId: "pokemon-emerald-us",
         sourceRepositoryUrl: null,
         sourceRevision: null,
+        releasedAt: null,
+        releaseNotes: null,
+        patch: null,
+        saveCompatibleFrom: [],
       }),
     });
     expect(response.status).toBe(200);
@@ -223,10 +226,14 @@ describe("catalog API", () => {
         gameId: "heart-n-soul",
         internalName: "invalid",
         displayName: "Invalid",
-        outputSha256: "not-a-hash",
+        outputSha1: "not-a-hash",
         requiredBaseId: null,
         sourceRepositoryUrl: null,
         sourceRevision: null,
+        releasedAt: null,
+        releaseNotes: null,
+        patch: null,
+        saveCompatibleFrom: [],
       }),
     });
     expect(invalidHash.status).toBe(400);
@@ -238,12 +245,199 @@ describe("catalog API", () => {
         gameId: "does-not-exist",
         internalName: "orphan",
         displayName: "Orphan",
-        outputSha256: "b".repeat(64),
+        outputSha1: "b".repeat(40),
         requiredBaseId: null,
         sourceRepositoryUrl: null,
         sourceRevision: null,
+        releasedAt: null,
+        releaseNotes: null,
+        patch: null,
+        saveCompatibleFrom: [],
       }),
     });
     expect(missingGame.status).toBe(409);
+  });
+
+  it("returns franchise, tags and cloud playthroughs with each game", async () => {
+    const redux = seedVersions.find(
+      (version) => version.gameId === "elite-redux",
+    )!;
+    for (const [userId, hash] of [
+      ["alice", redux.outputSha1],
+      ["bob", redux.outputSha1],
+      ["bob", "c".repeat(40)],
+    ])
+      await database
+        .prepare(
+          "insert into playthrough (user_id, hash, id, name) values (?, ?, 'default', 'Run')",
+        )
+        .bind(userId, hash)
+        .run();
+
+    const listed = (await (await request("/api/games")).json()) as {
+      games: Array<{
+        id: string;
+        franchise: string | null;
+        tags: string[];
+        cloudPlaythroughs: number;
+      }>;
+    };
+    expect(
+      Object.fromEntries(
+        listed.games.map(({ id, franchise, tags, cloudPlaythroughs }) => [
+          id,
+          { franchise, tags, cloudPlaythroughs },
+        ]),
+      ),
+    ).toEqual({
+      "elite-redux": {
+        franchise: "Pokémon",
+        tags: ["Pokémon", "Difficulty Hack"],
+        cloudPlaythroughs: 2,
+      },
+      "heart-n-soul": {
+        franchise: "Pokémon",
+        tags: ["Pokémon", "Remake"],
+        cloudPlaythroughs: 0,
+      },
+    });
+    expect(
+      await (await request("/api/games/elite-redux")).json(),
+    ).toMatchObject({ game: { cloudPlaythroughs: 2 } });
+  });
+
+  it("keeps tags in order, replaces them on write and rejects duplicates", async () => {
+    const game = seedGames.find((item) => item.id === "heart-n-soul")!;
+    const { id, ...input } = game;
+    const write = (tags: string[]) =>
+      request(`/api/admin/games/${id}`, {
+        method: "PUT",
+        headers: adminHeaders(),
+        body: JSON.stringify({ ...input, tags }),
+      });
+
+    const reordered = await write(["Remake", "Johto", "Pokémon"]);
+    expect(reordered.status).toBe(200);
+    expect(await reordered.json()).toMatchObject({
+      game: { tags: ["Remake", "Johto", "Pokémon"] },
+    });
+    expect((await write(["Remake", "remake"])).status).toBe(400);
+    expect((await write([])).status).toBe(200);
+    expect(await (await request(`/api/games/${id}`)).json()).toMatchObject({
+      game: { tags: [] },
+    });
+    expect((await write(input.tags)).status).toBe(200);
+  });
+
+  it("returns release dates, notes, hosted patches and save compatibility", async () => {
+    const previous = seedVersions.find(
+      (version) => version.gameId === "elite-redux",
+    )!;
+    const next = {
+      gameId: "elite-redux",
+      internalName: "v2.7",
+      displayName: "2.7",
+      outputSha1: "d".repeat(40),
+      requiredBaseId: "pokemon-emerald-us",
+      sourceRepositoryUrl: null,
+      sourceRevision: null,
+      releasedAt: "2026-09-20",
+      releaseNotes: "Rebalanced late-game trainers.",
+      patch: {
+        url: "https://patches.example/elite-redux-2.7.bps",
+        format: "bps",
+        size: 4_194_304,
+      },
+      saveCompatibleFrom: [previous.id],
+    };
+    const write = await request("/api/admin/versions/elite-redux-2.7", {
+      method: "PUT",
+      headers: adminHeaders(),
+      body: JSON.stringify(next),
+    });
+    expect(write.status).toBe(200);
+
+    const read = (await (
+      await request("/api/versions/elite-redux-2.7")
+    ).json()) as { version: Record<string, unknown> };
+    expect(read.version).toMatchObject({
+      releasedAt: "2026-09-20",
+      releaseNotes: "Rebalanced late-game trainers.",
+      patch: next.patch,
+      saveCompatibleFrom: [previous.id],
+    });
+    for (const column of ["patchUrl", "patchFormat", "patchSize"])
+      expect(read.version).not.toHaveProperty(column);
+    expect(
+      await (await request("/api/games/elite-redux")).json(),
+    ).toMatchObject({
+      game: {
+        versions: expect.arrayContaining([
+          expect.objectContaining({
+            id: "elite-redux-2.7",
+            saveCompatibleFrom: [previous.id],
+          }),
+          expect.objectContaining({
+            id: previous.id,
+            patch: null,
+            saveCompatibleFrom: [],
+          }),
+        ]),
+      },
+    });
+
+    // Removing the previous version removes it from the list that names it.
+    const cleared = await request(`/api/admin/versions/elite-redux-2.7`, {
+      method: "PUT",
+      headers: adminHeaders(),
+      body: JSON.stringify({ ...next, saveCompatibleFrom: [] }),
+    });
+    expect(await cleared.json()).toMatchObject({
+      version: { saveCompatibleFrom: [] },
+    });
+  });
+
+  it("enforces patch, date and save-compatibility rules", async () => {
+    const valid = {
+      gameId: "elite-redux",
+      internalName: "rules",
+      displayName: "Rules",
+      outputSha1: "e".repeat(40),
+      requiredBaseId: "pokemon-emerald-us",
+      sourceRepositoryUrl: null,
+      sourceRevision: null,
+      releasedAt: null,
+      releaseNotes: null,
+      patch: null,
+      saveCompatibleFrom: [],
+    };
+    const write = (changes: Record<string, unknown>) =>
+      request("/api/admin/versions/elite-redux-rules", {
+        method: "PUT",
+        headers: adminHeaders(),
+        body: JSON.stringify({ ...valid, ...changes }),
+      });
+    const patch = {
+      url: "https://patches.example/rules.bps",
+      format: "bps",
+      size: 1,
+    };
+
+    expect((await write({ requiredBaseId: null, patch })).status).toBe(400);
+    expect(
+      (await write({ patch: { ...patch, format: "xdelta" } })).status,
+    ).toBe(400);
+    expect((await write({ patch: { ...patch, size: 0 } })).status).toBe(400);
+    expect((await write({ releasedAt: "2026-9-20" })).status).toBe(400);
+    expect(
+      (await write({ saveCompatibleFrom: ["elite-redux-rules"] })).status,
+    ).toBe(400);
+    expect(
+      (await write({ saveCompatibleFrom: ["heart-n-soul-1.2.1"] })).status,
+    ).toBe(400);
+    expect(
+      (await write({ saveCompatibleFrom: ["elite-redux-missing"] })).status,
+    ).toBe(409);
+    expect((await write({ patch })).status).toBe(200);
   });
 });

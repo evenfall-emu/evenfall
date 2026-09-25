@@ -537,9 +537,8 @@ describe("account authentication", () => {
 });
 
 describe("private cloud resume discovery", () => {
-  const knownHash =
-    "7c4f90c8b68b64d4639a37306d5302a11cd4d7c44005114ec2faa2b28b210c3d";
-  const otherHash = "f".repeat(64);
+  const knownHash = "a4be81f8330d7f223a3ab847c3da822fe6f8a2e0";
+  const otherHash = "f".repeat(40);
   let owner: { Cookie: string; "X-Zigba-Account": string };
   let other: typeof owner;
 
@@ -572,7 +571,7 @@ describe("private cloud resume discovery", () => {
     await Promise.all(
       Array.from({ length: 101 }, (_, index) =>
         saves.put(
-          `${owner["X-Zigba-Account"]}/${index.toString(16).padStart(64, "0")}/resume`,
+          `${owner["X-Zigba-Account"]}/${index.toString(16).padStart(40, "0")}/resume`,
           "private checkpoint bytes",
           metadata,
         ),
@@ -581,6 +580,12 @@ describe("private cloud resume discovery", () => {
     await saves.put(
       `${owner["X-Zigba-Account"]}/${knownHash}/resume`,
       "known checkpoint",
+      metadata,
+    );
+    // Keyed by a ROM SHA-256, before games were identified by SHA-1: unlisted.
+    await saves.put(
+      `${owner["X-Zigba-Account"]}/${"e".repeat(64)}/resume`,
+      "SHA-256-keyed checkpoint",
       metadata,
     );
     await saves.put(
@@ -669,7 +674,7 @@ describe("private cloud resume discovery", () => {
   });
 
   it("retains private titles for unknown ROMs, validates them, and accepts older upload clients", async () => {
-    const hash = "c".repeat(64);
+    const hash = "c".repeat(40);
     const body = gzipSync(Buffer.from("ZIGBAST1test"));
     const digest = createHash("sha256").update(body).digest("hex");
     const title = "My Pokémon adventure 🌙";
@@ -724,7 +729,7 @@ describe("private cloud resume discovery", () => {
 });
 
 describe("playthrough quota and account erasure", () => {
-  const hash = "a".repeat(64);
+  const hash = "a".repeat(40);
   const body = gzipSync(Buffer.from("ZIGBAST1checkpoint"));
   const digest = createHash("sha256").update(body).digest("hex");
   let owner: { Cookie: string; "X-Zigba-Account": string };
@@ -820,7 +825,7 @@ describe("playthrough quota and account erasure", () => {
     expect(rejected.body).toMatchObject({
       error: { code: "playthrough_limit" },
     });
-    const anotherHash = "b".repeat(64);
+    const anotherHash = "b".repeat(40);
     const otherGame = await miniflare.dispatchFetch(
       `${origin}/api/saves/${anotherHash}/${crypto.randomUUID()}/resume`,
       {
@@ -1256,7 +1261,7 @@ describe("playthrough quota and account erasure", () => {
 });
 
 describe("cloud quick slots", () => {
-  const hash = "d".repeat(64);
+  const hash = "d".repeat(40);
   const state = (marker: number) =>
     gzipSync(Buffer.from([...Buffer.from("ZIGBAST1"), marker]));
   let owner: { Cookie: string; "X-Zigba-Account": string };

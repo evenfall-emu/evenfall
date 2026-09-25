@@ -1,11 +1,22 @@
 import {
   useEffect,
+  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { createRoot } from "react-dom/client";
+import {
+  createRootRoute,
+  createRoute,
+  createRouter,
+  redirect,
+  RouterProvider,
+  useNavigate,
+  useRouterState,
+} from "@tanstack/react-router";
 import { Button } from "@base-ui/react/button";
 import { Dialog } from "@base-ui/react/dialog";
 import { Popover } from "@base-ui/react/popover";
@@ -18,7 +29,8 @@ import {
   PlaythroughDialog,
 } from "./playthrough-dialog";
 import { AboutPage } from "./about";
-import { LibraryPage } from "./library-page";
+import { LibraryPage } from "./pages/library/library-page";
+import { previewCatalog, previewDevice } from "./pages/library/fixtures";
 import { AppHeader, type AppView } from "./app-header";
 import { Account } from "./account";
 import type { CloudResume } from "./cloud";
@@ -27,7 +39,8 @@ import { QuickConflictChoices } from "./quick-conflicts";
 import { gameRegistry } from "./games";
 import { download } from "./media";
 import { trackView } from "./analytics";
-import "./console.css";
+import { cx } from "./ui/styles";
+import "./styles.css";
 
 const act = (action: () => Promise<unknown>) =>
   void action().catch(player.error);
@@ -127,9 +140,24 @@ function Modal({
 function App() {
   const state = useSyncExternalStore(player.subscribe, player.snapshot);
   const [menu, setMenu] = useState<"speed" | "more" | null>(null);
-  const [view, setView] = useState<AppView>("home");
+  // The URL is the page, so a refresh or a shared link lands on it again.
+  const navigate = useNavigate();
+  const page = useRouterState({
+    select: (state) => state.matches[state.matches.length - 1],
+  });
+  const view: AppView =
+    page.routeId === "/player"
+      ? "player"
+      : page.routeId === "/library" || page.routeId === "/library/$gameId"
+        ? "library"
+        : "home";
+  const libraryGameId =
+    page.routeId === "/library/$gameId" ? page.params.gameId : undefined;
   const home = view === "home";
   const library = view === "library";
+  // The Library shows static catalog and device data until it is wired to the
+  // catalog API and this device's storage.
+  const libraryDevice = useMemo(() => previewDevice(), []);
   const navigationResume = useRef(false);
   const navigationWork = useRef(Promise.resolve());
   const navigation = useRef(view);
@@ -296,12 +324,9 @@ function App() {
     if (accountResume.current && !player.state.changing)
       act(() => player.play());
   }
-  function showView(destination: typeof view) {
-    navigation.current = destination;
-    setView(destination);
-  }
-  function browse(destination: "home" | "library") {
-    if (player.state.changing) return;
+  /** Leaving Player pauses it; returning resumes a session that was playing. */
+  function transition(destination: AppView) {
+    if (navigation.current === destination) return;
     if (navigation.current === "player") {
       navigationResume.current ||= player.state.playing;
       player.releaseKeys();
@@ -311,20 +336,10 @@ function App() {
         .then(() => player.pause())
         .catch(player.error);
     }
-    showView(destination);
+    navigation.current = destination;
     setMenu(null);
-  }
-  function openPlayer() {
-    if (player.state.resumeFailed && player.state.game) {
-      setResumeFailure({
-        game: player.state.game,
-        message:
-          "The local checkpoint could not be restored. Your stored progress is preserved.",
-      });
-      return;
-    }
+    if (destination !== "player") return;
     const shouldResume = navigationResume.current;
-    showView("player");
     navigationWork.current = navigationWork.current
       .then(async () => {
         if (
@@ -337,6 +352,30 @@ function App() {
         if (navigation.current === "player") navigationResume.current = false;
       })
       .catch(player.error);
+  }
+  // Back, Forward and typed URLs take the same steps as the app's controls.
+  useLayoutEffect(() => transition(view), [view]);
+  useEffect(() => {
+    if (page.routeId === "__root__") void navigate({ to: "/", replace: true });
+  }, [page.routeId]);
+  function showView(destination: AppView) {
+    transition(destination);
+    void navigate({ to: paths[destination] });
+  }
+  function browse(destination: "home" | "library") {
+    if (player.state.changing) return;
+    showView(destination);
+  }
+  function openPlayer() {
+    if (player.state.resumeFailed && player.state.game) {
+      setResumeFailure({
+        game: player.state.game,
+        message:
+          "The local checkpoint could not be restored. Your stored progress is preserved.",
+      });
+      return;
+    }
+    showView("player");
   }
   async function launchGameInternal(
     game: Game,
@@ -524,8 +563,8 @@ function App() {
   async function openFile(file: File) {
     if (cloudResumeRequest) return launchCloud(cloudResumeRequest, file);
     await navigationWork.current;
-    showView("player");
     navigationResume.current = false;
+    showView("player");
     await (/\.state$/i.test(file.name) ? importState(file) : player.open(file));
   }
   async function importState(file: File) {
@@ -591,7 +630,11 @@ function App() {
   return (
     <BridgeProvider host={state.ready ? player.session.bridges : undefined}>
       <div
-        className={`console-app ${dragging ? "dragging" : ""}`}
+        className={cx(
+          "console-app",
+          dragging && "dragging",
+          library && "bg-canvas md:h-dvh md:overflow-hidden",
+        )}
         data-view={view}
         onDragEnter={(event) => {
           if (event.dataTransfer.types.includes("Files")) {
@@ -623,8 +666,15 @@ function App() {
             onNavigate={(destination) =>
               destination === "player" ? openPlayer() : browse(destination)
             }
-            onAddGame={() => romInput.current?.click()}
             onAccount={openAccount}
+            back={
+              library && libraryGameId
+                ? {
+                    label: "Library",
+                    onBack: () => void navigate({ to: "/library" }),
+                  }
+                : undefined
+            }
             busy={!state.ready || state.changing || launching}
           />
         )}
@@ -1082,89 +1132,18 @@ function App() {
         </div>
         {library ? (
           <LibraryPage
-            entries={[
-              ...state.games.map((game) => ({
-                id: game.hash,
-                title: game.title,
-                status: "installed" as const,
-                romSize: game.romSize,
-                lastPlayed: game.lastPlayed,
-                resume:
-                  game.hash === state.game?.hash || Boolean(game.resumeSavedAt),
-                onPlay: () =>
-                  loadRun({
-                    hash: game.hash,
-                    playthroughId: game.activePlaythroughId ?? "default",
-                  }),
-                playthroughs: [
-                  ...state.runs
-                    .filter((run) => run.hash === game.hash)
-                    .map((run) => ({
-                      id: run.id,
-                      name: run.name,
-                      localSavedAt: run.resumeSavedAt,
-                      cloudUploadedAt: state.cloud.resumes?.find(
-                        (remote) =>
-                          remote.hash === game.hash &&
-                          remote.playthroughId === run.id,
-                      )?.uploadedAt,
-                      onPlay: () =>
-                        loadRun({ hash: game.hash, playthroughId: run.id }),
-                    })),
-                  ...(state.cloud.resumes ?? [])
-                    .filter(
-                      (remote) =>
-                        remote.hash === game.hash &&
-                        !state.runs.some(
-                          (run) =>
-                            run.hash === game.hash &&
-                            run.id === remote.playthroughId,
-                        ),
-                    )
-                    .map((remote) => ({
-                      id: remote.playthroughId,
-                      name: remote.playthroughName,
-                      cloudUploadedAt: remote.uploadedAt,
-                      onPlay: () =>
-                        loadRun({
-                          hash: game.hash,
-                          playthroughId: remote.playthroughId,
-                        }),
-                    })),
-                ],
-              })),
-              ...(state.cloud.resumes ?? [])
-                .filter(
-                  (remote, index, all) =>
-                    !state.games.some((game) => game.hash === remote.hash) &&
-                    all.findIndex((other) => other.hash === remote.hash) ===
-                      index,
-                )
-                .map((remote) => ({
-                  id: remote.hash,
-                  title: remote.title,
-                  status: "cloud" as const,
-                  onPlay: () =>
-                    loadRun({
-                      hash: remote.hash,
-                      playthroughId: remote.playthroughId,
-                    }),
-                  playthroughs: (state.cloud.resumes ?? [])
-                    .filter((run) => run.hash === remote.hash)
-                    .map((run) => ({
-                      id: run.playthroughId,
-                      name: run.playthroughName,
-                      cloudUploadedAt: run.uploadedAt,
-                      onPlay: () =>
-                        loadRun({
-                          hash: run.hash,
-                          playthroughId: run.playthroughId,
-                        }),
-                    })),
-                })),
-            ]}
+            catalog={previewCatalog}
+            device={libraryDevice}
             busy={!state.ready || state.changing || launching}
+            selectedId={libraryGameId}
+            onSelect={(gameId) =>
+              void navigate({ to: "/library/$gameId", params: { gameId } })
+            }
+            onBack={() => void navigate({ to: "/library" })}
             onAddGame={() => romInput.current?.click()}
+            onAction={() =>
+              setNotice("Library preview: this action isn’t connected yet.")
+            }
           />
         ) : home ? (
           <>
@@ -1264,7 +1243,7 @@ function App() {
             )}
             <details className="cloud-rom-identity">
               <summary>ROM details</summary>
-              SHA-256: <code>{cloudResumeRequest.hash}</code>
+              SHA-1: <code>{cloudResumeRequest.hash}</code>
             </details>
             {cloudResumeError && <p role="alert">{cloudResumeError}</p>}
             {launching && (
@@ -1380,17 +1359,55 @@ function App() {
   );
 }
 
+const paths = { home: "/", library: "/library", player: "/player" } as const;
+
+// Servers answer these paths with the player (see tools/serve-web.py, the
+// Worker and offline.ts); every other path is a 404.
+const rootRoute = createRootRoute({ component: App });
+// A fresh page has no game running, so /player opens the Library instead.
+// Later visits show the Player as it is.
+let started = false;
+const router = createRouter({
+  routeTree: rootRoute.addChildren([
+    createRoute({ getParentRoute: () => rootRoute, path: "/" }),
+    createRoute({ getParentRoute: () => rootRoute, path: "/library" }),
+    createRoute({ getParentRoute: () => rootRoute, path: "/library/$gameId" }),
+    createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/player",
+      beforeLoad: () => {
+        if (!started) throw redirect({ to: "/library", replace: true });
+      },
+    }),
+  ]),
+  basepath: import.meta.env.BASE_URL,
+});
+router.subscribe("onResolved", () => {
+  started = true;
+});
+declare module "@tanstack/react-router" {
+  interface Register {
+    router: typeof router;
+  }
+}
+
 // Installed game plugins' layouts (and their styles) load before the first
 // render, so a dashboard never replaces the player under a running game. A
 // plugin that fails to load leaves the generic player.
 void gameRegistry
   .load("dashboards")
   .catch((error: unknown) => console.error(error))
-  .finally(() => createRoot(document.getElementById("root")!).render(<App />));
+  .finally(() =>
+    createRoot(document.getElementById("root")!).render(
+      <RouterProvider router={router} />,
+    ),
+  );
 
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   void navigator.serviceWorker
-    .register(new URL("service-worker.js", document.baseURI))
+    .register(
+      new URL(`${import.meta.env.BASE_URL}service-worker.js`, location.origin),
+    )
     .catch(() => {
       /* Cache/storage denial must not prevent online or local play. */
     });

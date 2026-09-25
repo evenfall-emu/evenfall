@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import "./about.css";
 import { AboutScene } from "./about-scene";
 
 // Optional instance privacy notice supplied by the deployment build.

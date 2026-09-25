@@ -9,6 +9,8 @@ test.use({ hasTouch: true });
 
 const sha = (bytes: Uint8Array) =>
   createHash("sha256").update(bytes).digest("hex");
+const romSha = (bytes: Uint8Array) =>
+  createHash("sha1").update(bytes).digest("hex");
 async function ready(page: Page) {
   await page.goto("/");
   await page.getByRole("button", { name: "Enter player" }).click();
@@ -248,8 +250,8 @@ test("new HnS console reads the real wild battle and clears opponents on timelin
     !rom || !battle || !party,
     "Supply the hash-verified HnS ROM, battle.state and game2.state",
   );
-  expect(sha(await readFile(rom!))).toBe(
-    "7c4f90c8b68b64d4639a37306d5302a11cd4d7c44005114ec2faa2b28b210c3d",
+  expect(romSha(await readFile(rom!))).toBe(
+    "a4be81f8330d7f223a3ab847c3da822fe6f8a2e0",
   );
   expect(sha(await readFile(battle!))).toBe(
     "5515f43a8119632270b2f64a447917fd826bc7cf16655f3276bbb0f3c4d42e54",
@@ -685,8 +687,8 @@ test("Elite Redux uses the shared layout with four described abilities and real 
   const rom = process.env.ZIGBA_REDUX_ROM,
     state = process.env.ZIGBA_REDUX_STATE;
   test.skip(!rom || !state, "Supply the exact Redux Beta2 ROM and redux.state");
-  expect(sha(await readFile(rom!))).toBe(
-    "d86e6ac909e4abdef9159ed20b75a684a9b2ee2fe874f388122e00a5749d2d37",
+  expect(romSha(await readFile(rom!))).toBe(
+    "f1323126bc043f3ce931bcc670957930559eb515",
   );
   expect(sha(await readFile(state!))).toBe(
     "bf403592558c7a6cdc0deb493f8ab26f8796dfec829f0a2031fcbbc44af66d23",
@@ -904,8 +906,8 @@ test("Redux battle totals include stages and reset with the loaded state", async
     !rom || !baseline || !buffed,
     "Supply Redux ROM, original and stage-buffed states",
   );
-  expect(sha(await readFile(rom!))).toBe(
-    "d86e6ac909e4abdef9159ed20b75a684a9b2ee2fe874f388122e00a5749d2d37",
+  expect(romSha(await readFile(rom!))).toBe(
+    "f1323126bc043f3ce931bcc670957930559eb515",
   );
   expect(sha(await readFile(baseline!))).toBe(
     "bf403592558c7a6cdc0deb493f8ab26f8796dfec829f0a2031fcbbc44af66d23",

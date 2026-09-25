@@ -1,62 +1,152 @@
-import "./app-header.css";
+import logo from "./assets/brand/evenfall-logo.svg";
+import coast from "./assets/sunset/coast.png";
+import { PixelIcon, type PixelIconName } from "./ui/icons";
+import { button, cx, focusRing } from "./ui/styles";
 
 export type AppView = "home" | "player" | "library";
 
-/** Navigation belongs to the app; page-specific controls stay inside the page. */
+const tabs: { view: AppView; label: string; icon: PixelIconName }[] = [
+  { view: "library", label: "Library", icon: "book" },
+  { view: "player", label: "Player", icon: "play" },
+];
+
+function Tabs({
+  view,
+  busy,
+  onNavigate,
+}: {
+  view: AppView;
+  busy: boolean;
+  onNavigate: (view: AppView) => void;
+}) {
+  return (
+    <nav aria-label="Main navigation" className="flex self-stretch">
+      {tabs.map((tab) => {
+        const current = view === tab.view;
+        return (
+          <button
+            key={tab.view}
+            aria-current={current ? "page" : undefined}
+            disabled={busy}
+            onClick={() => onNavigate(tab.view)}
+            className={cx(
+              "relative flex cursor-pointer items-center gap-2 px-2 disabled:cursor-not-allowed disabled:opacity-60 sm:gap-3 sm:px-4 md:px-6",
+              "after:absolute after:inset-x-3 after:bottom-0 after:h-1 after:rounded-t-control",
+              current
+                ? "text-mint after:bg-mint"
+                : "text-content hover:text-mint-hover",
+              focusRing,
+              "focus-visible:-outline-offset-2",
+            )}
+          >
+            <PixelIcon
+              name={tab.icon}
+              className={cx(!current && tab.icon === "play" && "text-info")}
+            />
+            {tab.label}
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+/**
+ * The pixel horizon from the Home scene, anchored to the header's right edge
+ * so the sun stays in view at any width, and faded in from the left. Between
+ * the phone layout and wide desktops the tabs leave it too little room.
+ */
+function Banner({ className }: { className: string }) {
+  return (
+    <div
+      aria-hidden="true"
+      className={cx(
+        "pointer-events-none bg-no-repeat [mask-image:linear-gradient(to_right,transparent,black_30%,black_90%,transparent)]",
+        className,
+      )}
+      style={{ backgroundImage: `url(${coast})` }}
+    />
+  );
+}
+
+/**
+ * The navigation shared by Library and Player. Home, the landing page, has no
+ * header; the logo returns there. On narrow screens a page can replace the
+ * tabs with a Back button.
+ */
 export function AppHeader({
   view,
   onNavigate,
-  onAddGame,
   onAccount,
+  back,
   busy = false,
 }: {
   view: AppView;
   onNavigate: (view: AppView) => void;
-  onAddGame: () => void;
   onAccount: () => void;
+  back?: { label: string; onBack: () => void };
   busy?: boolean;
 }) {
   return (
-    <header className="app-header">
-      <button
-        className="app-wordmark"
-        aria-label="ZiGBA home"
-        disabled={busy}
-        onClick={() => onNavigate("home")}
-      >
-        ZIGBA
-      </button>
-      <nav aria-label="Main navigation">
-        {(["home", "player", "library"] as const).map((destination) => (
+    <header
+      data-ui
+      className="relative isolate shrink-0 border-b border-line bg-canvas font-sans text-2x text-content"
+    >
+      <div className="relative flex h-18 items-center gap-6 px-4 sm:px-6 md:h-22 md:gap-10 md:px-8">
+        <button
+          aria-label="evenfall home"
+          disabled={busy}
+          onClick={() => onNavigate("home")}
+          className={cx(
+            "z-10 shrink-0 cursor-pointer rounded-control",
+            focusRing,
+          )}
+        >
+          <img src={logo} alt="" className="h-10 w-auto md:h-12" />
+        </button>
+        <div className="hidden self-stretch md:flex">
+          <Tabs view={view} busy={busy} onNavigate={onNavigate} />
+        </div>
+        <Banner className="absolute inset-y-0 right-0 -z-10 w-[min(440px,calc(100%-144px))] bg-size-[502px_auto] bg-position-[right_-40px_top_-148px] md:static md:z-auto md:ml-auto md:hidden md:h-full md:w-[640px] xl:block md:min-w-0 md:bg-size-[836px_auto] md:bg-position-[right_-40px_top_-269px]" />
+        <div className="hidden md:ml-auto md:block xl:ml-0">
           <button
-            key={destination}
-            aria-current={view === destination ? "page" : undefined}
+            className={cx(
+              button("ghost"),
+              "h-14 gap-3 px-3 text-2x font-normal",
+            )}
+            aria-haspopup="dialog"
             disabled={busy}
-            onClick={() => onNavigate(destination)}
+            onClick={onAccount}
           >
-            {destination[0].toUpperCase() + destination.slice(1)}
+            <PixelIcon name="avatar" inks={{ "#": "text-mint" }} />
+            Account
           </button>
-        ))}
-      </nav>
-      <button className="app-add" disabled={busy} onClick={onAddGame}>
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M12 4v16M4 12h16" />
-        </svg>
-        <span>Add game</span>
-      </button>
-      <button
-        className="app-account"
-        disabled={busy}
-        onClick={onAccount}
-        aria-haspopup="dialog"
-        aria-label="Account"
-      >
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="12" cy="8" r="4" />
-          <path d="M4 22v-3a8 8 0 0 1 16 0v3" />
-        </svg>
-        <span>Account</span>
-      </button>
+        </div>
+      </div>
+      <div className="flex h-14 items-center justify-between border-t border-line px-2 sm:px-4 md:hidden">
+        {back ? (
+          <button
+            className={cx(button("ghost"), "text-2x font-normal")}
+            aria-label={`Back to ${back.label}`}
+            disabled={busy}
+            onClick={back.onBack}
+          >
+            <PixelIcon name="back" className="text-info" />
+            {back.label}
+          </button>
+        ) : (
+          <Tabs view={view} busy={busy} onNavigate={onNavigate} />
+        )}
+        <button
+          className={button("ghost", "icon")}
+          aria-label="Account"
+          aria-haspopup="dialog"
+          disabled={busy}
+          onClick={onAccount}
+        >
+          <PixelIcon name="gear" />
+        </button>
+      </div>
     </header>
   );
 }

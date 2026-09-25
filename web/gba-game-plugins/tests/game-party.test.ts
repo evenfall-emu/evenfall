@@ -92,7 +92,7 @@ function record(
 }
 
 const profile = {
-  romHash: "a".repeat(64),
+  romHash: "a".repeat(40),
   source: {
     repository: "synthetic",
     revision: "fixture",
@@ -135,8 +135,7 @@ describe("Heart & Soul 1.2.1 gameParty", () => {
       const memory = hnsMemory(record(17, isEgg, 412, true));
       const stamp = {
         ...sample,
-        romHash:
-          "7c4f90c8b68b64d4639a37306d5302a11cd4d7c44005114ec2faa2b28b210c3d",
+        romHash: "a4be81f8330d7f223a3ab847c3da822fe6f8a2e0",
       };
       expect(
         decodeGame(heartNSoul, stamp, memory, pokemonResources()).gameParty,

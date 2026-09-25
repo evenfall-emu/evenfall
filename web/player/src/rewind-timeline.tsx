@@ -7,7 +7,6 @@ import type {
 import { draw } from "./media";
 import { player } from "./player";
 import { formatRewindOffset, RewindFrameCache } from "./rewind-model";
-import "./rewind-timeline.css";
 
 function checkpointWindow(length: number, selected: number) {
   const count = Math.min(3, length);

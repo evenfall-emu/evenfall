@@ -23,9 +23,9 @@ const profile = (romHash: string, address: number) => ({
   },
   symbols: { count: ref(address, u8) },
 });
-const first = profile("a".repeat(64), 0x02000000);
+const first = profile("a".repeat(40), 0x02000000);
 const second: BuildProfile<typeof first.symbols> = profile(
-  "b".repeat(64),
+  "b".repeat(40),
   0x02000002,
 );
 const game = defineGame({
@@ -62,7 +62,7 @@ describe("per-game bridge dispatch", () => {
       { address: 0x02000000, bytes: new Uint8Array([1, 0xff, 5]) },
     ]);
     expect(resolveGame([game], second.romHash)).toBe(game);
-    expect(resolveGame([game], "c".repeat(64))).toBeNull();
+    expect(resolveGame([game], "c".repeat(40))).toBeNull();
     const result = decodeGame(game, sample, memory);
     expect(result.gameParty).toEqual({
       status: "ready",
@@ -80,10 +80,10 @@ describe("per-game bridge dispatch", () => {
   it("does not decode unsupported ROMs or silently pick an ambiguous game", () => {
     const memory = createMemoryReader([]);
     expect(
-      decodeGame(game, { ...sample, romHash: "c".repeat(64) }, memory),
+      decodeGame(game, { ...sample, romHash: "c".repeat(40) }, memory),
     ).toEqual({
-      gameParty: { status: "unsupported", romHash: "c".repeat(64) },
-      combat: { status: "unsupported", romHash: "c".repeat(64) },
+      gameParty: { status: "unsupported", romHash: "c".repeat(40) },
+      combat: { status: "unsupported", romHash: "c".repeat(40) },
     });
     const duplicate = defineGame({ ...game, id: "pokemon/other" });
     expect(() => resolveGame([game, duplicate], first.romHash)).toThrow(

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -65,7 +66,9 @@ export function ConsolePlayer({ onHelp }: { onHelp: () => void }) {
         .then((pixels) => draw(canvas, pixels))
         .catch(player.error);
   }, []);
-  useEffect(() => {
+  // Attached during the commit that shows the Player, so a key pressed as the
+  // page appears is never missed.
+  useLayoutEffect(() => {
     let rewindHeld = false;
     const releaseRewind = () => {
       rewindHeld = false;

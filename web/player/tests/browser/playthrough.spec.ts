@@ -132,7 +132,7 @@ test("Reset retains progress, while playthroughs isolate checkpoints and quick s
     await player.checkpointState();
     return Number((await player.emulator.inspect()).cycle);
   });
-  await page.reload();
+  await page.goto("/");
   await page.getByRole("button", { name: "Resume adventure" }).click();
   await expect(selectedRun(page)).toContainText("Second renamed");
   expect(
@@ -631,7 +631,7 @@ test("deleting a playthrough requires confirmation and keeps the other adventure
   expect(fresh.bootCycle).toBe(0);
   expect(fresh.oldResume).toBeUndefined();
   await page.evaluate(() => window.player.checkpointState());
-  await page.reload();
+  await page.goto("/");
   await page.getByRole("button", { name: "Resume adventure" }).click();
   await expect(selectedRun(page)).toBeVisible();
   expect(

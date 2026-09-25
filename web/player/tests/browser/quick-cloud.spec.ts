@@ -6,7 +6,7 @@ const loop = {
   mimeType: "application/octet-stream",
   buffer: Buffer.from([42, 0, 160, 227, 254, 255, 255, 234]),
 };
-const hash = createHash("sha256").update(loop.buffer).digest("hex");
+const hash = createHash("sha1").update(loop.buffer).digest("hex");
 type Stored = {
   body: Buffer;
   etag: string;

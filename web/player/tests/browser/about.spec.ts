@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { build } from "vite";
+import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "node:path";
 import { rm, writeFile } from "node:fs/promises";
 import { SUNSET_CLOUD_CYCLE_SECONDS } from "../../src/sunset-renderer";
@@ -10,6 +11,7 @@ test.beforeAll(async () => {
   await build({
     configFile: false,
     logLevel: "error",
+    plugins: [tailwindcss()],
     define: { "process.env.NODE_ENV": '"development"' },
     build: {
       outDir,

@@ -1,11 +1,11 @@
 # ZiGBA player
 
 The browser player for ZiGBA: a TypeScript and React application built with
-Vite, Effect 3 and IndexedDB (through `idb`). Games run entirely in the
-visitor's browser, and ROMs stay user-supplied and local. Gameplay needs no
-account or backend. When the [catalog and account server](../server/README.md)
-is available, signed-in players also get private cloud backups of their
-progress.
+Vite, Tailwind CSS 4, Effect 3 and IndexedDB (through `idb`). Games run
+entirely in the visitor's browser, and ROMs stay user-supplied and local.
+Gameplay needs no account or backend. When the
+[catalog and account server](../server/README.md) is available, signed-in
+players also get private cloud backups of their progress.
 
 The application has two entry points:
 
@@ -23,6 +23,34 @@ Pokémon panels come from the separate
 session, pacing, audio, rewind) is described in
 [`docs/design/web-runtime.md`](../docs/design/web-runtime.md).
 
+## Styling
+
+Tailwind CSS 4 runs through its Vite plugin. [`src/styles.css`](src/styles.css)
+imports Tailwind and defines the Evenfall design tokens in its `@theme` block:
+surface, boundary, text, brand (mint and peach) and feedback colors, control
+and panel radii, popover and dialog shadows, and two faces. Each token
+generates utilities such as `bg-surface`, `text-muted`, `border-line`,
+`rounded-panel` and `shadow-dialog`; components style themselves with these
+utilities rather than raw values. Shared building blocks live in
+[`src/ui/`](src/ui/): stroke icons and pixel-art icons (`PixelIcon`, drawn
+at whole-number scales), button and popup classes, and a dialog and selects
+built on Base UI.
+
+Text uses Press Start 2P (`font-sans`), self-hosted under the SIL Open Font
+License in `src/assets/fonts/`. It draws every glyph on an 8-pixel em and has
+one weight, so hierarchy comes from size and color rather than bold. The
+text sizes name how many screen pixels one font pixel covers: `text-2x`
+(16px), `text-3x`, `text-4x` and `text-5x` keep every font pixel square and
+sharp, and `text-1x5` (12px) is the one half step, for secondary text.
+
+The stylesheets that predate Tailwind (`console.css`, `about.css`,
+`account.css` and `rewind-timeline.css`) are imported by `styles.css` into a
+`legacy` cascade layer, above Tailwind's base styles and below its
+utilities. Their global element rules skip any subtree marked `data-ui`,
+which every Tailwind-built root carries, including popups rendered into a
+portal. Because they set a fluid root font size, `styles.css` restates
+Tailwind's spacing, type, container and radius scales in pixels.
+
 ## Build and run
 
 From the repository root, with Zig 0.16 and Node 24+:
@@ -36,8 +64,10 @@ python3 tools/serve-web.py # http://127.0.0.1:8765/
 `zig build web` builds the ReleaseSafe WASM, runs `npm run build -w frontend`
 into `zig-out/player`, and installs the result as `zig-out/web`, the
 deployable static directory; the Zig install prefix is respected. Serve it
-over localhost or HTTPS. `tools/serve-web.py` is a loopback-only static
-server (`--port`, `--directory`).
+over localhost or HTTPS, from the site root: asset URLs are absolute so they
+resolve from nested page URLs. `tools/serve-web.py` is a loopback-only
+static server (`--port`, `--directory`) that answers the player's page URLs
+with `index.html`.
 
 For frontend development with hot reload:
 
@@ -55,6 +85,21 @@ captured by Wrangler's email simulator rather than delivered.
 
 ## Pages and navigation
 
+Each page has a URL, handled by TanStack Router, so a refresh or a shared
+link lands on it again:
+
+| URL | Page |
+|---|---|
+| `/` | Home |
+| `/library` | Library |
+| `/library/<game ID>` | Library, with that game's details |
+| `/player` | Player |
+
+A fresh page load has no running game, so `/player` opens the Library
+instead. The browser's Back and Forward buttons move
+between pages like the tabs. Other paths are 404s, and servers answer only
+these URLs with the player's `index.html`.
+
 Home is the default destination. It introduces ZiGBA and, after a reload,
 offers **Resume adventure** for the last played local game's selected
 playthrough, with its name and checkpoint time; if no game is installed, it
@@ -62,10 +107,14 @@ can offer a cloud-only run. Its footer carries the trademark and
 non-affiliation notice and, when [configured](#analytics), a privacy-notice
 link. Opening a ROM from Home switches to Player and starts it.
 
-Home, Player and Library share one navigation header; playback actions live
-in a separate Player toolbar below it. Clicking the ZiGBA wordmark returns
-Home without unloading the current game. Returning to Player resumes the
-session only if it was playing before navigation.
+Library and Player share one header with a tab for each, the evenfall logo
+and **Account**; Home, the landing page, has none. Playback actions live in a
+separate Player toolbar below the header. The logo returns Home without
+unloading the current game. Returning to Player resumes the session only if
+it was playing before navigation, including through the browser's Back and
+Forward buttons. On narrow screens the tabs move to a second row beside an
+Account button, where the Library's details replace them with **Back to
+Library**.
 
 **Account** is available on Home and in the header. Opening it pauses play
 and persists progress before Discord can navigate away; closing it resumes a
@@ -76,7 +125,7 @@ grants no catalog rights.
 ## Player controls
 
 Open or drag a `.gba` file or a single-ROM ZIP onto the player. The native
-importer normalizes the ROM; its raw SHA-256 identifies the game and its save
+importer normalizes the ROM; its raw SHA-1 identifies the game and its save
 lock. Opening a ROM starts playback from its battery save. Unknown ROMs use
 the generic player without game panels.
 
@@ -135,24 +184,37 @@ License, with its license beside it in `src/assets/`.
 
 ### Library
 
-The toolbar's Library opens a full-page collection: list and details side by
-side on desktop, list then details on mobile. Search and the All games /
-Installed / Not installed filters share one list, sorted by Recently played
-by default, with unplayed titles following alphabetically. Mobile Back
-preserves search, filter, scroll and focus. Browsing pauses the current
-session and blocks gameplay input; Player returns without resetting it, and
-**Continue** explicitly resumes the loaded game. Library **Continue**
-restores a durable checkpoint when no matching session is loaded; **Play**
-uses the battery save when no checkpoint exists.
+The header's Library tab, or **Browse library** on Home, opens the game
+collection: a filterable list beside the selected game's details. Selecting a
+game changes the URL to `/library/<game ID>`; filtering the list keeps that
+game's details. On narrow screens the details replace the list, and Back or
+Escape returns to it with its scroll position and focus. Search, **Show**,
+**Franchise**, **Sort** and a tag picker combine; a game must carry every
+selected tag. **Show** offers All, Installed and Ready, where the base ROM is
+on this device and the release's patch is hosted, so the game plays at once.
+**Sort** orders by Played (the default, with unplayed titles following by
+name), Recently updated (latest release date, undated releases last) or
+Popularity (cloud playthroughs across accounts).
+Each row shows whether the game is installed, ready, or needs a base ROM from
+the user. Games without catalog artwork show their title initials.
 
-The collection holds local imports and cloud-only games discovered from the
-account; neither is a public catalog. Square logos can be supplied through
-`LibraryPage` metadata, and missing or broken images fall back to title
-initials. The Library does not query the server catalog, install patches or
-show community activity. On the Vite dev server, `/library-preview.html` is a
-labelled in-memory preview of installed, base-ready and missing-base states,
-including the compact drop area and the mobile file picker. It is not part of
-production builds and never stores the files it is given.
+Details show the project page, the latest release's notes, an update offer
+when a playthrough is on an older release, and each playthrough's release,
+last play time and cloud state. **Update…** offers to copy one playthrough's
+in-game save to the latest release and, unless the catalog declares the
+saves compatible, requires acknowledging that first. Playing a run whose
+cloud copy changed since this device last synced asks which progress to
+continue. **Add game** opens a ROM in the Player. Browsing pauses the current
+session and blocks gameplay input; Player returns without resetting it.
+
+The Library shows static data from
+[`src/pages/library/fixtures.ts`](src/pages/library/fixtures.ts) and is not
+connected to the catalog API or to this device's games; every action except
+**Add game** reports that it is not connected. The catalog side uses the
+server's response types for `GET /api/games` and `GET /api/versions`
+([`catalog.ts`](src/pages/library/catalog.ts)), and the device side the local
+database's playthrough, cloud-checkpoint and outbox types;
+[`model.ts`](src/pages/library/model.ts) joins both into what the page shows.
 
 ### Playthroughs
 
@@ -165,12 +227,12 @@ starts a fresh empty one. New runs get UUIDs and can be created offline.
 
 ## Local saves and resume
 
-All progress is stored in the `zigba-local` IndexedDB database (version 6).
-Battery saves, resume checkpoints, quick slots, save locks and cloud outbox
-jobs all include the playthrough ID; ROM bytes are stored once per exact
-hash. Opening an older database upgrades it in one version transaction,
-moving existing progress into playthrough `default` ("Playthrough 1"),
-including pending cloud work and quick slots.
+All progress is stored in the `zigba-local` IndexedDB database (version 7).
+Every key starts with the game's raw-ROM SHA-1. Battery saves, resume
+checkpoints, quick slots, save locks and cloud outbox jobs all include the
+playthrough ID; ROM bytes are stored once per exact hash. Databases from
+version 6 and earlier keyed games by SHA-256; opening one deletes its contents
+and starts an empty library.
 
 - **Autosave** runs every five seconds and on pause. It stores the battery
   data and an exact-ROM machine checkpoint with the boot and media options
@@ -188,7 +250,7 @@ including pending cloud work and quick slots.
   accepted and treated as never synced. Their outbox jobs use kind
   `quick/<slot>` in the `cloud` store.
 - **Save ownership.** A tab must hold the Web Lock
-  `zigba-save-playthrough:["<raw ROM SHA-256>","<playthrough ID>"]` to write
+  `zigba-save-playthrough:["<raw ROM SHA-1>","<playthrough ID>"]` to write
   a run's progress. Read-only tabs may resume but cannot persist, and
   opening another tab does not transfer unsaved state.
 
@@ -309,16 +371,16 @@ keeps the higher slots local with a sync message.
 
 ## Offline play
 
-Production builds install a service worker that caches one complete version
-of the player: every file of the Vite build, including the hashed SDK
-worker, worklet and WASM and the game plugins' lazily loaded layouts. After
-its first successful installation, the player can reload offline and resume
-an imported local game. API responses, credentials and user media are never
-cached. A new build waits for existing tabs to close before it activates, so
-a running worker never loads an incompatible WASM binary. The Vite dev server
-does not register the service worker. Offline play does not protect against
-browser storage denial or eviction, or against closing the page before the
-installation finishes.
+Production builds install a service worker that caches one complete version of
+the player: every file of the Vite build, including the hashed SDK worker,
+worklet and WASM and the game plugins' lazily loaded layouts. After its first
+successful installation, the player can reload offline, on any of its page
+URLs, and resume an imported local game. API responses, credentials and user
+media are never cached. A new build waits for existing tabs to close before it
+activates, so a running worker never loads an incompatible WASM binary. The
+Vite dev server does not register the service worker. Offline play does not
+protect against browser storage denial or eviction, or against closing the
+page before the installation finishes.
 
 ## Game plugins
 
@@ -328,7 +390,7 @@ exact-build game definitions from
 [`@evenfall/gba/bridge`](../docs/game-bridges.md) plus React **dashboards**,
 layouts keyed by game ID. The player loads every plugin's dashboards, with
 their styles, before its first render, so a layout never swaps in under a
-running game. `resolveGame` selects a layout by raw-ROM SHA-256, never by
+running game. `resolveGame` selects a layout by raw-ROM SHA-1, never by
 filename; ambiguous matches are errors, and unknown ROMs keep the generic
 layout. A layout receives the self-contained player as `children` plus
 `playing`, and reads live data with `useBridge` inside the player's
@@ -429,7 +491,10 @@ seed the database. Catalog management stays disabled unless the
 `ADMIN_SECRET` Worker secret is deliberately configured.
 
 The root `wrangler.jsonc` owns the custom domain and disables `workers.dev`
-and preview URLs. Missing paths return 404 rather than the Home page. HTML
+and preview URLs. It sends the player's page URLs (`/library`,
+`/library/<game ID>`, `/player`) to the Worker, which answers them with the
+player's `index.html`; other missing paths return 404 rather than the Home
+page. HTML
 and the service worker keep Cloudflare's default revalidation, while Vite's
 hashed assets, including the SDK worker and WASM, are cached as immutable
 ([`tools/cloudflare-headers`](../tools/cloudflare-headers)). Cross-origin

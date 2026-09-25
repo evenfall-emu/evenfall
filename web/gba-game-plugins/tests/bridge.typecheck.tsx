@@ -108,7 +108,7 @@ declare const pointerLayout: MemoryLayout<MemoryRef<SaveBlock> | null>;
 // Constructed independently, as a generator would emit it. Synthetic addresses
 // and identities are type fixtures, not a supported game profile.
 const otherPointerBuild = {
-  romHash: "b".repeat(64),
+  romHash: "b".repeat(40),
   source: {
     repository: "synthetic",
     revision: "fixture-v2",

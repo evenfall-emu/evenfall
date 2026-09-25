@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import type { MemorySnapshot } from "@evenfall/gba";
 
 const profile = {
-  romHash: "a".repeat(64),
+  romHash: "a".repeat(40),
   source: {
     repository: "fixture",
     revision: "1",
@@ -201,7 +201,7 @@ it("reports absent, unsupported and failed captures without a paused polling loo
   expect(emulator.captureMemory).toHaveBeenCalledTimes(1);
   emulator.captureMemory.mockResolvedValue({
     ...sample(),
-    romHash: "b".repeat(64),
+    romHash: "b".repeat(40),
   });
   emulator.dispatchEvent(
     new CustomEvent("clear", { detail: { timeline: "first" } }),
@@ -209,7 +209,7 @@ it("reports absent, unsupported and failed captures without a paused polling loo
   await vi.advanceTimersByTimeAsync(0);
   expect(store.getSnapshot().party).toEqual({
     status: "unsupported",
-    romHash: "b".repeat(64),
+    romHash: "b".repeat(40),
   });
   emulator.captureMemory.mockRejectedValueOnce(new Error("SessionBusy"));
   emulator.dispatchEvent(new Event("frame"));
@@ -271,7 +271,7 @@ it("retains sample identity when observed game collections are ambiguous", async
 
 function preparedWorker() {
   const bytes = new Uint8Array([17, 91, 3]);
-  const romHash = createHash("sha256").update(bytes).digest("hex");
+  const romHash = createHash("sha1").update(bytes).digest("hex");
   const prepare = vi.fn(
     ({
       rom,
@@ -376,7 +376,7 @@ it.each(["replacement", "unsubscribe", "close"])(
       if (action === "replacement") {
         emulator.captureMemory.mockImplementation(async () => ({
           ...sample(1, "new"),
-          romHash: "b".repeat(64),
+          romHash: "b".repeat(40),
         }));
         emulator.dispatchEvent(
           new CustomEvent("clear", { detail: { timeline: "new" } }),

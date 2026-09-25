@@ -85,7 +85,7 @@ test("cloud restore blocks Escape and backdrop dismissal until settled", async (
         accountId: "fixture",
         latest: {
           accountId: "fixture",
-          hash: "1".repeat(64),
+          hash: "1".repeat(40),
           playthroughId: "default",
           playthroughName: "Test run",
           title: "Cloud fixture",

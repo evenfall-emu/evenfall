@@ -2,6 +2,7 @@
 """Loopback-only development server. Private fixtures are opt-in, named files."""
 import argparse
 import functools
+import re
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit, parse_qs
@@ -20,6 +21,10 @@ for entry in args.fixture:
     if not name or '/' in name or name in ('.', '..'):
         parser.error('Fixture names must be single path segments')
     fixtures[name] = Path(path).resolve(strict=True)
+
+
+# The player's client-side pages, which all load its index.html.
+PAGE = re.compile(r'/(library(/[^/]+)?|player)')
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -55,6 +60,8 @@ class Handler(SimpleHTTPRequestHandler):
                 import shutil
                 shutil.copyfileobj(source, self.wfile)
             return
+        if PAGE.fullmatch(path):
+            self.path = '/index.html'
         super().do_GET()
 
     def do_POST(self):

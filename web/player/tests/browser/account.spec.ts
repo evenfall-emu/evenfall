@@ -200,7 +200,7 @@ test("account deletion needs one confirmation, signs out, and keeps local progre
   );
   await expect(dialog.getByLabel("Email address")).toBeVisible();
   expect(attempts).toBe(1);
-  await page.reload();
+  await page.goto("/");
   await expect(
     page.getByRole("button", { name: "Resume adventure" }),
   ).toBeEnabled();

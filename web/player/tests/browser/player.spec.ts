@@ -16,7 +16,7 @@ const rom = {
 async function ready(page: Page) {
   await page.goto("/");
   await page.getByRole("button", { name: "Enter player" }).click();
-  await expect(page.getByRole("button", { name: "Add game" })).toBeEnabled();
+  await expect(page.getByLabel("Open ROM", { exact: true })).toBeEnabled();
 }
 async function openRom(page: Page, file: typeof rom) {
   await page.getByLabel("Open ROM", { exact: true }).setInputFiles(file);
@@ -173,12 +173,12 @@ test("a recorded session replays in an isolated worker, and a failed assertion c
 }) => {
   const { createHash } = await import("node:crypto");
   const manifest: Scenario = {
-    version: 1,
+    version: 2,
     name: "Assertion fixture",
     assets: {
       rom: {
         path: "rom.gba",
-        sha256: createHash("sha256").update(rom.buffer).digest("hex"),
+        sha1: createHash("sha1").update(rom.buffer).digest("hex"),
       },
     },
     config: {
@@ -275,7 +275,7 @@ test("a recorded session replays in an isolated worker, and a failed assertion c
   );
 });
 
-test("battery save survives v1 upgrade, gameplay, refresh and duplicate ZIP import", async ({
+test("an older library is dropped; a new battery save survives gameplay, refresh and duplicate ZIP import", async ({
   page,
 }) => {
   // Reads the boot-time SRAM byte into r2, then writes 42 to it.
@@ -283,7 +283,7 @@ test("battery save survives v1 upgrade, gameplay, refresh and duplicate ZIP impo
     0xe3a0040e, 0xe5d02000, 0xe3a0102a, 0xe5c01000, 0xeafffffe,
   ]);
   const { createHash } = await import("node:crypto");
-  const hash = createHash("sha256").update(bytes).digest("hex");
+  const hash = createHash("sha1").update(bytes).digest("hex");
   await page.goto("/");
   await expect
     .poll(() => page.evaluate(() => window.player?.state.ready))
@@ -295,7 +295,8 @@ test("battery save survives v1 upgrade, gameplay, refresh and duplicate ZIP impo
       req.onerror = () => reject(req.error);
     });
   });
-  // Seed the first storage version's exact record shape before the player opens it.
+  // Seed a version-1 save; libraries before version 7 are keyed by SHA-256
+  // and start empty.
   await page.evaluate(async (hash) => {
     const req = indexedDB.open("zigba-local", 1);
     req.onupgradeneeded = () => req.result.createObjectStore("saves");
@@ -312,18 +313,19 @@ test("battery save survives v1 upgrade, gameplay, refresh and duplicate ZIP impo
     });
     db.close();
   }, hash);
-  await page.reload();
+  await page.goto("/");
   await page.getByRole("button", { name: "Enter player" }).click();
   await openRom(page, {
     name: "Save.gba",
     mimeType: "application/octet-stream",
     buffer: bytes,
   });
-  await expect.poll(() => register(page, 2)).toBe(17);
+  // The dropped save leaves erased SRAM.
+  await expect.poll(() => register(page, 2)).toBe(255);
   await expect.poll(() => exportedSave(page)).toBe(42);
   // Pause flushes the save before a controlled reload.
   await page.evaluate(() => window.player.pause());
-  await page.reload();
+  await page.goto("/");
   await page.getByRole("button", { name: "Resume adventure" }).click();
   await expect(
     page.getByRole("heading", { name: "Save", exact: true }),
@@ -428,14 +430,14 @@ test("storage failure leaves game and export controls available", async ({
   expect(save.every((byte) => byte === 17)).toBe(true);
 });
 
-test("v2 library migrates to metadata and reads only the selected ROM", async ({
+test("library lists metadata and reads only the selected ROM", async ({
   page,
 }) => {
   const { createHash } = await import("node:crypto");
   const second = Buffer.from(rom.buffer);
   second[0] = 43;
   const games = [rom.buffer, second].map((bytes, index) => ({
-    hash: createHash("sha256").update(bytes).digest("hex"),
+    hash: createHash("sha1").update(bytes).digest("hex"),
     title: `Game ${index + 1}`,
     rom: [...bytes],
     lastPlayed: index + 1,
@@ -444,27 +446,31 @@ test("v2 library migrates to metadata and reads only the selected ROM", async ({
   await expect
     .poll(() => page.evaluate(() => window.player?.state.ready))
     .toBe(true);
+  // The page has opened the current library; write two games directly.
   await page.evaluate(async (games) => {
-    await new Promise<void>((resolve, reject) => {
-      const request = indexedDB.deleteDatabase("zigba-local");
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
-    const request = indexedDB.open("zigba-local", 2);
-    request.onupgradeneeded = () => {
-      for (const name of ["games", "saves", "assets", "scenarios", "reports"])
-        request.result.createObjectStore(name);
-    };
+    const request = indexedDB.open("zigba-local");
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
-    const tx = db.transaction("games", "readwrite");
-    for (const game of games)
+    const tx = db.transaction(["games", "roms", "playthroughs"], "readwrite");
+    for (const { rom, ...game } of games) {
       tx.objectStore("games").put(
-        { ...game, rom: new Uint8Array(game.rom) },
+        { ...game, romSize: rom.length, activePlaythroughId: "default" },
         game.hash,
       );
+      tx.objectStore("roms").put(new Uint8Array(rom), game.hash);
+      tx.objectStore("playthroughs").put(
+        {
+          hash: game.hash,
+          id: "default",
+          name: "Playthrough 1",
+          createdAt: game.lastPlayed,
+          lastPlayed: game.lastPlayed,
+        },
+        [game.hash, "default"],
+      );
+    }
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve();
       tx.onabort = () => reject(tx.error);
@@ -480,13 +486,9 @@ test("v2 library migrates to metadata and reads only the selected ROM", async ({
     };
     (window as unknown as { romReads: string[] }).romReads = reads;
   });
-  await page.reload();
-  await page.getByRole("button", { name: "Browse library" }).click();
-  await expect(
-    page.getByRole("list", { name: "Games" }).getByRole("heading", {
-      level: 3,
-    }),
-  ).toHaveText(["Game 2", "Game 1"]);
+  await page.goto("/");
+  // Home offers the most recent game from metadata alone.
+  await expect(page.locator(".about-resume")).toContainText("Game 2");
   const reads = () =>
     page.evaluate(() => (window as unknown as { romReads: string[] }).romReads);
   expect(await reads()).toEqual([]);
@@ -511,11 +513,7 @@ test("v2 library migrates to metadata and reads only the selected ROM", async ({
     { size: 8, containsRom: false },
     { size: 8, containsRom: false },
   ]);
-  await page.getByRole("button", { name: "View Game 2", exact: true }).click();
-  await page
-    .getByRole("region", { name: "Game details" })
-    .getByRole("button", { name: /^(Play|Continue) Game 2$/ })
-    .click();
+  await page.getByRole("button", { name: "Resume adventure" }).click();
   await expect(page.getByLabel(/^Game screen/)).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Game 2", exact: true }),

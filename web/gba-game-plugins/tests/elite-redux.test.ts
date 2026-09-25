@@ -251,7 +251,7 @@ describe("Redux packed ABI", () => {
   it("registers compatible builds by exact hash without broadening to unknown revisions", () => {
     const second = {
       ...eliteReduxBeta2,
-      romHash: "b".repeat(64),
+      romHash: "b".repeat(40),
       source: { ...eliteReduxBeta2.source, variant: "synthetic second build" },
       symbols: { ...eliteReduxBeta2.symbols, playerCount: ref(0, u8) },
       catalog: { ...eliteReduxBeta2.catalog, abilityCount: 1 },
@@ -259,7 +259,7 @@ describe("Redux packed ABI", () => {
     };
     const game = createEliteReduxGame([eliteReduxBeta2, second]);
     expect(resolveGame([game], second.romHash)).toBe(game);
-    expect(resolveGame([game], "c".repeat(64))).toBeNull();
+    expect(resolveGame([game], "c".repeat(40))).toBeNull();
     const resources = game.prepare!({
       rom: read(new Uint8Array()),
       romHash: second.romHash,
@@ -278,7 +278,7 @@ describe("Redux packed ABI", () => {
       ).gameParty,
     ).toMatchObject({ status: "ready", data: { party: [] } });
     expect(() =>
-      game.prepare!({ rom: read(new Uint8Array()), romHash: "c".repeat(64) }),
+      game.prepare!({ rom: read(new Uint8Array()), romHash: "c".repeat(40) }),
     ).toThrow("Unsupported");
   });
 });
@@ -297,7 +297,7 @@ describe.skipIf(!romPath || !statePath)("private Redux release/state", () => {
   beforeAll(async () => {
     const rom = new Uint8Array(await readFile(romPath!));
     const state = new Uint8Array(await readFile(statePath!));
-    expect(createHash("sha256").update(rom).digest("hex")).toBe(sample.romHash);
+    expect(createHash("sha1").update(rom).digest("hex")).toBe(sample.romHash);
     expect(createHash("sha256").update(state).digest("hex")).toBe(
       "bf403592558c7a6cdc0deb493f8ab26f8796dfec829f0a2031fcbbc44af66d23",
     );

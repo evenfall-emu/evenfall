@@ -1,0 +1,337 @@
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Icon } from "../../ui/icons";
+import { button, cx } from "../../ui/styles";
+import type { LibraryAction, LibraryActionHandler } from "./actions";
+import type { LibraryCatalog, LibraryDevice } from "./catalog";
+import {
+  NewPlaythroughDialog,
+  ProgressDialog,
+  ReleaseNotesDialog,
+  UpdateDialog,
+} from "./dialogs";
+import { GameDetails } from "./game-details";
+import { GameList } from "./game-list";
+import {
+  buildLibrary,
+  filterGames,
+  franchisesOf,
+  noFilters,
+  tagsOf,
+  type LibraryGame,
+  type PlaythroughEntry,
+} from "./model";
+
+type OpenDialog =
+  | { kind: "update" | "notes" | "new" }
+  | { kind: "progress"; playthroughId: string };
+
+// Matches Tailwind's `md` breakpoint: below it, details replace the list.
+const narrow = () => window.matchMedia("(max-width: 767.98px)").matches;
+
+/**
+ * The game collection: a filterable list beside the selected game's details.
+ * The host owns the selection, so it can live in the URL; on narrow screens a
+ * selection shows the details instead of the list, and `onBack` returns.
+ */
+export function LibraryPage({
+  catalog,
+  device,
+  now = Date.now(),
+  busy = false,
+  selectedId,
+  onSelect,
+  onBack,
+  onAddGame,
+  onAction,
+}: {
+  catalog: LibraryCatalog;
+  device: LibraryDevice;
+  now?: number;
+  busy?: boolean;
+  /** The game whose details show; without one, the first listed game. */
+  selectedId?: string;
+  onSelect: (gameId: string) => void;
+  onBack: () => void;
+  onAddGame: () => void;
+  onAction: LibraryActionHandler;
+}) {
+  const games = useMemo(() => buildLibrary(catalog, device), [catalog, device]);
+  const franchises = useMemo(() => franchisesOf(games), [games]);
+  const tags = useMemo(() => tagsOf(games), [games]);
+  const [filters, setFilters] = useState(noFilters);
+  const visible = useMemo(() => filterGames(games, filters), [games, filters]);
+  // Back to the list keeps the last game selected, so focus can return to it.
+  const lastSelected = useRef(selectedId);
+  if (selectedId !== undefined) lastSelected.current = selectedId;
+  const selected =
+    games.find((game) => game.id === lastSelected.current) ?? visible[0];
+  const detailOpen = selectedId !== undefined;
+  const [dialog, setDialog] = useState<OpenDialog | null>(null);
+  const [working, setWorking] = useState(false);
+  const pending = useRef(false);
+  const [error, setError] = useState("");
+  const disabled = busy || working;
+
+  const pageHeading = useRef<HTMLHeadingElement>(null);
+  const detailHeading = useRef<HTMLHeadingElement>(null);
+  const selectedButton = useRef<HTMLButtonElement>(null);
+  const listScroll = useRef(0);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const fileFor = useRef<LibraryGame>(null);
+
+  useLayoutEffect(() => {
+    pageHeading.current?.focus({ preventScroll: true });
+  }, []);
+  // Narrow screens swap panes; keep the reader's place in each.
+  useLayoutEffect(() => {
+    if (!narrow()) return;
+    if (detailOpen) {
+      window.scrollTo(0, 0);
+      detailHeading.current?.focus({ preventScroll: true });
+    } else {
+      window.scrollTo(0, listScroll.current);
+      selectedButton.current?.focus({ preventScroll: true });
+    }
+  }, [detailOpen]);
+
+  async function run(action: LibraryAction) {
+    if (disabled || pending.current) return false;
+    pending.current = true;
+    setWorking(true);
+    setError("");
+    try {
+      await onAction(action);
+      return true;
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+      return false;
+    } finally {
+      pending.current = false;
+      setWorking(false);
+    }
+  }
+
+  async function finish(action: LibraryAction) {
+    if (await run(action)) setDialog(null);
+  }
+
+  function select(game: LibraryGame) {
+    setError("");
+    if (narrow()) listScroll.current = window.scrollY;
+    onSelect(game.id);
+  }
+
+  function play(game: LibraryGame, entry?: PlaythroughEntry) {
+    if (entry?.conflict) {
+      onSelect(game.id);
+      setDialog({ kind: "progress", playthroughId: entry.id });
+    } else
+      void run({ type: "play", gameId: game.id, playthroughId: entry?.id });
+  }
+
+  function addFile(game: LibraryGame) {
+    fileFor.current = game;
+    fileInput.current?.click();
+  }
+
+  const conflicted = selected?.playthroughs.find(
+    (entry) => dialog?.kind === "progress" && entry.id === dialog.playthroughId,
+  );
+
+  return (
+    <main
+      data-ui
+      aria-label="Library"
+      className="grid min-h-0 flex-1 grid-cols-1 bg-canvas font-sans text-2x text-content md:grid-cols-[minmax(360px,5fr)_minmax(0,7fr)]"
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && detailOpen && !dialog && narrow()) {
+          event.preventDefault();
+          onBack();
+        }
+      }}
+    >
+      <h1 ref={pageHeading} tabIndex={-1} className="sr-only">
+        Library
+      </h1>
+      <section
+        aria-label="Games"
+        className={cx(
+          "min-h-0 border-line md:overflow-y-auto md:border-r",
+          detailOpen && "max-md:hidden",
+        )}
+      >
+        <GameList
+          games={visible}
+          total={games.length}
+          filters={filters}
+          onFiltersChange={setFilters}
+          franchises={franchises}
+          tags={tags}
+          selectedId={selected?.id}
+          selectedRef={selectedButton}
+          disabled={disabled}
+          onSelect={select}
+          onAddGame={onAddGame}
+          onPlay={(game) => play(game, game.playthroughs[0])}
+          onInstall={(game) =>
+            void run({
+              type: "install",
+              gameId: game.id,
+              versionId: game.latest.id,
+            })
+          }
+          onAddFile={addFile}
+        />
+      </section>
+      <section
+        aria-label="Game details"
+        className={cx(
+          "min-h-0 md:overflow-y-auto",
+          !detailOpen && "max-md:hidden",
+        )}
+      >
+        {selected ? (
+          <GameDetails
+            key={selected.id}
+            game={selected}
+            now={now}
+            headingRef={detailHeading}
+            disabled={disabled}
+            onPlay={(entry) => play(selected, entry)}
+            onInstall={() =>
+              void run({
+                type: "install",
+                gameId: selected.id,
+                versionId: selected.latest.id,
+              })
+            }
+            onAddFile={() => addFile(selected)}
+            onUpdate={() => setDialog({ kind: "update" })}
+            onReleaseNotes={() => setDialog({ kind: "notes" })}
+            onNewPlaythrough={() => setDialog({ kind: "new" })}
+            onRename={(entry) =>
+              void run({
+                type: "rename-playthrough",
+                gameId: selected.id,
+                playthroughId: entry.id,
+              })
+            }
+            onExport={(entry) =>
+              void run({
+                type: "export-save",
+                gameId: selected.id,
+                playthroughId: entry.id,
+              })
+            }
+            onDelete={(entry) =>
+              void run({
+                type: "delete-playthrough",
+                gameId: selected.id,
+                playthroughId: entry.id,
+              })
+            }
+          />
+        ) : (
+          <p className="p-8 text-muted">Choose a game to see its details.</p>
+        )}
+      </section>
+      {error && (
+        <div
+          role="alert"
+          className="fixed bottom-4 left-1/2 z-30 flex w-max max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-panel border border-danger/60 bg-danger-surface py-2 pr-2 pl-4 text-danger shadow-popover"
+        >
+          <Icon name="alert" className="size-6 shrink-0" />
+          <p>{error}</p>
+          <button
+            className={button("ghost", "icon")}
+            aria-label="Dismiss error"
+            onClick={() => setError("")}
+          >
+            <Icon name="x" className="size-5" />
+          </button>
+        </div>
+      )}
+      <input
+        ref={fileInput}
+        type="file"
+        accept=".gba,.zip"
+        aria-label="Game file"
+        tabIndex={-1}
+        className="sr-only"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          const game = fileFor.current;
+          event.target.value = "";
+          if (file && game)
+            void run({
+              type: "add-file",
+              gameId: game.id,
+              versionId: game.latest.id,
+              file,
+            });
+        }}
+      />
+      {selected && dialog?.kind === "update" && (
+        <UpdateDialog
+          game={selected}
+          busy={working}
+          onClose={() => setDialog(null)}
+          onConfirm={(entry) =>
+            void finish({
+              type: "update",
+              gameId: selected.id,
+              playthroughId: entry.id,
+              versionId: selected.latest.id,
+            })
+          }
+        />
+      )}
+      {selected && conflicted?.conflict && (
+        <ProgressDialog
+          game={selected}
+          run={{ ...conflicted, conflict: conflicted.conflict }}
+          now={now}
+          busy={working}
+          onClose={() => setDialog(null)}
+          onChoose={(progress) =>
+            void finish({
+              type: "play",
+              gameId: selected.id,
+              playthroughId: conflicted.id,
+              progress,
+            })
+          }
+          onExport={() =>
+            void run({
+              type: "export-save",
+              gameId: selected.id,
+              playthroughId: conflicted.id,
+            })
+          }
+        />
+      )}
+      {selected && dialog?.kind === "notes" && (
+        <ReleaseNotesDialog
+          game={selected}
+          busy={working}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {selected && dialog?.kind === "new" && (
+        <NewPlaythroughDialog
+          game={selected}
+          busy={working}
+          onClose={() => setDialog(null)}
+          onCreate={(name, versionId) =>
+            void finish({
+              type: "new-playthrough",
+              gameId: selected.id,
+              versionId,
+              name,
+            })
+          }
+        />
+      )}
+    </main>
+  );
+}
