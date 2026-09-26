@@ -44,12 +44,12 @@ it, and the UI shows a dash rather than zero or an invented value.
 
 Game-authored header data uses the SDK's generic
 [`GameArenaStatus`](../../../web/src/bridge/context.ts), produced by each
-game's `gameContext`. The shared `ArenaStatus` component does not enumerate
+game's `context` view. The shared `ArenaStatus` component does not enumerate
 weather, terrain, trainer or buff keys, so a game may supply its own fields.
 Battle turn stays `null` in the battle contract and is omitted from the UI
 rather than simulated from frame counts.
 
-`definePreparedGame` prepares the shared Gen III catalog and artwork decoder
+Each family's `resources` prepares the Gen III catalog and artwork decoder
 once from the identity-checked user ROM. Catalog entries and decoded artwork
 are cached outside live observations; bridge results carry small serializable
 artwork references rather than pixel buffers.
@@ -133,6 +133,19 @@ The profile covers the **1.2.1 release ROM**, not arbitrary builds of the
 | Raw ROM SHA-1 | `a4be81f8330d7f223a3ab847c3da822fe6f8a2e0` |
 | Raw ROM CRC32 | `96a8425b`, matching the official UPS patch's output checksum |
 | UPS patch SHA-256 | `c8e70f448b481d2980266ca8f021aa8b3c462f4e582cf80228ced4636c6154eb` |
+
+The **1.2.0 release ROM** has no committed manifest: the player locates it
+with the 1.2.1 locators. Source: the
+[Release-v1.2.0 commit](https://github.com/PokemonHnS-Development/pokemonHnS/commit/f54ee7e82d856fa43e5d714c5689304ce92f6f67).
+
+| Property | Value |
+|---|---|
+| Raw ROM SHA-1 | `b8a4b491ca67a76f079a8e7c19fd5512a2147dd2` |
+| Raw ROM CRC32 | `cc143d14`, matching the official 1.2.0 UPS patch's output checksum |
+| Manifest | Located at runtime from the 1.2.1 locators; relocation from 1.2.1 agrees on every address |
+| To review | `rom.catalog.moveDescriptions.count`, inferred from a bounds check |
+
+Its RAM layout equals 1.2.1's, and every ROM table sits `0x180` bytes lower.
 
 ### Record layout
 
@@ -243,7 +256,7 @@ Release-binary literals and captured structures verify these roots:
 | `gMain` | `0x03001574` | packed `inBattle` is byte `+0x439` bit 1, at `0x030019ad` |
 | `gBattleTypeFlags` | `0x020003a0` | |
 | `gBattlersCount` | `0x02001420` | |
-| `gBattlerPartyIndexes` | `0x02001422` | four u16 values |
+| `gBattlerPartyIndexes` | `0x02001424` | four u16 values; code indexes it from a literal of this address and multiplies the result by the `0x64` party record size |
 | `gBattleMons` | `0x0200143c` | four `0x58`-byte records |
 | `gAbsentBattlerFlags` | `0x020015c8` | |
 | `gEnemyParty` | `0x0201de9c` | six `0x64`-byte records |
@@ -269,8 +282,8 @@ HP and level, and stage range.
   ability fields instead.
 - Battle turn count and live battle weather have no verified release
   symbols; they are `null` with warnings. Map-configured weather is
-  available separately through `gameContext`, labelled as map weather.
-- Trainer identity in battle is unavailable; `gameContext` publishes the
+  available separately through the `context` view, labelled as map weather.
+- Trainer identity in battle is unavailable; the `context` view publishes the
   battle kind and opponent category.
 - Spinda's spot-rendered and Deoxys's tile-processed front portraits are
   unsupported.
@@ -289,14 +302,60 @@ HP and level, and stage range.
 
 ### Layout family and build manifests
 
-[`elite-redux.ts`](../src/elite-redux.ts) registers `gameParty`,
-`gameBattle`, `gameStorage` and `gameContext`. `createEliteReduxGame(builds)`
-accepts compatible `EliteReduxBuild` manifests: layout ID, exact raw-ROM
-hash, source provenance, typed RAM symbols, catalog roots and counts, and
-artwork roots. Resource preparation selects the same hash as live decoding.
-To support a nearby revision, verify its manifest and append it; do not
-duplicate decoders or React components. A changed struct layout needs a new
-layout family, not relaxed hash matching. Beta1 is not registered.
+[`elite-redux.ts`](../src/elite-redux.ts) defines `eliteReduxFamily`, which
+meets the Gen III views (`party`, `storage`, `battle`, `context`, `media`) with
+its own sources and adds `trainers`. Each build is a manifest
+(`ManifestOf<typeof eliteReduxFamily>`): exact raw-ROM hash, source
+provenance, an address for each RAM source, and catalog, trainer and artwork
+roots and counts. `createGame(eliteReduxFamily, manifests)` registers them, and
+resource preparation selects the same hash as live decoding. The player
+locates nearby revisions with the family's locators; to review one, write its
+manifest with `tools/bridge.mjs locate --manifest`, verify it and append it.
+Do not duplicate decoders or React components. A changed struct layout needs
+its own sources or views, not relaxed hash matching. Beta1 has not been
+checked.
+
+### Debug build
+
+| Property | Value |
+|---|---|
+| Build | v2.65 Beta2 (1048) debug build |
+| Raw ROM SHA-1 | `299165fb56e19ac8afe5d66f83dd5bada823d58c` |
+| Raw ROM SHA-256 | `4f5bdd1dbcc013d876120b4a09c7e9116513d2a80f28a49591c44eb0e5bf0346` |
+| Manifest | Located at runtime from the release locators; relocation from the release agrees on every address |
+
+The debug build uses about 46 KB more ROM than the release. Its data tables
+sit at five offsets from the release's (+0x5330, +0x55dc, +0xb50c, +0xb534 and
++0xb5d0) and match them word for word, pointers compared by target. In RAM,
+`playerCount`, `playerParty` and `enemyParty` move by +0x14 and the other
+sources stay put; each move is backed by the literal pools that load it.
+`battleActive` and `neutralizingGas` have no literal of their own and follow
+their neighbours, and `enigmaBerries` has 14 of 17 pools in agreement. The
+build passes the family's probes and a cold-boot smoke run; no save state of
+it has been checked, so live RAM decoding is unverified.
+
+### Locators
+
+[`elite-redux.locators.ts`](../src/elite-redux.locators.ts) and
+[`heart-n-soul.locators.ts`](../src/heart-n-soul.locators.ts) are generated
+from the verified release ROMs with `tools/bridge.mjs signatures`. They cover
+every RAM source and every ROM address in the manifests; tables of name,
+description and icon pointers are also reached through their targets.
+Fields that no literal names directly, such as `battleActive` in both games
+and Redux's `neutralizingGas`, are found through the code that computes them
+(`thumbAccess`). Every count has value locators except Heart & Soul's
+species-table size (490), which no code uses; Heart & Soul's
+`moveDescriptions` count comes from a bounds check against the last ID and is
+inferred.
+
+Each family names its reviewed build as `locatedFrom`, the template for
+builds located at runtime. On the Redux debug build, the release locators
+find every RAM source, ROM table and count without the release ROM, and the
+1.2.1 Heart & Soul locators do the same for 1.2.0, leaving only the inferred
+`moveDescriptions` count to review. Relocation from the reviewed builds
+agrees on every address; the private `located-builds` test checks both. `tools/bridge.mjs detect` scores both Redux builds as Elite
+Redux and the Heart & Soul release as Heart & Soul, although all three carry
+Emerald's game code.
 
 The player connects these outputs to the same `PokemonDashboard`, roster,
 inspector, move list, artwork hook and tooltips used by Heart & Soul; only
@@ -305,7 +364,7 @@ the connector knows the game definition.
 [`redux-catalog.ts`](../src/redux-catalog.ts) adapts ROM tables to the shared
 metadata.
 
-The manifest's `linksFactory` builds Nextdex links: Beta2 uses
+`eliteReduxLinks` builds Nextdex links: Beta2 uses
 `v=2.65beta` and the record's internal `species` ID, not its selection `id`
 or National Dex number. Eggs return `null`.
 
@@ -406,10 +465,10 @@ personality, trainer ID, gender, friendship and experience stay unavailable;
 starting HP is max HP, and known IVs, applied EVs and calculated stats use
 the ordinary fields.
 
-Redux's `gameTrainerContext` reads, from one captured observation, the
+Redux's `reduxTrainerContext` reads, from one captured observation, the
 difficulty, EV enablement, the highest level among nonempty non-egg party
-slots (fainted Pokémon included) and the third badge. The ROM resource
-`searchTrainers(query, context)` then resolves the selected difficulty's
+slots (fainted Pokémon included) and the third badge. The `trainers` view binds the ROM resource
+`searchTrainers(query, context)` to it, which resolves the selected difficulty's
 party, signed level offsets, Hell's +5 after the third badge with a level cap
 of 100, Easy or disabled EVs, nature, Iron Pill's zero Speed IV,
 Shedinja-family HP, PP Max and Hell extra abilities. It uses the ROM's own
@@ -479,9 +538,11 @@ ROMs, SHA-256 for states. None of these files is committed.
 | Variable | File | Hash | Decodes to |
 |---|---|---|---|
 | `ZIGBA_HNS_ROM` | Heart & Soul 1.2.1 raw ROM | `a4be81f8330d7f223a3ab847c3da822fe6f8a2e0` | |
+| `ZIGBA_HNS_120_ROM` | Heart & Soul 1.2.0 raw ROM | `b8a4b491ca67a76f079a8e7c19fd5512a2147dd2` | Located at runtime; compared with relocation from `ZIGBA_HNS_ROM` |
 | `ZIGBA_HNS_STATE` | `game2.state` | `71817992f9053560808493c79c3e65b5acba2b4499375cc52d76806b2107fb5f` | Overworld, no battle, 15 named empty PC boxes. Party: TOTODILE (species 158) Lv10 HP 29/33, MODEST, TORRENT, SCRATCH 32/35, LEER 30/30, WATER GUN 25/25; PIDGEY (16) Lv3 HP 16/16 with TACKLE and KEEN EYE; HOPPIP (187) Lv2 HP 14/14 with SPLASH and CHLOROPHYLL |
 | `ZIGBA_HNS_BATTLE` | `battle.state` | `5515f43a8119632270b2f64a447917fd826bc7cf16655f3276bbb0f3c4d42e54` | Single wild battle on Route 29: TOTODILE Lv10 HP 26/33 against HOPPIP Lv3 HP 16/16, neutral stages, stats 33/18/20/16/17/17 and 16/8/8/7/8/9; SCRATCH 30/35, LEER 30/30, WATER GUN 25/25 and SPLASH 40/40 |
 | `ZIGBA_REDUX_ROM` | Elite Redux 2.65 Beta2 raw ROM | `f1323126bc043f3ce931bcc670957930559eb515` | |
+| `ZIGBA_REDUX_DEBUG_ROM` | Elite Redux 2.65 Beta2 debug build raw ROM | `299165fb56e19ac8afe5d66f83dd5bada823d58c` | Located at runtime; compared with relocation from `ZIGBA_REDUX_ROM` |
 | `ZIGBA_REDUX_STATE` | `redux.state` | `bf403592558c7a6cdc0deb493f8ab26f8796dfec829f0a2031fcbbc44af66d23` | Trainer battle on Easy with randomizers off: Frigibax Lv20 62/62 against Mudkip Lv20 58/58; rosters Frigibax/Klink/Aron/Goomy and Mudkip/Goomy; Frigibax has Mountaineer, Thermal Exchange, Heatproof and Freezing Point from live battle slots |
 | `ZIGBA_REDUX_STAGE_STATE` | `redux-stage-buff.state` | `d092f7bd0f323b1720321f16b72291753748c03fba63454fe8d19455ec7b472d` | Mudkip at Attack/Defense +1/+1: raw 41/31, totals 61/46; max HP 58 and Speed 29 unchanged |
 

@@ -240,3 +240,18 @@ describe("Gen III text", () => {
     });
   });
 });
+
+describe("Gen III text encoding", () => {
+  it("round-trips through the decoder, two-character glyphs included", async () => {
+    const { encodePokemonText, decodePokemonText } = await import(
+      "../src/text"
+    );
+    for (const text of ["BULBASAUR", "Mr. Mime", "PKMN Center", "Farfetch’d"]) {
+      const bytes = encodePokemonText(text);
+      expect(bytes.at(-1)).toBe(0xff);
+      expect(decodePokemonText(bytes).text).toBe(text);
+    }
+    expect(encodePokemonText("PK")).toEqual(Uint8Array.from([0x53, 0xff]));
+    expect(() => encodePokemonText("日本")).toThrow("No Gen III glyph");
+  });
+});

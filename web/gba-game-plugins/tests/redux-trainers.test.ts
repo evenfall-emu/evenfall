@@ -126,10 +126,10 @@ describe.skipIf(!path)(
         rom,
         createReduxCatalog(
           rom,
-          eliteReduxBeta2.catalog,
+          eliteReduxBeta2.rom.catalog,
           eliteReduxBeta2.romHash,
         ),
-        eliteReduxBeta2.trainers,
+        eliteReduxBeta2.rom.trainers,
         eliteReduxBeta2.romHash,
       );
     });

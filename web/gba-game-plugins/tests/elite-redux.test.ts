@@ -4,15 +4,16 @@ import { beforeAll, describe, expect, it } from "vitest";
 import {
   createMemoryReader,
   ref,
-  u8,
+  createGame,
   decodeGame,
   resolveGame,
   type MemoryRegion,
 } from "@evenfall/gba/bridge";
 import { WasmCore } from "@evenfall/gba/core";
 import {
-  createEliteReduxGame,
   eliteRedux,
+  eliteReduxFamily,
+  reduxTrainerContext,
   eliteReduxBeta2,
   reduxAbilities,
 } from "../src/elite-redux";
@@ -166,12 +167,12 @@ describe("Redux packed ABI", () => {
     const decodeStorage = (data = bytes) => {
       const memory = createMemoryReader([
         {
-          address: eliteReduxBeta2.symbols.storage.address,
+          address: eliteRedux.profiles[0].symbols.storage.address,
           bytes: pointerBytes,
         },
         { address: 0x02000000, bytes: data },
       ]);
-      return memory.read(memory.read(eliteReduxBeta2.symbols.storage)!);
+      return memory.read(memory.read(eliteRedux.profiles[0].symbols.storage)!);
     };
     const storage = decodeStorage();
     expect(storage.currentBox).toBe(25);
@@ -249,22 +250,25 @@ describe("Redux packed ABI", () => {
     ).toBeNull();
   });
   it("registers compatible builds by exact hash without broadening to unknown revisions", () => {
-    const second = {
+    const second: typeof eliteReduxBeta2 = {
       ...eliteReduxBeta2,
       romHash: "b".repeat(40),
       source: { ...eliteReduxBeta2.source, variant: "synthetic second build" },
-      symbols: { ...eliteReduxBeta2.symbols, playerCount: ref(0, u8) },
-      catalog: { ...eliteReduxBeta2.catalog, abilityCount: 1 },
-      linksFactory: undefined,
+      addresses: { ...eliteReduxBeta2.addresses, playerCount: 0 },
+      rom: {
+        ...eliteReduxBeta2.rom,
+        catalog: { ...eliteReduxBeta2.rom.catalog, abilityCount: 1 },
+      },
     };
-    const game = createEliteReduxGame([eliteReduxBeta2, second]);
+    const game = createGame(eliteReduxFamily, [eliteReduxBeta2, second]);
     expect(resolveGame([game], second.romHash)).toBe(game);
     expect(resolveGame([game], "c".repeat(40))).toBeNull();
     const resources = game.prepare!({
       rom: read(new Uint8Array()),
       romHash: second.romHash,
     });
-    expect(resources.linksFactory).toBeUndefined();
+    // Links belong to the game, so every build gets them.
+    expect(resources.linksFactory).toBeDefined();
     expect(() => resources.catalog.ability(1)).toThrow(
       "Invalid Redux catalog ID",
     );
@@ -274,12 +278,12 @@ describe("Redux packed ABI", () => {
         { romHash: second.romHash, timeline: "second", sequence: 1, cycle: 0n },
         read(new Uint8Array(1)),
         resources,
-        new Set(["gameParty"]),
-      ).gameParty,
+        new Set(["party"]),
+      ).party,
     ).toMatchObject({ status: "ready", data: { party: [] } });
     expect(() =>
       game.prepare!({ rom: read(new Uint8Array()), romHash: "c".repeat(40) }),
-    ).toThrow("Unsupported");
+    ).toThrow("No pokemon/elite-redux manifest");
   });
 });
 
@@ -325,6 +329,11 @@ describe.skipIf(!romPath || !statePath)("private Redux release/state", () => {
   });
   const decode = (input = regions) =>
     decodeGame(eliteRedux, sample, createMemoryReader(input), resources);
+  const trainerContext = (input = regions) =>
+    reduxTrainerContext({
+      memory: createMemoryReader(input),
+      symbols: eliteRedux.profiles[0].symbols,
+    });
   function changed(address: number, mutate: (bytes: Uint8Array) => void) {
     return regions.map((region) => {
       const bytes = region.bytes.slice();
@@ -334,7 +343,7 @@ describe.skipIf(!romPath || !statePath)("private Redux release/state", () => {
     });
   }
   it("binds trainer resolution to coherent settings and the highest non-egg level, including fainted and sixth-slot Pokémon", () => {
-    expect(decode().gameTrainerContext).toMatchObject({
+    expect(trainerContext()).toMatchObject({
       status: "ready",
       data: {
         difficulty: 0,
@@ -366,7 +375,7 @@ describe.skipIf(!romPath || !statePath)("private Redux release/state", () => {
       bytes[sb2 - 0x02000000 + 0xc8c] &= ~4;
       bytes[sb1 - 0x02000000 + 0x1ae1] |= 8;
     });
-    const result = decode(input).gameTrainerContext;
+    const result = trainerContext(input);
     expect(result).toMatchObject({
       status: "ready",
       data: {
@@ -379,6 +388,10 @@ describe.skipIf(!romPath || !statePath)("private Redux release/state", () => {
     if (result.status !== "ready") throw new Error("Expected ready context");
     const trainers = resources.searchTrainers("roxanne initial", result.data);
     if (trainers.status !== "ready") throw new Error(trainers.reason);
+    // The trainers view binds the same search to the live context.
+    const view = decode(input).trainers;
+    if (view?.status !== "ready") throw new Error("Expected trainer search");
+    expect(view.data("roxanne initial")).toEqual(trainers);
     expect(trainers.data[0].averageLevel).toBe(62);
     expect(Object.values(trainers.data[0].team[0].stats.evs)).toEqual([
       0, 0, 0, 0, 0, 0,
@@ -386,7 +399,7 @@ describe.skipIf(!romPath || !statePath)("private Redux release/state", () => {
     const portrait = resources.artwork(trainers.data[0].portrait!);
     expect([portrait.width, portrait.height]).toEqual([64, 64]);
     expect(portrait.pixels.some((value) => value !== 0)).toBe(true);
-    expect(decode().gameTrainerContext).toMatchObject({
+    expect(trainerContext()).toMatchObject({
       status: "ready",
       data: { highestLevel: 20, difficulty: 0 },
     });
@@ -394,12 +407,12 @@ describe.skipIf(!romPath || !statePath)("private Redux release/state", () => {
   it("reads the real party, trainer battle, ROM descriptions and artwork", () => {
     const result = decode();
     expect(
-      result.gameBattle.status,
-      result.gameBattle.status === "error"
-        ? result.gameBattle.message
+      result.battle.status,
+      result.battle.status === "error"
+        ? result.battle.message
         : "battle is ready",
     ).toBe("ready");
-    expect(result.gameParty).toMatchObject({
+    expect(result.party).toMatchObject({
       status: "ready",
       data: {
         party: [
@@ -410,7 +423,7 @@ describe.skipIf(!romPath || !statePath)("private Redux release/state", () => {
         ],
       },
     });
-    expect(result.gameBattle).toMatchObject({
+    expect(result.battle).toMatchObject({
       status: "ready",
       data: {
         active: true,
@@ -432,9 +445,9 @@ describe.skipIf(!romPath || !statePath)("private Redux release/state", () => {
         ],
       },
     });
-    expect(result.gameStorage.status).toBe("ready");
-    if (result.gameParty.status === "ready")
-      for (const mon of result.gameParty.data.party) {
+    expect(result.storage.status).toBe("ready");
+    if (result.party.status === "ready")
+      for (const mon of result.party.data.party) {
         expect(mon.warnings).toEqual([]);
         expect(resources.artwork(mon.artwork!.front).pixels).toHaveLength(
           64 * 64 * 4,
@@ -464,7 +477,7 @@ describe.skipIf(!romPath || !statePath)("private Redux release/state", () => {
   });
   it("does not report stale battle RAM when gMain says overworld", () => {
     expect(
-      decode(changed(0x03003859, (bytes) => (bytes[0] &= ~2))).gameBattle,
+      decode(changed(0x03003859, (bytes) => (bytes[0] &= ~2))).battle,
     ).toMatchObject({ status: "ready", data: { active: false } });
   });
   it("reads the final storage slot with absent current PP, and retains authoritative live abilities in randomized mode", () => {
@@ -474,9 +487,9 @@ describe.skipIf(!romPath || !statePath)("private Redux release/state", () => {
       bytes[0x29c48 + 0xc8a] |= 0xa8;
     });
     const result = decode(modified);
-    expect(result.gameStorage.status).toBe("ready");
-    if (result.gameStorage.status === "ready")
-      expect(result.gameStorage.data.boxes[25].pokemon.at(-1)).toMatchObject({
+    expect(result.storage.status).toBe("ready");
+    if (result.storage.status === "ready")
+      expect(result.storage.data.boxes[25].pokemon.at(-1)).toMatchObject({
         slot: 29,
         species: 996,
         abilities: null,
@@ -484,7 +497,7 @@ describe.skipIf(!romPath || !statePath)("private Redux release/state", () => {
         stats: { actual: null },
         moves: [{ pp: null }, { pp: null }, { pp: null }, null],
       });
-    expect(result.gameParty).toMatchObject({
+    expect(result.party).toMatchObject({
       status: "ready",
       data: {
         party: [
@@ -495,17 +508,17 @@ describe.skipIf(!romPath || !statePath)("private Redux release/state", () => {
         ],
       },
     });
-    expect(result.gameBattle.status).toBe("ready");
-    if (result.gameBattle.status === "ready" && result.gameBattle.data.active) {
+    expect(result.battle.status).toBe("ready");
+    if (result.battle.status === "ready" && result.battle.data.active) {
       expect(
-        result.gameBattle.data.battlers[0].abilities!.map((a) => a.id),
+        result.battle.data.battlers[0].abilities!.map((a) => a.id),
       ).toEqual([314, 575, 85, 492]);
-      expect(result.gameBattle.data.battlers[0].warnings).toEqual([]);
+      expect(result.battle.data.battlers[0].warnings).toEqual([]);
     }
   });
   it("distinguishes persistent suppression, shield effect and Embargo", () => {
     const states = (input: readonly MemoryRegion[]) => {
-      const battle = decode(input).gameBattle;
+      const battle = decode(input).battle;
       expect(battle.status).toBe("ready");
       if (battle.status !== "ready" || !battle.data.active)
         throw new Error("No battle");
@@ -567,15 +580,14 @@ describe.skipIf(!romPath || !statePath)("private Redux release/state", () => {
       changed(0x0201c50c + 8, (bytes) =>
         new DataView(bytes.buffer, bytes.byteOffset).setUint32(0, status, true),
       ),
-    ).gameBattle;
+    ).battle;
     expect(battle.status).toBe("ready");
     if (battle.status === "ready" && battle.data.active)
       expect(battle.data.battlers[0].ailments).toEqual([name]);
   });
   it("rejects broken linkage and illegal catalog IDs instead of using stale data", () => {
     expect(
-      decode(changed(0x0201c50c + 4, (bytes) => (bytes[0] ^= 1))).gameBattle
-        .status,
+      decode(changed(0x0201c50c + 4, (bytes) => (bytes[0] ^= 1))).battle.status,
     ).toBe("error");
     expect(
       decode(
@@ -583,10 +595,10 @@ describe.skipIf(!romPath || !statePath)("private Redux release/state", () => {
           bytes[0] = 0xff;
           bytes[1] = 0xff;
         }),
-      ).gameBattle.status,
+      ).battle.status,
     ).toBe("error");
     expect(
-      decode(changed(0x02039905, (bytes) => (bytes[0] = 7))).gameParty.status,
+      decode(changed(0x02039905, (bytes) => (bytes[0] = 7))).party.status,
     ).toBe("error");
   });
 });

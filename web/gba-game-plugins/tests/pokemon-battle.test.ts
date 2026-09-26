@@ -198,7 +198,7 @@ describe.skipIf(!romPath || !battlePath || !inactivePath)(
 
     it("decodes the supplied wild battle with ROM-backed details and live values", () => {
       const result = decode();
-      expect(result.gameBattle).toMatchObject({
+      expect(result.battle).toMatchObject({
         status: "ready",
         data: {
           active: true,
@@ -291,7 +291,7 @@ describe.skipIf(!romPath || !battlePath || !inactivePath)(
       expect(
         itemImage.pixels.some((alpha, index) => index % 4 === 3 && alpha),
       ).toBe(true);
-      expect(result.gameContext).toMatchObject({
+      expect(result.context).toMatchObject({
         status: "ready",
         data: {
           arena: {
@@ -339,11 +339,11 @@ describe.skipIf(!romPath || !battlePath || !inactivePath)(
 
     it("uses the verified gMain bit and ignores stale battle records when inactive", () => {
       const result = decode(inactiveRegions);
-      expect(result.gameBattle).toMatchObject({
+      expect(result.battle).toMatchObject({
         status: "ready",
         data: { active: false },
       });
-      expect(result.gameContext).toMatchObject({
+      expect(result.context).toMatchObject({
         status: "ready",
         data: {
           arena: {
@@ -358,7 +358,7 @@ describe.skipIf(!romPath || !battlePath || !inactivePath)(
         changed(0x020003a0, (bytes) => {
           bytes[0] = 8;
         }),
-      ).gameContext;
+      ).context;
       expect(result).toMatchObject({
         status: "ready",
         data: {
@@ -393,7 +393,7 @@ describe.skipIf(!romPath || !battlePath || !inactivePath)(
           bytes.copyWithin(0x143c + 3 * 0x58, 0x143c + 0x58, 0x143c + 2 * 0x58);
           view.setUint16(0x143c + 3 * 0x58 + 0x28, 12, true);
         }),
-      ).gameBattle;
+      ).battle;
       expect(result).toMatchObject({
         status: "ready",
         data: {
@@ -423,7 +423,7 @@ describe.skipIf(!romPath || !battlePath || !inactivePath)(
           bytes[0x21] = 0;
           bytes[0x22] = 1;
         }),
-      ).gameBattle;
+      ).battle;
       expect(result.status).toBe("ready");
       if (result.status === "ready" && result.data.active)
         expect(result.data.battlers[0]).toMatchObject({
@@ -452,7 +452,7 @@ describe.skipIf(!romPath || !battlePath || !inactivePath)(
           changed(0x0200143c + 0x48, (bytes) => {
             bytes[0] ^= 1;
           }),
-        ).gameBattle,
+        ).battle,
       ).toMatchObject({
         status: "unavailable",
         reason: "Battler 0 does not match its linked party record",
@@ -462,7 +462,7 @@ describe.skipIf(!romPath || !battlePath || !inactivePath)(
           changed(0x0200143c + 0x19, (bytes) => {
             bytes[0] = 13;
           }),
-        ).gameBattle,
+        ).battle,
       ).toMatchObject({
         status: "unavailable",
         reason: "Battler 0: Battle Pokémon is inconsistent or being updated",

@@ -1,41 +1,27 @@
 import {
-  definePreparedGame,
-  array,
+  createGame,
+  defineFamily,
+  locateWith,
   pointer,
-  ref,
-  u8,
-  type MemoryLayout,
+  ram,
   type GameArenaStatus,
   type GameStatusField,
+  type ManifestOf,
+  type MemoryLayout,
+  type View,
 } from "@evenfall/gba/bridge";
+import { battleKind, type PokemonRules } from "./bridges";
+import type { Gen3CatalogConfig } from "./catalog";
+import { locatedFrom, locators, romLocators } from "./heart-n-soul.locators";
 import {
-  gen3BattlePokemon,
-  gen3BoxPokemon,
-  gen3PartyRecord,
-} from "./gen3-record";
-import { createGen3Catalog, type Gen3CatalogConfig } from "./catalog";
-import { createPokemonArtwork } from "./artwork";
-import {
-  battleKind,
-  detailedGameBattle,
-  detailedGameParty,
-  gameStorage,
-  pokemonStorageLayout,
-  type PokemonRules,
-} from "./bridges";
+  pokemonGen3,
+  type Gen3Format,
+  type Gen3Rom,
+  type Gen3Sources,
+  type Gen3Views,
+  type PokemonContextView,
+} from "./gen3";
 
-const littleU16: MemoryLayout<number> = {
-  byteLength: 2,
-  decode: (memory, address) => memory.u16(address),
-};
-const littleU32: MemoryLayout<number> = {
-  byteLength: 4,
-  decode: (memory, address) => memory.u32(address),
-};
-const mainInBattle: MemoryLayout<boolean> = {
-  byteLength: 1,
-  decode: (memory, address) => Boolean(memory.u8(address) & 2),
-};
 const mapContext: MemoryLayout<{
   readonly x: number;
   readonly y: number;
@@ -180,175 +166,187 @@ const settings: MemoryLayout<PokemonRules> = {
   },
 };
 
+/** Heart & Soul's layout: widened records and its own option flags. */
+export const heartNSoulFormat: Gen3Format = {
+  record: recordFormat,
+  battleLimits: {
+    speciesLimit: 456,
+    moveLimit: 368,
+    typeLimit: 19,
+    abilityLimit: 82,
+  },
+  storage: {
+    byteLength: 0x8d34,
+    boxesOffset: 4,
+    boxCount: 15,
+    capacity: 30,
+    namesOffset: 0x8ca4,
+    nameLength: 9,
+  },
+  rules: settings,
+};
+
+/** Sources only Heart & Soul's context view reads. */
+const mapSources = {
+  mapContext: ram(pointer(mapContext)),
+  mapHeader: ram(mapHeader),
+};
+
+/** Map location and configured weather, from the save block and map header. */
+const contextView: View<
+  typeof mapSources & Pick<Gen3Sources, "battleActive" | "gBattleTypeFlags">,
+  unknown,
+  PokemonContextView
+> = ({ memory, symbols }) => {
+  const root = memory.read(symbols.mapContext);
+  if (!root)
+    return {
+      status: "unavailable" as const,
+      reason: "Map save data is not initialized",
+    };
+  const location = memory.read(root);
+  const header = memory.read(symbols.mapHeader);
+  const locationName =
+    location.mapGroup === 0 && location.mapNumber === 11 ? "Route 29" : null;
+  const weatherName = weatherNames[header.weather] ?? null;
+  const warnings: string[] = [];
+  if (!locationName)
+    warnings.push("This map id does not have a verified display name");
+  if (!weatherName)
+    warnings.push("This map weather id does not have a verified name");
+  const inBattle = memory.read(symbols.battleActive);
+  const fields: GameStatusField[] = [];
+  if (inBattle) {
+    const kind = battleKind(memory.read(symbols.gBattleTypeFlags));
+    fields.push(
+      {
+        id: "battle",
+        label: "Battle",
+        value: `${kind[0].toUpperCase()}${kind.slice(1)} battle`,
+      },
+      kind === "wild"
+        ? { id: "opponent", label: "Opponent", value: "Wild Pokémon" }
+        : {
+            id: "opponent",
+            label: "Opponent",
+            value: null,
+            reason: "Trainer/opponent identity is not verified for this build",
+          },
+      {
+        id: "weather",
+        label: "Weather",
+        value: null,
+        reason: "Live battle weather is not verified for this build",
+      },
+    );
+  } else {
+    fields.push(
+      weatherName === null
+        ? {
+            id: "weather",
+            label: "Map weather",
+            value: null,
+            reason: "Unknown map weather ID",
+          }
+        : { id: "weather", label: "Map weather", value: weatherName },
+    );
+  }
+  const arena: GameArenaStatus = {
+    title: locationName ?? `Map ${location.mapGroup}:${location.mapNumber}`,
+    fields,
+  };
+  return {
+    status: "ready" as const,
+    data: {
+      arena,
+      location: {
+        mapGroup: location.mapGroup,
+        mapNumber: location.mapNumber,
+        x: location.x,
+        y: location.y,
+        regionMapSection: header.regionMapSection,
+        name: locationName,
+      },
+      /** Configured map weather, not the unverified live weather effect. */
+      weather: {
+        id: header.weather,
+        name: weatherName,
+      },
+      warnings,
+    },
+  };
+};
+
+const gen3 = pokemonGen3(heartNSoulFormat);
+
 /**
- * Heart & Soul 1.2.1 only, not the moving 1.2 branch or stock Emerald.
- * Source: Release-v1.2.1 include/pokemon.h and include/constants/species.h.
+ * Heart & Soul: the Gen III family with its layout and map context.
  * The widened Poké Ball bitfield moves Misc.isEgg to bit 31. Populated species
  * end at Kleavor (455); 456–461 are reserved and 462 is the egg sentinel.
- * Address/disassembly evidence and reproduction: docs/game-bridges.md.
+ * Evidence and reproduction: docs/profiles.md.
  */
-export const heartNSoul = definePreparedGame(({ rom, romHash }) => ({
-  catalog: createGen3Catalog(rom, heartNSoulCatalog, romHash),
-  artwork: createPokemonArtwork(rom, {
-    romHash,
-    speciesCount: 490,
-    eggSpecies: 462,
-    unownSpecies: 201,
-    unownFormsStart: 463,
-    iconTable: 0x08952b3c,
-    iconPaletteIndices: 0x089532e4,
-    iconPalettes: 0x089534d0,
-    frontTable: 0x08732678,
-    palettes: 0x0872a28c,
-    shinyPalettes: 0x0872b1dc,
-    modernShinyPalettes: 0x0872c12c,
-    itemCount: 398,
-    itemIconTable: 0x08907368,
-    spindaSpecies: 308,
-    deoxysSpecies: 410,
-  }),
-}))({
+export const heartNSoulFamily = defineFamily<Gen3Views, Gen3Rom>()({
+  ...gen3,
   id: "pokemon/heart-n-soul",
-  profiles: [
-    {
-      romHash: "a4be81f8330d7f223a3ab847c3da822fe6f8a2e0",
-      source: {
-        repository: "https://github.com/PokemonHnS-Development/pokemonHnS",
-        revision: "4aa8fa894db4c890b3d1100abd6aab50f44c22b1",
-        variant: "Release-v1.2.1",
-        compiler:
-          "Release compiler unpublished; source prescribes devkitARM r65",
-        options: [
-          "Release binary verified by disassembly; not a matched local rebuild",
-        ],
-      },
-      symbols: {
-        gPlayerPartyCount: ref(0x0201d9e9, u8),
-        gPlayerParty: array(0x0201d9ec, gen3PartyRecord(recordFormat), 6),
-        gEnemyParty: array(0x0201de9c, gen3PartyRecord(recordFormat), 6),
-        rules: ref(0x03003740, pointer(settings)),
-        storage: ref(
-          0x03003748,
-          pointer(
-            pokemonStorageLayout(gen3BoxPokemon(recordFormat), {
-              byteLength: 0x8d34,
-              boxesOffset: 4,
-              boxCount: 15,
-              capacity: 30,
-              namesOffset: 0x8ca4,
-              nameLength: 9,
-            }),
-          ),
-        ),
-        battleActive: ref(0x030019ad, mainInBattle),
-        gBattleTypeFlags: ref(0x020003a0, littleU32),
-        gBattlersCount: ref(0x02001420, u8),
-        gBattlerPartyIndexes: array(0x02001422, littleU16, 4),
-        gBattleMons: array(
-          0x0200143c,
-          gen3BattlePokemon({
-            speciesLimit: 456,
-            moveLimit: 368,
-            typeLimit: 19,
-            abilityLimit: 82,
-          }),
-          4,
-        ),
-        gAbsentBattlerFlags: ref(0x020015c8, u8),
-        mapContext: ref(0x03003740, pointer(mapContext)),
-        mapHeader: ref(0x0200c220, mapHeader),
-      },
-    },
-  ],
-  bridges: {
-    gameParty: detailedGameParty,
-    gameStorage,
-    gameBattle: detailedGameBattle,
-    gameContext: {
-      id: "gameContext",
-      decode({ memory, symbols }) {
-        const root = memory.read(symbols.mapContext);
-        if (!root)
-          return {
-            status: "unavailable" as const,
-            reason: "Map save data is not initialized",
-          };
-        const location = memory.read(root);
-        const header = memory.read(symbols.mapHeader);
-        const locationName =
-          location.mapGroup === 0 && location.mapNumber === 11
-            ? "Route 29"
-            : null;
-        const weatherName = weatherNames[header.weather] ?? null;
-        const warnings: string[] = [];
-        if (!locationName)
-          warnings.push("This map id does not have a verified display name");
-        if (!weatherName)
-          warnings.push("This map weather id does not have a verified name");
-        const inBattle = memory.read(symbols.battleActive);
-        const fields: GameStatusField[] = [];
-        if (inBattle) {
-          const kind = battleKind(memory.read(symbols.gBattleTypeFlags));
-          fields.push(
-            {
-              id: "battle",
-              label: "Battle",
-              value: `${kind[0].toUpperCase()}${kind.slice(1)} battle`,
-            },
-            kind === "wild"
-              ? { id: "opponent", label: "Opponent", value: "Wild Pokémon" }
-              : {
-                  id: "opponent",
-                  label: "Opponent",
-                  value: null,
-                  reason:
-                    "Trainer/opponent identity is not verified for this build",
-                },
-            {
-              id: "weather",
-              label: "Weather",
-              value: null,
-              reason: "Live battle weather is not verified for this build",
-            },
-          );
-        } else {
-          fields.push(
-            weatherName === null
-              ? {
-                  id: "weather",
-                  label: "Map weather",
-                  value: null,
-                  reason: "Unknown map weather ID",
-                }
-              : { id: "weather", label: "Map weather", value: weatherName },
-          );
-        }
-        const arena: GameArenaStatus = {
-          title:
-            locationName ?? `Map ${location.mapGroup}:${location.mapNumber}`,
-          fields,
-        };
-        return {
-          status: "ready" as const,
-          data: {
-            arena,
-            location: {
-              mapGroup: location.mapGroup,
-              mapNumber: location.mapNumber,
-              x: location.x,
-              y: location.y,
-              regionMapSection: header.regionMapSection,
-              name: locationName,
-            },
-            /** Configured map weather, not the unverified live weather effect. */
-            weather: {
-              id: header.weather,
-              name: weatherName,
-            },
-            warnings,
-          },
-        };
-      },
+  sources: locateWith({ ...gen3.sources, ...mapSources }, locators),
+  views: { ...gen3.views, context: contextView },
+  romLocators,
+  locatedFrom,
+});
+
+/** The 1.2.1 release ROM, not the moving 1.2 branch or stock Emerald. */
+export const heartNSoul121: ManifestOf<typeof heartNSoulFamily> = {
+  family: "pokemon/heart-n-soul",
+  romHash: "a4be81f8330d7f223a3ab847c3da822fe6f8a2e0",
+  source: {
+    repository: "https://github.com/PokemonHnS-Development/pokemonHnS",
+    revision: "4aa8fa894db4c890b3d1100abd6aab50f44c22b1",
+    variant: "Release-v1.2.1",
+    compiler: "Release compiler unpublished; source prescribes devkitARM r65",
+    options: [
+      "Release binary verified by disassembly; not a matched local rebuild",
+    ],
+  },
+  addresses: {
+    gPlayerPartyCount: 0x0201d9e9,
+    gPlayerParty: 0x0201d9ec,
+    gEnemyParty: 0x0201de9c,
+    rules: 0x03003740,
+    storage: 0x03003748,
+    battleActive: 0x030019ad,
+    gBattleTypeFlags: 0x020003a0,
+    gBattlersCount: 0x02001420,
+    gBattlerPartyIndexes: 0x02001424,
+    gBattleMons: 0x0200143c,
+    gAbsentBattlerFlags: 0x020015c8,
+    mapContext: 0x03003740,
+    mapHeader: 0x0200c220,
+  },
+  rom: {
+    catalog: heartNSoulCatalog,
+    artwork: {
+      speciesCount: 490,
+      eggSpecies: 462,
+      unownSpecies: 201,
+      unownFormsStart: 463,
+      iconTable: 0x08952b3c,
+      iconPaletteIndices: 0x089532e4,
+      iconPalettes: 0x089534d0,
+      frontTable: 0x08732678,
+      palettes: 0x0872a28c,
+      shinyPalettes: 0x0872b1dc,
+      modernShinyPalettes: 0x0872c12c,
+      itemCount: 398,
+      itemIconTable: 0x08907368,
+      spindaSpecies: 308,
+      deoxysSpecies: 410,
     },
   },
-});
+  provenance: { method: "reviewed" },
+};
+
+/**
+ * Reviewed builds. Other Heart & Soul builds (1.2.0, for one) are recognized
+ * in the player from the locators, with 1.2.1 as their template.
+ */
+export const heartNSoul = createGame(heartNSoulFamily, [heartNSoul121]);

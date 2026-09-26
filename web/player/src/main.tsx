@@ -22,6 +22,7 @@ import { Dialog } from "@base-ui/react/dialog";
 import { Popover } from "@base-ui/react/popover";
 import { Select } from "@base-ui/react/select";
 import { player } from "./player";
+import type { BridgeHost } from "@evenfall/gba/bridge";
 import { BridgeProvider } from "@evenfall/gba/bridge/react";
 import { ConsolePlayer, PlayerHelp, quickState } from "./console-player";
 import {
@@ -36,7 +37,7 @@ import { Account } from "./account";
 import type { CloudResume } from "./cloud";
 import { QUICK_SLOTS, type Game, type PlaythroughRef } from "./library";
 import { QuickConflictChoices } from "./quick-conflicts";
-import { gameRegistry } from "./games";
+import { gameRegistry, watchBuild } from "./games";
 import { download } from "./media";
 import { trackView } from "./analytics";
 import { cx } from "./ui/styles";
@@ -192,8 +193,14 @@ function App() {
   // Keep the panels in the toolbar's existing desktop/mobile CSS coordinates.
   const toolbar = useRef<HTMLDivElement>(null);
   const dragDepth = useRef(0);
-  const experience = gameRegistry.layoutForRom("dashboards", state.game?.hash);
+  const romHash = state.game?.hash;
+  // Bumped when a build is recognized or forgotten, to pick a layout again.
+  const [, setBuilds] = useState(0);
+  // The ROM whose build is being located after its game was detected.
+  const [recognizing, setRecognizing] = useState<string>();
+  const experience = gameRegistry.layoutForRom("dashboards", romHash);
   const Layout = experience?.Layout;
+  const build = gameRegistry.buildInfo(romHash);
   const lastGame = state.game ?? state.games[0];
   const lastRun = state.runs.find(
     (run) =>
@@ -253,6 +260,56 @@ function App() {
   useEffect(() => {
     if (quickReview && !quickConflicts.length && !quickBusy) closeQuickReview();
   }, [quickReview, quickConflicts.length, quickBusy]);
+  // A ROM no reviewed build matches may still be a build of an installed
+  // game: recognize it from the cache or the game's locators, then show its
+  // layout.
+  useEffect(() => {
+    if (!state.ready || !romHash || gameRegistry.gameForRom(romHash)) return;
+    const controller = new AbortController();
+    void gameRegistry
+      .recognize(
+        romHash,
+        async () => {
+          if (player.state.game?.hash !== romHash)
+            throw new Error("The game changed during recognition");
+          return player.emulator.exportRom();
+        },
+        {
+          cache: player.library.builds,
+          signal: controller.signal,
+          onLocating: () => setRecognizing(romHash),
+        },
+      )
+      .then((result) => {
+        if (result.status !== "unsupported") setBuilds((count) => count + 1);
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) console.error(error);
+      })
+      .finally(() =>
+        setRecognizing((hash) => (hash === romHash ? undefined : hash)),
+      );
+    return () => controller.abort();
+  }, [state.ready, romHash]);
+  // A located build whose views never decode is dropped for the generic player.
+  useEffect(() => {
+    if (!experience || !romHash || build?.provenance !== "located") return;
+    const store = player.session.bridges.observe(
+      // Plugins list their games as identities; each is a game definition.
+      experience.game as Parameters<BridgeHost["observe"]>[0],
+    );
+    return watchBuild(store, () => {
+      setNotice("This game's dashboard could not read this build.");
+      void gameRegistry
+        .forget(romHash, player.library.builds)
+        .catch((error: unknown) => console.error(error))
+        .finally(() => setBuilds((count) => count + 1));
+    });
+  }, [experience?.game, romHash, build?.provenance]);
+  // Swapping layouts remounts the screen; keep keyboard focus on it.
+  useEffect(() => {
+    if (document.activeElement === document.body) player.canvas?.focus();
+  }, [experience?.game]);
   useEffect(() => trackView(view), [view]);
   useEffect(() => {
     if (home && state.ready && state.cloud.accountId)
@@ -1170,13 +1227,22 @@ function App() {
             />
           </>
         ) : Layout ? (
-          <Layout key={experience.game.id} playing={state.playing}>
+          <Layout
+            key={experience.game.id}
+            playing={state.playing}
+            build={build}
+          >
             {display}
           </Layout>
         ) : (
           <main className="generic-experience" data-game-layout="generic">
             {display}
           </main>
+        )}
+        {romHash && recognizing === romHash && !notice && (
+          <div className="console-notice" role="status">
+            Recognizing game…
+          </div>
         )}
         <span className="sr-only" role="status">
           {state.message}

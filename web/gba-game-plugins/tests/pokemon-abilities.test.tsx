@@ -1,7 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import { createMemoryReader } from "@evenfall/gba/bridge";
-import { eliteRedux, eliteReduxBeta2 } from "../src/elite-redux";
+import {
+  eliteRedux,
+  eliteReduxBeta2,
+  eliteReduxLinks,
+} from "../src/elite-redux";
 import { pokemonResources } from "./fixtures/pokemon";
 import {
   PokemonDashboard,
@@ -150,7 +154,7 @@ it("omits links for absent factories, unavailable entries, eggs, and empty selec
       <PokemonInspector
         pokemon={{ ...pokemon, isEgg: true }}
         artwork={() => ({})}
-        linksFactory={eliteReduxBeta2.linksFactory}
+        linksFactory={eliteReduxLinks}
       />,
     ),
   ).not.toContain("<a ");

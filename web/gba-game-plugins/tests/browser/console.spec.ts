@@ -14,7 +14,7 @@ const romSha = (bytes: Uint8Array) =>
 async function ready(page: Page) {
   await page.goto("/");
   await page.getByRole("button", { name: "Enter player" }).click();
-  await expect(page.getByRole("button", { name: "Add game" })).toBeEnabled();
+  await expect(page.getByLabel("Open ROM", { exact: true })).toBeEnabled();
 }
 async function importState(page: Page, path: string) {
   await page.getByRole("button", { name: "More options" }).click();

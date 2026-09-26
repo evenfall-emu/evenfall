@@ -939,6 +939,10 @@ table {
   gap: 6px;
   padding-bottom: 10px;
 }
+.arena-heading .build-warning {
+  color: #e7c780;
+  font-size: 0.86rem;
+}
 .arena-status {
   display: flex;
   flex-wrap: wrap;

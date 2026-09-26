@@ -8,14 +8,16 @@ import {
   type ReactNode,
 } from "react";
 import { Combobox } from "@base-ui/react/combobox";
-import { useBridge, useBridgeResources } from "@evenfall/gba/bridge/react";
+import { useViews } from "@evenfall/gba/bridge/react";
 import { HpBar, TypeBadge } from "./game-layout";
 import { usePokemonArtwork } from "./pokemon-ui";
 import { InfoTip } from "./info-tip";
 import type { BridgeState, GameArenaStatus } from "@evenfall/gba/bridge";
+import type { Gen3Game } from "../src/gen3";
 import { heartNSoul } from "../src/heart-n-soul";
 import { eliteRedux } from "../src/elite-redux";
 import type { PokemonResources } from "../src/bridges";
+import type { BuildInfo, GameLayoutProps } from "./layout";
 import type {
   PokemonAbility,
   PokemonDetails,
@@ -196,10 +198,29 @@ function Category({
 }
 
 /** A layout can display any game-authored field without a UI-specific switch. */
-export function ArenaStatus({ arena }: { arena: GameArenaStatus }) {
+export function ArenaStatus({
+  arena,
+  build,
+}: {
+  arena: GameArenaStatus;
+  build?: BuildInfo;
+}) {
   return (
     <header className="scene-heading arena-heading">
       <h1>{arena.title}</h1>
+      {build?.provenance === "located" && (
+        <p
+          className="build-warning"
+          title={[
+            "Recognized from this game's locators; nobody has reviewed this build.",
+            ...(build.review.length
+              ? [`Unconfirmed: ${build.review.join(", ")}`]
+              : []),
+          ].join("\n")}
+        >
+          Detected build · not reviewed
+        </p>
+      )}
       <dl className="arena-status" aria-label="Arena status">
         {arena.fields.map((field) => (
           <div key={field.id} title={field.reason}>
@@ -894,8 +915,13 @@ export interface PokemonDashboardProps {
   readonly storage: BridgeState<PokemonStorageView>;
   readonly battle: BridgeState<PokemonBattleView>;
   readonly context: BridgeState<{ readonly arena: GameArenaStatus }>;
-  readonly resources: PokemonResources | undefined;
+  /** ROM-bound artwork and links; absent until the ROM is prepared. */
+  readonly resources:
+    | Pick<PokemonResources, "artwork" | "linksFactory">
+    | undefined;
   readonly trainerSearch?: PokemonTrainerSearch;
+  /** The loaded build's provenance; a located build is marked as unreviewed. */
+  readonly build?: BuildInfo;
   readonly children: ReactNode;
 }
 
@@ -907,6 +933,7 @@ export function PokemonDashboard({
   context,
   resources,
   trainerSearch,
+  build,
   children,
 }: PokemonDashboardProps) {
   const [mobilePanel, setMobilePanel] = useState<"team" | "info">("team");
@@ -980,6 +1007,7 @@ export function PokemonDashboard({
       </div>
       <div className="adventure-center">
         <ArenaStatus
+          build={build}
           arena={
             context.status === "ready"
               ? context.data.arena
@@ -1052,73 +1080,73 @@ export function PokemonDashboard({
   );
 }
 
-export function HeartNSoulDashboard({ children }: { children: ReactNode }) {
-  const party = useBridge(heartNSoul, "gameParty");
-  const storage = useBridge(heartNSoul, "gameStorage");
-  const battle = useBridge(heartNSoul, "gameBattle");
-  const context = useBridge(heartNSoul, "gameContext");
-  const resources = useBridgeResources(heartNSoul, "gameParty");
+const idle = { status: "idle" } as const;
+
+/**
+ * The Pokémon overlay for any game built on the Gen III views: it reads every
+ * view of `game` and renders the dashboard around the player (`children`).
+ */
+export function Gen3Overlay({
+  game,
+  gameName,
+  build,
+  children,
+}: {
+  game: Gen3Game;
+  gameName: string;
+  build?: BuildInfo;
+  children: ReactNode;
+}) {
+  const views = useViews(game);
+  const media = views?.media.status === "ready" ? views.media.data : undefined;
+  const resources = useMemo(
+    () =>
+      media && {
+        artwork: media.artwork,
+        linksFactory: media.links ?? undefined,
+      },
+    [media?.artwork, media?.links],
+  );
+  const trainers = views?.trainers;
+  const trainerReason =
+    trainers?.status === "unavailable"
+      ? trainers.reason
+      : trainers?.status === "error"
+        ? trainers.message
+        : "Waiting for trainer preview context";
+  const trainerSearch = useMemo<PokemonTrainerSearch | undefined>(() => {
+    if (!trainers) return undefined;
+    if (trainers.status === "ready") return trainers.data;
+    return () => ({ status: "unavailable", reason: trainerReason });
+  }, [trainers?.status === "ready" ? trainers.data : trainerReason]);
   return (
     <PokemonDashboard
-      gameName="Heart & Soul"
-      party={party}
-      storage={storage}
-      battle={battle}
-      context={context}
+      gameName={gameName}
+      party={views?.party ?? idle}
+      storage={views?.storage ?? idle}
+      battle={views?.battle ?? idle}
+      context={views?.context ?? idle}
       resources={resources}
+      trainerSearch={trainerSearch}
+      build={build}
     >
       {children}
     </PokemonDashboard>
   );
 }
 
-export function EliteReduxDashboard({ children }: { children: ReactNode }) {
-  const party = useBridge(eliteRedux, "gameParty");
-  const storage = useBridge(eliteRedux, "gameStorage");
-  const battle = useBridge(eliteRedux, "gameBattle");
-  const context = useBridge(eliteRedux, "gameContext");
-  const trainerContext = useBridge(eliteRedux, "gameTrainerContext");
-  const resources = useBridgeResources(eliteRedux, "gameParty");
-  const values =
-    trainerContext.status === "ready" ? trainerContext.data : undefined;
-  const { difficulty, highestLevel, hellLevelBonus, evsEnabled } = values ?? {};
-  const reason =
-    trainerContext.status === "unavailable"
-      ? trainerContext.reason
-      : trainerContext.status === "error"
-        ? trainerContext.message
-        : "Waiting for trainer preview context";
-  // Snapshot sequence changes every frame; only inputs that affect a team invalidate search.
-  const trainerSearch = useMemo<PokemonTrainerSearch>(
-    () => (query) => {
-      if (
-        !resources ||
-        difficulty === undefined ||
-        highestLevel === undefined ||
-        hellLevelBonus === undefined ||
-        evsEnabled === undefined
-      )
-        return { status: "unavailable", reason };
-      return resources.searchTrainers(query, {
-        difficulty,
-        highestLevel,
-        hellLevelBonus,
-        evsEnabled,
-      });
-    },
-    [resources, difficulty, highestLevel, hellLevelBonus, evsEnabled, reason],
-  );
+export function HeartNSoulDashboard({ build, children }: GameLayoutProps) {
   return (
-    <PokemonDashboard
-      gameName="Elite Redux"
-      party={party}
-      storage={storage}
-      battle={battle}
-      context={context}
-      resources={resources}
-      trainerSearch={trainerSearch}
-    >
+    <Gen3Overlay game={heartNSoul} gameName="Heart & Soul" build={build}>
       {children}
-    </PokemonDashboard>
+    </Gen3Overlay>
+  );
+}
+
+export function EliteReduxDashboard({ build, children }: GameLayoutProps) {
+  return (
+    <Gen3Overlay game={eliteRedux} gameName="Elite Redux" build={build}>
+      {children}
+    </Gen3Overlay>
   );
 }

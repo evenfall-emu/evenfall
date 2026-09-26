@@ -227,12 +227,13 @@ starts a fresh empty one. New runs get UUIDs and can be created offline.
 
 ## Local saves and resume
 
-All progress is stored in the `zigba-local` IndexedDB database (version 7).
+All progress is stored in the `zigba-local` IndexedDB database (version 8).
 Every key starts with the game's raw-ROM SHA-1. Battery saves, resume
 checkpoints, quick slots, save locks and cloud outbox jobs all include the
 playthrough ID; ROM bytes are stored once per exact hash. Databases from
 version 6 and earlier keyed games by SHA-256; opening one deletes its contents
-and starts an empty library.
+and starts an empty library. Version 8 adds the `builds` store and keeps
+everything else.
 
 - **Autosave** runs every five seconds and on pause. It stores the battery
   data and an exact-ROM machine checkpoint with the boot and media options
@@ -253,6 +254,11 @@ and starts an empty library.
   `zigba-save-playthrough:["<raw ROM SHA-1>","<playthrough ID>"]` to write
   a run's progress. Read-only tabs may resume but cannot persist, and
   opening another tab does not transfer unsaved state.
+
+- **Recognized builds** live in the `builds` store under
+  `<game ID>:<raw ROM SHA-1>:<locator version>`, each a located manifest and
+  its review list (see [Game plugins](#game-plugins)). They are a cache: a
+  new locator version misses it and locates the build again.
 
 In-memory rewind history is separate from all of these and is not a resume
 store. Snapshots are specific to one exact ROM; carrying battery saves
@@ -391,14 +397,23 @@ exact-build game definitions from
 layouts keyed by game ID. The player loads every plugin's dashboards, with
 their styles, before its first render, so a layout never swaps in under a
 running game. `resolveGame` selects a layout by raw-ROM SHA-1, never by
-filename; ambiguous matches are errors, and unknown ROMs keep the generic
-layout. A layout receives the self-contained player as `children` plus
-`playing`, and reads live data with `useBridge` inside the player's
-`BridgeProvider`. `main.tsx` never imports a game package.
+filename; ambiguous matches are errors. A layout receives the self-contained
+player as `children` plus `playing` and `build`, and reads live data with
+`useBridge` inside the player's `BridgeProvider`. `main.tsx` never imports a
+game package.
+
+A ROM that matches no reviewed build is recognized with
+`gameRegistry.recognize`: from the `builds` cache, else by running the
+[locators](../docs/game-bridges.md#recognizing-builds-at-runtime) of each
+installed game that has them, on the page while the game plays. The player
+shows "Recognizing game…" once a game's detection matches, then the game's
+layout with `build.provenance` set to `located`; unrecognized ROMs keep the
+generic layout. A located build whose views keep failing is forgotten
+(`gameRegistry.forget`) and the generic layout returns.
 
 The default build installs
 [`@evenfall/gba-pokemon`](../games/pokemon/README.md), which adds the
-Heart & Soul 1.2.1 and Elite Redux 2.65 Beta2 dashboards; its README
+Heart & Soul and Elite Redux dashboards; its README
 describes those panels and their limits. To build without it, remove its
 import and `installed` entry from `games.ts` and its dependency from
 `package.json`. To add a game, export an object of the same `GamePlugin` shape

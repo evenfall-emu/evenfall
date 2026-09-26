@@ -103,13 +103,64 @@ describe("library storage", () => {
     await old.put("scenarios", { name: "Old scenario" }, "scenario");
     old.close();
     const lib = await openLibrary();
-    expect(lib.db!.version).toBe(7);
+    expect(lib.db!.version).toBe(8);
     expect(await lib.list()).toEqual([]);
     expect(await lib.rom(hash)).toBeUndefined();
     expect(await lib.getSave(ref(hash))).toBeUndefined();
     expect(await lib.db!.getAll("scenarios")).toEqual([]);
     expect(await lib.playthroughs(hash)).toEqual([]);
     expect(await lib.cloudJobs("alice")).toEqual([]);
+    lib.close();
+  });
+  it("keeps a version 7 library and adds the recognized-build cache", async () => {
+    await deleteDB("zigba-local");
+    const first = await openLibrary();
+    await first.put({
+      hash: "abc",
+      title: "Kept",
+      rom: new Uint8Array([1]),
+      lastPlayed: 1,
+    });
+    await first.save(ref("abc"), new Uint8Array([42]));
+    first.close();
+    // Downgrade the schema to version 7: same stores, no build cache.
+    const raw = await openDB("zigba-local");
+    const stores = new Map<string, Map<IDBValidKey, unknown>>();
+    for (const name of raw.objectStoreNames) {
+      const entries = new Map<IDBValidKey, unknown>();
+      for (const key of await raw.getAllKeys(name))
+        entries.set(key, await raw.get(name, key));
+      stores.set(name, entries);
+    }
+    raw.close();
+    await deleteDB("zigba-local");
+    const old = await openDB("zigba-local", 7, {
+      upgrade(db) {
+        for (const name of stores.keys()) {
+          if (name === "builds") continue;
+          const store = db.createObjectStore(name);
+          if (name === "cloud") {
+            store.createIndex("accountId", "accountId");
+            store.createIndex("hash", "hash");
+          }
+          if (name === "playthroughs") store.createIndex("hash", "hash");
+        }
+      },
+    });
+    for (const [name, entries] of stores)
+      if (name !== "builds")
+        for (const [key, value] of entries) await old.put(name, value, key);
+    old.close();
+    const lib = await openLibrary();
+    expect(lib.db!.version).toBe(8);
+    expect((await lib.list()).map((game) => game.title)).toEqual(["Kept"]);
+    expect(await lib.rom("abc")).toEqual(new Uint8Array([1]));
+    expect(await lib.getSave(ref("abc"))).toEqual(new Uint8Array([42]));
+    expect(await lib.builds.get("game:abc:v1")).toBeUndefined();
+    await lib.builds.set("game:abc:v1", { review: [] });
+    expect(await lib.builds.get("game:abc:v1")).toEqual({ review: [] });
+    await lib.builds.delete("game:abc:v1");
+    expect(await lib.builds.get("game:abc:v1")).toBeUndefined();
     lib.close();
   });
   it("reports unavailable storage explicitly", async () => {

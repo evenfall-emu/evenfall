@@ -7,7 +7,9 @@ import type {
 } from "../src/model";
 
 /** Bounded, resource-scoped PNG cache. No ROM bytes or pixels enter snapshots. */
-export function usePokemonArtwork(resources: PokemonResources | undefined) {
+export function usePokemonArtwork(
+  resources: Pick<PokemonResources, "artwork"> | undefined,
+) {
   return useMemo(() => {
     const cache = new Map<string, { src?: string; reason?: string }>();
     return (

@@ -908,6 +908,16 @@ export class Library {
       }
     });
   }
+  /** Builds recognized from game locators; see `recognize` in games.ts. */
+  readonly builds = {
+    get: async (key: string): Promise<unknown> => this.db?.get("builds", key),
+    set: async (key: string, value: unknown): Promise<void> => {
+      await this.db?.put("builds", value, key);
+    },
+    delete: async (key: string): Promise<void> => {
+      await this.db?.delete("builds", key);
+    },
+  };
   async asset(hash: string): Promise<Uint8Array | undefined> {
     return (await this.db?.get("assets", hash)) ?? (await this.rom(hash));
   }
@@ -925,26 +935,31 @@ export async function openLibrary() {
   const failure = new Promise<never>((_, reject) => {
     rejectBlocked = reject;
   });
-  const opened = openDB("zigba-local", 7, {
-    upgrade(db) {
-      // Version 7 identifies games by the SHA-1 of the raw ROM instead of its
-      // SHA-256. Keys cannot be converted without rehashing every ROM, so an
-      // older database starts empty.
-      for (const name of [...db.objectStoreNames]) db.deleteObjectStore(name);
-      for (const name of [
-        "saves",
-        "games",
-        "roms",
-        "resumes",
-        "assets",
-        "scenarios",
-        "reports",
-      ])
-        db.createObjectStore(name);
-      const cloud = db.createObjectStore("cloud");
-      cloud.createIndex("accountId", "accountId");
-      cloud.createIndex("hash", "hash");
-      db.createObjectStore("playthroughs").createIndex("hash", "hash");
+  const opened = openDB("zigba-local", 8, {
+    upgrade(db, oldVersion) {
+      if (oldVersion < 7) {
+        // Version 7 identifies games by the SHA-1 of the raw ROM instead of
+        // its SHA-256. Keys cannot be converted without rehashing every ROM,
+        // so an older database starts empty.
+        for (const name of [...db.objectStoreNames]) db.deleteObjectStore(name);
+        for (const name of [
+          "saves",
+          "games",
+          "roms",
+          "resumes",
+          "assets",
+          "scenarios",
+          "reports",
+        ])
+          db.createObjectStore(name);
+        const cloud = db.createObjectStore("cloud");
+        cloud.createIndex("accountId", "accountId");
+        cloud.createIndex("hash", "hash");
+        db.createObjectStore("playthroughs").createIndex("hash", "hash");
+      }
+      // Version 8: builds recognized from game locators, by game, ROM and
+      // locator version.
+      if (oldVersion < 8) db.createObjectStore("builds");
     },
     blocked() {
       blocked = true;

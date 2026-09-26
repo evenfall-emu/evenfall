@@ -111,3 +111,26 @@ const glyphs = new Map<number, string>([
   [0xf6, "ü"],
   [0xfe, "\n"],
 ]);
+
+// The decoder's table, inverted: the first byte for each glyph wins.
+const encoding = new Map<string, number>();
+for (let byte = 0; byte < 0xff; byte++) {
+  const glyph = internationalGlyph(byte);
+  if (glyph !== null && !encoding.has(glyph)) encoding.set(glyph, byte);
+}
+
+/** Encode international Gen III text, terminated by 0xFF. Throws on a glyph it lacks. */
+export function encodePokemonText(text: string): Uint8Array {
+  const bytes: number[] = [];
+  for (let i = 0; i < text.length; ) {
+    // Two-character glyphs (PK, MN) before single characters.
+    const pair = text.slice(i, i + 2);
+    const byte = encoding.get(pair) ?? encoding.get(text[i]);
+    if (byte === undefined)
+      throw new Error(`No Gen III glyph for ${JSON.stringify(text[i])}`);
+    bytes.push(byte);
+    i += encoding.has(pair) ? 2 : 1;
+  }
+  bytes.push(0xff);
+  return Uint8Array.from(bytes);
+}

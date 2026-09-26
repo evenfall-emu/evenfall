@@ -1,9 +1,16 @@
 // Compile-only author examples, checked against the real hook and decoders.
 import { expectTypeOf } from "vitest";
-import { useBridge } from "@evenfall/gba/bridge/react";
+import { useBridge, useViews } from "@evenfall/gba/bridge/react";
 import {
+  createGame,
   defineBridge,
+  defineFamily,
   defineGame,
+  ram,
+  ramArray,
+  u8,
+  type ManifestOf,
+  type RomContext,
   definePreparedGame,
   type BridgeContext,
   type BuildProfile,
@@ -292,5 +299,115 @@ definePreparedGame(() => ({ title: "not a catalog" }))({
   bridges: {
     // @ts-expect-error Prepared resources must satisfy reusable decoders.
     catalog: needsCatalog,
+  },
+});
+
+// Families: the overlay's views fix what each view returns, sources fix what
+// views read, and a manifest must name every source.
+interface FamilyViews {
+  party: { readonly levels: readonly number[] };
+  search: (query: string) => readonly string[];
+  enemy?: { readonly count: number };
+}
+interface Mon {
+  level: number;
+  species: number;
+}
+declare const mon: MemoryLayout<Mon>;
+declare const monWithoutSpecies: MemoryLayout<{ level: number }>;
+const family = defineFamily<FamilyViews, { names: number }>()({
+  id: "example/family",
+  sources: { count: ram(u8), party: ramArray(mon, 6) },
+  resources: ({ config }: RomContext<{ names: number }>) => ({
+    search: (query: string) => [`${query}@${config.names}`],
+  }),
+  views: {
+    party: ({ memory, symbols }) => {
+      const first = memory.read(symbols.party);
+      expectTypeOf(first).toEqualTypeOf<readonly Mon[]>();
+      return {
+        status: "ready",
+        data: {
+          levels: first
+            .slice(0, memory.read(symbols.count))
+            .map((m) => m.level),
+        },
+      };
+    },
+    search: ({ resources }) => ({ status: "ready", data: resources.search }),
+  },
+});
+
+defineFamily<FamilyViews>()({
+  id: "missing-view",
+  sources: {},
+  resources: () => ({}),
+  // @ts-expect-error A required view (search) is missing.
+  views: {
+    party: () => ({ status: "ready", data: { levels: [] } }),
+  },
+});
+defineFamily<FamilyViews>()({
+  id: "wrong-view",
+  sources: {},
+  resources: () => ({}),
+  views: {
+    // @ts-expect-error A view must return its overlay input's shape.
+    party: () => ({ status: "ready", data: { levels: "none" } }),
+    search: () => ({ status: "ready", data: () => [] }),
+  },
+});
+defineFamily<FamilyViews, { names: number }>()({
+  ...family,
+  id: "wrong-codec",
+  sources: {
+    ...family.sources,
+    party: ramArray(monWithoutSpecies, 6),
+  },
+  // @ts-expect-error The inherited party view reads species the new codec lacks.
+  views: family.views,
+});
+
+const familyManifest: ManifestOf<typeof family> = {
+  family: "example/family",
+  romHash: "a".repeat(40),
+  source: profile.source,
+  addresses: { count: 0x02000000, party: 0x02000004 },
+  rom: { names: 0x08000000 },
+  provenance: { method: "reviewed" },
+};
+const badManifest: ManifestOf<typeof family> = {
+  ...familyManifest,
+  // @ts-expect-error Every source needs an address, and names are checked.
+  addresses: { count: 0x02000000, partyy: 0x02000004 },
+};
+void badManifest;
+const familyGame = createGame(family, [familyManifest]);
+
+export function FamilyOverlay() {
+  const views = useViews(familyGame);
+  if (views?.search.status === "ready")
+    expectTypeOf(views.search.data).toEqualTypeOf<
+      (query: string) => readonly string[]
+    >();
+  // @ts-expect-error An optional view may be absent: check before reading it.
+  views!.enemy.status;
+  return null;
+}
+
+// ROM locators are keyed by paths to numbers in the family's ROM data.
+defineFamily<FamilyViews, { names: number; table: { base: number } }>()({
+  id: "rom-locators",
+  sources: {},
+  resources: () => ({ search: (query: string) => [query] }),
+  views: {
+    party: () => ({ status: "ready", data: { levels: [] } }),
+    search: ({ resources }) => ({ status: "ready", data: resources.search }),
+  },
+  romLocators: {
+    names: [],
+    "table.base": [],
+    // @ts-expect-error No such number in the ROM data.
+    "table.size": [],
   },
 });

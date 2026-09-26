@@ -37,18 +37,25 @@ package never writes game memory.
 
 ## Supported builds
 
-Support is per **exact build**, identified by the SHA-1 of the raw ROM
-(the `.gba`, or the single ROM inside a ZIP). Title and header codes are not
-enough: a different revision of the same game is not recognized.
+Reviewed support is per **exact build**, identified by the SHA-1 of the raw
+ROM (the `.gba`, or the single ROM inside a ZIP). Title and header codes are
+not enough.
 
-| Game | Build | Raw ROM SHA-1 | Player layout |
+| Game | Build | Raw ROM SHA-1 | Support |
 |---|---|---|---|
-| Pokémon Heart & Soul (ROM hack) | 1.2.1 release | `a4be81f8330d7f223a3ab847c3da822fe6f8a2e0` | dashboard |
-| Pokémon Elite Redux (ROM hack) | 2.65 Beta2 | `f1323126bc043f3ce931bcc670957930559eb515` | dashboard |
+| Pokémon Heart & Soul (ROM hack) | 1.2.1 release | `a4be81f8330d7f223a3ab847c3da822fe6f8a2e0` | reviewed manifest |
+| Pokémon Heart & Soul (ROM hack) | 1.2.0 release | `b8a4b491ca67a76f079a8e7c19fd5512a2147dd2` | located in the player |
+| Pokémon Elite Redux (ROM hack) | 2.65 Beta2 | `f1323126bc043f3ce931bcc670957930559eb515` | reviewed manifest |
+| Pokémon Elite Redux (ROM hack) | 2.65 Beta2 debug build | `299165fb56e19ac8afe5d66f83dd5bada823d58c` | located in the player |
 
-Elite Redux 2.65 Beta1, other revisions and other pokeemerald-expansion hacks
-are not enabled automatically; each needs a reviewed build manifest. Retail
-Pokémon games have no profile, and unknown ROMs keep the generic player.
+Both games carry locators generated from their reviewed builds. When the
+player loads another build of either game, it runs them; a build is accepted
+only if every address is found without disagreement and the ROM probes pass,
+and its dashboard is marked as not reviewed. The two located builds above are
+checked against relocation from the reviewed builds. Other revisions, such as
+Elite Redux 2.65 Beta1, are recognized only if their locators still match.
+Other pokeemerald-expansion hacks and retail Pokémon games have no family, and
+unknown ROMs keep the generic player.
 [`docs/profiles.md`](docs/profiles.md) records the evidence behind every
 address and layout, and what remains unavailable.
 
@@ -113,13 +120,17 @@ import { heartNSoul } from "@evenfall/gba-pokemon";
 
 const store = new BridgeHost(emulator).observe(heartNSoul);
 store.subscribe(() => {
-  const party = store.getSnapshot().gameParty;
+  const party = store.getSnapshot().party;
   if (party.status === "ready") console.log(party.data.party.length);
-}, "gameParty");
+}, "party");
 ```
 
-`createEliteReduxGame(builds)` accepts further verified `EliteReduxBuild`
-manifests; see the
+Games are families over the shared Gen III views
+([`src/gen3.ts`](src/gen3.ts)): `pokemonGen3(format)` supplies the standard
+sources, views and resources, Heart & Soul spreads it with its layout and map
+context, and Elite Redux defines its own sources and views for the same
+overlay. A build is a manifest; `createGame(family, manifests)` registers
+further verified builds. See the
 [Elite Redux profile](docs/profiles.md#elite-redux-265-beta2).
 
 ## Tests
@@ -139,8 +150,10 @@ before use:
 | Variable | File |
 |---|---|
 | `ZIGBA_HNS_ROM` | Heart & Soul 1.2.1 raw ROM |
+| `ZIGBA_HNS_120_ROM` | Heart & Soul 1.2.0 raw ROM, with `ZIGBA_HNS_ROM` |
 | `ZIGBA_HNS_STATE`, `ZIGBA_HNS_BATTLE` | `game2.state` and `battle.state` ([hashes](docs/profiles.md#test-fixtures)) |
 | `ZIGBA_REDUX_ROM` | Elite Redux 2.65 Beta2 raw ROM |
+| `ZIGBA_REDUX_DEBUG_ROM` | Elite Redux 2.65 Beta2 debug build raw ROM, with `ZIGBA_REDUX_ROM` |
 | `ZIGBA_REDUX_STATE`, `ZIGBA_REDUX_STAGE_STATE` | `redux.state` and `redux-stage-buff.state` ([hashes](docs/profiles.md#test-fixtures)) |
 
 No ROM, save or state is committed, and none is needed for the default suites.

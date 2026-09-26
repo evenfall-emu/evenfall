@@ -128,7 +128,7 @@ function hnsMemory(pokemon: Uint8Array, settings?: Uint8Array) {
   ]);
 }
 
-describe("Heart & Soul 1.2.1 gameParty", () => {
+describe("Heart & Soul 1.2.1 party view", () => {
   it.each([false, true])(
     "uses HnS species, addresses and egg bits (egg=%s)",
     (isEgg) => {
@@ -138,7 +138,7 @@ describe("Heart & Soul 1.2.1 gameParty", () => {
         romHash: "a4be81f8330d7f223a3ab847c3da822fe6f8a2e0",
       };
       expect(
-        decodeGame(heartNSoul, stamp, memory, pokemonResources()).gameParty,
+        decodeGame(heartNSoul, stamp, memory, pokemonResources()).party,
       ).toMatchObject({
         status: "ready",
         sample: stamp,
@@ -158,8 +158,7 @@ describe("Heart & Soul 1.2.1 gameParty", () => {
         },
       });
       expect(
-        decodeGame(heartNSoul, sample, memory, pokemonResources()).gameParty
-          .status,
+        decodeGame(heartNSoul, sample, memory, pokemonResources()).party.status,
       ).toBe("unsupported");
     },
   );
@@ -179,7 +178,7 @@ describe("Heart & Soul 1.2.1 gameParty", () => {
           { ...sample, romHash: heartNSoul.profiles[0].romHash },
           memory,
           pokemonResources(),
-        ).gameParty.status,
+        ).party.status,
       ).toBe(status);
     },
   );
@@ -194,7 +193,7 @@ describe("Heart & Soul 1.2.1 gameParty", () => {
       { ...sample, romHash: heartNSoul.profiles[0].romHash },
       hnsMemory(record(7, false, 25, true), settings),
       pokemonResources(),
-    ).gameParty;
+    ).party;
     expect(result).toMatchObject({
       status: "ready",
       data: {
