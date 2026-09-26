@@ -1,26 +1,44 @@
+import type { WantedFile } from "./model";
+
 /**
- * Everything the Library asks its host to do. The page only describes intent;
- * the host owns ROM bytes, the running session and cloud transfers.
+ * Everything the Library asks its host to do, resolved to ROM SHA-1s and
+ * playthrough IDs. The host owns ROM bytes, the running session and cloud
+ * transfers.
  */
 export type LibraryAction =
-  /** Continue a playthrough, or the most recent one, or start a first one. */
+  /**
+   * Continue a playthrough, or the ROM's active one when no ID is given.
+   * After a cloud conflict, `progress` names the copy to continue.
+   */
   | {
       type: "play";
-      gameId: string;
+      hash: string;
       playthroughId?: string;
-      /** Which copy to continue after a cloud conflict. */
       progress?: "device" | "cloud";
     }
-  /** Download the release's patch and apply it to the base ROM on this device. */
-  | { type: "install"; gameId: string; versionId: string }
-  /** A base ROM, or the release ROM itself, chosen by the user. */
-  | { type: "add-file"; gameId: string; versionId: string; file: File }
-  | { type: "new-playthrough"; gameId: string; versionId: string; name: string }
-  /** Copy the in-game save into the target release and play it there. */
-  | { type: "update"; gameId: string; playthroughId: string; versionId: string }
-  | { type: "export-save"; gameId: string; playthroughId: string }
-  | { type: "rename-playthrough"; gameId: string; playthroughId: string }
-  | { type: "delete-playthrough"; gameId: string; playthroughId: string };
+  /**
+   * Download a release's patch and apply it to the base ROM here, then play
+   * the release when `play` is set.
+   */
+  | { type: "install"; versionId: string; play?: boolean }
+  /** Store a ROM file the user chose, if it is one of the wanted files. */
+  | { type: "add-file"; file: File; wanted: readonly WantedFile[] }
+  | { type: "new-playthrough"; hash: string; name: string }
+  /** Copy a playthrough's in-game save to a new run on another release. */
+  | {
+      type: "update";
+      from: { hash: string; playthroughId: string };
+      toHash: string;
+      name: string;
+    }
+  | { type: "export-save"; hash: string; playthroughId: string; name: string }
+  | {
+      type: "rename-playthrough";
+      hash: string;
+      playthroughId: string;
+      name: string;
+    }
+  | { type: "delete-playthrough"; hash: string; playthroughId: string };
 
 export type LibraryActionHandler = (
   action: LibraryAction,

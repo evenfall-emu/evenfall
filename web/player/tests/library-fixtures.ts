@@ -3,10 +3,10 @@ import type {
   CatalogVersion,
   LibraryCatalog,
   LibraryDevice,
-} from "./catalog";
+} from "../src/pages/library/catalog";
 
-// Static Library data until the page reads the catalog API and this device.
-// Everything below has the shape those sources return.
+// A catalog and a device in the shapes the catalog API and the local database
+// return, for Library tests.
 
 /** Recognizable placeholder digests; fixtures only. */
 const hex = (byte: number, bytes: number) =>
@@ -178,6 +178,12 @@ export function previewDevice(now = Date.now()): LibraryDevice {
   const main = now - 2 * 3_600_000;
   const randomizer = at(3, 14, 20);
   const seaglass = at(1, 18, 40);
+  const rom = (hash: string, title: string, lastPlayed = 0) => ({
+    hash,
+    title,
+    romSize: 16_777_216,
+    lastPlayed,
+  });
   const run = (hash: string, id: string, name: string, lastPlayed: number) => ({
     hash,
     id,
@@ -205,12 +211,12 @@ export function previewDevice(now = Date.now()): LibraryDevice {
     etag,
   });
   return {
-    roms: [
-      bases.emerald.sha1,
-      bases.fireRed.sha1,
-      bases.fireEmblem.sha1,
-      sha(0x25),
-      sha(0x12),
+    games: [
+      rom(bases.emerald.sha1, "Pokemon Emerald"),
+      rom(bases.fireRed.sha1, "Pokemon FireRed"),
+      rom(bases.fireEmblem.sha1, "Fire Emblem"),
+      rom(sha(0x25), "Elite Redux 2.5", main),
+      rom(sha(0x12), "Emerald Seaglass", seaglass),
     ],
     playthroughs: [
       run(sha(0x25), "main", "Main adventure", main),

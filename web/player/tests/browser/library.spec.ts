@@ -1,21 +1,30 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { Emulator } from "@evenfall/gba";
-
-// The Library shows static catalog data (src/pages/library/fixtures.ts) until
-// it reads the catalog API and this device.
-const catalogOrder = [
-  "Elite Redux",
-  "Emerald Seaglass",
-  "Fire Emblem: Vision Quest",
-  "Golden Sun: Reloaded",
-  "Pokémon Unbound",
-];
+import { loop, maplePatch, mockCatalog, sha1 } from "./catalog.fixture";
 
 async function openLibrary(page: Page) {
   await page.goto("/");
   await page.getByRole("button", { name: "Browse library" }).click();
   await expect(page.getByRole("main", { name: "Library" })).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
+}
+
+/** Opens loop ROMs in the Player, which stores each with a playthrough. */
+async function importRoms(page: Page, roms: [number, string][]) {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Enter player" }).click();
+  for (const [marker, name] of roms) {
+    await expect(page.getByLabel("Open ROM", { exact: true })).toBeEnabled();
+    await page
+      .getByLabel("Open ROM", { exact: true })
+      .setInputFiles(loop(marker, name));
+    await expect(
+      page.getByRole("heading", { name, exact: true }),
+    ).toBeVisible();
+  }
+  await expect(page.getByLabel("Open ROM", { exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await expect(page.getByRole("main", { name: "Library" })).toBeVisible();
 }
 
 const titles = (page: Page) =>
@@ -33,23 +42,58 @@ async function choose(page: Page, select: string, option: string) {
   await page.getByRole("option", { name: option, exact: true }).click();
 }
 
-const loop = (marker: number, name: string) => ({
-  name: `${name}.gba`,
-  mimeType: "application/octet-stream",
-  buffer: Buffer.from([marker, 0, 160, 227, 254, 255, 255, 234]),
-});
+async function chooseFile(
+  page: Page,
+  button: string,
+  file: ReturnType<typeof loop>,
+) {
+  const picker = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: button }).click();
+  await (await picker).setFiles(file);
+}
+
+/**
+ * Reads records from the player's local database: the one at `key`, or with
+ * `prefix`, every record whose array key starts with it.
+ */
+function stored(
+  page: Page,
+  store: string,
+  key: string | string[],
+  prefix = false,
+): Promise<Record<string, unknown>[]> {
+  return page.evaluate(
+    async ({ store, key, prefix }) => {
+      const request = indexedDB.open("zigba-local");
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const result = await new Promise<unknown>((resolve, reject) => {
+        const get = db
+          .transaction(store)
+          .objectStore(store)
+          .getAll(prefix ? IDBKeyRange.bound([key], [key, []]) : key);
+        get.onsuccess = () => resolve(get.result);
+        get.onerror = () => reject(get.error);
+      });
+      db.close();
+      return JSON.parse(
+        JSON.stringify(result, (_, value) =>
+          value instanceof Uint8Array ? Array.from(value) : value,
+        ),
+      );
+    },
+    { store, key, prefix },
+  );
+}
+
+/** The playthrough rows in the details pane. */
+const runsIn = (details: Locator) =>
+  details.getByRole("listitem").filter({ hasText: "Last played" });
 
 async function openGame(page: Page) {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Enter player" }).click();
-  await expect(page.getByLabel("Open ROM", { exact: true })).toBeEnabled();
-  await page
-    .getByLabel("Open ROM", { exact: true })
-    .setInputFiles(loop(42, "Birch"));
-  await expect(
-    page.getByRole("heading", { name: "Birch", exact: true }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await importRoms(page, [[42, "Birch"]]);
 }
 
 const frames = (page: Page) =>
@@ -60,95 +104,75 @@ const frames = (page: Page) =>
     ),
   );
 
-test("Library lists the catalog with each game's state and filters it", async ({
+test("Library joins the catalog with this device's ROMs and filters it", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await openLibrary(page);
+  await mockCatalog(page);
+  await importRoms(page, [
+    [42, "Birch"],
+    [40, "maple-dump"],
+  ]);
   await expect(
     page.getByRole("button", { name: "Library", exact: true }),
   ).toHaveAttribute("aria-current", "page");
-  expect(await titles(page)).toEqual(catalogOrder);
-  await expect(page.getByText("On this device")).toHaveCount(2);
-  await expect(
-    page.getByRole("button", { name: "Install Fire Emblem: Vision Quest" }),
-  ).toBeVisible();
+  // A catalog base shows under the catalog's name, not its file name.
+  const order = ["Maple (US)", "Birch Quest", "Cedar Saga", "Maple Remix"];
+  await expect.poll(() => titles(page)).toEqual(order);
+  await expect(page.getByText("On this device", { exact: true })).toHaveCount(
+    2,
+  );
   await expect(
     page.getByRole("button", {
-      name: "Add Golden Sun: The Lost Age (US) for Golden Sun: Reloaded",
+      name: "Add the Cedar Saga v1 ROM for Cedar Saga",
     }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Play Golden Sun: Reloaded" }),
+    page.getByRole("button", { name: "Play Cedar Saga" }),
   ).toHaveCount(0);
 
+  await page.getByRole("button", { name: "View Birch Quest" }).click();
+  await expect(page).toHaveURL(/\/library\/birch-quest$/);
   const details = page.getByRole("region", { name: "Game details" });
-  await expect(
-    details.getByRole("heading", { level: 2, name: "Elite Redux" }),
-  ).toBeVisible();
   await expect(details).toContainText("Available locally");
-  await expect(details).toContainText("v2.6 available");
-  for (const [run, status] of [
-    ["Main adventure", "Cloud synced"],
-    ["Randomizer run", "Local changes not backed up"],
-    ["Challenge run", "Cloud backup · Not downloaded here"],
-  ])
-    await expect(
-      details.getByRole("listitem").filter({ hasText: run }),
-    ).toContainText(status);
+  await expect(details).toContainText("v2 available");
+  await expect(
+    details.getByRole("listitem").filter({ hasText: "Playthrough 1" }),
+  ).toContainText("v1 · Last played just now");
+  await expect(details).toContainText("On this device only");
   await page.screenshot({ path: "../artifacts/library/desktop.png" });
 
-  await page.getByRole("button", { name: "View Golden Sun: Reloaded" }).click();
-  await expect(details).toContainText("Needs Golden Sun: The Lost Age (US)");
-  await expect(
-    details.getByRole("button", { name: "New playthrough" }),
-  ).toHaveCount(0);
-
-  await page.getByRole("searchbox", { name: "Search games" }).fill("sea");
-  expect(await titles(page)).toEqual(["Emerald Seaglass"]);
-  // The selection is the URL's game: filtering the list does not replace it.
-  await expect(
-    details.getByRole("heading", { level: 2, name: "Golden Sun: Reloaded" }),
-  ).toBeVisible();
-  await page.getByRole("searchbox", { name: "Search games" }).fill("");
+  await page.getByRole("button", { name: "View Maple Remix" }).click();
+  await expect(details).toContainText("Your Maple (US) is on this device");
 
   await choose(page, "Show", "Ready");
-  expect(await titles(page)).toEqual([
-    "Fire Emblem: Vision Quest",
-    "Pokémon Unbound",
-  ]);
+  expect(await titles(page)).toEqual(["Maple Remix"]);
   await choose(page, "Show", "Installed");
-  expect(await titles(page)).toEqual(catalogOrder.slice(0, 2));
+  expect(await titles(page)).toEqual(order.slice(0, 2));
   await choose(page, "Show", "All");
   await choose(page, "Sort", "Popularity");
   expect(await titles(page)).toEqual([
-    "Pokémon Unbound",
-    "Elite Redux",
-    "Fire Emblem: Vision Quest",
-    "Emerald Seaglass",
-    "Golden Sun: Reloaded",
+    "Cedar Saga",
+    "Birch Quest",
+    "Maple Remix",
+    "Maple (US)",
   ]);
-  await choose(page, "Sort", "Played");
-  await choose(page, "Franchise", "Fire Emblem");
-  expect(await titles(page)).toEqual(["Fire Emblem: Vision Quest"]);
+  await choose(page, "Franchise", "Trees");
+  expect(await titles(page)).toEqual(["Cedar Saga", "Birch Quest"]);
   await choose(page, "Franchise", "All");
-
-  await page.getByRole("combobox", { name: "Tags" }).fill("diff");
+  await choose(page, "Sort", "Played");
+  await page.getByRole("combobox", { name: "Tags" }).fill("har");
   await page.keyboard.press("Enter");
-  expect(await titles(page)).toEqual(["Elite Redux", "Golden Sun: Reloaded"]);
-  await page.getByRole("combobox", { name: "Tags" }).fill("rand");
-  await page.getByRole("option", { name: "Randomizer" }).click();
-  expect(await titles(page)).toEqual(["Elite Redux"]);
-  await page.getByRole("button", { name: "Remove Difficulty Hack" }).click();
-  await page.getByRole("button", { name: "Remove Randomizer" }).click();
-  expect(await titles(page)).toEqual(catalogOrder);
-
+  expect(await titles(page)).toEqual(["Birch Quest", "Maple Remix"]);
+  await page.getByRole("button", { name: "Remove Hard" }).click();
+  await page.getByRole("searchbox", { name: "Search games" }).fill("map");
+  expect(await titles(page)).toEqual(["Maple (US)", "Maple Remix"]);
   await page.getByRole("searchbox", { name: "Search games" }).fill("zzz");
   await expect(
     page.getByRole("heading", { name: "No matching games" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Clear filters" }).click();
-  expect(await titles(page)).toEqual(catalogOrder);
+  expect(await titles(page)).toEqual(order);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
@@ -156,22 +180,144 @@ test("Library lists the catalog with each game's state and filters it", async ({
   ).toBe(true);
 });
 
-test("Update and progress choices stay disabled until the risk is acknowledged", async ({
+test("Library keeps the last catalog it read for offline use", async ({
+  page,
+}) => {
+  await mockCatalog(page);
+  await openLibrary(page);
+  await expect.poll(() => titles(page)).toHaveLength(3);
+  await page.unroute("**/api/games");
+  await page.route("**/api/games", (route) => route.abort());
+  await openLibrary(page);
+  expect(await titles(page)).toEqual([
+    "Birch Quest",
+    "Cedar Saga",
+    "Maple Remix",
+  ]);
+  await expect(page.locator(".console-notice")).toContainText(
+    "Catalog unavailable",
+  );
+});
+
+test("Install patches the base ROM and plays the verified release", async ({
+  page,
+}) => {
+  await mockCatalog(page);
+  await importRoms(page, [[40, "Maple base"]]);
+  await page.getByRole("button", { name: "Play Maple Remix" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Maple Remix", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel(/^Game screen/)).toBeVisible();
+  expect(
+    await page.evaluate(
+      async () =>
+        (await (window as unknown as { emulator: Emulator }).emulator.inspect())
+          .romHash,
+    ),
+  ).toBe(sha1(41));
+
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await page.getByRole("button", { name: "View Maple Remix" }).click();
+  await expect(
+    page.getByRole("region", { name: "Game details" }),
+  ).toContainText("Available locally");
+});
+
+test("Install stores nothing when the patch is not the catalog's", async ({
+  page,
+}) => {
+  await mockCatalog(page);
+  await importRoms(page, [[40, "Maple base"]]);
+  await page.route("https://example.invalid/maple.bps", (route) =>
+    route.fulfill({
+      body: Buffer.alloc(maplePatch.length),
+      headers: { "access-control-allow-origin": "*" },
+    }),
+  );
+  await page.getByRole("button", { name: "Install Maple Remix" }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "This is not a BPS patch.",
+  );
+  expect(await stored(page, "games", sha1(41))).toEqual([]);
+  await page.getByRole("button", { name: "Dismiss error" }).click();
+
+  await page.route("https://example.invalid/maple.bps", (route) =>
+    route.fulfill({ status: 404 }),
+  );
+  await page.getByRole("button", { name: "Install Maple Remix" }).click();
+  await expect(page.getByRole("alert")).toContainText("(HTTP 404)");
+});
+
+test("Choose file stores only a ROM the game wants, then plays it", async ({
+  page,
+}) => {
+  await mockCatalog(page);
+  await openLibrary(page);
+  await page.getByRole("button", { name: "View Cedar Saga" }).click();
+  const details = page.getByRole("region", { name: "Game details" });
+  await expect(details).toContainText("Needs the Cedar Saga v1 ROM");
+  await chooseFile(page, "Choose file…", loop(45, "Wrong"));
+  await expect(page.getByRole("alert")).toContainText(
+    "That file isn’t Cedar Saga.",
+  );
+  expect(await stored(page, "games", sha1(45))).toEqual([]);
+
+  await chooseFile(page, "Choose file…", loop(44, "cedar-dump"));
+  await expect(details).toContainText("Available locally");
+  await expect(details).toContainText("No playthroughs yet");
+  expect(await stored(page, "playthroughs", [sha1(44), "default"])).toEqual([]);
+
+  await details.getByRole("button", { name: "New playthrough" }).click();
+  const create = page.getByRole("dialog", { name: "New playthrough" });
+  await create.getByRole("textbox", { name: "Name" }).fill("  ");
+  await expect(
+    create.getByRole("button", { name: "Create & play" }),
+  ).toBeDisabled();
+  await create.getByRole("textbox", { name: "Name" }).fill("Hard mode");
+  await create.getByRole("button", { name: "Create & play" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Cedar Saga", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel(/^Game screen/)).toBeVisible();
+
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await expect(
+    details.getByRole("listitem").filter({ hasText: "Hard mode" }),
+  ).toBeVisible();
+});
+
+test("Update adds the latest ROM, then copies the in-game save to a new run", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await openLibrary(page);
+  await mockCatalog(page);
+  await importRoms(page, [[42, "Birch"]]);
+  // A 32 KiB SRAM image.
+  const save = Array.from({ length: 32768 }, (_, index) => index & 0xff);
+  await page.evaluate(
+    async ({ hash, save }) => {
+      const request = indexedDB.open("zigba-local");
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const tx = db.transaction("saves", "readwrite");
+      tx.objectStore("saves").put(
+        { data: new Uint8Array(save), updatedAt: Date.now() },
+        [hash, "default"],
+      );
+      await new Promise((resolve) => (tx.oncomplete = resolve));
+      db.close();
+    },
+    { hash: sha1(42), save },
+  );
 
+  await page.getByRole("button", { name: "View Birch Quest" }).click();
   await page.getByRole("button", { name: "Update…" }).click();
-  const update = page.getByRole("dialog", { name: "Elite Redux · v2.6" });
-  await update.getByRole("combobox", { name: "Playthrough to update" }).click();
-  await expect(page.getByRole("option")).toHaveText([
-    "Main adventure · v2.5",
-    "Randomizer run · v2.5",
-    "Challenge run · v2.4",
-  ]);
-  await page.getByRole("option", { name: "Challenge run · v2.4" }).click();
-  await expect(update).toContainText("Save compatibility not verified");
+  const update = page.getByRole("dialog", { name: "Birch Quest · v2" });
+  await expect(update).toContainText("Add the v2 ROM to this device first");
+  await chooseFile(page, "Choose file…", loop(43, "birch-v2"));
   const copy = update.getByRole("button", { name: "Copy save & play" });
   await expect(copy).toBeDisabled();
   await update
@@ -181,41 +327,81 @@ test("Update and progress choices stay disabled until the risk is acknowledged",
     .click();
   await update.screenshot({ path: "../artifacts/library/update.png" });
   await copy.click();
-  await expect(update).toHaveCount(0);
-  await expect(page.locator(".console-notice")).toContainText(
-    "Library preview",
-  );
+  await expect(page.getByLabel(/^Game screen/)).toBeVisible();
 
-  await page.getByRole("button", { name: "Play Randomizer run" }).click();
-  const progress = page.getByRole("dialog", { name: "Choose progress" });
-  await expect(progress).toContainText("Elite Redux · Randomizer run · v2.5");
-  const use = progress.getByRole("button", { name: "Use selected progress" });
-  await expect(use).toBeDisabled();
-  await progress.getByRole("radio", { name: /Cloud backup/ }).click();
-  await expect(use).toBeEnabled();
-  await progress.screenshot({ path: "../artifacts/library/progress.png" });
-  await page.keyboard.press("Escape");
-  await expect(progress).toHaveCount(0);
+  const runs = await stored(page, "playthroughs", sha1(43), true);
+  expect(runs).toMatchObject([{ name: "Playthrough 1" }]);
+  expect(
+    await stored(page, "saves", [sha1(43), runs[0].id as string]),
+  ).toMatchObject([{ data: save }]);
+  expect(
+    await page.evaluate(async () =>
+      Array.from(
+        await (
+          window as unknown as { emulator: Emulator }
+        ).emulator.exportSave(),
+      ),
+    ),
+  ).toEqual(save);
 
-  await page.getByRole("button", { name: "Play Main adventure" }).click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  const details = page.getByRole("region", { name: "Game details" });
+  await expect(runsIn(details)).toHaveCount(2);
+  await expect(runsIn(details).first()).toContainText("v2 ·");
+  await expect(runsIn(details).last()).toContainText("v1 ·");
+});
 
-  await page.getByRole("button", { name: "New playthrough" }).click();
+test("playthrough menus rename, and delete after confirmation", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockCatalog(page);
+  await importRoms(page, [[42, "Birch"]]);
+  await page.getByRole("button", { name: "View Birch Quest" }).click();
+  const details = page.getByRole("region", { name: "Game details" });
+
+  await page
+    .getByRole("button", { name: "More options for Playthrough 1" })
+    .click();
+  await page.getByRole("menuitem", { name: "Rename…" }).click();
+  const rename = page.getByRole("dialog", { name: "Rename playthrough" });
+  await expect(rename.getByRole("button", { name: "Rename" })).toBeDisabled();
+  await rename.getByRole("textbox", { name: "Name" }).fill("Main");
+  await rename.getByRole("button", { name: "Rename" }).click();
+  await expect(rename).toHaveCount(0);
+  await expect(runsIn(details)).toHaveText([/^Main/]);
+
+  await details.getByRole("button", { name: "New playthrough" }).click();
   const create = page.getByRole("dialog", { name: "New playthrough" });
-  await create.getByRole("textbox", { name: "Name" }).fill("  ");
-  await expect(
-    create.getByRole("button", { name: "Create & play" }),
-  ).toBeDisabled();
-  await create.getByRole("textbox", { name: "Name" }).fill("Nuzlocke");
+  await create.getByRole("textbox", { name: "Name" }).fill("Second");
   await create.getByRole("button", { name: "Create & play" }).click();
-  await expect(create).toHaveCount(0);
+  await expect(page.getByLabel(/^Game screen/)).toBeVisible();
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await expect(runsIn(details)).toHaveCount(2);
+
+  // Main is no longer the running playthrough.
+  await page.getByRole("button", { name: "More options for Main" }).click();
+  await page.getByRole("menuitem", { name: "Delete…" }).click();
+  const remove = page.getByRole("dialog", { name: "Delete playthrough?" });
+  await remove.getByRole("button", { name: "Cancel" }).click();
+  await expect(runsIn(details)).toHaveCount(2);
+  await page.getByRole("button", { name: "More options for Main" }).click();
+  await page.getByRole("menuitem", { name: "Delete…" }).click();
+  await remove.getByRole("button", { name: "Delete" }).click();
+  await expect(remove).toHaveCount(0);
+  await expect(runsIn(details)).toHaveText([/^Second/]);
+  expect(await stored(page, "playthroughs", sha1(42), true)).toMatchObject([
+    { name: "Second" },
+  ]);
 });
 
 test("mobile details replace the list, and Back restores its scroll and focus", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 700 });
+  await mockCatalog(page, 8);
   await openLibrary(page);
+  await expect.poll(() => titles(page)).toHaveLength(11);
   const list = page.getByRole("region", { name: "Games" });
   const details = page.getByRole("region", { name: "Game details" });
   await expect(details).toBeHidden();
@@ -224,7 +410,7 @@ test("mobile details replace the list, and Back restores its scroll and focus", 
     fullPage: true,
   });
 
-  const pick = page.getByRole("button", { name: "View Pokémon Unbound" });
+  const pick = page.getByRole("button", { name: "View Oak 8" });
   await pick.scrollIntoViewIfNeeded();
   const scrolled = await page.evaluate(() => scrollY);
   expect(scrolled).toBeGreaterThan(0);
@@ -232,7 +418,7 @@ test("mobile details replace the list, and Back restores its scroll and focus", 
   await expect(list).toBeHidden();
   const heading = details.getByRole("heading", {
     level: 2,
-    name: "Pokémon Unbound",
+    name: "Oak 8",
   });
   await expect(heading).toBeFocused();
   await expect(
@@ -248,14 +434,14 @@ test("mobile details replace the list, and Back restores its scroll and focus", 
   await expect(pick).toBeFocused();
   expect(await page.evaluate(() => scrollY)).toBe(scrolled);
 
-  await page.getByRole("button", { name: "View Elite Redux" }).click();
+  await page.getByRole("button", { name: "View Birch Quest" }).click();
   await expect(
-    details.getByRole("heading", { level: 2, name: "Elite Redux" }),
+    details.getByRole("heading", { level: 2, name: "Birch Quest" }),
   ).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(list).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "View Elite Redux" }),
+    page.getByRole("button", { name: "View Birch Quest" }),
   ).toBeFocused();
   expect(
     await page.evaluate(

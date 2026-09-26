@@ -31,11 +31,21 @@ import {
 } from "./playthrough-dialog";
 import { AboutPage } from "./about";
 import { LibraryPage } from "./pages/library/library-page";
-import { previewCatalog, previewDevice } from "./pages/library/fixtures";
+import type { LibraryAction } from "./pages/library/actions";
+import type { LibraryDevice } from "./pages/library/catalog";
+import { patchRelease } from "./pages/library/install";
+import { useCatalog, useDumpNames } from "./pages/library/use-catalog";
 import { AppHeader, type AppView } from "./app-header";
 import { Account } from "./account";
 import type { CloudResume } from "./cloud";
-import { QUICK_SLOTS, type Game, type PlaythroughRef } from "./library";
+import {
+  playthroughLockKey,
+  QUICK_SLOTS,
+  type CloudJob,
+  type Game,
+  type PlaythroughRef,
+} from "./library";
+import { acquireSaveLock } from "./storage.js";
 import { QuickConflictChoices } from "./quick-conflicts";
 import { gameRegistry, watchBuild } from "./games";
 import { download } from "./media";
@@ -156,9 +166,18 @@ function App() {
     page.routeId === "/library/$gameId" ? page.params.gameId : undefined;
   const home = view === "home";
   const library = view === "library";
-  // The Library shows static catalog and device data until it is wired to the
-  // catalog API and this device's storage.
-  const libraryDevice = useMemo(() => previewDevice(), []);
+  const { catalog, offline: catalogOffline } = useCatalog();
+  const dumpNames = useDumpNames(library);
+  const [cloudJobs, setCloudJobs] = useState<CloudJob[]>([]);
+  const libraryDevice = useMemo(
+    (): LibraryDevice => ({
+      games: state.games,
+      playthroughs: state.runs,
+      cloud: state.cloud.resumes ?? [],
+      jobs: cloudJobs,
+    }),
+    [state.games, state.runs, state.cloud.resumes, cloudJobs],
+  );
   const navigationResume = useRef(false);
   const navigationWork = useRef(Promise.resolve());
   const navigation = useRef(view);
@@ -312,9 +331,30 @@ function App() {
   }, [experience?.game]);
   useEffect(() => trackView(view), [view]);
   useEffect(() => {
-    if (home && state.ready && state.cloud.accountId)
+    if ((home || library) && state.ready && state.cloud.accountId)
       void player.cloud.discover();
-  }, [home, state.ready, state.cloud.accountId]);
+  }, [home, library, state.ready, state.cloud.accountId]);
+  // Sync states compare this outbox with the cloud listing.
+  useEffect(() => {
+    if (!library || !state.ready) return;
+    let current = true;
+    player.library
+      .cloudJobs(state.cloud.accountId ?? "")
+      .then((jobs) => current && setCloudJobs(jobs), player.error);
+    return () => {
+      current = false;
+    };
+  }, [
+    library,
+    state.ready,
+    state.cloud.accountId,
+    state.cloud.uploadedAt,
+    state.runs,
+  ]);
+  useEffect(() => {
+    if (library && catalogOffline)
+      setNotice("Catalog unavailable. Showing the last copy on this device.");
+  }, [library, catalogOffline]);
   useEffect(() => {
     if (cloudResumeRequest?.accountId !== state.cloud.accountId)
       setCloudResumeRequest(null);
@@ -483,15 +523,170 @@ function App() {
       throw error;
     }
   }
-  async function launchGame(game: Game, fromBattery = false) {
-    if (launchPending.current || player.state.changing) return;
+  /** Runs one launch or storage change at a time; a second is refused. */
+  async function exclusive(work: () => Promise<void>) {
+    if (launchPending.current || player.state.changing)
+      throw new Error("Another game action is still running.");
     launchPending.current = true;
     setLaunching(true);
     try {
-      await launchGameInternal(game, fromBattery);
+      await navigationWork.current;
+      await work();
     } finally {
       launchPending.current = false;
       setLaunching(false);
+    }
+  }
+  async function launchGame(game: Game, fromBattery = false) {
+    if (launchPending.current || player.state.changing) return;
+    await exclusive(() => launchGameInternal(game, fromBattery));
+  }
+  const isActive = (ref: PlaythroughRef) =>
+    player.activeRef?.hash === ref.hash &&
+    player.activeRef.playthroughId === ref.playthroughId;
+  function storedGame(hash: string) {
+    const game = player.state.games.find((item) => item.hash === hash);
+    if (!game) throw new Error("This game's ROM is not on this device.");
+    return game;
+  }
+  async function libraryAction(action: LibraryAction) {
+    switch (action.type) {
+      case "play": {
+        const game = player.state.games.find(
+          (item) => item.hash === action.hash,
+        );
+        const playthroughId =
+          action.playthroughId ?? game?.activePlaythroughId ?? "default";
+        const ref = { hash: action.hash, playthroughId };
+        if (action.progress === "device")
+          return exclusive(() =>
+            launchGameInternal(storedGame(action.hash), false, playthroughId),
+          );
+        if (action.progress === "cloud") {
+          const backup = player.state.cloud.resumes?.find(
+            (item) =>
+              item.hash === ref.hash &&
+              item.playthroughId === ref.playthroughId,
+          );
+          if (!backup)
+            throw new Error("This cloud backup is no longer available.");
+          return exclusive(async () => {
+            await player.restoreCloud("resume", backup);
+            navigationResume.current = false;
+            showView("player");
+          });
+        }
+        return loadRun(ref);
+      }
+      case "install": {
+        const version = catalog.versions.find(
+          (item) => item.id === action.versionId,
+        );
+        const base = version?.requiredBase;
+        if (!version || !base)
+          throw new Error("This release is no longer in the catalog.");
+        const source = await player.library.rom(base.sha1);
+        if (!source) throw new Error(`Add ${base.displayName} first.`);
+        const rom = await patchRelease(version, source);
+        await player.library.addRom({
+          hash: version.outputSha1,
+          title:
+            catalog.games.find((item) => item.id === version.gameId)
+              ?.displayName ?? version.displayName,
+          rom,
+          lastPlayed: 0,
+        });
+        await player.refresh();
+        if (action.play)
+          await exclusive(() =>
+            launchGameInternal(storedGame(version.outputSha1)),
+          );
+        return;
+      }
+      case "add-file": {
+        const rom = await player.inspectRom(action.file);
+        const wanted = action.wanted.find((item) => item.sha1 === rom.hash);
+        if (!wanted)
+          throw new Error(
+            `That file isn’t ${[...new Set(action.wanted.map((item) => item.title))].join(" or ")}. Choose that exact ROM.`,
+          );
+        await player.library.addRom({
+          hash: rom.hash,
+          title: wanted.title,
+          rom: rom.rom,
+          lastPlayed: 0,
+        });
+        return player.refresh();
+      }
+      case "new-playthrough": {
+        const game = storedGame(action.hash);
+        return exclusive(async () => {
+          if (game.hash === player.state.game?.hash && player.activeRef) {
+            await player.switchPlaythrough(undefined, action.name);
+            navigationResume.current = false;
+            showView("player");
+          } else {
+            const run = await player.library.createPlaythrough(
+              game.hash,
+              action.name,
+            );
+            await launchGameInternal(game, false, run.id);
+          }
+        });
+      }
+      case "update": {
+        const game = storedGame(action.toHash);
+        return exclusive(async () => {
+          if (isActive(action.from)) await player.pause();
+          const save = await player.library.getSave(action.from);
+          if (!save?.length)
+            throw new Error("This playthrough has no in-game save to copy.");
+          const run = await player.library.createPlaythrough(
+            game.hash,
+            action.name,
+          );
+          await player.library.save(
+            { hash: game.hash, playthroughId: run.id },
+            save,
+          );
+          await launchGameInternal(game, true, run.id);
+        });
+      }
+      case "export-save": {
+        const active = isActive(action);
+        if (active) await player.pause();
+        const save = active
+          ? await player.emulator.exportSave()
+          : await player.library.getSave(action);
+        if (!save?.length)
+          throw new Error("This playthrough has no in-game save yet.");
+        const title =
+          player.state.games.find((item) => item.hash === action.hash)?.title ??
+          "Game";
+        download(
+          save,
+          `${title} - ${action.name}.sav`.replace(/[\\/:*?"<>|]/g, "_"),
+        );
+        return;
+      }
+      case "rename-playthrough":
+        if (isActive(action)) return player.renamePlaythrough(action.name);
+        await player.library.renamePlaythrough(action, action.name);
+        return player.refresh();
+      case "delete-playthrough": {
+        if (isActive(action)) return player.deletePlaythrough();
+        const release = await acquireSaveLock(playthroughLockKey(action));
+        if (!release && navigator.locks)
+          throw new Error(
+            "Another tab has this playthrough open. Close it before deleting.",
+          );
+        try {
+          await player.library.deletePlaythrough(action);
+        } finally {
+          release?.();
+        }
+        return player.refresh();
+      }
     }
   }
   async function loadRun(
@@ -555,7 +750,7 @@ function App() {
         setCloudResumeRequest(backup);
       } else if (source === "restore") {
         setNotice("No cloud checkpoint is available for this playthrough.");
-      } else if (game && !run) {
+      } else if (game && !run && game.activePlaythroughId) {
         setNotice(
           "This playthrough is not on this device and its cloud checkpoint is unavailable.",
         );
@@ -1189,7 +1384,8 @@ function App() {
         </div>
         {library ? (
           <LibraryPage
-            catalog={previewCatalog}
+            catalog={catalog}
+            dumpNames={dumpNames}
             device={libraryDevice}
             busy={!state.ready || state.changing || launching}
             selectedId={libraryGameId}
@@ -1198,9 +1394,7 @@ function App() {
             }
             onBack={() => void navigate({ to: "/library" })}
             onAddGame={() => romInput.current?.click()}
-            onAction={() =>
-              setNotice("Library preview: this action isn’t connected yet.")
-            }
+            onAction={libraryAction}
           />
         ) : home ? (
           <>

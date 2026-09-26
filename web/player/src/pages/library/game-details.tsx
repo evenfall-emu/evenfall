@@ -48,7 +48,8 @@ function Playthrough({
       <div className="min-w-0">
         <p className="truncate font-bold">{run.name}</p>
         <p className="text-1x5 text-muted">
-          {run.release.label} · Last played {formatAgo(run.lastPlayed, now)}
+          {run.release.label && `${run.release.label} · `}Last played{" "}
+          {formatAgo(run.lastPlayed, now)}
         </p>
       </div>
       <p className="flex items-center gap-3 text-1x5 max-2xl:col-start-1 max-2xl:row-start-2">
@@ -70,38 +71,41 @@ function Playthrough({
         <PixelIcon name="playSmall" />
         Play
       </button>
-      <Menu.Root>
-        <Menu.Trigger
-          className={cx(
-            button("outline", "icon"),
-            "max-2xl:row-span-2 max-sm:size-10",
-          )}
-          aria-label={`More options for ${run.name}`}
-          disabled={disabled}
-        >
-          <Icon name="dotsVertical" className="size-6" />
-        </Menu.Trigger>
-        <Menu.Portal>
-          <Menu.Positioner align="end" sideOffset={4} className="z-50">
-            <Menu.Popup data-ui className={cx(popup, "min-w-56 font-sans")}>
-              <Menu.Item className={popupItem} onClick={onRename}>
-                Rename…
-              </Menu.Item>
-              {run.sync !== "cloud-only" && (
+      {/* A cloud-only run has nothing on this device to manage yet. */}
+      {run.sync === "cloud-only" ? (
+        <span className="size-11 max-2xl:row-span-2 max-sm:size-10" />
+      ) : (
+        <Menu.Root>
+          <Menu.Trigger
+            className={cx(
+              button("outline", "icon"),
+              "max-2xl:row-span-2 max-sm:size-10",
+            )}
+            aria-label={`More options for ${run.name}`}
+            disabled={disabled}
+          >
+            <Icon name="dotsVertical" className="size-6" />
+          </Menu.Trigger>
+          <Menu.Portal>
+            <Menu.Positioner align="end" sideOffset={4} className="z-50">
+              <Menu.Popup data-ui className={cx(popup, "min-w-56 font-sans")}>
+                <Menu.Item className={popupItem} onClick={onRename}>
+                  Rename…
+                </Menu.Item>
                 <Menu.Item className={popupItem} onClick={onExport}>
                   Export in-game save
                 </Menu.Item>
-              )}
-              <Menu.Item
-                className={cx(popupItem, "text-danger")}
-                onClick={onDelete}
-              >
-                Delete…
-              </Menu.Item>
-            </Menu.Popup>
-          </Menu.Positioner>
-        </Menu.Portal>
-      </Menu.Root>
+                <Menu.Item
+                  className={cx(popupItem, "text-danger")}
+                  onClick={onDelete}
+                >
+                  Delete…
+                </Menu.Item>
+              </Menu.Popup>
+            </Menu.Positioner>
+          </Menu.Portal>
+        </Menu.Root>
+      )}
     </li>
   );
 }
@@ -262,8 +266,9 @@ export function GameDetails({
         >
           <p className="font-bold">Needs {game.missingFile}</p>
           <p className="text-1x5 text-muted">
-            Add your own copy to install {latest.label}. It stays on this
-            device.
+            Add your own copy
+            {latest.label ? ` to install ${latest.label}` : " to play"}. It
+            stays on this device.
           </p>
         </Offer>
       )}
@@ -294,7 +299,7 @@ export function GameDetails({
           >
             Your playthroughs
           </h3>
-          {game.availability !== "needs-file" && (
+          {game.availability === "installed" && (
             <button
               className={button("primary")}
               disabled={disabled}

@@ -15,7 +15,9 @@ export type Availability = "installed" | "ready" | "needs-file";
 
 export type Release = {
   id: string;
-  /** "v2.6" */
+  /** SHA-1 of the release's ROM, which identifies its playthroughs. */
+  hash: string;
+  /** "v2.6"; empty for a ROM the catalog does not know. */
   label: string;
   installed: boolean;
   /** Milliseconds since the epoch; null when the catalog has no date. */
@@ -55,7 +57,11 @@ export type PlaythroughEntry = {
   };
 };
 
+/** A ROM file this device may add for a game, identified by its SHA-1. */
+export type WantedFile = { sha1: string; title: string };
+
 export type LibraryGame = {
+  /** The catalog ID, or the ROM SHA-1 for a game the catalog does not know. */
   id: string;
   title: string;
   summary: string | null;
@@ -70,6 +76,8 @@ export type LibraryGame = {
   latest: Release;
   /** What `needs-file` is waiting for, e.g. "Pokémon Emerald (US)". */
   missingFile?: string;
+  /** Files Choose file accepts: any release ROM, or the base a patch needs. */
+  wantedFiles: readonly WantedFile[];
   /** Most recently played first. */
   playthroughs: readonly PlaythroughEntry[];
   lastPlayed?: number;
@@ -83,6 +91,7 @@ const dated = (release: Release) => release.releasedAt ?? -Infinity;
 function release(version: CatalogVersion, roms: Set<string>): Release {
   return {
     id: version.id,
+    hash: version.outputSha1,
     label: `v${version.displayName}`,
     installed: roms.has(version.outputSha1),
     releasedAt: version.releasedAt ? Date.parse(version.releasedAt) : null,
@@ -90,6 +99,21 @@ function release(version: CatalogVersion, roms: Set<string>): Release {
     sourceUrl: version.sourceRepositoryUrl,
     requiredBase: version.requiredBase,
     saveCompatibleFrom: version.saveCompatibleFrom,
+  };
+}
+
+/** The single "release" of a ROM the catalog does not know. */
+function unlisted(hash: string, installed: boolean): Release {
+  return {
+    id: hash,
+    hash,
+    label: "",
+    installed,
+    releasedAt: null,
+    releaseNotes: null,
+    sourceUrl: null,
+    requiredBase: null,
+    saveCompatibleFrom: [],
   };
 }
 
@@ -139,7 +163,10 @@ function playthroughs(
     .filter(
       (item) =>
         releases.has(item.hash) &&
-        !local.some((run) => run.id === item.playthroughId),
+        !local.some(
+          (run) =>
+            run.id === item.playthroughId && run.release.hash === item.hash,
+        ),
     )
     .map(
       (item): PlaythroughEntry => ({
@@ -155,13 +182,19 @@ function playthroughs(
   );
 }
 
-/** Joins the catalog with this device's ROMs, playthroughs and cloud copies. */
+/**
+ * Joins the catalog with this device's ROMs, playthroughs and cloud copies.
+ * ROMs and cloud playthroughs the catalog does not list as a release become
+ * games of their own. Their title is the catalog's base name, else the dump
+ * name in `dumps` (SHA-1 to No-Intro name), else the stored title.
+ */
 export function buildLibrary(
   catalog: LibraryCatalog,
   device: LibraryDevice,
+  dumps: Readonly<Record<string, string>> = {},
 ): LibraryGame[] {
-  const roms = new Set(device.roms);
-  return catalog.games.flatMap((game) => {
+  const roms = new Set(device.games.map((game) => game.hash));
+  const listed = catalog.games.flatMap((game): LibraryGame[] => {
     const versions = catalog.versions
       .filter((version) => version.gameId === game.id)
       .map((version) => ({ version, release: release(version, roms) }))
@@ -175,15 +208,18 @@ export function buildLibrary(
     const releases = versions.map((item) => item.release);
     const latest = releases[0];
     const runs = playthroughs(
-      new Map(versions.map((item) => [item.version.outputSha1, item.release])),
+      new Map(releases.map((item) => [item.hash, item])),
       device,
     );
     const base = newest.requiredBase;
+    const baseHere = Boolean(base && roms.has(base.sha1));
     const availability: Availability = releases.some((item) => item.installed)
       ? "installed"
-      : newest.patch && (!base || roms.has(base.sha1))
+      : newest.patch && (!base || baseHere)
         ? "ready"
         : "needs-file";
+    // A base only helps when a patch can turn it into the release.
+    const wantsBase = Boolean(newest.patch && base && !baseHere);
     return [
       {
         id: game.id,
@@ -197,8 +233,21 @@ export function buildLibrary(
         releases,
         latest,
         ...(availability === "needs-file"
-          ? { missingFile: base?.displayName ?? `${game.displayName} ROM` }
+          ? {
+              missingFile: wantsBase
+                ? base!.displayName
+                : `the ${game.displayName} ${latest.label} ROM`,
+            }
           : {}),
+        wantedFiles: [
+          ...releases.map((item) => ({
+            sha1: item.hash,
+            title: game.displayName,
+          })),
+          ...(wantsBase
+            ? [{ sha1: base!.sha1, title: base!.displayName }]
+            : []),
+        ],
         playthroughs: runs,
         lastPlayed: runs[0]?.lastPlayed,
         updatable:
@@ -208,6 +257,48 @@ export function buildLibrary(
       },
     ];
   });
+  const outputs = new Set(
+    catalog.versions.map((version) => version.outputSha1),
+  );
+  const bases = new Map(
+    catalog.versions.flatMap((version) =>
+      version.requiredBase
+        ? [[version.requiredBase.sha1, version.requiredBase.displayName]]
+        : [],
+    ),
+  );
+  const titles = new Map<string, string>();
+  for (const { hash, title } of [...device.cloud, ...device.games])
+    if (!outputs.has(hash))
+      titles.set(
+        hash,
+        bases.get(hash) ??
+          (Object.hasOwn(dumps, hash) ? dumps[hash] : undefined) ??
+          title,
+      );
+  const unknown = [...titles].map(([hash, title]): LibraryGame => {
+    const installed = roms.has(hash);
+    const only = unlisted(hash, installed);
+    const runs = playthroughs(new Map([[hash, only]]), device);
+    return {
+      id: hash,
+      title,
+      summary: null,
+      imageUrl: null,
+      franchise: null,
+      tags: [],
+      cloudPlaythroughs: 0,
+      availability: installed ? "installed" : "needs-file",
+      releases: [only],
+      latest: only,
+      ...(installed ? {} : { missingFile: `the ${title} ROM` }),
+      wantedFiles: [{ sha1: hash, title }],
+      playthroughs: runs,
+      lastPlayed: runs[0]?.lastPlayed,
+      updatable: [],
+    };
+  });
+  return [...listed, ...unknown];
 }
 
 export type ShowFilter = "all" | Exclude<Availability, "needs-file">;

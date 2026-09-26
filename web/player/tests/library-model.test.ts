@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { previewCatalog, previewDevice } from "../src/pages/library/fixtures";
+import { previewCatalog, previewDevice } from "./library-fixtures";
 import type { LibraryDevice } from "../src/pages/library/catalog";
 import { formatAgo, formatMoment } from "../src/pages/library/format";
 import {
@@ -9,12 +9,14 @@ import {
   noFilters,
   saveCompatible,
   tagsOf,
+  type LibraryGame,
 } from "../src/pages/library/model";
 
 const now = new Date(2026, 8, 25, 16, 0).getTime();
 const device = previewDevice(now);
 const games = buildLibrary(previewCatalog, device);
 const game = (id: string) => games.find((item) => item.id === id)!;
+const sha = (byte: number) => byte.toString(16).padStart(2, "0").repeat(20);
 
 describe("buildLibrary", () => {
   it("derives availability from ROMs and base ROMs on this device", () => {
@@ -26,10 +28,79 @@ describe("buildLibrary", () => {
       "vision-quest": "ready",
       "golden-sun-reloaded": "needs-file",
       unbound: "ready",
+      // Base ROMs the catalog lists only as bases.
+      [sha(0xe0)]: "installed",
+      [sha(0xf0)]: "installed",
+      [sha(0xfe)]: "installed",
     });
     expect(game("golden-sun-reloaded").missingFile).toBe(
       "Golden Sun: The Lost Age (US)",
     );
+  });
+
+  it("accepts any release ROM, and a base only when a patch needs it", () => {
+    expect(game("golden-sun-reloaded").wantedFiles).toEqual([
+      { sha1: expect.any(String), title: "Golden Sun: Reloaded" },
+      { sha1: sha(0x65), title: "Golden Sun: The Lost Age (US)" },
+    ]);
+    expect(game("elite-redux").wantedFiles.map((file) => file.sha1)).toEqual(
+      game("elite-redux").releases.map((item) => item.hash),
+    );
+  });
+
+  it("lists ROMs and cloud copies the catalog does not know", () => {
+    const homebrew = sha(0x42);
+    const library = buildLibrary(previewCatalog, {
+      ...device,
+      cloud: [
+        ...device.cloud,
+        {
+          ...device.cloud[0],
+          hash: homebrew,
+          title: "Homebrew",
+          playthroughId: "demo",
+          playthroughName: "Demo run",
+        },
+      ],
+    });
+    const emerald = library.find((item) => item.id === sha(0xe0))!;
+    // A base keeps the catalog's name for it, not the stored file name.
+    expect(emerald).toMatchObject({
+      title: "Pokémon Emerald (US)",
+      availability: "installed",
+      latest: { hash: sha(0xe0), label: "", installed: true },
+      playthroughs: [],
+    });
+    const cloudOnly = library.find((item) => item.id === homebrew)!;
+    expect(cloudOnly).toMatchObject({
+      title: "Homebrew",
+      availability: "needs-file",
+      missingFile: "the Homebrew ROM",
+      wantedFiles: [{ sha1: homebrew, title: "Homebrew" }],
+    });
+    expect(cloudOnly.playthroughs.map((run) => [run.name, run.sync])).toEqual([
+      ["Demo run", "cloud-only"],
+    ]);
+  });
+
+  it("titles other unlisted ROMs by their No-Intro dump name", () => {
+    const emerald = "Pokemon - Emerald Version (USA, Europe)";
+    const dumps = {
+      [sha(0xe0)]: emerald,
+      [sha(0x25)]: "A dump name for a catalog release",
+      toString: "An inherited key",
+    };
+    const title = (library: LibraryGame[], id: string) =>
+      library.find((item) => item.id === id)?.title;
+    const named = buildLibrary(previewCatalog, device, dumps);
+    expect(title(named, sha(0xe0))).toBe("Pokémon Emerald (US)");
+    expect(title(named, "elite-redux")).toBe("Elite Redux");
+    const unlisted = buildLibrary({ games: [], versions: [] }, device, dumps);
+    expect(title(unlisted, sha(0xe0))).toBe(emerald);
+    expect(title(unlisted, sha(0x25))).toBe(
+      "A dump name for a catalog release",
+    );
+    expect(title(unlisted, sha(0xf0))).toBe("Pokemon FireRed");
   });
 
   it("orders releases by date, not by display name", () => {
@@ -122,8 +193,25 @@ describe("buildLibrary", () => {
 });
 
 describe("filterGames", () => {
+  // The catalog's games; the base ROMs on the device sort among them.
+  const listed = games.filter((item) => item.latest.label);
   const ids = (filters: Partial<typeof noFilters>) =>
-    filterGames(games, { ...noFilters, ...filters }).map((item) => item.id);
+    filterGames(listed, { ...noFilters, ...filters }).map((item) => item.id);
+
+  it("places unplayed local ROMs among unplayed games by title", () => {
+    expect(
+      filterGames(games, noFilters)
+        .slice(2)
+        .map((item) => item.title),
+    ).toEqual([
+      "Fire Emblem (US)",
+      "Fire Emblem: Vision Quest",
+      "Golden Sun: Reloaded",
+      "Pokémon Emerald (US)",
+      "Pokémon FireRed (US 1.0)",
+      "Pokémon Unbound",
+    ]);
+  });
 
   it("sorts by play, then unplayed games by title", () => {
     expect(ids({})).toEqual([

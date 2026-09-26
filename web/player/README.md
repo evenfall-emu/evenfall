@@ -195,26 +195,44 @@ on this device and the release's patch is hosted, so the game plays at once.
 **Sort** orders by Played (the default, with unplayed titles following by
 name), Recently updated (latest release date, undated releases last) or
 Popularity (cloud playthroughs across accounts).
-Each row shows whether the game is installed, ready, or needs a base ROM from
-the user. Games without catalog artwork show their title initials.
+Each row shows whether the game is installed, ready, or needs a ROM from the
+user. ROMs on this device and cloud playthroughs the catalog does not list
+as a release appear as games of their own. A catalog base keeps the catalog's
+name for it; any other ROM takes its No-Intro dump name from
+[`no-intro-gba.json`](src/pages/library/no-intro-gba.json), a SHA-1 to name
+table the Library loads as its own chunk, and otherwise the title it was
+stored with. Games without catalog artwork show their title initials.
 
 Details show the project page, the latest release's notes, an update offer
 when a playthrough is on an older release, and each playthrough's release,
-last play time and cloud state. **Update…** offers to copy one playthrough's
-in-game save to the latest release and, unless the catalog declares the
-saves compatible, requires acknowledging that first. Playing a run whose
-cloud copy changed since this device last synced asks which progress to
-continue. **Add game** opens a ROM in the Player. Browsing pauses the current
+last play time and cloud state. **Update…** copies one playthrough's
+in-game save to a new playthrough on the latest release, under the same name,
+and plays it; unless the catalog declares the saves compatible, it requires
+acknowledging that first. When the latest release's ROM is not on this
+device, **Update…** asks for it first. Playing a run whose cloud copy changed
+since this device last synced asks which progress to continue. A playthrough's
+menu renames it, exports its in-game save, or deletes it after confirmation,
+as the Player's controls do; cloud-only runs have no menu.
+
+**Choose file…** reads a `.gba` or single-game ZIP in an isolated Worker and
+stores it, without playing it, only when its SHA-1 is one of the game's
+releases or the base ROM its latest patch needs. No playthrough exists until
+the first play. **Install** downloads the latest release's hosted patch,
+applies it to the base ROM on this device
+([`src/patch.ts`](src/patch.ts) reads BPS, UPS and IPS), and stores the result
+only when its SHA-1 is the release's; **Play** on a ready game installs it,
+then plays. BPS and UPS patches also check their own base, output and patch
+CRC32s. **Add game** opens a ROM in the Player. Browsing pauses the current
 session and blocks gameplay input; Player returns without resetting it.
 
-The Library shows static data from
-[`src/pages/library/fixtures.ts`](src/pages/library/fixtures.ts) and is not
-connected to the catalog API or to this device's games; every action except
-**Add game** reports that it is not connected. The catalog side uses the
-server's response types for `GET /api/games` and `GET /api/versions`
-([`catalog.ts`](src/pages/library/catalog.ts)), and the device side the local
-database's playthrough, cloud-checkpoint and outbox types;
+The catalog comes from `GET /api/games` and `GET /api/versions`
+([`use-catalog.ts`](src/pages/library/use-catalog.ts)); the last response is
+kept in `localStorage`, so the Library shows it at once and while offline.
+The device side is the local database's games, playthroughs and cloud outbox,
+and the account's cloud checkpoints;
 [`model.ts`](src/pages/library/model.ts) joins both into what the page shows.
+Browser tests serve their own catalog through Playwright routes, and unit
+tests use [`tests/library-fixtures.ts`](tests/library-fixtures.ts).
 
 ### Playthroughs
 

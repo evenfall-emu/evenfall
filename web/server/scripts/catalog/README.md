@@ -12,6 +12,7 @@ node tools/catalog/no-intro.mjs lookup --crc32 1f1c08fb
 node tools/catalog/no-intro.mjs lookup --sha1 <40 hex digits>
 node tools/catalog/no-intro.mjs lookup --name emerald  # substring, any case
 node tools/catalog/no-intro.mjs latest                 # newest upstream DAT
+node tools/catalog/no-intro.mjs names                  # the player's name table
 ```
 
 `lookup` prints JSON `{ commit, version, matches }` and exits 0 when something
@@ -34,6 +35,12 @@ that fail verification are never cached. The verified file is cached at
 `artifacts/no-intro/<commit>.dat` and reused while its digest matches. The DAT
 itself is never committed.
 
+`names` writes the pinned DAT's SHA-1 to dump-name table to the player's
+[`no-intro-gba.json`](../../frontend/src/pages/library/no-intro-gba.json)
+(or to `--out FILE`), which is committed. The Library titles ROMs the catalog
+does not list with it. The file records the DAT's source URL, version and
+license, and lists one dump per line in SHA-1 order.
+
 To move the pin:
 
 1. Run `node tools/catalog/no-intro.mjs latest`. It prints the newest
@@ -42,5 +49,6 @@ To move the pin:
 2. Try the candidate with `lookup ... --commit <sha> --sha256 <digest>`.
 3. Update `DAT_COMMIT` and `DAT_SHA256` together, and run
    `node --test tools/catalog/*.test.mjs`.
+4. Run `node tools/catalog/no-intro.mjs names` and commit the table.
 
 The tests use a handwritten fixture and need no network.

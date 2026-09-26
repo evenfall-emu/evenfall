@@ -289,7 +289,7 @@ export function GameList({
                     <button
                       className={button("ghost", "icon")}
                       aria-label={`Install ${game.title}`}
-                      title="Ready: install and play"
+                      title="Ready: install"
                       disabled={disabled}
                       onClick={() => onInstall(game)}
                     >

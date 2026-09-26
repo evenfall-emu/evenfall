@@ -4,9 +4,11 @@ import { button, cx } from "../../ui/styles";
 import type { LibraryAction, LibraryActionHandler } from "./actions";
 import type { LibraryCatalog, LibraryDevice } from "./catalog";
 import {
+  DeleteDialog,
   NewPlaythroughDialog,
   ProgressDialog,
   ReleaseNotesDialog,
+  RenameDialog,
   UpdateDialog,
 } from "./dialogs";
 import { GameDetails } from "./game-details";
@@ -23,7 +25,7 @@ import {
 
 type OpenDialog =
   | { kind: "update" | "notes" | "new" }
-  | { kind: "progress"; playthroughId: string };
+  | { kind: "progress" | "rename" | "delete"; run: PlaythroughEntry };
 
 // Matches Tailwind's `md` breakpoint: below it, details replace the list.
 const narrow = () => window.matchMedia("(max-width: 767.98px)").matches;
@@ -35,6 +37,7 @@ const narrow = () => window.matchMedia("(max-width: 767.98px)").matches;
  */
 export function LibraryPage({
   catalog,
+  dumpNames,
   device,
   now = Date.now(),
   busy = false,
@@ -45,6 +48,8 @@ export function LibraryPage({
   onAction,
 }: {
   catalog: LibraryCatalog;
+  /** SHA-1 to No-Intro name, titling ROMs the catalog does not list. */
+  dumpNames?: Readonly<Record<string, string>>;
   device: LibraryDevice;
   now?: number;
   busy?: boolean;
@@ -55,7 +60,10 @@ export function LibraryPage({
   onAddGame: () => void;
   onAction: LibraryActionHandler;
 }) {
-  const games = useMemo(() => buildLibrary(catalog, device), [catalog, device]);
+  const games = useMemo(
+    () => buildLibrary(catalog, device, dumpNames),
+    [catalog, device, dumpNames],
+  );
   const franchises = useMemo(() => franchisesOf(games), [games]);
   const tags = useMemo(() => tagsOf(games), [games]);
   const [filters, setFilters] = useState(noFilters);
@@ -121,12 +129,23 @@ export function LibraryPage({
     onSelect(game.id);
   }
 
+  function install(game: LibraryGame, play = false) {
+    void run({ type: "install", versionId: game.latest.id, play });
+  }
+
   function play(game: LibraryGame, entry?: PlaythroughEntry) {
+    const release = game.releases.find((item) => item.installed);
     if (entry?.conflict) {
       onSelect(game.id);
-      setDialog({ kind: "progress", playthroughId: entry.id });
-    } else
-      void run({ type: "play", gameId: game.id, playthroughId: entry?.id });
+      setDialog({ kind: "progress", run: entry });
+    } else if (entry)
+      void run({
+        type: "play",
+        hash: entry.release.hash,
+        playthroughId: entry.id,
+      });
+    else if (release) void run({ type: "play", hash: release.hash });
+    else install(game, true);
   }
 
   function addFile(game: LibraryGame) {
@@ -134,9 +153,13 @@ export function LibraryPage({
     fileInput.current?.click();
   }
 
-  const conflicted = selected?.playthroughs.find(
-    (entry) => dialog?.kind === "progress" && entry.id === dialog.playthroughId,
-  );
+  const ref = (entry: PlaythroughEntry) => ({
+    hash: entry.release.hash,
+    playthroughId: entry.id,
+  });
+  const exportSave = (entry: PlaythroughEntry) =>
+    void run({ type: "export-save", ...ref(entry), name: entry.name });
+  const conflicted = dialog?.kind === "progress" ? dialog.run : undefined;
 
   return (
     <main
@@ -173,13 +196,7 @@ export function LibraryPage({
           onSelect={select}
           onAddGame={onAddGame}
           onPlay={(game) => play(game, game.playthroughs[0])}
-          onInstall={(game) =>
-            void run({
-              type: "install",
-              gameId: game.id,
-              versionId: game.latest.id,
-            })
-          }
+          onInstall={(game) => install(game)}
           onAddFile={addFile}
         />
       </section>
@@ -198,38 +215,14 @@ export function LibraryPage({
             headingRef={detailHeading}
             disabled={disabled}
             onPlay={(entry) => play(selected, entry)}
-            onInstall={() =>
-              void run({
-                type: "install",
-                gameId: selected.id,
-                versionId: selected.latest.id,
-              })
-            }
+            onInstall={() => install(selected)}
             onAddFile={() => addFile(selected)}
             onUpdate={() => setDialog({ kind: "update" })}
             onReleaseNotes={() => setDialog({ kind: "notes" })}
             onNewPlaythrough={() => setDialog({ kind: "new" })}
-            onRename={(entry) =>
-              void run({
-                type: "rename-playthrough",
-                gameId: selected.id,
-                playthroughId: entry.id,
-              })
-            }
-            onExport={(entry) =>
-              void run({
-                type: "export-save",
-                gameId: selected.id,
-                playthroughId: entry.id,
-              })
-            }
-            onDelete={(entry) =>
-              void run({
-                type: "delete-playthrough",
-                gameId: selected.id,
-                playthroughId: entry.id,
-              })
-            }
+            onRename={(entry) => setDialog({ kind: "rename", run: entry })}
+            onExport={exportSave}
+            onDelete={(entry) => setDialog({ kind: "delete", run: entry })}
           />
         ) : (
           <p className="p-8 text-muted">Choose a game to see its details.</p>
@@ -238,7 +231,7 @@ export function LibraryPage({
       {error && (
         <div
           role="alert"
-          className="fixed bottom-4 left-1/2 z-30 flex w-max max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-panel border border-danger/60 bg-danger-surface py-2 pr-2 pl-4 text-danger shadow-popover"
+          className="fixed bottom-4 left-1/2 z-60 flex w-max max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-panel border border-danger/60 bg-danger-surface py-2 pr-2 pl-4 text-danger shadow-popover"
         >
           <Icon name="alert" className="size-6 shrink-0" />
           <p>{error}</p>
@@ -262,13 +255,9 @@ export function LibraryPage({
           const file = event.target.files?.[0];
           const game = fileFor.current;
           event.target.value = "";
+          // An open Update dialog stays, and copies once the ROM is here.
           if (file && game)
-            void run({
-              type: "add-file",
-              gameId: game.id,
-              versionId: game.latest.id,
-              file,
-            });
+            void run({ type: "add-file", file, wanted: game.wantedFiles });
         }}
       />
       {selected && dialog?.kind === "update" && (
@@ -276,12 +265,13 @@ export function LibraryPage({
           game={selected}
           busy={working}
           onClose={() => setDialog(null)}
+          onAddFile={() => addFile(selected)}
           onConfirm={(entry) =>
             void finish({
               type: "update",
-              gameId: selected.id,
-              playthroughId: entry.id,
-              versionId: selected.latest.id,
+              from: ref(entry),
+              toHash: selected.latest.hash,
+              name: entry.name,
             })
           }
         />
@@ -294,20 +284,9 @@ export function LibraryPage({
           busy={working}
           onClose={() => setDialog(null)}
           onChoose={(progress) =>
-            void finish({
-              type: "play",
-              gameId: selected.id,
-              playthroughId: conflicted.id,
-              progress,
-            })
+            void finish({ type: "play", ...ref(conflicted), progress })
           }
-          onExport={() =>
-            void run({
-              type: "export-save",
-              gameId: selected.id,
-              playthroughId: conflicted.id,
-            })
-          }
+          onExport={() => exportSave(conflicted)}
         />
       )}
       {selected && dialog?.kind === "notes" && (
@@ -322,13 +301,34 @@ export function LibraryPage({
           game={selected}
           busy={working}
           onClose={() => setDialog(null)}
-          onCreate={(name, versionId) =>
+          onCreate={(name, hash) =>
+            void finish({ type: "new-playthrough", hash, name })
+          }
+        />
+      )}
+      {selected && dialog?.kind === "rename" && (
+        <RenameDialog
+          game={selected}
+          run={dialog.run}
+          busy={working}
+          onClose={() => setDialog(null)}
+          onRename={(name) =>
             void finish({
-              type: "new-playthrough",
-              gameId: selected.id,
-              versionId,
+              type: "rename-playthrough",
+              ...ref(dialog.run),
               name,
             })
+          }
+        />
+      )}
+      {selected && dialog?.kind === "delete" && (
+        <DeleteDialog
+          game={selected}
+          run={dialog.run}
+          busy={working}
+          onClose={() => setDialog(null)}
+          onDelete={() =>
+            void finish({ type: "delete-playthrough", ...ref(dialog.run) })
           }
         />
       )}

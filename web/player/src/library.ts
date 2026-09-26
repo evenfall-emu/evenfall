@@ -394,6 +394,24 @@ export class Library {
       return info;
     });
   }
+  /**
+   * Stores a ROM without creating or selecting a playthrough; its first
+   * launch creates one. A ROM already stored keeps its record.
+   */
+  async addRom(game: GameImport): Promise<Game> {
+    if (!this.db) throw new StorageError({ cause: this.error });
+    const tx = this.db.transaction(["games", "roms"], "readwrite");
+    return finishWrite(tx, async () => {
+      const existing: Game | undefined = await tx
+        .objectStore("games")
+        .get(game.hash);
+      if (existing) return existing;
+      const info = metadata(game);
+      await tx.objectStore("roms").put(game.rom, game.hash);
+      await tx.objectStore("games").put(info, game.hash);
+      return info;
+    });
+  }
   async save(
     ref: PlaythroughRef,
     data: Uint8Array,

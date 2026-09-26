@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import {
-  findByCrc32, findByName, findBySha1, indexDat, loadDat, parseDat, sha256, toBaseRow,
+  findByCrc32, findByName, findBySha1, indexDat, loadDat, namesJson, parseDat, sha256, toBaseRow,
 } from './no-intro.mjs';
 
 const CLI = fileURLToPath(new URL('./no-intro.mjs', import.meta.url));
@@ -109,6 +109,23 @@ test('looks entries up by SHA-1, shared CRC32 and name substring', () => {
   });
   const { entries } = parseDat(FIXTURE);
   assert.throws(() => indexDat([...entries, { ...entries[2], name: 'Copy' }]), /listed twice/);
+});
+
+test('writes the SHA-1 -> name table sorted, with its source and license', () => {
+  const { version, entries } = parseDat(FIXTURE);
+  const text = namesJson(entries, { commit: COMMIT, version });
+  const table = JSON.parse(text);
+  assert.equal(table.version, '2026.01.02');
+  assert.match(table.source, new RegExp(`/blob/${COMMIT}/metadat/no-intro/Nintendo%20-%20Game%20Boy%20Advance\\.dat$`));
+  assert.match(table.license, /^CC BY-SA 4\.0/);
+  assert.deepEqual(Object.entries(table.names), [
+    ['1111111111111111111111111111111111111111', 'Tricky (Name), With (Parens, Commas) (Europe) (En,Fr,De)'],
+    ['2222222222222222222222222222222222222222', 'Shared CRC (Japan)'],
+    ['3333333333333333333333333333333333333333', 'Shared CRC (USA)'],
+    [EMERALD.sha1, EMERALD.name],
+  ]);
+  // One dump per line, so a new DAT diffs by entry.
+  assert.equal(text.split('\n').filter((line) => /^ {4}"[0-9a-f]{40}": /.test(line)).length, 4);
 });
 
 test('verifies cached and downloaded bytes against the pinned digest', async (t) => {

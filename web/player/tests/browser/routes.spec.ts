@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { Emulator } from "@evenfall/gba";
+import { mockCatalog } from "./catalog.fixture";
 
 const frames = (page: Page) =>
   page.evaluate(async () =>
@@ -11,19 +12,20 @@ const frames = (page: Page) =>
 
 test("each page has a URL that survives a reload", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
+  await mockCatalog(page);
   await page.goto("/");
   await page.getByRole("button", { name: "Browse library" }).click();
   await expect(page).toHaveURL(/\/library$/);
-  await page.getByRole("button", { name: "View Emerald Seaglass" }).click();
-  await expect(page).toHaveURL(/\/library\/emerald-seaglass$/);
+  await page.getByRole("button", { name: "View Cedar Saga" }).click();
+  await expect(page).toHaveURL(/\/library\/cedar-saga$/);
 
   await page.reload();
   const details = page.getByRole("region", { name: "Game details" });
   await expect(
-    details.getByRole("heading", { level: 2, name: "Emerald Seaglass" }),
+    details.getByRole("heading", { level: 2, name: "Cedar Saga" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "View Emerald Seaglass" }),
+    page.getByRole("button", { name: "View Cedar Saga" }),
   ).toHaveAttribute("aria-current", "true");
 
   // A fresh page has no running game: /player opens the Library.
@@ -45,25 +47,26 @@ test("a shared game link opens its details on a phone, and Back returns to the l
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
+  await mockCatalog(page);
   await page.goto("/library/pokemon-unbound");
   // An unknown ID falls back to the first game rather than an empty page.
   await expect(
     page.getByRole("region", { name: "Game details" }).getByRole("heading", {
       level: 2,
     }),
-  ).toHaveText("Elite Redux");
-  await page.goto("/library/unbound");
+  ).toHaveText("Birch Quest");
+  await page.goto("/library/maple-remix");
   await expect(
     page
       .getByRole("region", { name: "Game details" })
-      .getByRole("heading", { level: 2, name: "Pokémon Unbound" }),
+      .getByRole("heading", { level: 2, name: "Maple Remix" }),
   ).toBeFocused();
   await expect(page.getByRole("region", { name: "Games" })).toBeHidden();
   await page.getByRole("button", { name: "Back to Library" }).click();
   await expect(page).toHaveURL(/\/library$/);
   await expect(page.getByRole("region", { name: "Games" })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "View Pokémon Unbound" }),
+    page.getByRole("button", { name: "View Maple Remix" }),
   ).toBeFocused();
 });
 

@@ -840,6 +840,31 @@ export class Player {
       this.update({ changing: false });
     }
   }
+  /**
+   * Reads a chosen .gba or single-game ZIP in an isolated Worker, returning
+   * the raw ROM and its SHA-1 without storing or running it.
+   */
+  async inspectRom(file: File) {
+    if (!this.state.ready) throw new Error("Player is still starting.");
+    if (file.size > 40 * 1024 * 1024) throw new Error("ROM exceeds 40 MiB");
+    const zipped = /\.zip$/i.test(file.name);
+    const rom = new Uint8Array(await file.arrayBuffer());
+    const candidate = await makeEmulator();
+    try {
+      const cpu = await candidate.load(rom, {
+        ...this.options,
+        sampleRate: await this.audio.ready(),
+        zipped,
+      });
+      return {
+        hash: cpu.romHash,
+        title: file.name.replace(/\.(gba|zip)$/i, ""),
+        rom: zipped ? await candidate.exportRom() : rom,
+      };
+    } finally {
+      candidate.terminate();
+    }
+  }
   async renamePlaythrough(name: string) {
     const ref = this.activeRef;
     if (!ref || this.state.changing) return;

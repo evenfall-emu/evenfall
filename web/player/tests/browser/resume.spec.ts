@@ -449,9 +449,6 @@ test("a read-only tab can resume but never overwrites the lock owner's checkpoin
 test("trying another game after a failed resume cannot overwrite the failed game's checkpoint", async ({
   page,
 }) => {
-  // Switching to another installed game needs the Library wired to this
-  // device; until then it shows static catalog data and cannot start a game.
-  test.fixme();
   await enterPlayer(page);
   const healthy = await importAndCheckpoint(page, 46, "Healthy");
   const failed = await importAndCheckpoint(page, 47, "Failed");
@@ -489,9 +486,6 @@ test("trying another game after a failed resume cannot overwrite the failed game
 test("a missing target checkpoint pauses the previously running machine", async ({
   page,
 }) => {
-  // Switching to another installed game needs the Library wired to this
-  // device; until then it shows static catalog data and cannot start a game.
-  test.fixme();
   await enterPlayer(page);
   const missing = await importAndCheckpoint(page, 48, "Missing target");
   await importAndCheckpoint(page, 49, "Running source");

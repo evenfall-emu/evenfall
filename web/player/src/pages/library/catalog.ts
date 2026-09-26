@@ -3,7 +3,7 @@ import type {
   CatalogPatch,
   CatalogVersion,
 } from "../../../../server/src/types";
-import type { CloudJob, Playthrough } from "../../library";
+import type { CloudJob, Game, Playthrough } from "../../library";
 import type { CloudResume } from "../../cloud";
 
 export type { CatalogGameSummary, CatalogPatch, CatalogVersion };
@@ -19,8 +19,8 @@ export type LibraryCatalog = {
 
 /** What this browser holds, in the shapes the local database and cloud use. */
 export type LibraryDevice = {
-  /** SHA-1 of every ROM on this device: installed releases and base ROMs. */
-  roms: string[];
+  /** The `games` store: every ROM on this device, by SHA-1. */
+  games: Game[];
   /** The `playthroughs` store. */
   playthroughs: Playthrough[];
   /** Cloud checkpoints discovered for the signed-in account. */

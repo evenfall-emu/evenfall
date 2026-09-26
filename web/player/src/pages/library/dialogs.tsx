@@ -86,11 +86,17 @@ export function UpdateDialog({
   busy,
   onClose,
   onConfirm,
-}: DialogProps & { onConfirm: (run: PlaythroughEntry) => void }) {
+  onAddFile,
+}: DialogProps & {
+  onConfirm: (run: PlaythroughEntry) => void;
+  /** Chooses the latest release's ROM when this device lacks it. */
+  onAddFile: () => void;
+}) {
   const [runId, setRunId] = useState(game.updatable[0]?.id ?? "");
   const [understood, setUnderstood] = useState(false);
   const run = game.updatable.find((item) => item.id === runId);
   const verified = run ? saveCompatible(run.release, game.latest) : false;
+  const { installed } = game.latest;
   return (
     <Dialog
       open
@@ -140,10 +146,17 @@ export function UpdateDialog({
         />
         <Fact icon="history" title="Old progress remains available." />
       </ul>
-      {!verified && (
+      {!verified && installed && (
         <Confirm checked={understood} onChange={setUnderstood}>
           I understand compatibility is unverified.
         </Confirm>
+      )}
+      {!installed && (
+        <p className="mt-5 flex items-start gap-3 text-1x5">
+          <Icon name="filePlus" className="size-6 shrink-0 text-warning" />
+          Add the {game.latest.label} ROM to this device first. It stays on this
+          device.
+        </p>
       )}
       <DialogActions>
         <button
@@ -153,13 +166,23 @@ export function UpdateDialog({
         >
           Cancel
         </button>
-        <button
-          className={button("primary", "lg")}
-          disabled={busy || !run || (!verified && !understood)}
-          onClick={() => run && onConfirm(run)}
-        >
-          Copy save &amp; play
-        </button>
+        {installed ? (
+          <button
+            className={button("primary", "lg")}
+            disabled={busy || !run || (!verified && !understood)}
+            onClick={() => run && onConfirm(run)}
+          >
+            Copy save &amp; play
+          </button>
+        ) : (
+          <button
+            className={button("primary", "lg")}
+            disabled={busy}
+            onClick={onAddFile}
+          >
+            Choose file…
+          </button>
+        )}
       </DialogActions>
     </Dialog>
   );
@@ -223,7 +246,9 @@ export function ProgressDialog({
       onOpenChange={(open) => !open && onClose()}
       busy={busy}
       title="Choose progress"
-      subtitle={`${game.title} · ${run.name} · ${run.release.label}`}
+      subtitle={[game.title, run.name, run.release.label]
+        .filter(Boolean)
+        .join(" · ")}
     >
       <p className="mt-5">
         Cloud progress changed since this device last synced. Choose which
@@ -298,22 +323,44 @@ export function ReleaseNotesDialog({ game, busy, onClose }: DialogProps) {
   );
 }
 
+function NameField({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="mt-6 block">
+      <span className="mb-2 block font-bold text-heading">Name</span>
+      <input
+        value={value}
+        maxLength={64}
+        required
+        autoFocus
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-12 w-full rounded-control border border-line bg-canvas px-3 text-2x focus:border-mint focus:outline-none"
+      />
+    </label>
+  );
+}
+
 export function NewPlaythroughDialog({
   game,
   busy,
   onClose,
   onCreate,
 }: DialogProps & {
-  onCreate: (name: string, versionId: string) => void;
+  onCreate: (name: string, hash: string) => void;
 }) {
-  const releases = game.releases.filter(
-    (item) =>
-      item.installed || (item === game.latest && game.availability === "ready"),
-  );
+  const releases = game.releases.filter((item) => item.installed);
   const [name, setName] = useState(
     `Playthrough ${game.playthroughs.length + 1}`,
   );
-  const [versionId, setVersionId] = useState(releases[0]?.id ?? "");
+  const [hash, setHash] = useState(releases[0]?.hash ?? "");
   const trimmed = name.trim();
   return (
     <Dialog
@@ -326,33 +373,25 @@ export function NewPlaythroughDialog({
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          if (trimmed && versionId) onCreate(trimmed, versionId);
+          if (trimmed && hash) onCreate(trimmed, hash);
         }}
       >
-        <label className="mt-6 block">
-          <span className="mb-2 block font-bold text-heading">Name</span>
-          <input
-            value={name}
-            maxLength={64}
-            required
-            disabled={busy}
-            onChange={(event) => setName(event.target.value)}
-            className="h-12 w-full rounded-control border border-line bg-canvas px-3 text-2x focus:border-mint focus:outline-none"
-          />
-        </label>
-        <div className="mt-5">
-          <FieldSelect
-            label="Release"
-            value={versionId}
-            disabled={busy}
-            options={releases.map((item) => ({
-              value: item.id,
-              label:
-                item === game.latest ? `${item.label} (latest)` : item.label,
-            }))}
-            onChange={setVersionId}
-          />
-        </div>
+        <NameField value={name} disabled={busy} onChange={setName} />
+        {releases.length > 1 && (
+          <div className="mt-5">
+            <FieldSelect
+              label="Release"
+              value={hash}
+              disabled={busy}
+              options={releases.map((item) => ({
+                value: item.hash,
+                label:
+                  item === game.latest ? `${item.label} (latest)` : item.label,
+              }))}
+              onChange={setHash}
+            />
+          </div>
+        )}
         <DialogActions>
           <button
             type="button"
@@ -365,12 +404,105 @@ export function NewPlaythroughDialog({
           <button
             type="submit"
             className={button("primary", "lg")}
-            disabled={busy || !trimmed || !versionId}
+            disabled={busy || !trimmed || !hash}
           >
             Create &amp; play
           </button>
         </DialogActions>
       </form>
+    </Dialog>
+  );
+}
+
+export function RenameDialog({
+  game,
+  run,
+  busy,
+  onClose,
+  onRename,
+}: DialogProps & {
+  run: PlaythroughEntry;
+  onRename: (name: string) => void;
+}) {
+  const [name, setName] = useState(run.name);
+  const trimmed = name.trim();
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => !open && onClose()}
+      busy={busy}
+      title="Rename playthrough"
+      subtitle={game.title}
+    >
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (trimmed) onRename(trimmed);
+        }}
+      >
+        <NameField value={name} disabled={busy} onChange={setName} />
+        <DialogActions>
+          <button
+            type="button"
+            className={button("outline", "lg")}
+            disabled={busy}
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className={button("primary", "lg")}
+            disabled={busy || !trimmed || trimmed === run.name}
+          >
+            Rename
+          </button>
+        </DialogActions>
+      </form>
+    </Dialog>
+  );
+}
+
+export function DeleteDialog({
+  game,
+  run,
+  busy,
+  onClose,
+  onDelete,
+}: DialogProps & { run: PlaythroughEntry; onDelete: () => void }) {
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => !open && onClose()}
+      busy={busy}
+      title="Delete playthrough?"
+      subtitle={`${game.title} · ${run.name}`}
+    >
+      <p className="mt-5">
+        This removes the playthrough&rsquo;s in-game save, resume point and
+        quick states from this device.
+      </p>
+      {run.sync !== "device-only" && (
+        <p className="mt-3 text-1x5 text-muted">
+          Its cloud backup stays, and can be downloaded again.
+        </p>
+      )}
+      <DialogActions>
+        <button
+          className={button("outline", "lg")}
+          disabled={busy}
+          onClick={onClose}
+        >
+          Cancel
+        </button>
+        <button
+          className={button("danger", "lg")}
+          disabled={busy}
+          onClick={onDelete}
+        >
+          Delete
+        </button>
+      </DialogActions>
     </Dialog>
   );
 }

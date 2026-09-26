@@ -16,6 +16,9 @@ const buttonVariants = {
   outline:
     "border border-control text-content hover:bg-hover active:bg-selected disabled:border-line disabled:text-muted",
   ghost: "text-content hover:bg-hover active:bg-selected disabled:text-muted",
+  /** Confirms an action that discards data. */
+  danger:
+    "border border-danger/70 bg-danger-surface text-danger hover:bg-danger/20 active:bg-danger/30 disabled:border-line disabled:bg-raised disabled:text-muted",
 };
 
 const buttonSizes = {

@@ -38,9 +38,11 @@ path is served from the player's Static Assets in `.dist/cloudflare` (see
   unique exact **playable output ROM SHA-1**, display label, optional
   required base, and optional source repository and revision, release date
   (`YYYY-MM-DD`), release notes and hosted patch. A patch is an HTTP(S) URL,
-  a format (`bps`, `ups` or `ips`) and a size in bytes, and needs a required
-  base; the base SHA-1 in and the output SHA-1 out verify it, so it carries
-  no digest of its own. A game can have many versions.
+  a format (`bps`, `ups` or `ips`) and its exact size in bytes, and needs a
+  required base; the base SHA-1 in and the output SHA-1 out verify it, so it
+  carries no digest of its own. The player downloads patches from the
+  browser, so their host must allow cross-origin `GET`. A game can have many
+  versions.
 - `version_save_compatibility`: for a version, the earlier versions of the
   same game whose in-game saves are verified to load in it.
 - `bases`: stable ID, unique internal name, display label, and the unique
