@@ -242,7 +242,9 @@ export function LandingPage({
           />
           {/* On phones the scene sits below the text: the bottom padding
               leaves room for the sun at a full-size art pixel. */}
-          <div className="mx-auto h-full max-w-[1600px] px-6 pt-32 [text-shadow:2px_2px_0_#101c2a] md:px-10 md:pt-44">
+          {/* On wide screens, use half the height beyond 900px to bring the
+              copy toward the lighthouse without lowering it on short views. */}
+          <div className="mx-auto h-full max-w-[1600px] px-6 pt-32 [text-shadow:2px_2px_0_#101c2a] md:px-10 md:pt-44 2xl:pt-[clamp(176px,calc(50svh_-_274px),400px)]">
             <div ref={intro} className="max-w-fit">
               <h1
                 id="landing-title"
