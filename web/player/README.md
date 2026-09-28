@@ -43,6 +43,9 @@ text sizes name how many screen pixels one font pixel covers: `text-2x`
 (16px), `text-3x`, `text-4x` and `text-5x` keep every font pixel square and
 sharp, and `text-1x5` (12px) is the one half step, for secondary text.
 
+The brand mark in `src/assets/brand/` is the site icon; its README covers the
+bitmaps the tab and the iOS home screen need.
+
 The stylesheets that predate Tailwind (`console.css`, `account.css` and
 `rewind-timeline.css`) are imported by `styles.css` into a
 `legacy` cascade layer, above Tailwind's base styles and below its
