@@ -11,6 +11,7 @@
 
 import { ambient, drawBubbles } from "./bubbles";
 import type { Camera } from "./camera";
+import { shown } from "./dither";
 
 const DEEP = "#012d53";
 const SHAFT = "#01345a";
@@ -23,19 +24,6 @@ const GLOW = ["#60c5a1", "#146884"];
 const BUBBLE = "#bcd8af";
 /** Rows over which walls and shafts fade in at the top and out below. */
 const FADE = 28;
-
-const BAYER = [
-  [0, 32, 8, 40, 2, 34, 10, 42],
-  [48, 16, 56, 24, 50, 18, 58, 26],
-  [12, 44, 4, 36, 14, 46, 6, 38],
-  [60, 28, 52, 20, 62, 30, 54, 22],
-  [3, 35, 11, 43, 1, 33, 9, 41],
-  [51, 19, 59, 27, 49, 17, 57, 25],
-  [15, 47, 7, 39, 13, 45, 5, 37],
-  [63, 31, 55, 23, 61, 29, 53, 21],
-];
-const shown = (x: number, y: number, amount: number) =>
-  BAYER[((y % 8) + 8) % 8][((x % 8) + 8) % 8] / 64 < amount;
 
 // A small deterministic hash, so the scene varies without randomness.
 const hash = (n: number) => {

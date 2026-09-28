@@ -54,6 +54,14 @@ views or near the middle on phones, keeping it whole and clear of the hero
 text. The lower layers reuse the surface's scale and horizontal offset, so
 their columns line up down the page.
 
+A canvas shorter than its plate crops the plate's painted fade into deep
+water. So the last 28 art rows of each edge that meets the abyss, the
+descent's bottom and the seabed's top, always dissolve into deep water
+through the same ordered dither, drawn by
+[`dither.ts`](../../pages/landing/dither.ts); over a whole painted fade they
+change little. The seabed's section grows with the width, as the plate does
+on views wide enough to raise the scale, so the whole plate normally fits.
+
 Only the layers on screen animate, at fifteen frames a second, and everything
 moves by whole art pixels:
 

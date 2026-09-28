@@ -203,6 +203,53 @@ test("the footer sits on the seabed's sand, and the sand ends the page", async (
   expect(floor).toEqual(["9,52,77"]);
 });
 
+test("the descent and the seabed meet the abyss on deep water at every width", async ({
+  page,
+}) => {
+  // Wider than 1920 pixels the scale rises to cover the width: the seabed's
+  // section grows with it, so its whole plate fits, while the descent's
+  // canvas crops its plate on ultrawide views, as the seabed's does on
+  // tablets, and a runtime dither replaces the cropped fade.
+  for (const viewport of [
+    { width: 3440, height: 1440 },
+    { width: 2516, height: 1300 },
+    { width: 768, height: 1024 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await open(page);
+    const descent = plates(page).nth(1);
+    const seabed = plates(page).nth(3);
+    if (viewport.width > 1920)
+      expect(
+        Number(await seabed.getAttribute("data-y")),
+        `the whole seabed plate at ${viewport.width}`,
+      ).toBeGreaterThanOrEqual(0);
+    // The canvas row at each edge that meets the abyss is all deep water:
+    // the art never stops at a line.
+    for (const [layer, edge] of [
+      [descent, "bottom"],
+      [seabed, "top"],
+    ] as const) {
+      const art = await layer.evaluate((element: HTMLCanvasElement, edge) => {
+        const row = edge === "top" ? 0 : element.height - 1;
+        const data = element
+          .getContext("2d")!
+          .getImageData(0, row, element.width, 1).data;
+        // A Set would not survive the trip out of the page.
+        return [
+          ...new Set(
+            Array.from({ length: element.width }, (_, x) =>
+              [data[x * 4], data[x * 4 + 1], data[x * 4 + 2]].join(),
+            ),
+          ),
+        ];
+      }, edge);
+      expect(art, `${edge} edge at ${viewport.width}`).toEqual(["1,45,83"]);
+    }
+  }
+});
+
 test("the product story fits every width and its pixel art stays on whole multiples", async ({
   page,
 }) => {

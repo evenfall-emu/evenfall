@@ -389,7 +389,11 @@ export function LandingPage({
       </main>
 
       {/* The seabed: its canvas runs behind the last section and the footer,
-          whose text rests on the sand where it settles into a flat floor. */}
+          whose text rests on the sand where it settles into a flat floor.
+          The section grows with the width like the plate, which is 128/480
+          of the width once wide views raise the scale; with the footer below
+          it, the whole plate fits and the text keeps its place among the
+          ruins. */}
       <div className="relative isolate bg-[#012d53]">
         <canvas
           ref={seabed}
@@ -398,7 +402,7 @@ export function LandingPage({
         />
         <section
           aria-labelledby="landing-open"
-          className="mx-auto flex min-h-[clamp(300px,26vw,380px)] max-w-2xl flex-col items-center justify-center gap-6 px-6 pt-16 text-center"
+          className="mx-auto flex min-h-[max(300px,26vw)] max-w-2xl flex-col items-center justify-center gap-6 px-6 pt-16 text-center"
         >
           <h2 id="landing-open" className="text-3x text-heading md:text-4x">
             Built in the open.

@@ -10,6 +10,7 @@ import {
   type Bubble,
 } from "./bubbles";
 import { frame, type Camera, type Framing, type Plate } from "./camera";
+import { fadeEdge, type Edge } from "./dither";
 import { observeDeviceSize, type DeviceSize } from "./pixel-canvas";
 import { drawClouds, drawGlow, type Clouds, type Glow } from "./sky";
 import { drawSea, type Sea } from "./waves";
@@ -82,6 +83,19 @@ const FILL: Record<LayerName, string> = {
   seabed: "#012d53",
 };
 
+/**
+ * The canvas edge where each plate meets the abyss. Both plates paint a fade
+ * into deep water there, but a canvas shorter than its plate crops it, most
+ * on views wide enough to raise the scale, and the art would stop at a
+ * straight line. So the last `EDGE_FADE` art rows at that edge always
+ * dissolve into deep water; over a whole painted fade they change little.
+ */
+const MEETS_ABYSS = { descent: "bottom", seabed: "top" } as const satisfies {
+  [name in PlateName]?: Edge;
+};
+type MeetsAbyss = keyof typeof MEETS_ABYSS;
+const EDGE_FADE = 28;
+
 /** Preferred on-screen size of one art pixel, in CSS pixels. */
 const PIXEL = 4;
 /** Views narrower than this, in CSS pixels, center the sun below the text.
@@ -129,6 +143,8 @@ export function surfaceFraming(
  * and abyss hang from their canvas's top. The seabed rests on its canvas's
  * bottom, so its sand ends with the page, and its deep-water top rows meet
  * the abyss above; a canvas taller than the plate shows deep water above it.
+ * A canvas shorter than its plate crops the edge that meets the abyss; see
+ * `MEETS_ABYSS`.
  * All canvases are the page's full width, so they share offsets.
  */
 export function follow(
@@ -239,6 +255,7 @@ export async function createFresco(
   let previous = 0;
   let sinceDraw = 0;
   let abyss: ReturnType<typeof createAbyss> | null = null;
+  let fades: Partial<Record<LayerName, ReturnType<typeof fadeEdge>>> = {};
 
   function draw(name: LayerName) {
     const canvas = canvases[name];
@@ -280,6 +297,8 @@ export async function createFresco(
       camera,
       BUBBLE,
     );
+    // Over the bubbles too, so they dissolve with the art near the edge.
+    fades[name]?.(context);
   }
 
   /** Frames every layer from the current sizes, then redraws them all. */
@@ -308,6 +327,19 @@ export async function createFresco(
             textWidth: (textColumn() * sizes.abyss.ratio) / deep.scale,
           })
         : null;
+    fades = {};
+    for (const plate of Object.keys(MEETS_ABYSS) as MeetsAbyss[]) {
+      const camera = cameras[plate];
+      const view = sizes[plate];
+      if (camera && view)
+        fades[plate] = fadeEdge(
+          camera,
+          view,
+          MEETS_ABYSS[plate],
+          EDGE_FADE,
+          FILL[plate],
+        );
+    }
     for (const name of names) {
       const camera = cameras[name];
       Object.assign(canvases[name].dataset, {
