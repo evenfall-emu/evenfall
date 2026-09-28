@@ -40,10 +40,10 @@ const frames = (page: Page) =>
   page.evaluate(async () =>
     Number((await window.player.emulator.inspect()).frames),
   );
-/** The SDK harness page; its load event waits for the validation run. */
+/** Load the bundled SDK without rerunning the dedicated validation test. */
 async function sdkPage(page: Page) {
-  await page.goto("/validation.html");
-  await expect(page.locator("#result")).not.toHaveText("RUNNING");
+  await page.goto("/validation.html?sdk-only");
+  await expect(page.locator("#result")).toHaveText("READY");
 }
 /** A cartridge with an SRAM signature whose code runs before the signature. */
 function sramRom(code: number[]) {

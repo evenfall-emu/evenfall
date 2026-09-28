@@ -3,6 +3,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import type { Emulator } from "@evenfall/gba";
 
 const hns120 = "b8a4b491ca67a76f079a8e7c19fd5512a2147dd2";
 
@@ -60,8 +61,28 @@ test("recognizes Heart & Soul 1.2.0 from its locators, then from the cache", asy
       new RegExp(`^pokemon/heart-n-soul:${hns120}:[0-9a-f]{16}$`),
     ),
   ]);
-  // Its views decode: a second of samples does not drop the build.
-  await page.waitForTimeout(1500);
+  // watchBuild rejects a view after 20 unsuccessful samples. Wait for actual
+  // captures, not wall time: the next capture starts after the prior decode.
+  await page.evaluate(() => {
+    const host = window as unknown as {
+      emulator: Emulator;
+      buildSamples: number;
+    };
+    host.buildSamples = 0;
+    const capture = host.emulator.captureMemory.bind(host.emulator);
+    host.emulator.captureMemory = async () => {
+      const sample = await capture();
+      if (sample) host.buildSamples++;
+      return sample;
+    };
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { buildSamples: number }).buildSamples,
+      ),
+    )
+    .toBeGreaterThan(20);
   await expect(dashboard).toBeVisible();
   await expect(page.getByText("could not read this build")).toHaveCount(0);
   await page.screenshot({

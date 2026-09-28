@@ -16,7 +16,10 @@ async function until(predicate, label) {
 }
 const sha = async bytes => [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(x => x.toString(16).padStart(2, '0')).join('');
 let emulator;
-try {
+// SDK tests need the bundled hooks, not another run of this whole suite.
+if (new URL(location.href).searchParams.has('sdk-only')) {
+  output.textContent = 'READY';
+} else try {
   emulator = await Emulator.create();
   const errors = [];
   window.addEventListener('error', e => errors.push(e.message));

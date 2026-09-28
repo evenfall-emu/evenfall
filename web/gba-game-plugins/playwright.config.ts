@@ -7,7 +7,8 @@ const deploymentUrl = process.env.ZIGBA_TEST_URL;
 export default defineConfig({
   testDir: "tests/browser",
   timeout: 60000,
-  workers: 1,
+  // Per-file fixture directories stay owned by one worker.
+  workers: 2,
   use: {
     baseURL: deploymentUrl ?? `http://127.0.0.1:${port}`,
     headless: true,

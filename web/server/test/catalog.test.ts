@@ -5,6 +5,7 @@ import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import app, { type Bindings } from "../src/index";
 import { seedBases, seedGames, seedVersions } from "../src/seed";
+import { baseInput, gameInput, resourceId, versionInput } from "../src/types";
 
 const adminSecret = "test-only-secret";
 let miniflare: Miniflare;
@@ -354,8 +355,58 @@ describe("catalog API", () => {
     );
   });
 
-  it("addresses every seeded row by ID through reads and management", async () => {
-    for (const game of seedGames) {
+  it("accepts every seed's ID and management input with valid relationships", () => {
+    // Seeding exercises database constraints, but bypasses the HTTP schemas.
+    // Validate all rows here rather than repeating every database write via HTTP.
+    for (const [rows, schema] of [
+      [seedGames, gameInput],
+      [seedBases, baseInput],
+      [seedVersions, versionInput],
+    ] as const) {
+      expect(new Set(rows.map(({ id }) => id)).size).toBe(rows.length);
+      for (const { id, ...input } of rows) {
+        expect(resourceId.parse(id), id).toBe(id);
+        expect(schema.parse(input), id).toEqual(input);
+      }
+    }
+    const games = new Set(seedGames.map(({ id }) => id));
+    const bases = new Set(seedBases.map(({ id }) => id));
+    const versions = new Map(
+      seedVersions.map((version) => [version.id, version]),
+    );
+    for (const version of seedVersions) {
+      expect(games.has(version.gameId), version.id).toBe(true);
+      if (version.requiredBaseId !== null)
+        expect(bases.has(version.requiredBaseId), version.id).toBe(true);
+      for (const previous of version.saveCompatibleFrom) {
+        expect(previous, version.id).not.toBe(version.id);
+        expect(versions.get(previous)?.gameId, version.id).toBe(version.gameId);
+      }
+    }
+  });
+
+  it("addresses representative seeded IDs through management and public readback", async () => {
+    // Slug IDs and dotted release IDs use the same validator on all routes.
+    // Other tests cover compatibility edges, hidden rows and missing references.
+    const representativeVersions = [
+      "elite-redux-2.65-beta2",
+      "fire-emblem-vision-quest-16d772195bd3",
+    ].map((id) => {
+      const version = seedVersions.find((row) => row.id === id);
+      expect(version, id).toBeDefined();
+      return version!;
+    });
+    const games = seedGames.filter((game) =>
+      representativeVersions.some((version) => version.gameId === game.id),
+    );
+    const bases = seedBases.filter((base) =>
+      representativeVersions.some(
+        (version) => version.requiredBaseId === base.id,
+      ),
+    );
+    expect(games).toHaveLength(2);
+    expect(bases).toHaveLength(2);
+    for (const game of games) {
       const read = await request(`/api/games/${game.id}`);
       expect(read.status).toBe(200);
       expect(await read.json()).toMatchObject({ game: { id: game.id } });
@@ -367,10 +418,13 @@ describe("catalog API", () => {
         body: JSON.stringify(input),
       });
       expect(write.status).toBe(200);
-      expect(await write.json()).toMatchObject({ game: { id } });
+      expect(await write.json()).toMatchObject({ game });
+      expect(await (await request(`/api/games/${id}`)).json()).toMatchObject({
+        game,
+      });
     }
 
-    for (const base of seedBases) {
+    for (const base of bases) {
       const read = await request(`/api/bases/${base.id}`);
       expect(read.status).toBe(200);
       expect(await read.json()).toMatchObject({ base: { id: base.id } });
@@ -382,10 +436,13 @@ describe("catalog API", () => {
         body: JSON.stringify(input),
       });
       expect(write.status).toBe(200);
-      expect(await write.json()).toMatchObject({ base: { id } });
+      expect(await write.json()).toMatchObject({ base });
+      expect(await (await request(`/api/bases/${id}`)).json()).toMatchObject({
+        base,
+      });
     }
 
-    for (const version of seedVersions) {
+    for (const version of representativeVersions) {
       const read = await request(`/api/versions/${version.id}`);
       expect(read.status).toBe(200);
       expect(await read.json()).toMatchObject({ version: { id: version.id } });
@@ -397,9 +454,20 @@ describe("catalog API", () => {
         body: JSON.stringify(input),
       });
       expect(write.status).toBe(200);
-      expect(await write.json()).toMatchObject({ version: { id } });
+      const expected = {
+        ...version,
+        requiredBase: seedBases.find(
+          (base) => base.id === version.requiredBaseId,
+        ),
+      };
+      expect(await write.json()).toMatchObject({ version: expected });
+      expect(await (await request(`/api/versions/${id}`)).json()).toMatchObject(
+        {
+          version: expected,
+        },
+      );
     }
-  }, 60_000);
+  });
 
   it("rejects malformed dot-separated IDs", async () => {
     for (const id of [".version", "version.", "version..1", "Version.1"]) {

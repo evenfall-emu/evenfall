@@ -3,6 +3,8 @@ import { execFileSync } from "node:child_process";
 import { gzipSync } from "node:zlib";
 import { expect, test, type Page } from "@playwright/test";
 import type { Emulator } from "@evenfall/gba";
+import { advanceAutosave } from "./autosave";
+import { stateAt } from "./state.fixture";
 
 const rom = Buffer.from([42, 0, 160, 227, 254, 255, 255, 234]);
 const hash = createHash("sha1").update(rom).digest("hex");
@@ -11,7 +13,7 @@ const file = {
   mimeType: "application/octet-stream",
   buffer: rom,
 };
-type Backup = { data: number[]; cycle: string };
+type Backup = { data: string; cycle: string };
 
 async function checkpoint(page: Page, cycle = "1234567"): Promise<Backup> {
   await page.route("**/api/auth/get-session", (route) =>
@@ -19,18 +21,7 @@ async function checkpoint(page: Page, cycle = "1234567"): Promise<Backup> {
   );
   await page.goto("/");
   await expect(page.getByLabel("Open ROM", { exact: true })).toBeEnabled();
-  return page.evaluate(
-    async ({ rom, cycle }) => {
-      const emulator = (window as unknown as { emulator: Emulator }).emulator;
-      await emulator.load(new Uint8Array(rom), { rtcEpoch: 123n });
-      await emulator.runUntil(BigInt(cycle));
-      return {
-        data: Array.from(await emulator.saveState()),
-        cycle: (await emulator.inspect()).cycle.toString(),
-      };
-    },
-    { rom: Array.from(rom), cycle },
-  );
+  return stateAt(rom, BigInt(cycle));
 }
 
 async function remote(page: Page, backup: Backup, playthroughId = "default") {
@@ -41,7 +32,7 @@ async function remote(page: Page, backup: Backup, playthroughId = "default") {
     uploads: 0,
     etag: '"remote-checkpoint"',
   };
-  const bytes = gzipSync(Buffer.from(backup.data));
+  const bytes = gzipSync(Buffer.from(JSON.parse(backup.data)));
   await page.route("**/api/auth/get-session", (route) =>
     control.online
       ? route.fulfill({
@@ -153,7 +144,7 @@ async function localResume(page: Page, playthroughId = "default") {
             resolve(
               read.result
                 ? {
-                    data: Array.from(read.result.data),
+                    data: JSON.stringify(Array.from(read.result.data)),
                     cycle: read.result.cycle,
                   }
                 : null,
@@ -204,7 +195,7 @@ async function installLocal(page: Page, backup: Backup) {
       );
       tx.objectStore("resumes").put(
         {
-          data: new Uint8Array(backup.data),
+          data: new Uint8Array(JSON.parse(backup.data)),
           cycle: backup.cycle,
           savedAt,
           options: { rtcEpoch: 123n },
@@ -382,7 +373,7 @@ test("Home resumes the last local run, while Player resolves the selected other 
       const ref = { hash, playthroughId: run.id };
       await library.saveResume(
         ref,
-        new Uint8Array(b.data),
+        new Uint8Array(JSON.parse(b.data)),
         { rtcEpoch: 123n },
         BigInt(b.cycle),
       );
@@ -647,7 +638,9 @@ test("cloud restore preserves the running adventure when its local checkpoint fa
     );
     const original = player.activeRef;
     const writer = player.releaseLock;
-    const before = Array.from(await player.emulator.saveState());
+    const before = JSON.stringify(
+      Array.from(await player.emulator.saveState()),
+    );
     player.library.saveResume = async () => {
       throw new DOMException("Storage full", "QuotaExceededError");
     };
@@ -662,7 +655,7 @@ test("cloud restore preserves the running adventure when its local checkpoint fa
       original,
       selected: player.activeRef,
       before,
-      after: Array.from(await player.emulator.saveState()),
+      after: JSON.stringify(Array.from(await player.emulator.saveState())),
       writerRetained: Boolean(writer) && player.releaseLock === writer,
     };
   });
@@ -677,12 +670,13 @@ for (const failure of ["incompatible checkpoint", "local storage failure"])
   test(`${failure} cannot overwrite existing local progress on an autosave tick`, async ({
     page,
   }) => {
+    await page.clock.install();
     const local = await checkpoint(page);
     await installLocal(page, local);
     await remote(
       page,
       failure === "incompatible checkpoint"
-        ? { data: [1, 2, 3], cycle: "0" }
+        ? { data: JSON.stringify([1, 2, 3]), cycle: "0" }
         : local,
     );
     await page.goto("/");
@@ -704,7 +698,7 @@ for (const failure of ["incompatible checkpoint", "local storage failure"])
       .getByRole("button", { name: "Resume cloud checkpoint" })
       .click();
     await expect(dialog.getByRole("alert")).toBeVisible();
-    await page.waitForTimeout(5500);
+    await advanceAutosave(page);
     expect(await localResume(page)).toEqual(local);
     expect(
       await page.evaluate(async (hash) => {

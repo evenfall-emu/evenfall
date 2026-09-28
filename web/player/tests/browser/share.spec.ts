@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { expect, test, type Page } from "@playwright/test";
-import type { Emulator } from "@evenfall/gba";
 import { loop, maplePatch, mockCatalog, sha1 } from "./catalog.fixture";
+import { stateAt } from "./state.fixture";
 declare global {
   interface Window {
     player: import("../../src/player").Player;
@@ -44,25 +44,17 @@ async function farState(page: Page, bytes: Buffer = rom) {
   await signedIn(page, null);
   await page.goto("/");
   await expect(page.getByLabel("Open ROM", { exact: true })).toBeEnabled();
-  return page.evaluate(async (rom) => {
-    const emulator = (window as unknown as { emulator: Emulator }).emulator;
-    await emulator.load(new Uint8Array(rom), { rtcEpoch: 123n });
-    await emulator.runUntil(100_000_000n);
-    return {
-      data: Array.from(await emulator.saveState()),
-      cycle: (await emulator.inspect()).cycle.toString(),
-    };
-  }, Array.from(bytes));
+  return stateAt(bytes, 100_000_000n);
 }
 
 async function serveShare(
   page: Page,
-  state: number[],
+  state: string,
   playthroughName: string,
   shared = { hash, title: "Shared adventure · 1.0" },
   headers: Record<string, string> = {},
 ) {
-  const body = gzipSync(Buffer.from(state));
+  const body = gzipSync(Buffer.from(JSON.parse(state)));
   const reads = { count: 0 };
   await page.route(`**/api/shares/${shareId}`, (route) => {
     reads.count++;
@@ -197,11 +189,11 @@ test("Share uploads the exact live state and hands back a copyable link", async 
     const player = window.player;
     return {
       playing: player.state.playing,
-      state: Array.from(await player.emulator.saveState()),
+      state: JSON.stringify(Array.from(await player.emulator.saveState())),
     };
   });
   expect(live.playing).toBe(false);
-  expect(gunzipSync(body)).toEqual(Buffer.from(live.state));
+  expect(gunzipSync(body)).toEqual(Buffer.from(JSON.parse(live.state)));
 
   // Only admin accounts are offered the ROM.
   await expect(
@@ -380,12 +372,28 @@ test("A share link for a catalog release patches the base on this device and sta
   // Nothing cached and a slow catalog: the link must wait to learn that the
   // shared ROM is a release this base becomes.
   await page.evaluate(() => localStorage.removeItem("evenfall-catalog"));
+  let releaseCatalog!: () => void;
+  const catalogGate = new Promise<void>((resolve) => {
+    releaseCatalog = resolve;
+  });
+  let catalogRequested = false;
   await page.route("**/api/versions", async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    catalogRequested = true;
+    await catalogGate;
     await route.fallback();
   });
 
   await page.goto(`/share/state/${shareId}`);
+  await expect.poll(() => catalogRequested).toBe(true);
+  await expect
+    .poll(() => page.evaluate(() => window.player.state.ready))
+    .toBe(true);
+  await expect(page).toHaveURL(new RegExp(`/share/state/${shareId}$`));
+  await expect(page.getByRole("dialog", { name: "Shared state" })).toHaveCount(
+    0,
+  );
+  expect(downloads.count).toBe(0);
+  releaseCatalog();
   await expect(page).toHaveURL(/\/player$/);
   await expect(
     page.getByRole("heading", { name: "Maple Remix", exact: true }),

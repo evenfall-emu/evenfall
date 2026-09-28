@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { Emulator } from "@evenfall/gba";
+import { advanceAutosave } from "./autosave";
 
 const loopRom = (marker: number, name: string) => ({
   name: `${name}.gba`,
@@ -79,12 +80,13 @@ async function importAndCheckpoint(page: Page, marker: number, name: string) {
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
-    const result = await new Promise<number[]>((resolve, reject) => {
+    const result = await new Promise<string>((resolve, reject) => {
       const get = db
         .transaction("resumes")
         .objectStore("resumes")
         .get([hash, "default"]);
-      get.onsuccess = () => resolve(Array.from(get.result.data));
+      get.onsuccess = () =>
+        resolve(JSON.stringify(Array.from(get.result.data)));
       get.onerror = () => reject(get.error);
     });
     db.close();
@@ -103,7 +105,7 @@ async function preventPlayback(page: Page) {
 async function replaceResume(
   page: Page,
   hash: string,
-  data?: number[],
+  data?: string,
   options = { retainCurrentAsPrevious: false },
 ) {
   await page.evaluate(
@@ -127,7 +129,7 @@ async function replaceResume(
         store.put(
           {
             ...generation,
-            data: new Uint8Array(data),
+            data: new Uint8Array(JSON.parse(data)),
             previous: options.retainCurrentAsPrevious ? generation : undefined,
           },
           [hash, "default"],
@@ -150,17 +152,17 @@ async function storedResume(page: Page, hash: string) {
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
-    const result = await new Promise<number[] | undefined>(
-      (resolve, reject) => {
-        const get = db
-          .transaction("resumes")
-          .objectStore("resumes")
-          .get([key, "default"]);
-        get.onsuccess = () =>
-          resolve(get.result ? Array.from(get.result.data) : undefined);
-        get.onerror = () => reject(get.error);
-      },
-    );
+    const result = await new Promise<string | undefined>((resolve, reject) => {
+      const get = db
+        .transaction("resumes")
+        .objectStore("resumes")
+        .get([key, "default"]);
+      get.onsuccess = () =>
+        resolve(
+          get.result ? JSON.stringify(Array.from(get.result.data)) : undefined,
+        );
+      get.onerror = () => reject(get.error);
+    });
     db.close();
     return result;
   }, hash);
@@ -232,7 +234,7 @@ test("resumes the most recent game at its exact durable state without requiring 
         const emulator = (window as unknown as { emulator: Emulator }).emulator;
         return {
           hash: (await emulator.inspect()).romHash,
-          state: Array.from(await emulator.saveState()),
+          state: JSON.stringify(Array.from(await emulator.saveState())),
         };
       }),
     )
@@ -244,7 +246,7 @@ test("recovers the previous generation when the latest checkpoint is corrupt", a
 }) => {
   await enterPlayer(page);
   const saved = await importAndCheckpoint(page, 50, "Recovery");
-  await replaceResume(page, saved.hash, [9, 8, 7], {
+  await replaceResume(page, saved.hash, JSON.stringify([9, 8, 7]), {
     retainCurrentAsPrevious: true,
   });
   await page.goto("/");
@@ -256,10 +258,12 @@ test("recovers the previous generation when the latest checkpoint is corrupt", a
   await expect(page.getByLabel(/^Game screen/)).toBeVisible();
   expect(
     await page.evaluate(async () =>
-      Array.from(
-        await (
-          window as unknown as { emulator: Emulator }
-        ).emulator.saveState(),
+      JSON.stringify(
+        Array.from(
+          await (
+            window as unknown as { emulator: Emulator }
+          ).emulator.saveState(),
+        ),
       ),
     ),
   ).toEqual(saved.state);
@@ -271,6 +275,7 @@ test("recovers the previous generation when the latest checkpoint is corrupt", a
 test("a corrupt resume remains available for retry and cannot be replaced by the boot fallback", async ({
   page,
 }) => {
+  await page.clock.install();
   await enterPlayer(page);
   const saved = await importAndCheckpoint(page, 43, "Corrupt");
   const corrupt = [1, 2, 3, 4];
@@ -310,7 +315,7 @@ test("a corrupt resume remains available for retry and cannot be replaced by the
   await page.screenshot({
     path: "../artifacts/resume-recovery/desktop-corrupt.png",
   });
-  await page.waitForTimeout(5500);
+  await advanceAutosave(page);
   expect(
     await page.evaluate(async (hash) => {
       const request = indexedDB.open("zigba-local");
@@ -340,6 +345,7 @@ test("a corrupt resume remains available for retry and cannot be replaced by the
 test("missing resume data does not silently start from the battery save", async ({
   page,
 }) => {
+  await page.clock.install();
   await enterPlayer(page);
   const saved = await importAndCheckpoint(page, 44, "Missing");
   await page.evaluate(async (hash) => {
@@ -365,7 +371,7 @@ test("missing resume data does not silently start from the battery save", async 
   await page.screenshot({
     path: "../artifacts/resume-recovery/mobile-missing.png",
   });
-  await page.waitForTimeout(5500);
+  await advanceAutosave(page);
   expect(
     await page.evaluate(async (hash) => {
       const request = indexedDB.open("zigba-local");
@@ -400,6 +406,7 @@ test("a read-only tab can resume but never overwrites the lock owner's checkpoin
   await enterPlayer(page);
   const owner = await importAndCheckpoint(page, 45, "Locked");
   const second = await context.newPage();
+  await second.clock.install();
   await second.goto("/");
   await expect(
     second.getByRole("button", { name: "Resume adventure" }),
@@ -423,7 +430,7 @@ test("a read-only tab can resume but never overwrites the lock owner's checkpoin
     const cycle = (await emulator.inspect()).cycle;
     await emulator.runUntil(cycle + 1000n);
   });
-  await second.waitForTimeout(5500);
+  await advanceAutosave(second);
   expect(
     await second.evaluate(async (hash) => {
       const request = indexedDB.open("zigba-local");
@@ -431,12 +438,13 @@ test("a read-only tab can resume but never overwrites the lock owner's checkpoin
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       });
-      const result = await new Promise<number[]>((resolve, reject) => {
+      const result = await new Promise<string>((resolve, reject) => {
         const get = db
           .transaction("resumes")
           .objectStore("resumes")
           .get([hash, "default"]);
-        get.onsuccess = () => resolve(Array.from(get.result.data));
+        get.onsuccess = () =>
+          resolve(JSON.stringify(Array.from(get.result.data)));
         get.onerror = () => reject(get.error);
       });
       db.close();
@@ -456,7 +464,7 @@ test("trying another game after a failed resume cannot overwrite the failed game
   // generation, not the earlier checkpoint returned by importAndCheckpoint.
   const healthyCurrent = await storedResume(page, healthy.hash);
   expect(healthyCurrent).toBeDefined();
-  const corrupt = [9, 8, 7];
+  const corrupt = JSON.stringify([9, 8, 7]);
   await replaceResume(page, failed.hash, corrupt);
 
   await page.goto("/");
@@ -476,7 +484,7 @@ test("trying another game after a failed resume cannot overwrite the failed game
     .poll(() =>
       page.evaluate(async () => {
         const emulator = (window as unknown as { emulator: Emulator }).emulator;
-        return Array.from(await emulator.saveState());
+        return JSON.stringify(Array.from(await emulator.saveState()));
       }),
     )
     .toEqual(healthyCurrent);
