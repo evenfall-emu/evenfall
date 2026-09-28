@@ -224,6 +224,9 @@ name for it; any other ROM takes its No-Intro dump name from
 table the Library loads as its own chunk, and otherwise the title it was
 stored with. Games without catalog artwork show their title initials.
 
+Within a game, dated releases come first by release date. If dates are
+unknown or equal, numeric build names order naturally (Beta10 after Beta3).
+
 Details show the project page, the latest release's notes, an update offer
 when a playthrough is on an older release, and each playthrough's release,
 last play time and cloud state. **Update…** copies one playthrough's

@@ -204,6 +204,50 @@ describe("buildLibrary", () => {
     ).toEqual(["v2.6", "v2.5", "v2.4", "nightly"]);
   });
 
+  it("picks the newest numeric build when release dates are unknown", () => {
+    const original = previewCatalog.versions.find(
+      (version) => version.gameId === "elite-redux",
+    )!;
+    const versions = [
+      ["elite-redux-2.65-beta3", "v2.65-beta3", "2.65 Beta3", sha(0xb3)],
+      [
+        "elite-redux-2.65-beta2",
+        "v2.65-beta2-1048",
+        "2.65 Beta2 (1048)",
+        sha(0xb2),
+      ],
+      ["elite-redux-2.65-beta10", "v2.65-beta10", "2.65 Beta10", sha(0xba)],
+    ].map(([id, internalName, displayName, outputSha1]) => ({
+      ...original,
+      id,
+      internalName,
+      displayName,
+      outputSha1,
+      releasedAt: null,
+    }));
+    const library = buildLibrary(
+      { games: previewCatalog.games, versions },
+      device,
+    );
+    expect(
+      library
+        .find((item) => item.id === "elite-redux")!
+        .releases.map((item) => item.label),
+    ).toEqual(["v2.65 Beta10", "v2.65 Beta3", "v2.65 Beta2 (1048)"]);
+
+    const installed = buildLibrary(
+      { games: previewCatalog.games, versions: versions.slice(0, 2) },
+      {
+        games: [{ ...device.games[0], hash: sha(0xb3) }],
+        playthroughs: [{ ...device.playthroughs[0], hash: sha(0xb3) }],
+        cloud: [],
+        jobs: [],
+      },
+    ).find((item) => item.id === "elite-redux")!;
+    expect(installed.latest.id).toBe("elite-redux-2.65-beta3");
+    expect(installed.updatable).toEqual([]);
+  });
+
   it("adds a version prefix only to numeric release labels", () => {
     const original = previewCatalog.versions[0];
     for (const [displayName, expected] of [

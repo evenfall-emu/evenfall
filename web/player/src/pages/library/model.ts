@@ -90,6 +90,10 @@ export type LibraryGame = {
 
 /** A release's date for ordering; undated releases sort after dated ones. */
 const dated = (release: Release) => release.releasedAt ?? -Infinity;
+const versionNames = new Intl.Collator("en", {
+  numeric: true,
+  sensitivity: "base",
+});
 
 function release(version: CatalogVersion, roms: Set<string>): Release {
   return {
@@ -217,6 +221,10 @@ export function buildLibrary(
       .sort(
         (a, b) =>
           dated(b.release) - dated(a.release) ||
+          versionNames.compare(
+            b.version.internalName,
+            a.version.internalName,
+          ) ||
           a.version.id.localeCompare(b.version.id),
       );
     const newest = versions[0]?.version;
