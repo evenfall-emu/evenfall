@@ -9,6 +9,23 @@ export interface GameLayoutProps {
   /** How the player knows the loaded build. */
   readonly build?: BuildInfo;
   readonly children: ReactNode;
+  /**
+   * Set on phones: return `handheld(hud)` instead of placing `children`; the
+   * player places the screen and controls and shows the HUD around them.
+   */
+  readonly handheld?: (hud: HandheldHud) => ReactNode;
+}
+
+/** A layout's contribution to the phone player. */
+export interface HandheldHud {
+  /** One non-interactive line under the screen; tapping it opens `panels`. */
+  readonly summary: ReactNode;
+  /** Tabs of the sheet (portrait) or drawer (landscape), in order. */
+  readonly panels: readonly {
+    readonly id: string;
+    readonly label: string;
+    readonly content: ReactNode;
+  }[];
 }
 
 export interface BuildInfo {

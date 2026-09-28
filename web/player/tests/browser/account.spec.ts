@@ -83,6 +83,8 @@ test("toolbar cloud upload runs backup for an active game only when enabled", as
     path: "../artifacts/backup-toolbar-desktop.png",
   });
   await page.setViewportSize({ width: 390, height: 844 });
+  // Phones keep the toolbar in the player menu.
+  await page.getByRole("button", { name: "Player menu" }).click();
   await page.locator(".player-tools").screenshot({
     path: "../artifacts/backup-toolbar-mobile.png",
   });

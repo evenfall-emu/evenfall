@@ -1093,3 +1093,80 @@ table {
     padding-bottom: 4px;
   }
 }
+/* The phone player's line under the screen (HandheldSummary). */
+.handheld-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 100%;
+}
+.handheld-party {
+  display: flex;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.handheld-party li {
+  display: grid;
+  justify-items: center;
+  gap: 1px;
+  width: 38px;
+}
+.handheld-party img,
+.handheld-party .sprite-missing {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+.handheld-party li[data-fainted] img {
+  filter: grayscale(1);
+  opacity: 0.5;
+}
+.handheld-party progress {
+  appearance: none;
+  width: 32px;
+  height: 5px;
+  border: 1px solid #467b90;
+  border-radius: 2px;
+  background: #15313f;
+  overflow: hidden;
+}
+.handheld-party progress::-webkit-progress-bar {
+  background: #15313f;
+}
+.handheld-party progress::-webkit-progress-value {
+  background: #32f56b;
+}
+.handheld-party progress::-moz-progress-bar {
+  background: #32f56b;
+}
+.handheld-party progress.warning::-webkit-progress-value {
+  background: #efcf24;
+}
+.handheld-party progress.critical::-webkit-progress-value {
+  background: #ff5534;
+}
+.handheld-party progress.warning::-moz-progress-bar {
+  background: #efcf24;
+}
+.handheld-party progress.critical::-moz-progress-bar {
+  background: #ff5534;
+}
+.handheld-versus {
+  color: #ffb18a;
+  font-size: 0.8rem;
+}
+.handheld-arena {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}

@@ -82,6 +82,8 @@ test("sound volume opens on hover or focus and persists independently of mute", 
     path: testInfo.outputPath("volume-hover-desktop.png"),
   });
   await page.setViewportSize({ width: 390, height: 844 });
+  // Phones keep the toolbar in the player menu.
+  await page.getByRole("button", { name: "Player menu" }).click();
   await page.getByRole("button", { name: "Mute sound" }).hover();
   await expect(slider).toBeInViewport();
   await page.screenshot({
@@ -124,7 +126,14 @@ test("paused game shows a resume hint over the screen, not while playing or empt
   await expect(overlay).toHaveCount(0);
 });
 
+/** Whether the page shows the phone player (see src/handheld.tsx). */
+const phone = ({ width, height }: { width: number; height: number }) =>
+  width < height ? width <= 650 : height <= 500;
+
 async function screenFillsColumn(page: Page) {
+  const viewport = page.viewportSize()!;
+  // Crossing the phone breakpoint swaps layouts; measure the settled one.
+  await expect(page.locator(".handheld")).toHaveCount(phone(viewport) ? 1 : 0);
   const geometry = await page.locator(".console-player").evaluate((player) => {
     const display = player.querySelector(".game-display")!;
     const canvas = display.querySelector("canvas")!;
@@ -152,15 +161,24 @@ async function screenFillsColumn(page: Page) {
     geometry.availableHeight + 1,
   );
   expect(geometry.canvas).toBeGreaterThan(0);
-  expect(geometry.display - geometry.canvas).toBeCloseTo(12, 0);
   expect(geometry.ratio).toBeCloseTo(1.5, 2);
+  if (phone(viewport)) {
+    // No frame: the screen spans the width in portrait, the height in
+    // landscape.
+    expect(geometry.display - geometry.canvas).toBeCloseTo(0, 0);
+    if (viewport.width < viewport.height)
+      expect(geometry.canvas).toBeCloseTo(viewport.width, 0);
+    else expect(geometry.displayHeight).toBeCloseTo(viewport.height, 0);
+  } else expect(geometry.display - geometry.canvas).toBeCloseTo(12, 0);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollHeight <= innerHeight,
     ),
   ).toBe(true);
   for (const element of await page
-    .locator(".game-display, .quick-bar, .touch-pad")
+    .locator(
+      '.game-display, .quick-bar:visible, .touch-pad, [aria-label="Touch controls"]',
+    )
     .all()) {
     const box = await element.boundingBox();
     expect(box!.y).toBeGreaterThanOrEqual(0);
@@ -193,6 +211,7 @@ test("player and controls fit wide, short, and portrait viewports", async ({
       path: `../artifacts/ui-refresh/player-empty-${width}x${height}.png`,
     });
   }
+  await page.setViewportSize({ width: 1366, height: 768 });
   await page.getByLabel("Open ROM", { exact: true }).setInputFiles(loop);
   await expect(
     page.getByRole("heading", { name: "Loop", exact: true }),
@@ -210,12 +229,22 @@ test("player and controls fit wide, short, and portrait viewports", async ({
     await expect(
       page.getByLabel("Touch controls", { exact: true }),
     ).toBeInViewport();
+    const onPhone = phone({ width, height });
+    // Phones keep the toolbar in the player menu, which scrolls.
+    if (onPhone)
+      await page.getByRole("button", { name: "Player menu" }).click();
     await page.getByRole("button", { name: "More options" }).click();
-    const menu = await page
-      .getByRole("dialog", { name: "Saves and options" })
-      .boundingBox();
-    expect(menu!.y + menu!.height).toBeLessThanOrEqual(height);
+    const menu = page.getByRole("dialog", { name: "Saves and options" });
+    if (onPhone) {
+      const last = menu.locator(".slot-row").last();
+      await last.scrollIntoViewIfNeeded();
+      await expect(last).toBeInViewport();
+    } else {
+      const box = await menu.boundingBox();
+      expect(box!.y + box!.height).toBeLessThanOrEqual(height);
+    }
     await page.getByRole("button", { name: "More options" }).click();
+    if (onPhone) await page.getByRole("button", { name: "Close menu" }).click();
     await page.screenshot({
       path: `../artifacts/ui-refresh/player-touch-${width}x${height}.png`,
     });
@@ -296,9 +325,14 @@ test("console autoplays, routes keys outside the canvas, and keeps help and typi
   await help.screenshot({ path: "../artifacts/hud/player-help-desktop.png" });
   await page.setViewportSize({ width: 390, height: 844 });
   await help.screenshot({ path: "../artifacts/hud/player-help-mobile.png" });
-  await help
-    .getByRole("button", { name: "Show touch controls" })
-    .scrollIntoViewIfNeeded();
+  // Phones show touch controls by default when the pointer is coarse.
+  const toggle = help.getByRole("button", { name: /^(Show|Hide) touch/ });
+  await toggle.scrollIntoViewIfNeeded();
+  if (await page.evaluate(() => matchMedia("(pointer: coarse)").matches)) {
+    await expect(toggle).toHaveText("Hide touch controls");
+    await toggle.click();
+  }
+  await expect(toggle).toHaveText("Show touch controls");
   await expect(
     help.getByRole("button", { name: "Close dialog" }),
   ).toBeInViewport();
@@ -856,6 +890,8 @@ test("new console controls and persistent quick slots work", async ({
     path: "../artifacts/hud/reboot-generic-mobile.png",
     fullPage: true,
   });
+  // Phones keep the toolbar in the player menu.
+  await page.getByRole("button", { name: "Player menu" }).click();
   await page.getByRole("button", { name: "More options" }).click();
   await expect(
     page.getByRole("dialog", { name: "Saves and options" }),

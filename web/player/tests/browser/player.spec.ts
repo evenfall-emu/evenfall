@@ -585,9 +585,16 @@ test("keyboard focus, focus loss, touch release and visibility pause", async ({
   expect(await keys()).toBe(0);
   await page.getByLabel("Typing fixture").evaluate((node) => node.remove());
   await page.setViewportSize({ width: 390, height: 844 });
+  // Phones keep help in the player menu and show touch controls by default
+  // for a coarse pointer.
+  await page.getByRole("button", { name: "Player menu" }).click();
   await page.getByRole("button", { name: "How to play", exact: true }).click();
-  await page.getByRole("button", { name: "Show touch controls" }).click();
+  const toggle = page.getByRole("button", { name: /^(Show|Hide) touch/ });
+  if (!(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)))
+    await toggle.click();
+  await expect(toggle).toHaveText("Hide touch controls");
   await page.getByRole("button", { name: "Close dialog" }).click();
+  await page.getByRole("button", { name: "Close menu" }).click();
   const a = page
     .getByLabel("Touch controls", { exact: true })
     .getByRole("button", { name: "A", exact: true });

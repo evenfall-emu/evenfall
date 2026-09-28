@@ -128,7 +128,8 @@ logo returns Home without unloading the current game. Returning to Player
 resumes the session only if it was playing before navigation, including
 through the browser's Back and Forward buttons. On narrow screens the tabs
 move to a second row beside an Account button, where the Library's details
-replace them with **Back to Library**.
+replace them with **Back to Library**. On phones the Player drops the header
+and toolbar for its [phone layout](#phones).
 
 **Account** is available on Home and in the header. Opening it pauses play
 and persists progress before Discord can navigate away; closing it resumes a
@@ -189,6 +190,29 @@ running.
 - **Imports.** Drop a `.state` file or use **More → Import state** to restore
   a ZiGBA save state; it stays paused for inspection. Importing a battery
   `.sav` reboots the ROM with that save and starts play.
+
+### Phones
+
+A portrait page up to 650 px wide, or a landscape page up to 500 px tall, gets
+the phone layout ([`src/handheld.tsx`](src/handheld.tsx)); tablets and
+desktops keep the dashboards. Portrait stacks one bar (**Back to Library**,
+the game and playthrough, play/pause and the **Player menu**), the screen at
+full width, the game's HUD line and the on-screen controls. Landscape gives
+the screen the full height, puts the controls in the gutters beside it and
+the bar's buttons in the top corners. The Player menu holds the toolbar and
+the playthrough controls. A game layout's panels open in a sheet below the
+screen, or a drawer beside it in landscape, so the game stays visible; with
+the controls hidden, portrait shows the panels inline instead.
+
+On-screen controls start shown on touch screens unless a standard gamepad is
+connected; **How to play** toggles them. The D-pad follows its finger even
+off the pad, giving each direction 60° and each diagonal 30°; a finger slides
+between face, shoulder and Start/Select buttons, and every finger is tracked
+on its own ([`src/touch-model.ts`](src/touch-model.ts)). Fast-forward runs at
+16x while held; quick save, quick load and rewind act on a tap, on slot 1 and
+the rewind timeline. Presses vibrate where the browser supports it.
+Placements are percentages of the control surface, one layout per
+orientation. Fullscreen covers the whole page on phones, controls included.
 
 Transient notifications dismiss after two seconds. The screen fills its
 column at the native 3:2 aspect ratio; game side panels stop growing at
@@ -497,8 +521,11 @@ their styles, before its first render, so a layout never swaps in under a
 running game. `resolveGame` selects a layout by raw-ROM SHA-1, never by
 filename; ambiguous matches are errors. A layout receives the self-contained
 player as `children` plus `playing` and `build`, and reads live data with
-`useBridge` inside the player's `BridgeProvider`. `main.tsx` never imports a
-game package.
+`useBridge` inside the player's `BridgeProvider`. On phones it also receives
+`handheld` and returns `handheld(hud)` instead of placing `children`: `hud`
+is a one-line `summary` for under the screen and titled `panels` for the
+sheet, and the player places the screen and controls itself. `main.tsx` never
+imports a game package.
 
 A ROM that matches no reviewed build is recognized with
 `gameRegistry.recognize`: from the `builds` cache, else by running the

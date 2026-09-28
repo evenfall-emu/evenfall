@@ -3,7 +3,12 @@
 import { eliteRedux } from "../src/elite-redux";
 import { heartNSoul } from "../src/heart-n-soul";
 
-export type { BuildInfo, GameLayoutProps, GameLayouts } from "./layout";
+export type {
+  BuildInfo,
+  GameLayoutProps,
+  GameLayouts,
+  HandheldHud,
+} from "./layout";
 
 /**
  * Registration for the ZiGBA player's game registry (frontend/src/games.ts).

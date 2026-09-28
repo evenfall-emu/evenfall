@@ -287,7 +287,8 @@ sys.stdout.buffer.write(output.getvalue())
     ).toEqual([saved.cycle]);
     expect((await localResume(phone))?.cycle).toBe(saved.cycle);
     expect(control.uploads).toBe(0);
-    await phone.getByRole("button", { name: "evenfall home" }).click();
+    // Leaving the phone player persists progress, as any navigation does.
+    await phone.getByRole("button", { name: "Back to Library" }).click();
     await expect
       .poll(async () => (await localResume(phone))?.cycle)
       .not.toBe(saved.cycle);

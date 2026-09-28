@@ -10,7 +10,15 @@ async function prepare(page: Page, count = 5) {
     mimeType: "application/octet-stream",
     buffer: Buffer.from([42, 0, 160, 227, 254, 255, 255, 234]),
   });
-  await expect(page.getByRole("button", { name: /Quick save/ })).toBeEnabled();
+  // Ready for quick slots; the phone layout has no quick bar to wait on.
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const { state } = (window as unknown as { player: Player }).player;
+        return Boolean(state.playthrough) && !state.changing;
+      }),
+    )
+    .toBe(true);
   await expect
     .poll(() =>
       page.evaluate(
@@ -58,8 +66,9 @@ for (const mode of ["desktop", "mobile", "fullscreen"] as const) {
     await page.evaluate(() => document.fonts.ready);
     const panel = await dialog.boundingBox();
     const display = await page.locator("#game-display").boundingBox();
-    // Normal displays include a 1px frame; fullscreen removes that border.
-    const inset = mode === "mobile" ? 6 : mode === "fullscreen" ? 10 : 11;
+    // Desktop displays include a 1px frame; fullscreen and the phone layout
+    // remove it.
+    const inset = mode === "mobile" ? 5 : mode === "fullscreen" ? 10 : 11;
     expect(panel!.x - display!.x).toBeCloseTo(inset, 0);
     expect(display!.y + display!.height - panel!.y - panel!.height).toBeCloseTo(
       inset,

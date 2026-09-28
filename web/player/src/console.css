@@ -1197,3 +1197,81 @@ kbd:not(:where([data-ui], [data-ui] *)) {
     font-size: 1.2rem;
   }
 }
+/* Phone player (handheld.tsx). The screen fills the width in portrait and the
+   height in landscape, with no frame; the quick bar's actions move into the
+   touch controls and the menu. */
+.handheld[data-orientation="portrait"] {
+  display: flex;
+  flex-direction: column;
+}
+.handheld[data-orientation="portrait"] > * {
+  flex-shrink: 0;
+}
+.handheld[data-orientation="portrait"] > :last-child {
+  flex: 1;
+}
+.handheld[data-orientation="landscape"] {
+  display: grid;
+  /* A definite track, so the screen's height: 100% is the page's height. */
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  place-items: center;
+}
+.handheld[data-orientation="landscape"] .handheld-screen {
+  height: 100%;
+  max-width: 100%;
+  aspect-ratio: 3 / 2;
+}
+.handheld .player-stage {
+  height: 100%;
+}
+.handheld .game-viewport {
+  padding: 0;
+}
+.handheld .game-display {
+  width: min(100cqw, 100cqh * 1.5);
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+}
+.handheld .quick-bar,
+.handheld .player-help {
+  display: none;
+}
+.handheld-menu .player-tools {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  min-height: 0;
+  padding: 12px;
+  border: 0;
+  background: none;
+}
+.handheld-menu .playthrough-controls {
+  flex-wrap: wrap;
+  gap: 5px;
+  font-size: 0.72rem;
+}
+.handheld-menu .playthrough-label {
+  flex-basis: 100%;
+}
+.handheld-menu .playthrough-controls .playthrough-select {
+  flex: 1;
+  min-width: 170px;
+}
+.handheld-menu .console-toolbar {
+  width: 100%;
+  margin-left: 0;
+  justify-content: space-between;
+  gap: 4px;
+}
+.handheld-menu .toolbar-menu {
+  top: 52px;
+  right: 0;
+  left: 0;
+  width: auto;
+  max-height: none;
+}
+/* The phone bar already names the game. */
+.handheld-menu .player-tools-title {
+  display: none;
+}

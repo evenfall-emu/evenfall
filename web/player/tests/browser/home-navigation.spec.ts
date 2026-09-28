@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { Emulator } from "@evenfall/gba";
 
 const loop = {
@@ -107,8 +107,9 @@ test("Home navigation remains usable on mobile", async ({ page }) => {
 
   await page.getByRole("button", { name: "Open player" }).click();
   await expect(page.getByLabel(/^Game screen/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Library" })).toBeVisible();
-  await page.getByRole("button", { name: "Library", exact: true }).click();
+  // The phone player trades the shared header for its own bar.
+  await expect(header(page)).toHaveCount(0);
+  await page.getByRole("button", { name: "Back to Library" }).click();
   await expect(header(page)).toHaveCount(1);
   await expect(
     page.getByRole("button", { name: "Library", exact: true }),
@@ -127,17 +128,22 @@ test("shared navigation fits mobile when pixel fonts cannot load", async ({
   await page.route("**/*.ttf", (route) => route.abort());
   await ready(page);
   await page.getByRole("button", { name: "Open player" }).click();
-  await expect(header(page)).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
-
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
-    360,
-  );
-  for (const button of await header(page).getByRole("button").all()) {
-    const bounds = await button.boundingBox();
-    expect(bounds!.x).toBeGreaterThanOrEqual(0);
-    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(360);
-  }
+  const fits = async (buttons: Locator) => {
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBe(360);
+    for (const button of await buttons.all()) {
+      const bounds = await button.boundingBox();
+      expect(bounds!.x).toBeGreaterThanOrEqual(0);
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(360);
+    }
+  };
+  // The phone player's own bar, then the shared header on the Library.
+  await fits(page.locator(".handheld-bar").getByRole("button"));
+  await page.getByRole("button", { name: "Back to Library" }).click();
+  await expect(header(page)).toBeVisible();
+  await fits(header(page).getByRole("button"));
   await page.screenshot({
     path: "../artifacts/home-mobile-fallback.png",
     fullPage: true,

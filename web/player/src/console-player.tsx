@@ -53,10 +53,54 @@ export async function quickState(slot: number, restore: boolean) {
   if (resume) await player.play();
 }
 
-/** Self-contained display and play controls; a game layout only places this child. */
-export function ConsolePlayer({ onHelp }: { onHelp: () => void }) {
-  const state = useSyncExternalStore(player.subscribe, player.snapshot);
+/**
+ * The open rewind timeline, if any. Owned above the display so on-screen
+ * controls outside it can open the timeline too.
+ */
+export function useRewindTimeline() {
+  const rewindTimeline = useSyncExternalStore(
+    player.subscribe,
+    () => player.state.rewindTimeline,
+  );
   const [timeline, setTimeline] = useState<Timeline>();
+  useEffect(() => {
+    if (!rewindTimeline) setTimeline(undefined);
+  }, [rewindTimeline]);
+  const open = useCallback(() => {
+    void player.openRewindTimeline().then(setTimeline).catch(player.error);
+  }, []);
+  const close = useCallback(
+    (checkpoint?: Timeline["checkpoints"][number]) => {
+      const open = timeline;
+      setTimeline(undefined);
+      void player
+        .closeRewindTimeline(
+          open && checkpoint
+            ? {
+                timeline: open.timeline,
+                index: checkpoint.index,
+                steps: checkpoint.steps,
+              }
+            : undefined,
+        )
+        .catch(player.error);
+    },
+    [timeline],
+  );
+  return { timeline, open, close };
+}
+export type RewindTimelineControl = ReturnType<typeof useRewindTimeline>;
+
+/** Self-contained display and play controls; a game layout only places this child. */
+export function ConsolePlayer({
+  onHelp,
+  rewind,
+}: {
+  onHelp: () => void;
+  rewind: RewindTimelineControl;
+}) {
+  const state = useSyncExternalStore(player.subscribe, player.snapshot);
+  const { timeline, open: openTimeline, close: closeTimeline } = rewind;
   const displayRef = useRef<HTMLDivElement>(null);
   const screenRef = useCallback((canvas: HTMLCanvasElement | null) => {
     player.canvas = canvas ?? undefined;
@@ -96,10 +140,7 @@ export function ConsolePlayer({ onHelp }: { onHelp: () => void }) {
         if (event.repeat || rewindHeld || event.ctrlKey) return;
         rewindHeld = true;
         if (event.shiftKey) {
-          void player
-            .openRewindTimeline()
-            .then(setTimeline)
-            .catch(player.error);
+          openTimeline();
         } else {
           void player.rewindOnce().catch(player.error);
         }
@@ -123,28 +164,7 @@ export function ConsolePlayer({ onHelp }: { onHelp: () => void }) {
       window.removeEventListener("blur", releaseRewind);
       player.releaseKeys();
     };
-  }, []);
-  useEffect(() => {
-    if (!state.rewindTimeline) setTimeline(undefined);
-  }, [state.rewindTimeline]);
-  const closeTimeline = useCallback(
-    (checkpoint?: Timeline["checkpoints"][number]) => {
-      const open = timeline;
-      setTimeline(undefined);
-      void player
-        .closeRewindTimeline(
-          open && checkpoint
-            ? {
-                timeline: open.timeline,
-                index: checkpoint.index,
-                steps: checkpoint.steps,
-              }
-            : undefined,
-        )
-        .catch(player.error);
-    },
-    [timeline],
-  );
+  }, [openTimeline]);
   return (
     <section className="console-player" aria-label="Game player">
       <div className="game-viewport">
@@ -237,12 +257,7 @@ export function ConsolePlayer({ onHelp }: { onHelp: () => void }) {
         </button>
         <button
           disabled={!state.game || state.changing}
-          onClick={() =>
-            void player
-              .openRewindTimeline()
-              .then(setTimeline)
-              .catch(player.error)
-          }
+          onClick={openTimeline}
           title="Choose a rewind checkpoint. R steps back; Shift + R opens history."
         >
           <span>Rewind</span>

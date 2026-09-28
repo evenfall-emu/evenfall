@@ -24,7 +24,13 @@ import { Select } from "@base-ui/react/select";
 import { player } from "./player";
 import type { BridgeHost } from "@evenfall/gba/bridge";
 import { BridgeProvider } from "@evenfall/gba/bridge/react";
-import { ConsolePlayer, PlayerHelp, quickState } from "./console-player";
+import {
+  ConsolePlayer,
+  PlayerHelp,
+  quickState,
+  useRewindTimeline,
+} from "./console-player";
+import { HandheldPlayer, useHandheld, useTouchByDefault } from "./handheld";
 import {
   DeletePlaythroughDialog,
   PlaythroughDialog,
@@ -61,7 +67,7 @@ import {
 } from "./library";
 import { acquireSaveLock } from "./storage.js";
 import { QuickConflictChoices } from "./quick-conflicts";
-import { gameRegistry, watchBuild } from "./games";
+import { gameRegistry, watchBuild, type HandheldHud } from "./games";
 import { download } from "./media";
 import { trackShare, trackView } from "./analytics";
 import { cx } from "./ui/styles";
@@ -223,7 +229,14 @@ function App() {
     new URLSearchParams(location.search).has("account"),
   );
   const accountResume = useRef(false);
-  const [controls, setControls] = useState(false);
+  // Phones get their own layout; on-screen controls default on for touch.
+  const handheld = useHandheld();
+  const touchByDefault = useTouchByDefault();
+  const [controlsChoice, setControls] = useState<boolean>();
+  const controls = controlsChoice ?? (handheld !== undefined && touchByDefault);
+  const [handheldMenu, setHandheldMenu] = useState(false);
+  const rewind = useRewindTimeline();
+  const appRoot = useRef<HTMLDivElement>(null);
   const [muted, setMuted] = useState(player.audio.muted);
   const [volume, setVolume] = useState(player.audio.volume);
   const [notice, setNotice] = useState("");
@@ -1045,8 +1058,8 @@ function App() {
   }
   const display = (
     <div className="player-stage">
-      <ConsolePlayer onHelp={openHelp} />
-      {controls && (
+      <ConsolePlayer onHelp={openHelp} rewind={rewind} />
+      {controls && !handheld && (
         <div className="touch-pad" aria-label="Touch controls">
           {[
             ["↑", 64],
@@ -1088,9 +1101,471 @@ function App() {
       )}
     </div>
   );
+  const tools = (
+    <div className="player-tools" hidden={home || library}>
+      <h1 className="player-tools-title">
+        {state.game?.title ?? "No game loaded"}
+      </h1>
+      {state.game && state.playthrough && (
+        <div className="playthrough-controls">
+          <Select.Root
+            items={playerRuns.map((run) => ({
+              label: run.name,
+              value: run.id,
+            }))}
+            value={state.playthrough?.id ?? ""}
+            disabled={state.changing || launching}
+            onValueChange={(value) => {
+              if (value === "__new__") setCreatePlaythroughOpen(true);
+              else if (value && state.game)
+                act(() =>
+                  loadRun({ hash: state.game!.hash, playthroughId: value }),
+                );
+            }}
+          >
+            <Select.Label className="playthrough-label">
+              Playthrough
+            </Select.Label>
+            <Select.Trigger
+              ref={playthroughTrigger}
+              className="playthrough-select"
+            >
+              <Select.Value />
+              <Select.Icon aria-hidden="true">▾</Select.Icon>
+            </Select.Trigger>
+            <Select.Portal>
+              <Select.Positioner
+                alignItemWithTrigger={false}
+                sideOffset={4}
+                className="playthrough-select-positioner"
+              >
+                <Select.Popup className="playthrough-select-popup">
+                  <Select.List>
+                    {playerRuns.map((run) => (
+                      <Select.Item key={run.id} value={run.id}>
+                        <Select.ItemText>{run.name}</Select.ItemText>
+                        <Select.ItemIndicator>
+                          <svg
+                            viewBox="0 0 16 16"
+                            width="16"
+                            height="16"
+                            fill="currentColor"
+                            shapeRendering="crispEdges"
+                            aria-hidden="true"
+                          >
+                            <path d="M1 8h2v2H1zm2 2h2v2H3zm2 2h2v2H5zm2-2h2v2H7zm2-2h2v2H9zm2-2h2v2h-2zm2-2h2v2h-2z" />
+                          </svg>
+                        </Select.ItemIndicator>
+                      </Select.Item>
+                    ))}
+                    <Select.Separator />
+                    <Select.Item value="__new__" label="New playthrough">
+                      <Select.ItemText>＋ New playthrough</Select.ItemText>
+                    </Select.Item>
+                  </Select.List>
+                </Select.Popup>
+              </Select.Positioner>
+            </Select.Portal>
+          </Select.Root>
+          <PlaythroughDialog
+            mode="create"
+            gameTitle={state.game.title}
+            disabled={state.changing || launching}
+            createOpen={createPlaythroughOpen}
+            onCreateOpenChange={setCreatePlaythroughOpen}
+            selectTrigger={playthroughTrigger}
+          />
+          <PlaythroughDialog
+            mode="rename"
+            gameTitle={state.game.title}
+            currentName={state.playthrough.name}
+            disabled={state.changing || launching}
+          />
+          <DeletePlaythroughDialog
+            name={state.playthrough.name}
+            disabled={state.changing || launching}
+          />
+        </div>
+      )}
+      <div className="console-toolbar" ref={toolbar}>
+        <button
+          className="icon-button"
+          aria-label="Share state"
+          title="Share state"
+          aria-haspopup="dialog"
+          disabled={!state.playthrough || state.changing || state.resumeFailed}
+          onClick={openShare}
+        >
+          <Icon name="share" />
+        </button>
+        <button
+          className="icon-button"
+          aria-label="Back up now"
+          title="Back up now"
+          disabled={!state.game || state.changing || !state.cloud.enabled}
+          onClick={() => act(() => player.backupCloud())}
+        >
+          <Icon name="cloudUpload" />
+        </button>
+        <button
+          className="icon-button"
+          aria-label="Fullscreen"
+          title="Fullscreen"
+          onClick={() =>
+            act(async () => {
+              if (document.fullscreenElement) await document.exitFullscreen();
+              // On phones the controls stay on screen with the game.
+              else if (handheld) await appRoot.current?.requestFullscreen();
+              else
+                await document
+                  .getElementById("game-display")
+                  ?.requestFullscreen();
+            })
+          }
+        >
+          <Icon name="fullscreen" />
+        </button>
+        <div className="volume-control">
+          <button
+            className="icon-button"
+            aria-label={muted ? "Unmute sound" : "Mute sound"}
+            title={muted ? "Sound off" : "Sound on"}
+            aria-pressed={muted}
+            onClick={() =>
+              act(async () => {
+                await player.audio.mute();
+                setMuted(player.audio.muted);
+              })
+            }
+          >
+            <Icon name={muted ? "muted" : "sound"} />
+          </button>
+          <div className="volume-panel">
+            <label htmlFor="sound-volume">
+              Volume <output>{Math.round(volume * 100)}%</output>
+            </label>
+            <input
+              id="sound-volume"
+              type="range"
+              min="0"
+              max="100"
+              value={Math.round(volume * 100)}
+              onChange={(event) => {
+                const next = Number(event.target.value) / 100;
+                player.audio.setVolume(next);
+                setVolume(next);
+              }}
+            />
+          </div>
+        </div>
+        <Popover.Root
+          open={menu === "speed"}
+          onOpenChange={(open) =>
+            setMenu((current) =>
+              open ? "speed" : current === "speed" ? null : current,
+            )
+          }
+        >
+          <Popover.Trigger
+            className="icon-button speed-button"
+            aria-label="Playback speed"
+          >
+            {state.boosting ? "16" : state.speed}×
+          </Popover.Trigger>
+          <Popover.Portal container={toolbar} style={{ display: "contents" }}>
+            <Popover.Positioner
+              className="toolbar-menu-positioner"
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                transform: "none",
+                width: "100%",
+              }}
+            >
+              <Popover.Popup
+                className="toolbar-menu speed-menu"
+                aria-label="Playback speed"
+              >
+                <h2>Playback speed</h2>
+                {[0.5, 1, 2, 4, 8, 16].map((speed) => (
+                  <button
+                    key={speed}
+                    aria-pressed={state.speed === speed}
+                    onClick={() => {
+                      player.setSpeed(speed);
+                      setMenu(null);
+                    }}
+                  >
+                    {speed}× {state.speed === speed ? "✓" : ""}
+                  </button>
+                ))}
+              </Popover.Popup>
+            </Popover.Positioner>
+          </Popover.Portal>
+        </Popover.Root>
+        <button
+          className="icon-button"
+          aria-label="How to play"
+          title="How to play"
+          aria-haspopup="dialog"
+          aria-expanded={help}
+          disabled={state.changing}
+          onClick={openHelp}
+        >
+          <Icon name="gamepad" />
+        </button>
+        <Popover.Root
+          open={menu === "more"}
+          onOpenChange={(open) =>
+            setMenu((current) =>
+              open ? "more" : current === "more" ? null : current,
+            )
+          }
+        >
+          <Popover.Trigger
+            className="icon-button"
+            aria-label="More options"
+            title="Saves & options"
+          >
+            <Icon name="more" />
+          </Popover.Trigger>
+          <Popover.Portal container={toolbar} style={{ display: "contents" }}>
+            <Popover.Positioner
+              className="toolbar-menu-positioner"
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                transform: "none",
+                width: "100%",
+              }}
+            >
+              <Popover.Popup
+                className="toolbar-menu"
+                aria-label="Saves and options"
+              >
+                <h2>Saves & options</h2>
+                <label className="menu-file">
+                  Import state
+                  <input
+                    type="file"
+                    aria-label="Import state"
+                    accept=".state"
+                    disabled={!state.game || state.changing}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      event.target.value = "";
+                      if (file) act(() => importState(file));
+                    }}
+                  />
+                </label>
+                <button
+                  disabled={!state.game || state.changing}
+                  onClick={() =>
+                    act(async () => {
+                      await player.pause();
+                      download(await player.emulator.saveState(), "game.state");
+                      setMenu(null);
+                    })
+                  }
+                >
+                  Export state
+                </button>
+                <button
+                  disabled={!state.game || state.changing}
+                  onClick={() =>
+                    act(async () => {
+                      await player.pause();
+                      download(await player.emulator.exportSave(), "game.sav");
+                      setMenu(null);
+                    })
+                  }
+                >
+                  Export battery save
+                </button>
+                <label className="menu-file">
+                  Import battery save
+                  <input
+                    type="file"
+                    aria-label="Import battery save"
+                    accept=".sav"
+                    disabled={!state.game || state.changing}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      event.target.value = "";
+                      if (file && state.game)
+                        act(async () => {
+                          await player.open(
+                            state.game!,
+                            new Uint8Array(await file.arrayBuffer()),
+                          );
+                          setMenu(null);
+                        });
+                    }}
+                  />
+                </label>
+                <hr />
+                <h2>Cloud progress</h2>
+                <p role="status">{state.cloud.message}</p>
+                {state.cloud.uploadedAt && (
+                  <p>
+                    Last confirmed:{" "}
+                    {new Date(state.cloud.uploadedAt).toLocaleString()}
+                  </p>
+                )}
+                <button
+                  disabled={
+                    !state.game || state.changing || !state.cloud.enabled
+                  }
+                  onClick={() => act(() => player.backupCloud())}
+                >
+                  Back up now
+                </button>
+                <button
+                  disabled={
+                    !state.playthrough ||
+                    state.changing ||
+                    !state.cloud.accountId
+                  }
+                  onClick={() => {
+                    setMenu(null);
+                    const ref = player.activeRef;
+                    if (ref) act(() => loadRun(ref, "restore"));
+                  }}
+                >
+                  Restore cloud resume
+                </button>
+                <button
+                  disabled={
+                    !state.game || state.changing || !state.cloud.accountId
+                  }
+                  onClick={() => {
+                    if (
+                      confirm(
+                        "Restart from the cloud in-game save? Export local progress first if you want to keep both.",
+                      )
+                    )
+                      act(() => player.restoreCloud("battery"));
+                  }}
+                >
+                  Restore cloud in-game save
+                </button>
+                <button
+                  disabled={
+                    !state.game || state.changing || !state.cloud.enabled
+                  }
+                  onClick={() => {
+                    if (
+                      confirm(
+                        "Replace this game's cloud copies with local progress? This can overwrite progress from another device.",
+                      )
+                    )
+                      act(() => player.backupCloud(true));
+                  }}
+                >
+                  Replace cloud with local progress
+                </button>
+                {!state.cloud.enabled && (
+                  <button onClick={openAccount}>Set up cloud backups</button>
+                )}
+                <hr />
+                <h2>Quick slots</h2>
+                <p className="menu-note">
+                  Shift/Ctrl + 1–9, 0 save/load.{" "}
+                  {state.cloud.enabled
+                    ? "Saved slots also back up to your account."
+                    : "Slots stay on this device while cloud backups are off."}
+                </p>
+                {quickConflicts.length > 0 && (
+                  <button onClick={openQuickReview}>
+                    Resolve {quickConflicts.length} changed slot
+                    {quickConflicts.length === 1 ? "" : "s"}…
+                  </button>
+                )}
+                {Array.from({ length: QUICK_SLOTS }, (_, index) => {
+                  const slot = index + 1;
+                  const info = state.quickSlots.find(
+                    (item) => item.slot === slot,
+                  );
+                  return (
+                    <div className="slot-row" key={slot}>
+                      <span>
+                        Slot {slot}
+                        <small>
+                          {info?.savedAt === undefined
+                            ? "Empty"
+                            : info.savedAt
+                              ? new Date(info.savedAt).toLocaleString(
+                                  undefined,
+                                  {
+                                    dateStyle: "short",
+                                    timeStyle: "short",
+                                  },
+                                )
+                              : "Saved"}
+                          {info?.sync === "conflict"
+                            ? " · differs"
+                            : info?.sync === "pending"
+                              ? " · backing up"
+                              : info?.sync === "synced"
+                                ? " · synced"
+                                : ""}
+                        </small>
+                      </span>
+                      <button
+                        disabled={!state.playthrough || state.changing}
+                        onClick={() => act(() => quickState(slot, false))}
+                      >
+                        Save
+                      </button>
+                      <button
+                        disabled={
+                          !state.playthrough ||
+                          state.changing ||
+                          info?.savedAt === undefined
+                        }
+                        onClick={() => act(() => quickState(slot, true))}
+                      >
+                        Load
+                      </button>
+                    </div>
+                  );
+                })}
+              </Popover.Popup>
+            </Popover.Positioner>
+          </Popover.Portal>
+        </Popover.Root>
+      </div>
+    </div>
+  );
+  const handheldPlayer = (hud?: HandheldHud) => (
+    <HandheldPlayer
+      orientation={handheld!}
+      title={state.game?.title ?? "No game loaded"}
+      subtitle={state.playthrough?.name}
+      playing={state.playing}
+      canPlay={Boolean(state.game) && !state.changing && !state.resumeFailed}
+      onBack={() => browse("library")}
+      onTogglePlay={() => act(() => player.play())}
+      onRewind={rewind.open}
+      menu={tools}
+      menuOpen={handheldMenu}
+      onMenuOpenChange={(open) => {
+        setHandheldMenu(open);
+        if (!open) setMenu(null);
+      }}
+      hud={hud}
+      controls={controls}
+      container={appRoot}
+    >
+      {display}
+    </HandheldPlayer>
+  );
   return (
     <BridgeProvider host={state.ready ? player.session.bridges : undefined}>
       <div
+        ref={appRoot}
         className={cx(
           "console-app",
           dragging && "dragging",
@@ -1121,7 +1596,7 @@ function App() {
           if (file && state.ready && !state.changing) act(() => openFile(file));
         }}
       >
-        {!home && (
+        {!home && !(handheld && view === "player") && (
           <AppHeader
             view={view}
             onNavigate={(destination) =>
@@ -1152,457 +1627,7 @@ function App() {
             if (file) act(() => openFile(file));
           }}
         />
-        <div className="player-tools" hidden={home || library}>
-          <h1 className="player-tools-title">
-            {state.game?.title ?? "No game loaded"}
-          </h1>
-          {state.game && state.playthrough && (
-            <div className="playthrough-controls">
-              <Select.Root
-                items={playerRuns.map((run) => ({
-                  label: run.name,
-                  value: run.id,
-                }))}
-                value={state.playthrough?.id ?? ""}
-                disabled={state.changing || launching}
-                onValueChange={(value) => {
-                  if (value === "__new__") setCreatePlaythroughOpen(true);
-                  else if (value && state.game)
-                    act(() =>
-                      loadRun({ hash: state.game!.hash, playthroughId: value }),
-                    );
-                }}
-              >
-                <Select.Label className="playthrough-label">
-                  Playthrough
-                </Select.Label>
-                <Select.Trigger
-                  ref={playthroughTrigger}
-                  className="playthrough-select"
-                >
-                  <Select.Value />
-                  <Select.Icon aria-hidden="true">▾</Select.Icon>
-                </Select.Trigger>
-                <Select.Portal>
-                  <Select.Positioner
-                    alignItemWithTrigger={false}
-                    sideOffset={4}
-                    className="playthrough-select-positioner"
-                  >
-                    <Select.Popup className="playthrough-select-popup">
-                      <Select.List>
-                        {playerRuns.map((run) => (
-                          <Select.Item key={run.id} value={run.id}>
-                            <Select.ItemText>{run.name}</Select.ItemText>
-                            <Select.ItemIndicator>
-                              <svg
-                                viewBox="0 0 16 16"
-                                width="16"
-                                height="16"
-                                fill="currentColor"
-                                shapeRendering="crispEdges"
-                                aria-hidden="true"
-                              >
-                                <path d="M1 8h2v2H1zm2 2h2v2H3zm2 2h2v2H5zm2-2h2v2H7zm2-2h2v2H9zm2-2h2v2h-2zm2-2h2v2h-2z" />
-                              </svg>
-                            </Select.ItemIndicator>
-                          </Select.Item>
-                        ))}
-                        <Select.Separator />
-                        <Select.Item value="__new__" label="New playthrough">
-                          <Select.ItemText>＋ New playthrough</Select.ItemText>
-                        </Select.Item>
-                      </Select.List>
-                    </Select.Popup>
-                  </Select.Positioner>
-                </Select.Portal>
-              </Select.Root>
-              <PlaythroughDialog
-                mode="create"
-                gameTitle={state.game.title}
-                disabled={state.changing || launching}
-                createOpen={createPlaythroughOpen}
-                onCreateOpenChange={setCreatePlaythroughOpen}
-                selectTrigger={playthroughTrigger}
-              />
-              <PlaythroughDialog
-                mode="rename"
-                gameTitle={state.game.title}
-                currentName={state.playthrough.name}
-                disabled={state.changing || launching}
-              />
-              <DeletePlaythroughDialog
-                name={state.playthrough.name}
-                disabled={state.changing || launching}
-              />
-            </div>
-          )}
-          <div className="console-toolbar" ref={toolbar}>
-            <button
-              className="icon-button"
-              aria-label="Share state"
-              title="Share state"
-              aria-haspopup="dialog"
-              disabled={
-                !state.playthrough || state.changing || state.resumeFailed
-              }
-              onClick={openShare}
-            >
-              <Icon name="share" />
-            </button>
-            <button
-              className="icon-button"
-              aria-label="Back up now"
-              title="Back up now"
-              disabled={!state.game || state.changing || !state.cloud.enabled}
-              onClick={() => act(() => player.backupCloud())}
-            >
-              <Icon name="cloudUpload" />
-            </button>
-            <button
-              className="icon-button"
-              aria-label="Fullscreen"
-              title="Fullscreen"
-              onClick={() =>
-                act(async () => {
-                  if (document.fullscreenElement)
-                    await document.exitFullscreen();
-                  else
-                    await document
-                      .getElementById("game-display")
-                      ?.requestFullscreen();
-                })
-              }
-            >
-              <Icon name="fullscreen" />
-            </button>
-            <div className="volume-control">
-              <button
-                className="icon-button"
-                aria-label={muted ? "Unmute sound" : "Mute sound"}
-                title={muted ? "Sound off" : "Sound on"}
-                aria-pressed={muted}
-                onClick={() =>
-                  act(async () => {
-                    await player.audio.mute();
-                    setMuted(player.audio.muted);
-                  })
-                }
-              >
-                <Icon name={muted ? "muted" : "sound"} />
-              </button>
-              <div className="volume-panel">
-                <label htmlFor="sound-volume">
-                  Volume <output>{Math.round(volume * 100)}%</output>
-                </label>
-                <input
-                  id="sound-volume"
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={Math.round(volume * 100)}
-                  onChange={(event) => {
-                    const next = Number(event.target.value) / 100;
-                    player.audio.setVolume(next);
-                    setVolume(next);
-                  }}
-                />
-              </div>
-            </div>
-            <Popover.Root
-              open={menu === "speed"}
-              onOpenChange={(open) =>
-                setMenu((current) =>
-                  open ? "speed" : current === "speed" ? null : current,
-                )
-              }
-            >
-              <Popover.Trigger
-                className="icon-button speed-button"
-                aria-label="Playback speed"
-              >
-                {state.boosting ? "16" : state.speed}×
-              </Popover.Trigger>
-              <Popover.Portal
-                container={toolbar}
-                style={{ display: "contents" }}
-              >
-                <Popover.Positioner
-                  className="toolbar-menu-positioner"
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    transform: "none",
-                    width: "100%",
-                  }}
-                >
-                  <Popover.Popup
-                    className="toolbar-menu speed-menu"
-                    aria-label="Playback speed"
-                  >
-                    <h2>Playback speed</h2>
-                    {[0.5, 1, 2, 4, 8, 16].map((speed) => (
-                      <button
-                        key={speed}
-                        aria-pressed={state.speed === speed}
-                        onClick={() => {
-                          player.setSpeed(speed);
-                          setMenu(null);
-                        }}
-                      >
-                        {speed}× {state.speed === speed ? "✓" : ""}
-                      </button>
-                    ))}
-                  </Popover.Popup>
-                </Popover.Positioner>
-              </Popover.Portal>
-            </Popover.Root>
-            <button
-              className="icon-button"
-              aria-label="How to play"
-              title="How to play"
-              aria-haspopup="dialog"
-              aria-expanded={help}
-              disabled={state.changing}
-              onClick={openHelp}
-            >
-              <Icon name="gamepad" />
-            </button>
-            <Popover.Root
-              open={menu === "more"}
-              onOpenChange={(open) =>
-                setMenu((current) =>
-                  open ? "more" : current === "more" ? null : current,
-                )
-              }
-            >
-              <Popover.Trigger
-                className="icon-button"
-                aria-label="More options"
-                title="Saves & options"
-              >
-                <Icon name="more" />
-              </Popover.Trigger>
-              <Popover.Portal
-                container={toolbar}
-                style={{ display: "contents" }}
-              >
-                <Popover.Positioner
-                  className="toolbar-menu-positioner"
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    transform: "none",
-                    width: "100%",
-                  }}
-                >
-                  <Popover.Popup
-                    className="toolbar-menu"
-                    aria-label="Saves and options"
-                  >
-                    <h2>Saves & options</h2>
-                    <label className="menu-file">
-                      Import state
-                      <input
-                        type="file"
-                        aria-label="Import state"
-                        accept=".state"
-                        disabled={!state.game || state.changing}
-                        onChange={(event) => {
-                          const file = event.target.files?.[0];
-                          event.target.value = "";
-                          if (file) act(() => importState(file));
-                        }}
-                      />
-                    </label>
-                    <button
-                      disabled={!state.game || state.changing}
-                      onClick={() =>
-                        act(async () => {
-                          await player.pause();
-                          download(
-                            await player.emulator.saveState(),
-                            "game.state",
-                          );
-                          setMenu(null);
-                        })
-                      }
-                    >
-                      Export state
-                    </button>
-                    <button
-                      disabled={!state.game || state.changing}
-                      onClick={() =>
-                        act(async () => {
-                          await player.pause();
-                          download(
-                            await player.emulator.exportSave(),
-                            "game.sav",
-                          );
-                          setMenu(null);
-                        })
-                      }
-                    >
-                      Export battery save
-                    </button>
-                    <label className="menu-file">
-                      Import battery save
-                      <input
-                        type="file"
-                        aria-label="Import battery save"
-                        accept=".sav"
-                        disabled={!state.game || state.changing}
-                        onChange={(event) => {
-                          const file = event.target.files?.[0];
-                          event.target.value = "";
-                          if (file && state.game)
-                            act(async () => {
-                              await player.open(
-                                state.game!,
-                                new Uint8Array(await file.arrayBuffer()),
-                              );
-                              setMenu(null);
-                            });
-                        }}
-                      />
-                    </label>
-                    <hr />
-                    <h2>Cloud progress</h2>
-                    <p role="status">{state.cloud.message}</p>
-                    {state.cloud.uploadedAt && (
-                      <p>
-                        Last confirmed:{" "}
-                        {new Date(state.cloud.uploadedAt).toLocaleString()}
-                      </p>
-                    )}
-                    <button
-                      disabled={
-                        !state.game || state.changing || !state.cloud.enabled
-                      }
-                      onClick={() => act(() => player.backupCloud())}
-                    >
-                      Back up now
-                    </button>
-                    <button
-                      disabled={
-                        !state.playthrough ||
-                        state.changing ||
-                        !state.cloud.accountId
-                      }
-                      onClick={() => {
-                        setMenu(null);
-                        const ref = player.activeRef;
-                        if (ref) act(() => loadRun(ref, "restore"));
-                      }}
-                    >
-                      Restore cloud resume
-                    </button>
-                    <button
-                      disabled={
-                        !state.game || state.changing || !state.cloud.accountId
-                      }
-                      onClick={() => {
-                        if (
-                          confirm(
-                            "Restart from the cloud in-game save? Export local progress first if you want to keep both.",
-                          )
-                        )
-                          act(() => player.restoreCloud("battery"));
-                      }}
-                    >
-                      Restore cloud in-game save
-                    </button>
-                    <button
-                      disabled={
-                        !state.game || state.changing || !state.cloud.enabled
-                      }
-                      onClick={() => {
-                        if (
-                          confirm(
-                            "Replace this game's cloud copies with local progress? This can overwrite progress from another device.",
-                          )
-                        )
-                          act(() => player.backupCloud(true));
-                      }}
-                    >
-                      Replace cloud with local progress
-                    </button>
-                    {!state.cloud.enabled && (
-                      <button onClick={openAccount}>
-                        Set up cloud backups
-                      </button>
-                    )}
-                    <hr />
-                    <h2>Quick slots</h2>
-                    <p className="menu-note">
-                      Shift/Ctrl + 1–9, 0 save/load.{" "}
-                      {state.cloud.enabled
-                        ? "Saved slots also back up to your account."
-                        : "Slots stay on this device while cloud backups are off."}
-                    </p>
-                    {quickConflicts.length > 0 && (
-                      <button onClick={openQuickReview}>
-                        Resolve {quickConflicts.length} changed slot
-                        {quickConflicts.length === 1 ? "" : "s"}…
-                      </button>
-                    )}
-                    {Array.from({ length: QUICK_SLOTS }, (_, index) => {
-                      const slot = index + 1;
-                      const info = state.quickSlots.find(
-                        (item) => item.slot === slot,
-                      );
-                      return (
-                        <div className="slot-row" key={slot}>
-                          <span>
-                            Slot {slot}
-                            <small>
-                              {info?.savedAt === undefined
-                                ? "Empty"
-                                : info.savedAt
-                                  ? new Date(info.savedAt).toLocaleString(
-                                      undefined,
-                                      {
-                                        dateStyle: "short",
-                                        timeStyle: "short",
-                                      },
-                                    )
-                                  : "Saved"}
-                              {info?.sync === "conflict"
-                                ? " · differs"
-                                : info?.sync === "pending"
-                                  ? " · backing up"
-                                  : info?.sync === "synced"
-                                    ? " · synced"
-                                    : ""}
-                            </small>
-                          </span>
-                          <button
-                            disabled={!state.playthrough || state.changing}
-                            onClick={() => act(() => quickState(slot, false))}
-                          >
-                            Save
-                          </button>
-                          <button
-                            disabled={
-                              !state.playthrough ||
-                              state.changing ||
-                              info?.savedAt === undefined
-                            }
-                            onClick={() => act(() => quickState(slot, true))}
-                          >
-                            Load
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </Popover.Popup>
-                </Popover.Positioner>
-              </Popover.Portal>
-            </Popover.Root>
-          </div>
-        </div>
+        {!handheld && tools}
         {library ? (
           <LibraryPage
             catalog={catalog}
@@ -1646,9 +1671,12 @@ function App() {
             key={experience.game.id}
             playing={state.playing}
             build={build}
+            handheld={handheld ? handheldPlayer : undefined}
           >
             {display}
           </Layout>
+        ) : handheld ? (
+          handheldPlayer()
         ) : (
           <main className="generic-experience" data-game-layout="generic">
             {display}

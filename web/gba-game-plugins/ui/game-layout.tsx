@@ -1,3 +1,9 @@
+/** The HP bar's color class: under half is a warning, a fifth is critical. */
+export function hpTone(value: number, max: number) {
+  const ratio = max > 0 ? value / max : 0;
+  return ratio <= 0.2 ? "critical" : ratio <= 0.5 ? "warning" : "healthy";
+}
+
 export function HpBar({
   value,
   max,
@@ -7,8 +13,7 @@ export function HpBar({
   max: number;
   label: string;
 }) {
-  const ratio = max > 0 ? value / max : 0;
-  const tone = ratio <= 0.2 ? "critical" : ratio <= 0.5 ? "warning" : "healthy";
+  const tone = hpTone(value, max);
   return (
     <div className="hp-readout">
       <span className="hp-label">HP</span>

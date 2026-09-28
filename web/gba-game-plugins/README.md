@@ -81,7 +81,11 @@ player without any Pokémon code.
 
 Opening a supported ROM selects the three-column dashboard automatically:
 team and PC roster on the left, the player in the center, and the selected
-Pokémon's inspector on the right. Team cards support click and Arrow/Home/End;
+Pokémon's inspector on the right. On phones the player's
+[phone layout](../../frontend/README.md#phones) shows the party's icons and
+HP under the screen, with the active opponents in a battle or the arena's
+known fields outside one, and opens the Team and Info (Battle) panels in a
+sheet. Team cards support click and Arrow/Home/End;
 selection follows identity through reordering and resets on a new timeline,
 and search includes PC storage. While the game runs, observations refresh up
 to 20 times a second; pausing keeps the last reading, and loading a state

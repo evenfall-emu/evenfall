@@ -109,7 +109,12 @@ export function PlaythroughDialog({
         </Dialog.Trigger>
       )}
       <Dialog.Portal>
-        <Dialog.Backdrop className="playthrough-dialog-backdrop" />
+        <Dialog.Backdrop
+          className="playthrough-dialog-backdrop"
+          // Opened from the phone menu sheet, the dialog is nested; its own
+          // backdrop keeps tap-outside-to-close working there.
+          forceRender
+        />
         <Dialog.Popup
           className="playthrough-dialog"
           initialFocus={input}
@@ -275,7 +280,12 @@ export function DeletePlaythroughDialog({
         </svg>
       </Dialog.Trigger>
       <Dialog.Portal>
-        <Dialog.Backdrop className="playthrough-dialog-backdrop" />
+        <Dialog.Backdrop
+          className="playthrough-dialog-backdrop"
+          // Opened from the phone menu sheet, the dialog is nested; its own
+          // backdrop keeps tap-outside-to-close working there.
+          forceRender
+        />
         <Dialog.Popup
           className="playthrough-dialog playthrough-delete-dialog"
           initialFocus={cancel}

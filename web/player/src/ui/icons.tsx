@@ -16,6 +16,7 @@ const glyphs = {
   ),
   check: <path d="m4 12.5 5 5L20 6.5" />,
   chevronDown: <path d="m6 9 6 6 6-6" />,
+  chevronLeft: <path d="m15 5-7 7 7 7" />,
   cloud: (
     <path d="M7 19a5 5 0 0 1-.6-9.96A6.5 6.5 0 0 1 18.8 10.1 4.5 4.5 0 0 1 17.5 19Z" />
   ),
@@ -33,6 +34,7 @@ const glyphs = {
     </g>
   ),
   download: <path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4" />,
+  fastForward: <path d="m3 6 8 6-8 6Zm10 0 8 6-8 6Z" />,
   externalLink: (
     <>
       <path d="M14 4h6v6m0-6-9 9" />
@@ -63,12 +65,15 @@ const glyphs = {
       <path d="M12 11v6m0-10v1" />
     </>
   ),
+  loadState: <path d="M12 15V4m-5 5 5-5 5 5M4 15v5h16v-5" />,
   monitor: (
     <>
       <path d="M3 4h18v12H3Z" />
       <path d="M12 16v4m-4 0h8" />
     </>
   ),
+  pause: <path d="M8 5v14m8-14v14" />,
+  play: <path d="M7 4v16l13-8Z" />,
   plus: <path d="M12 4v16M4 12h16" />,
   releaseNotes: (
     <>
@@ -78,6 +83,8 @@ const glyphs = {
       <path d="M15.5 17.5h4" />
     </>
   ),
+  rewind: <path d="M11 6 3 12l8 6Zm10 0-8 6 8 6Z" />,
+  saveState: <path d="M12 4v11m-5-5 5 5 5-5M4 15v5h16v-5" />,
   search: (
     <>
       <circle cx="10.5" cy="10.5" r="6.5" />

@@ -212,7 +212,9 @@ test("Redux trainer search uses real ROM teams and portraits with an inactive-ba
   ).toHaveText("0");
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "Info", exact: true }).click();
+  // Phones open the game panels in a sheet below the screen.
+  await page.getByRole("button", { name: "Show Team and Info" }).click();
+  await page.getByRole("tab", { name: "Info", exact: true }).click();
   await input.scrollIntoViewIfNeeded();
   await input.click();
   await expect(page.getByRole("option")).toHaveCount(5);

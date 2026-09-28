@@ -9,7 +9,7 @@ import {
 } from "react";
 import { Combobox } from "@base-ui/react/combobox";
 import { useViews } from "@evenfall/gba/bridge/react";
-import { HpBar, TypeBadge } from "./game-layout";
+import { HpBar, hpTone, TypeBadge } from "./game-layout";
 import { usePokemonArtwork } from "./pokemon-ui";
 import { InfoTip } from "./info-tip";
 import type { BridgeState, GameArenaStatus } from "@evenfall/gba/bridge";
@@ -909,6 +909,63 @@ export function TrainerSearch({
   );
 }
 
+/**
+ * The phone player's line under the screen: the party's health, then the
+ * active opponents in a battle or the arena's known fields outside one.
+ */
+function HandheldSummary({
+  party,
+  opponents,
+  arena,
+  artwork,
+}: {
+  party: readonly PokemonPartyMember[];
+  opponents: readonly PokemonPartyMember[];
+  arena: GameArenaStatus;
+  artwork: Artwork;
+}) {
+  const icons = (members: readonly PokemonPartyMember[], label: string) => (
+    <ol className="handheld-party" aria-label={label}>
+      {members.map((member) => {
+        const image = artwork(member.artwork?.front);
+        return (
+          <li key={member.slot} data-fainted={member.hp === 0 || undefined}>
+            {image.src ? (
+              <img src={image.src} alt="" />
+            ) : (
+              <span className="sprite-missing">?</span>
+            )}
+            <progress
+              className={hpTone(member.hp, member.maxHp)}
+              aria-label={`${nameOf(member)} HP ${member.hp} of ${member.maxHp}`}
+              value={member.hp}
+              max={member.maxHp}
+            />
+          </li>
+        );
+      })}
+    </ol>
+  );
+  const known = arena.fields.flatMap((field) =>
+    field.value ? [field.value] : [],
+  );
+  return (
+    <div className="handheld-summary">
+      {icons(party, "Your team")}
+      {opponents.length ? (
+        <>
+          <span className="handheld-versus">VS</span>
+          {icons(opponents, "Opponent")}
+        </>
+      ) : (
+        known.length > 0 && (
+          <span className="handheld-arena">{known.join(" · ")}</span>
+        )
+      )}
+    </div>
+  );
+}
+
 export interface PokemonDashboardProps {
   readonly gameName: string;
   readonly party: BridgeState<PokemonPartyView>;
@@ -923,6 +980,8 @@ export interface PokemonDashboardProps {
   /** The loaded build's provenance; a located build is marked as unreviewed. */
   readonly build?: BuildInfo;
   readonly children: ReactNode;
+  /** On phones: hand the HUD to the player instead of laying out the page. */
+  readonly handheld?: GameLayoutProps["handheld"];
 }
 
 export function PokemonDashboard({
@@ -935,6 +994,7 @@ export function PokemonDashboard({
   trainerSearch,
   build,
   children,
+  handheld,
 }: PokemonDashboardProps) {
   const [mobilePanel, setMobilePanel] = useState<"team" | "info">("team");
   const panelId = useId();
@@ -981,6 +1041,100 @@ export function PokemonDashboard({
         : battle.status === "loading"
           ? "Reading battle…"
           : undefined;
+  const arena: GameArenaStatus =
+    context.status === "ready"
+      ? context.data.arena
+      : {
+          title: gameName,
+          fields: [
+            {
+              id: "context",
+              label: "Arena",
+              value: null,
+              reason:
+                context.status === "unavailable"
+                  ? context.reason
+                  : context.status === "error"
+                    ? context.message
+                    : "Waiting for game context",
+            },
+          ],
+        };
+  const playerSlots = combat?.battlers
+    .filter((b) => b.side === "player")
+    .map((b) => b.partySlot);
+  const opponentSlots = combat?.battlers
+    .filter((b) => b.side === "opponent")
+    .map((b) => b.partySlot);
+  const opponents = battleParty("opponent", combat?.opponentParty ?? []);
+  const team = (
+    <PokemonRoster
+      key={`team:${timeline}`}
+      party={battleParty("player", members)}
+      stored={stored}
+      artwork={artwork}
+      linksFactory={resources?.linksFactory}
+      label={
+        storage.status === "ready"
+          ? `${members.length + stored.length} owned`
+          : `${members.length} in party`
+      }
+      message={message}
+      activeSlots={playerSlots}
+    />
+  );
+  const info =
+    battle.status === "ready" && !battle.data.active && trainerSearch ? (
+      <TrainerSearch
+        key={`trainer:${battleTimeline}`}
+        search={trainerSearch}
+        artwork={artwork}
+        linksFactory={resources?.linksFactory}
+      />
+    ) : (
+      <PokemonRoster
+        key={`opponent:${timeline}`}
+        party={opponents}
+        artwork={artwork}
+        linksFactory={resources?.linksFactory}
+        opponent
+        label={
+          combat
+            ? battleLabel
+            : opponentMessage
+              ? "Unavailable"
+              : "Not in battle"
+        }
+        message={opponentMessage}
+        activeSlots={opponentSlots}
+      />
+    );
+  if (handheld)
+    return handheld({
+      summary: (
+        <HandheldSummary
+          party={battleParty("player", members)}
+          opponents={opponents.filter((member) =>
+            opponentSlots?.includes(member.slot),
+          )}
+          arena={arena}
+          artwork={artwork}
+        />
+      ),
+      panels: [
+        { id: "team", label: "Team", content: team },
+        {
+          id: "info",
+          label: combat ? "Battle" : "Info",
+          content: (
+            <>
+              <ArenaStatus build={build} arena={arena} />
+              {info}
+            </>
+          ),
+        },
+      ],
+    });
   return (
     <main
       className="adventure-grid"
@@ -988,47 +1142,10 @@ export function PokemonDashboard({
       data-panel={mobilePanel}
     >
       <div className="dashboard-team" id={`${panelId}-team`}>
-        <PokemonRoster
-          key={`team:${timeline}`}
-          party={battleParty("player", members)}
-          stored={stored}
-          artwork={artwork}
-          linksFactory={resources?.linksFactory}
-          label={
-            storage.status === "ready"
-              ? `${members.length + stored.length} owned`
-              : `${members.length} in party`
-          }
-          message={message}
-          activeSlots={combat?.battlers
-            .filter((b) => b.side === "player")
-            .map((b) => b.partySlot)}
-        />
+        {team}
       </div>
       <div className="adventure-center">
-        <ArenaStatus
-          build={build}
-          arena={
-            context.status === "ready"
-              ? context.data.arena
-              : {
-                  title: gameName,
-                  fields: [
-                    {
-                      id: "context",
-                      label: "Arena",
-                      value: null,
-                      reason:
-                        context.status === "unavailable"
-                          ? context.reason
-                          : context.status === "error"
-                            ? context.message
-                            : "Waiting for game context",
-                    },
-                  ],
-                }
-          }
-        />
+        <ArenaStatus build={build} arena={arena} />
         {children}
       </div>
       <nav className="dashboard-panels" aria-label="Game panels">
@@ -1048,33 +1165,7 @@ export function PokemonDashboard({
         </button>
       </nav>
       <div className="dashboard-info" id={`${panelId}-info`}>
-        {battle.status === "ready" && !battle.data.active && trainerSearch ? (
-          <TrainerSearch
-            key={`trainer:${battleTimeline}`}
-            search={trainerSearch}
-            artwork={artwork}
-            linksFactory={resources?.linksFactory}
-          />
-        ) : (
-          <PokemonRoster
-            key={`opponent:${timeline}`}
-            party={battleParty("opponent", combat?.opponentParty ?? [])}
-            artwork={artwork}
-            linksFactory={resources?.linksFactory}
-            opponent
-            label={
-              combat
-                ? battleLabel
-                : opponentMessage
-                  ? "Unavailable"
-                  : "Not in battle"
-            }
-            message={opponentMessage}
-            activeSlots={combat?.battlers
-              .filter((b) => b.side === "opponent")
-              .map((b) => b.partySlot)}
-          />
-        )}
+        {info}
       </div>
     </main>
   );
@@ -1091,11 +1182,13 @@ export function Gen3Overlay({
   gameName,
   build,
   children,
+  handheld,
 }: {
   game: Gen3Game;
   gameName: string;
   build?: BuildInfo;
   children: ReactNode;
+  handheld?: GameLayoutProps["handheld"];
 }) {
   const views = useViews(game);
   const media = views?.media.status === "ready" ? views.media.data : undefined;
@@ -1129,23 +1222,42 @@ export function Gen3Overlay({
       resources={resources}
       trainerSearch={trainerSearch}
       build={build}
+      handheld={handheld}
     >
       {children}
     </PokemonDashboard>
   );
 }
 
-export function HeartNSoulDashboard({ build, children }: GameLayoutProps) {
+export function HeartNSoulDashboard({
+  build,
+  children,
+  handheld,
+}: GameLayoutProps) {
   return (
-    <Gen3Overlay game={heartNSoul} gameName="Heart & Soul" build={build}>
+    <Gen3Overlay
+      game={heartNSoul}
+      gameName="Heart & Soul"
+      build={build}
+      handheld={handheld}
+    >
       {children}
     </Gen3Overlay>
   );
 }
 
-export function EliteReduxDashboard({ build, children }: GameLayoutProps) {
+export function EliteReduxDashboard({
+  build,
+  children,
+  handheld,
+}: GameLayoutProps) {
   return (
-    <Gen3Overlay game={eliteRedux} gameName="Elite Redux" build={build}>
+    <Gen3Overlay
+      game={eliteRedux}
+      gameName="Elite Redux"
+      build={build}
+      handheld={handheld}
+    >
       {children}
     </Gen3Overlay>
   );

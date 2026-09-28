@@ -423,7 +423,16 @@ test("naming forms validate Unicode names and preserve failed edits for retry on
   await expect(create.getByRole("alert")).toHaveText(
     "Use 160 characters or fewer.",
   );
+  // Phones reach the playthrough tools from the player menu.
+  await create.getByRole("button", { name: "Cancel" }).click();
   await page.setViewportSize({ width: 360, height: 480 });
+  await page.getByRole("button", { name: "Player menu" }).click();
+  await openNewRun(page);
+  await name.fill("🌙".repeat(161));
+  await name.press("Enter");
+  await expect(create.getByRole("alert")).toHaveText(
+    "Use 160 characters or fewer.",
+  );
   await create
     .getByRole("button", { name: "Create playthrough" })
     .scrollIntoViewIfNeeded();
@@ -573,8 +582,10 @@ test("deleting a playthrough requires confirmation and keeps the other adventure
     await page.evaluate(() => window.player.activeRef!.playthroughId),
   ).toBe(second.playthroughId);
 
-  await trash.click();
+  // Phones reach the playthrough tools from the player menu.
   await page.setViewportSize({ width: 390, height: 640 });
+  await page.getByRole("button", { name: "Player menu" }).click();
+  await trash.click();
   await page.screenshot({ path: "../artifacts/playthrough-delete-mobile.png" });
   await confirm.getByRole("button", { name: "Delete playthrough" }).click();
   await expect(confirm).toBeHidden();
@@ -633,6 +644,7 @@ test("deleting a playthrough requires confirmation and keeps the other adventure
   await page.evaluate(() => window.player.checkpointState());
   await page.goto("/");
   await page.getByRole("button", { name: "Resume adventure" }).click();
+  await page.getByRole("button", { name: "Player menu" }).click();
   await expect(selectedRun(page)).toBeVisible();
   expect(
     await page.evaluate(() => window.player.activeRef!.playthroughId),
