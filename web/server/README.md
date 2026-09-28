@@ -164,9 +164,18 @@ D1, separate from catalog metadata.
   secret.
 - **Magic links** expire after five minutes, are stored hashed in D1, and are
   single-use, including under concurrent verification. Mail is sent as
-  `ZiGBA <EMAIL_FROM>` through the Cloudflare Email Sending binding, which is
-  restricted to that sender. Without both the `EMAIL` binding and
-  `EMAIL_FROM`, email sign-in returns `503 email_unavailable`.
+  `Evenfall <EMAIL_FROM>` with subject `Sign in to Evenfall Player` through the
+  Cloudflare Email Sending binding, which is restricted to that sender.
+  The message includes plain text and branded HTML with a sign-in button and
+  copyable link. It uses inline styles, presentation tables and system fonts.
+  The canonical Evenfall logo and wordmark travel as an inline PNG attachment
+  referenced by Content-ID, not a remote image or unsupported SVG. The PNG
+  includes a navy background so its cream wordmark stays legible if the
+  client changes the surrounding colors. Clients that suppress attachments
+  still have the image's alt text, live heading, button and plain-text version.
+  The URL is HTML-escaped, never shortened or wrapped in tracking links.
+  Without both the `EMAIL` binding and `EMAIL_FROM`, email sign-in returns
+  `503 email_unavailable`.
 - **Rate limits** are stored in D1: three magic-link requests per IP per
   minute, and per recipient (normalized case-insensitively) three per 15
   minutes and ten per day, enforced atomically. These are fixed windows that
@@ -472,10 +481,34 @@ http://127.0.0.1:5173/api/auth/callback/discord
 Open **Account** on Home or in the Player/Library header. Discord uses the
 real provider, so completing its consent screen is a manual test. Email is
 simulated: Wrangler prints capture paths, and text messages appear under
-`server/.wrangler/tmp/email/*/email-text/`. Open the newest file and paste
-its link into the same browser within five minutes. No real inbox is
-contacted and no Cloudflare email quota is used. Keep `remote: true` off the
-email binding for routine tests, and do not share captured links.
+`server/.wrangler/tmp/email/*/email-text/`; HTML messages appear under
+`server/.wrangler/tmp/email/*/email-html/`, with the inline PNG captured under
+`server/.wrangler/tmp/email/*/email-attachment/`. A standalone HTML capture
+does not resolve `cid:` references: map `cid:evenfall-logo` to its matching
+attachment when previewing in a browser. Paste the text version's link into
+the same browser within five minutes. Captures contain a live sign-in
+credential: do not share them or use them for public screenshots. No real
+inbox is contacted and no Cloudflare email quota is used. Keep `remote: true`
+off the email binding for routine tests.
+
+The small base64 PNG in [`src/email-brand.ts`](src/email-brand.ts) is bundled
+with the Worker, so deployment does not depend on the gitignored brand kit.
+To regenerate it from the checked-in SVG using the workspace's Playwright,
+run from the repository root:
+
+```sh
+node tools/generate-email-brand.mjs
+# Or use an installed browser:
+CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium node tools/generate-email-brand.mjs
+```
+
+The template avoids remote images, font downloads and tracking, but cannot
+guarantee inbox placement. For spam reports, inspect the received message's
+authentication results for SPF, DKIM and DMARC alignment with the configured
+sender domain, as well as Cloudflare's sending-domain status and reputation.
+Branding is not a substitute for domain authentication. Actual Gmail, Apple
+Mail and Outlook rendering and inbox placement require inbox checks; a local
+browser preview does not emulate their sanitizers or Outlook's Word renderer.
 
 To load the catalog seed locally:
 

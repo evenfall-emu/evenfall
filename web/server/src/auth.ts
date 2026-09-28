@@ -4,6 +4,7 @@ import { APIError, createAuthMiddleware } from "better-auth/api";
 import { magicLink } from "better-auth/plugins/magic-link";
 import { drizzle } from "drizzle-orm/d1";
 import * as schema from "./auth-schema";
+import { signInEmail } from "./sign-in-email";
 
 export interface AuthBindings {
   DB?: D1Database;
@@ -133,10 +134,9 @@ export function createAuth(env: AuthBindings) {
             )
               return;
             await env.EMAIL.send({
-              from: { email: env.EMAIL_FROM, name: "ZiGBA" },
+              from: { email: env.EMAIL_FROM, name: "Evenfall" },
               to: recipient,
-              subject: "Sign in to ZiGBA",
-              text: `Sign in to ZiGBA:\n\n${url}\n\nThis link expires in 5 minutes and can be used once. If you did not request it, ignore this email.`,
+              ...signInEmail(url),
             });
           } catch {
             // Do not expose suppression/delivery status, recipient addresses,

@@ -336,12 +336,25 @@ describe("account authentication", () => {
     expect(await response.json()).toEqual({ status: true });
     expect(messages).toHaveLength(1);
     expect(messages[0]).toMatchObject({
-      from: { email: "noreply@evenfall-emu.org", name: "ZiGBA" },
+      from: { email: "noreply@evenfall-emu.org", name: "Evenfall" },
       to: "player@example.com",
-      subject: "Sign in to ZiGBA",
+      subject: "Sign in to Evenfall Player",
+      attachments: [
+        {
+          contentId: "evenfall-logo",
+          disposition: "inline",
+          type: "image/png",
+          content: expect.any(String),
+        },
+      ],
     });
     expect(messages[0].text).toContain("5 minutes");
     const link = messages[0].text!.match(/https:\/\/\S+/)![0];
+    const htmlLinks = [...messages[0].html!.matchAll(/href="([^"]+)"/g)];
+    expect(htmlLinks).toHaveLength(2);
+    for (const [, href] of htmlLinks)
+      expect(href.replaceAll("&amp;", "&")).toBe(link);
+    expect(messages[0].html).toContain("Sign in to Evenfall Player");
     expect(new URL(link).origin).toBe(origin);
     const verified = await request(link);
     expect(verified.status).toBe(302);
