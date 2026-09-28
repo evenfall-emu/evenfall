@@ -430,6 +430,42 @@ test("storage failure leaves game and export controls available", async ({
   expect(save.every((byte) => byte === 17)).toBe(true);
 });
 
+test("battery import ignores an emulator trailer and keeps both flash banks", async ({
+  page,
+}) => {
+  await ready(page);
+  const flashRom = Buffer.alloc(272);
+  flashRom.writeUInt32LE(0xeafffffe, 0);
+  flashRom.write("FLASH1M_V103", 256);
+  await openRom(page, {
+    name: "Flash.gba",
+    mimeType: "application/octet-stream",
+    buffer: flashRom,
+  });
+  const save = Buffer.alloc(128 * 1024 + 16, 0xff);
+  save[0x1234] = 0x35;
+  save[0x10042] = 0x7a;
+  save.fill(0x55, 128 * 1024);
+
+  await page.getByRole("button", { name: "More options" }).click();
+  await page.getByLabel("Import battery save", { exact: true }).setInputFiles({
+    name: "Flash.sav",
+    mimeType: "application/octet-stream",
+    buffer: save,
+  });
+  await expect(page.locator(".save-indicator")).toContainText(
+    "Autosave active",
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const data = await window.player.emulator.exportSave();
+        return [data.length, data[0x1234], data[0x10042]];
+      }),
+    )
+    .toEqual([128 * 1024, 0x35, 0x7a]);
+});
+
 test("library lists metadata and reads only the selected ROM", async ({
   page,
 }) => {
