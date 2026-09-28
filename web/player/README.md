@@ -98,6 +98,7 @@ link lands on it again:
 | `/library` | Library |
 | `/library/<game ID>` | Library, with that game's details |
 | `/player` | Player |
+| `/share/state/<ID>` | Home, starting a [shared state](#sharing-a-state) |
 
 A fresh page load has no running game, so `/player` opens the Library
 instead. The browser's Back and Forward buttons move
@@ -154,9 +155,10 @@ and the screen's `?` open **How to play**, with illustrated keycaps and a
 touch-control toggle; help pauses play and resumes on close if it was
 running.
 
-- **Toolbar.** **Back up now** (with a game open and cloud backups on),
-  fullscreen, sound and playback speed. Hover or focus the sound button for a
-  volume slider; volume is stored on the device and mute does not reset it.
+- **Toolbar.** [**Share state**](#sharing-a-state), **Back up now** (with a
+  game open and cloud backups on), fullscreen, sound and playback speed.
+  Hover or focus the sound button for a volume slider; volume is stored on
+  the device and mute does not reset it.
   Speed changes wall-clock pacing, not guest cycles, and audio follows the
   rate with a matching pitch change.
 - **Reset** restarts emulation from the current playthrough's battery save,
@@ -403,6 +405,31 @@ slot last synced for another account is never uploaded or retagged. Only
 slots 1-10 sync, even if the account's server limit is higher; a lower limit
 keeps the higher slots local with a sync message.
 
+### Sharing a state
+
+**Share state** in the Player toolbar pauses the game and uploads its exact
+current save state, which includes the in-game save, as a link that anyone
+can open for at least 24 hours. The dialog shows the link with **Copy link**,
+and closing it resumes play if the game was running. Creating a
+link needs a signed-in account, not cloud backups; signed out, the dialog
+offers **Sign in** and uploads nothing. The upload carries the playthrough
+name, the game's title and the ROM's SHA-1, never the ROM itself. The
+server's side is in
+[`server/README.md`](../server/README.md#state-shares).
+
+Opening `/share/state/<ID>` needs no account. The player downloads the state,
+checks its digest, and validates it against the ROM in an isolated emulator
+before anything changes. It then starts the state at once as a new
+playthrough under the shared name, never replacing an existing one. It asks
+first only when it needs something:
+
+- the game's ROM, if this device does not have it; the ROM stays local;
+- a new name, if a playthrough of this game already has the shared name,
+  ignoring case and surrounding spaces. Cloud-only runs count.
+
+Starting replaces the link in the browser history with `/player`, so Back
+does not start it again. An expired or unknown link says so and offers Home.
+
 ## Offline play
 
 Production builds install a service worker that caches one complete version of
@@ -465,7 +492,8 @@ The formats are described in [`docs/devtools.md`](../docs/devtools.md).
 
 Analytics are opt-in at build time and off by default: `zig build web`, the
 Vite dev server and tests send nothing. A production build sends anonymous,
-cookieless Home, Player and Library pageviews to PostHog only when these
+cookieless Home, Player and Library pageviews, and the share events
+`state_share_created` and `state_share_opened`, to PostHog only when these
 variables are set in the build environment:
 
 | Variable | Meaning |
@@ -479,8 +507,10 @@ variables are set in the build environment:
 publishes the repository's [`PRIVACY.md`](../PRIVACY.md) as `/privacy.txt`;
 export your own values, or empty ones, when deploying elsewhere.
 
-Accounts, ROMs, gameplay, clicks, errors and recordings are never tracked. URL queries, fragments, referrers and other event properties
-are removed before sending. The page host and browser user agent are sent so
+Accounts, ROMs, gameplay, clicks, errors, recordings and share-link pages
+are never tracked. URL queries, fragments, referrers and other event properties
+are removed before sending; share events carry no URL at all, so neither a
+link nor its game can reach PostHog. The page host and browser user agent are sent so
 PostHog can hash cookieless events with the request IP; PostHog stores no
 analytics cookie or browser identifier.
 

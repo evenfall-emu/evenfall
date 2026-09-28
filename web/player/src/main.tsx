@@ -37,7 +37,13 @@ import { patchRelease } from "./pages/library/install";
 import { useCatalog, useDumpNames } from "./pages/library/use-catalog";
 import { AppHeader, type AppView } from "./app-header";
 import { Account } from "./account";
-import type { CloudResume } from "./cloud";
+import { fetchSharedState, type CloudResume, type SharedState } from "./cloud";
+import {
+  nameTaken,
+  ShareLink,
+  SharedStateChoices,
+  type ShareProgress,
+} from "./share-state";
 import {
   playthroughLockKey,
   QUICK_SLOTS,
@@ -49,7 +55,7 @@ import { acquireSaveLock } from "./storage.js";
 import { QuickConflictChoices } from "./quick-conflicts";
 import { gameRegistry, watchBuild } from "./games";
 import { download } from "./media";
-import { trackView } from "./analytics";
+import { trackShare, trackView } from "./analytics";
 import { cx } from "./ui/styles";
 import "./styles.css";
 
@@ -60,6 +66,12 @@ const icons = {
     <>
       <path d="M12 13v8m-4-4 4-4 4 4" />
       <path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 4 16.25" />
+    </>
+  ),
+  share: (
+    <>
+      <path d="M12 15V3m-4 4 4-4 4 4" />
+      <path d="M8 10H5v11h14V10h-3" />
     </>
   ),
   fullscreen: <path d="M3 9V3h6m6 0h6v6m0 6v6h-6m-6 0H3v-6" />,
@@ -164,6 +176,9 @@ function App() {
         : "home";
   const libraryGameId =
     page.routeId === "/library/$gameId" ? page.params.gameId : undefined;
+  // A share link opens over Home and leaves for Player once it starts.
+  const shareId =
+    page.routeId === "/share/state/$shareId" ? page.params.shareId : undefined;
   const home = view === "home";
   const library = view === "library";
   const { catalog, offline: catalogOffline } = useCatalog();
@@ -197,6 +212,17 @@ function App() {
   const [quickBusy, setQuickBusy] = useState(false);
   const quickResume = useRef(false);
   const launchPending = useRef(false);
+  const [share, setShare] = useState<ShareProgress | null>(null);
+  const shareResume = useRef(false);
+  const [sharedOpen, setSharedOpen] = useState<{
+    id: string;
+    shared?: SharedState;
+    needsRom?: boolean;
+    /** The user was asked for a name or ROM, so the choices stay on screen. */
+    prompted?: boolean;
+    busy?: boolean;
+    error?: string;
+  } | null>(null);
   const [cloudResumeRequest, setCloudResumeRequest] =
     useState<CloudResume | null>(null);
   const [cloudResumeHasLocal, setCloudResumeHasLocal] = useState(false);
@@ -329,7 +355,39 @@ function App() {
   useEffect(() => {
     if (document.activeElement === document.body) player.canvas?.focus();
   }, [experience?.game]);
-  useEffect(() => trackView(view), [view]);
+  // A share link's ID is its only credential, so its page is never tracked.
+  useEffect(() => {
+    if (!shareId) trackView(view);
+  }, [view, shareId]);
+  useEffect(() => {
+    if (!shareId || !state.ready) return;
+    let current = true;
+    setSharedOpen({ id: shareId });
+    void fetchSharedState(shareId).then(
+      (shared) => {
+        if (!current) return;
+        const needsRom = !player.state.games.some(
+          (game) => game.hash === shared.hash,
+        );
+        const prompted =
+          needsRom ||
+          nameTaken(playthroughNames(shared.hash), shared.playthroughName);
+        const open = { id: shareId, shared, needsRom, prompted };
+        if (prompted) setSharedOpen(open);
+        else void startShared(open, shared.playthroughName);
+      },
+      (error: unknown) => {
+        if (current)
+          setSharedOpen({
+            id: shareId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [shareId, state.ready]);
   useEffect(() => {
     if ((home || library) && state.ready && state.cloud.accountId)
       void player.cloud.discover();
@@ -421,6 +479,73 @@ function App() {
     if (accountResume.current && !player.state.changing)
       act(() => player.play());
   }
+  function openShare() {
+    shareResume.current = player.state.playing;
+    setMenu(null);
+    createShare();
+  }
+  function createShare() {
+    if (!player.state.cloud.accountId) {
+      setShare({ status: "signed-out" });
+      act(() => player.pause());
+      return;
+    }
+    setShare({ status: "creating" });
+    player.shareState().then(
+      (url) => {
+        trackShare("state_share_created");
+        setShare({ status: "ready", url });
+      },
+      (error: unknown) =>
+        setShare({
+          status: "failed",
+          message: error instanceof Error ? error.message : String(error),
+        }),
+    );
+  }
+  function closeShare() {
+    setShare(null);
+    if (shareResume.current && !player.state.changing) act(() => player.play());
+  }
+  /** Names the user already sees for a game: local runs and cloud-only runs. */
+  function playthroughNames(hash: string) {
+    return [
+      ...player.state.runs
+        .filter((run) => run.hash === hash)
+        .map((run) => run.name),
+      ...(player.state.cloud.resumes ?? [])
+        .filter((run) => run.hash === hash)
+        .map((run) => run.playthroughName),
+    ];
+  }
+  async function startShared(
+    open: NonNullable<typeof sharedOpen> & { shared: SharedState },
+    name: string,
+    file?: File,
+  ) {
+    setSharedOpen({ ...open, busy: true, error: undefined });
+    try {
+      await exclusive(async () => {
+        await player.openSharedState(open.shared, name, file);
+        trackShare("state_share_opened");
+        navigationResume.current = false;
+        // Replace the link, so Back cannot start it a second time.
+        showView("player", true);
+      });
+      setSharedOpen(null);
+    } catch (error) {
+      setSharedOpen({
+        ...open,
+        prompted: true,
+        busy: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  function closeShared() {
+    setSharedOpen(null);
+    void navigate({ to: "/", replace: true });
+  }
   /** Leaving Player pauses it; returning resumes a session that was playing. */
   function transition(destination: AppView) {
     if (navigation.current === destination) return;
@@ -455,9 +580,9 @@ function App() {
   useEffect(() => {
     if (page.routeId === "__root__") void navigate({ to: "/", replace: true });
   }, [page.routeId]);
-  function showView(destination: AppView) {
+  function showView(destination: AppView, replace = false) {
     transition(destination);
-    void navigate({ to: paths[destination] });
+    void navigate({ to: paths[destination], replace });
   }
   function browse(destination: "home" | "library") {
     if (player.state.changing) return;
@@ -1031,6 +1156,18 @@ function App() {
           <div className="console-toolbar" ref={toolbar}>
             <button
               className="icon-button"
+              aria-label="Share state"
+              title="Share state"
+              aria-haspopup="dialog"
+              disabled={
+                !state.playthrough || state.changing || state.resumeFailed
+              }
+              onClick={openShare}
+            >
+              <Icon name="share" />
+            </button>
+            <button
+              className="icon-button"
               aria-label="Back up now"
               title="Back up now"
               disabled={!state.game || state.changing || !state.cloud.enabled}
@@ -1460,6 +1597,68 @@ function App() {
             <Account />
           </Modal>
         )}
+        {share && state.game && state.playthrough && (
+          <Modal
+            title="Share state"
+            close={closeShare}
+            busy={share.status === "creating"}
+            className="share-dialog"
+          >
+            <ShareLink
+              progress={share}
+              title={state.game.title}
+              playthroughName={state.playthrough.name}
+              retry={createShare}
+              signIn={() => {
+                const resume = shareResume.current;
+                setShare(null);
+                openAccount();
+                accountResume.current = resume;
+              }}
+            />
+          </Modal>
+        )}
+        {sharedOpen && sharedOpen.id === shareId && (
+          <Modal
+            title="Shared state"
+            close={closeShared}
+            busy={
+              Boolean(sharedOpen.busy) ||
+              (!sharedOpen.shared && !sharedOpen.error)
+            }
+            className="shared-state-dialog"
+          >
+            {sharedOpen.shared && sharedOpen.prompted ? (
+              <SharedStateChoices
+                shared={sharedOpen.shared}
+                needsRom={Boolean(sharedOpen.needsRom)}
+                takenNames={playthroughNames(sharedOpen.shared.hash)}
+                busy={Boolean(sharedOpen.busy)}
+                error={sharedOpen.error ?? ""}
+                start={(name, file) =>
+                  void startShared(
+                    { ...sharedOpen, shared: sharedOpen.shared! },
+                    name,
+                    file,
+                  )
+                }
+              />
+            ) : sharedOpen.error ? (
+              <>
+                <p role="alert">{sharedOpen.error}</p>
+                <div className="resume-recovery-actions">
+                  <button onClick={closeShared}>Go to Home</button>
+                </div>
+              </>
+            ) : (
+              <p role="status">
+                {sharedOpen.shared
+                  ? `Starting ${sharedOpen.shared.title} · ${sharedOpen.shared.playthroughName}…`
+                  : "Opening shared state…"}
+              </p>
+            )}
+          </Modal>
+        )}
         {cloudResumeRequest && (
           <Modal
             title="Resume from cloud"
@@ -1632,6 +1831,10 @@ const router = createRouter({
     createRoute({ getParentRoute: () => rootRoute, path: "/" }),
     createRoute({ getParentRoute: () => rootRoute, path: "/library" }),
     createRoute({ getParentRoute: () => rootRoute, path: "/library/$gameId" }),
+    createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/share/state/$shareId",
+    }),
     createRoute({
       getParentRoute: () => rootRoute,
       path: "/player",

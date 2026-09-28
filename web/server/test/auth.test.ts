@@ -1550,3 +1550,317 @@ describe("cloud quick slots", () => {
     expect((await putQuick(other, run, 1)).status).toBe(401);
   });
 });
+
+describe("state shares", () => {
+  // A catalog output whose name must replace the uploader's private label.
+  const catalogHash = "b".repeat(40);
+  const unknownHash = "9".repeat(40);
+  const state = (marker: string) => gzipSync(Buffer.from(`ZIGBAST1${marker}`));
+  const name = "Route 1 · Pokémon 🌙";
+  let owner: { Cookie: string; "X-Zigba-Account": string };
+  let other: typeof owner;
+
+  beforeAll(async () => {
+    async function login(email: string, ip: string) {
+      await request("/api/auth/sign-in/magic-link", post({ email }, ip));
+      expect(messages.at(-1)?.to).toBe(email);
+      const Cookie = sessionCookie(
+        await request(messageLink(), { headers: { "CF-Connecting-IP": ip } }),
+      );
+      const session = (await (
+        await request("/api/auth/get-session", { headers: { Cookie } })
+      ).json()) as { user: { id: string } };
+      return { Cookie, "X-Zigba-Account": session.user.id };
+    }
+    owner = await login("share-owner@example.com", "192.0.2.210");
+    other = await login("share-other@example.com", "192.0.2.211");
+    const admin = { ADMIN_SECRET: "test-share-secret" };
+    const put = (path: string, body: unknown) =>
+      request(
+        path,
+        {
+          method: "PUT",
+          headers: {
+            Authorization: "Bearer test-share-secret",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+        },
+        admin,
+      );
+    expect(
+      (
+        await put("/api/admin/games/share-test", {
+          internalName: "share-test",
+          displayName: "Share Test",
+          summary: null,
+          imageUrl: null,
+          franchise: null,
+          tags: [],
+        })
+      ).status,
+    ).toBe(200);
+    // Only public releases (a hosted patch, not hidden) lend their name.
+    expect(
+      (
+        await put("/api/admin/bases/share-test-base", {
+          internalName: "share-test-base",
+          displayName: "Share Test Base",
+          sha1: "8".repeat(40),
+          crc32: "88888888",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await put("/api/admin/versions/share-test-1", {
+          gameId: "share-test",
+          internalName: "share-test-1",
+          displayName: "1.0",
+          outputSha1: catalogHash,
+          requiredBaseId: "share-test-base",
+          sourceRepositoryUrl: null,
+          sourceRevision: null,
+          releasedAt: null,
+          releaseNotes: null,
+          patch: {
+            url: "https://patches.example/share-test.bps",
+            format: "bps",
+            size: 1234,
+          },
+          saveCompatibleFrom: [],
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  function share(
+    account: Record<string, string>,
+    hash: string,
+    body: Buffer,
+    headers: Record<string, string> = {},
+  ) {
+    return miniflare.dispatchFetch(`${origin}/api/shares`, {
+      method: "POST",
+      body,
+      headers: {
+        ...account,
+        Origin: origin,
+        "Content-Type": "application/octet-stream",
+        "X-Zigba-Rom": hash,
+        "X-Zigba-Digest": createHash("sha256").update(body).digest("hex"),
+        "X-Zigba-Playthrough-Name": encodeURIComponent(name),
+        ...headers,
+      },
+    });
+  }
+  type Created = { id: string; url: string };
+
+  it("requires a matching session, exact Origin, a state and a name to create", async () => {
+    const body = state("x");
+    expect((await share({}, catalogHash, body)).status).toBe(401);
+    expect(
+      (await share({ Cookie: owner.Cookie }, catalogHash, body)).status,
+    ).toBe(403);
+    expect(
+      (
+        await share(
+          { ...owner, "X-Zigba-Account": other["X-Zigba-Account"] },
+          catalogHash,
+          body,
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await share(owner, catalogHash, body, {
+          Origin: "https://evil.example",
+        })
+      ).status,
+    ).toBe(403);
+    const notState = gzipSync(Buffer.from("NOTSTATE"));
+    const rejected = await share(owner, catalogHash, notState);
+    expect(rejected.status).toBe(400);
+    expect(await rejected.json()).toMatchObject({
+      error: { code: "invalid_state" },
+    });
+    const unnamed = await miniflare.dispatchFetch(`${origin}/api/shares`, {
+      method: "POST",
+      body,
+      headers: {
+        ...owner,
+        Origin: origin,
+        "Content-Type": "application/octet-stream",
+        "X-Zigba-Rom": catalogHash,
+        "X-Zigba-Digest": createHash("sha256").update(body).digest("hex"),
+      },
+    });
+    expect(unnamed.status).toBe(400);
+    expect(await unnamed.json()).toMatchObject({
+      error: { code: "invalid_playthrough_name" },
+    });
+    expect((await saves.list({ prefix: "share/" })).objects).toHaveLength(0);
+  });
+
+  it("serves the exact bytes publicly with the catalog title, never the account", async () => {
+    const body = state("catalog");
+    const created = await share(owner, catalogHash, body, {
+      "X-Zigba-Title": encodeURIComponent("my rom dump (1)"),
+    });
+    expect(created.status).toBe(201);
+    const { id, url } = (await created.json()) as Created;
+    expect(id).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(url).toBe(`${origin}/share/state/${id}`);
+
+    // No cookie, no account header: the link alone is enough.
+    const read = await miniflare.dispatchFetch(`${origin}/api/shares/${id}`);
+    expect(read.status).toBe(200);
+    const bytes = Buffer.from(await read.arrayBuffer());
+    expect(bytes).toEqual(body);
+    expect(read.headers.get("X-Zigba-Digest")).toBe(
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+    expect(read.headers.get("X-Zigba-Rom")).toBe(catalogHash);
+    expect(decodeURIComponent(read.headers.get("X-Zigba-Title")!)).toBe(
+      "Share Test · 1.0",
+    );
+    expect(
+      decodeURIComponent(read.headers.get("X-Zigba-Playthrough-Name")!),
+    ).toBe(name);
+    expect(read.headers.get("Cache-Control")).toBe("no-store");
+    expect(read.headers.get("Referrer-Policy")).toBe("no-referrer");
+    for (const [, value] of read.headers)
+      expect(value).not.toContain(owner["X-Zigba-Account"]);
+
+    // Shares never occupy the account's prefix or playthrough quota.
+    expect(
+      (await saves.list({ prefix: `${owner["X-Zigba-Account"]}/` })).objects,
+    ).toHaveLength(0);
+    const listing = (await (
+      await miniflare.dispatchFetch(`${origin}/api/saves`, { headers: owner })
+    ).json()) as { usage: { playthroughs: number } };
+    expect(listing.usage.playthroughs).toBe(0);
+  });
+
+  it("keeps each share separate and labels unknown ROMs by upload or hash", async () => {
+    const labelled = (await (
+      await share(owner, unknownHash, state("a"), {
+        "X-Zigba-Title": encodeURIComponent("Homebrew demo"),
+      })
+    ).json()) as Created;
+    const bare = (await (
+      await share(owner, unknownHash, state("b"))
+    ).json()) as Created;
+    expect(labelled.id).not.toBe(bare.id);
+    const first = await miniflare.dispatchFetch(
+      `${origin}/api/shares/${labelled.id}`,
+    );
+    const second = await miniflare.dispatchFetch(
+      `${origin}/api/shares/${bare.id}`,
+    );
+    expect(decodeURIComponent(first.headers.get("X-Zigba-Title")!)).toBe(
+      "Homebrew demo",
+    );
+    expect(Buffer.from(await first.arrayBuffer())).toEqual(state("a"));
+    expect(decodeURIComponent(second.headers.get("X-Zigba-Title")!)).toBe(
+      "Game 99999999",
+    );
+    expect(Buffer.from(await second.arrayBuffer())).toEqual(state("b"));
+    for (const id of ["A".repeat(21), "A".repeat(22), "..%2F..%2Fx"]) {
+      const missing = await miniflare.dispatchFetch(
+        `${origin}/api/shares/${id}`,
+      );
+      expect(missing.status).toBe(404);
+      expect(await missing.json()).toMatchObject({
+        error: { code: "share_not_found" },
+      });
+    }
+  });
+
+  it("silently caps new links per day like the upload budget", async () => {
+    const userId = owner["X-Zigba-Account"];
+    const key = `cloud-save:shares:${userId}:${24 * 60 * 60_000}`;
+    const count = async () =>
+      (
+        await database
+          .prepare("SELECT count FROM rate_limit WHERE key = ?")
+          .bind(key)
+          .first<{ count: number }>()
+      )?.count;
+    // Earlier shares in this block already opened the account's window.
+    await database
+      .prepare(
+        `INSERT INTO rate_limit (id, key, count, last_request) VALUES (?, ?, 99, ?)
+        ON CONFLICT(key) DO UPDATE SET count = 99, last_request = excluded.last_request`,
+      )
+      .bind(key, key, Date.now())
+      .run();
+    try {
+      // A rejected upload creates no link, so it costs none.
+      const invalid = await share(
+        owner,
+        catalogHash,
+        gzipSync(Buffer.from("NOTSTATE")),
+      );
+      expect(invalid.status).toBe(400);
+      expect(await count()).toBe(99);
+      expect((await share(owner, catalogHash, state("100th"))).status).toBe(
+        201,
+      );
+      expect(await count()).toBe(100);
+      const capped = await share(owner, catalogHash, state("101st"));
+      expect(capped.status).toBe(429);
+      expect(await capped.json()).toEqual({
+        error: {
+          code: "save_rate_limited",
+          message: "Cloud-save upload budget exceeded",
+        },
+      });
+    } finally {
+      await database
+        .prepare("DELETE FROM rate_limit WHERE key = ?")
+        .bind(key)
+        .run();
+    }
+  });
+
+  it("spends the account's upload budget", async () => {
+    const userId = other["X-Zigba-Account"];
+    const key = `cloud-save:requests:${userId}:${60 * 60_000}`;
+    await database
+      .prepare(
+        "INSERT INTO rate_limit (id, key, count, last_request) VALUES (?, ?, 120, ?)",
+      )
+      .bind(key, key, Date.now())
+      .run();
+    try {
+      const limited = await share(other, catalogHash, state("budget"));
+      expect(limited.status).toBe(429);
+    } finally {
+      await database
+        .prepare("DELETE FROM rate_limit WHERE key = ?")
+        .bind(key)
+        .run();
+    }
+    expect((await share(other, catalogHash, state("budget"))).status).toBe(201);
+  });
+
+  it("hides an account's shares as soon as its deletion begins", async () => {
+    const { id } = (await (
+      await share(other, unknownHash, state("deleted"))
+    ).json()) as Created;
+    expect(
+      (await miniflare.dispatchFetch(`${origin}/api/shares/${id}`)).status,
+    ).toBe(200);
+    const erased = await request(
+      "/api/account",
+      { method: "DELETE", headers: { ...other, Origin: origin } },
+      { SAVES: saves as unknown as R2Bucket },
+    );
+    expect(erased.status).toBe(202);
+    expect(
+      (await miniflare.dispatchFetch(`${origin}/api/shares/${id}`)).status,
+    ).toBe(404);
+    expect((await share(other, unknownHash, state("late"))).status).toBe(401);
+  });
+});

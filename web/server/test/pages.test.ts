@@ -17,7 +17,12 @@ function assets() {
 
 describe("player pages", () => {
   it("serve the player's index for each client-side page", async () => {
-    for (const path of ["/library", "/library/elite-redux", "/player"]) {
+    for (const path of [
+      "/library",
+      "/library/elite-redux",
+      "/player",
+      "/share/state/Ab-_0123456789abcdefghij",
+    ]) {
       const { requested, fetcher } = assets();
       const response = await app.request(
         `https://zigba.test${path}`,
@@ -34,7 +39,16 @@ describe("player pages", () => {
 
   it("leave other paths as 404s", async () => {
     const { requested, fetcher } = assets();
-    for (const path of ["/libraries", "/library/a/b", "/player/1", "/home"]) {
+    for (const path of [
+      "/libraries",
+      "/library/a/b",
+      "/player/1",
+      "/home",
+      "/share",
+      "/share/state",
+      "/share/save/abc",
+      "/share/state/a/b",
+    ]) {
       const response = await app.request(
         `https://zigba.test${path}`,
         {},

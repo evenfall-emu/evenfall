@@ -24,6 +24,15 @@ const HASH = /^[0-9a-f]{40}$/;
 const DIGEST = /^[0-9a-f]{64}$/;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// Shares stay readable until the bucket's lifecycle rule on SHARE_PREFIX
+// deletes them: at least its age, and typically less than a day longer.
+const SHARE_PREFIX = "share/";
+// Abuse prevention, not a quota: new links per account per fixed window. It
+// answers like the upload budget, so clients never present it separately.
+const SHARE_LIMIT = 100;
+const SHARE_WINDOW_MS = 24 * 60 * 60_000;
+// 128 random bits as unpadded base64url.
+const SHARE_ID = /^[A-Za-z0-9_-]{22}$/;
 
 export interface CloudSaveBindings extends AuthBindings {
   SAVES?: R2Bucket;
@@ -41,6 +50,7 @@ export function registerCloudSaveRoutes(app: Hono<Env>): void {
     }
   };
   app.use("/api/saves*", privateHeaders);
+  app.use("/api/shares*", privateHeaders);
   app.use("/api/account", privateHeaders);
 
   app.get("/api/saves", async (c) => {
@@ -80,28 +90,15 @@ export function registerCloudSaveRoutes(app: Hono<Env>): void {
         },
       ];
     });
-    // Existing backups predate discovery. Resolve their exact output identity
-    // through the catalog; unknown ROMs remain identifiable by their hash.
-    const names = saves.length
-      ? (
-          await c.env
-            .DB!.prepare(
-              `SELECT v.output_sha1 AS hash, g.display_name || ' · ' || v.display_name AS title
-           FROM versions v JOIN games g ON g.id = v.game_id
-           WHERE v.patch_url IS NOT NULL AND v.visibility != 'hidden'
-             AND v.output_sha1 IN (${saves.map(() => "?").join(",")})`,
-            )
-            .bind(...saves.map((save) => save.hash))
-            .all<{ hash: string; title: string }>()
-        ).results
-      : [];
+    const names = await catalogTitles(
+      c.env.DB!,
+      saves.map((save) => save.hash),
+    );
     return c.json({
       saves: saves.map((save) => ({
         ...save,
         title:
-          names.find((name) => name.hash === save.hash)?.title ??
-          save.title ??
-          `Game ${save.hash.slice(0, 8)}`,
+          names.get(save.hash) ?? save.title ?? `Game ${save.hash.slice(0, 8)}`,
       })),
       cursor: page.truncated ? page.cursor : null,
       usage: {
@@ -221,6 +218,141 @@ export function registerCloudSaveRoutes(app: Hono<Env>): void {
     },
   );
 
+  // A share is one uploaded state that anyone with its link can read until
+  // the lifecycle rule on SHARE_PREFIX deletes it. Shares live outside account
+  // prefixes so that one rule covers them; reads are gated on account deletion.
+  app.post("/api/shares", async (c) => {
+    const account = await saveAccount(c);
+    if (account instanceof Response) return account;
+    const { userId, baseURL } = account;
+    const rejected = uploadRejected(c, baseURL);
+    if (rejected) return rejected;
+    const hash = c.req.header("X-Zigba-Rom");
+    const expectedDigest = c.req.header("X-Zigba-Digest");
+    if (
+      !hash ||
+      !HASH.test(hash) ||
+      !expectedDigest ||
+      !DIGEST.test(expectedDigest)
+    )
+      return failure(
+        c,
+        400,
+        "invalid_metadata",
+        "ROM hash or digest is invalid",
+      );
+    const title = readLabel(c, "X-Zigba-Title", "invalid_title", "Title");
+    if (title instanceof Response) return title;
+    const playthroughName = readLabel(
+      c,
+      "X-Zigba-Playthrough-Name",
+      "invalid_playthrough_name",
+      "Playthrough name",
+    );
+    if (playthroughName instanceof Response) return playthroughName;
+    if (playthroughName === undefined)
+      return failure(
+        c,
+        400,
+        "invalid_playthrough_name",
+        "A playthrough name is required",
+      );
+
+    const upload = await receiveUpload(c, userId, expectedDigest, MAX_RESUME);
+    if (upload instanceof Response) return upload;
+    if (!startsWith(upload.decoded, STATE_MAGIC))
+      return failure(c, 400, "invalid_state", "State magic is invalid");
+    // Counted only for valid states, so rejected uploads cost no links.
+    if (
+      !(await consumeLimits(c.env.DB!, userId, SHARE_WINDOW_MS, [
+        ["shares", 1, SHARE_LIMIT],
+      ]))
+    )
+      return failure(
+        c,
+        429,
+        "save_rate_limited",
+        "Cloud-save upload budget exceeded",
+      );
+    const id = newShareId();
+    const key = shareKey(id);
+    const object = await c.env.SAVES!.put(key, upload.compressed, {
+      onlyIf: { etagDoesNotMatch: "*" },
+      httpMetadata: { contentType: "application/octet-stream" },
+      customMetadata: {
+        userId,
+        hash,
+        playthroughName,
+        digest: upload.digest,
+        ...(title ? { title } : {}),
+      },
+      sha256: upload.digest,
+    });
+    // A deletion that began during the upload must not leave a readable share.
+    if (await accountDeleting(c.env.DB!, userId)) {
+      if (object) await c.env.SAVES!.delete(key).catch(() => {});
+      return failure(
+        c,
+        503,
+        "deletion_in_progress",
+        "Account deletion is in progress",
+      );
+    }
+    if (!object)
+      return failure(c, 500, "share_failed", "The state could not be shared");
+    return c.json(
+      { id, url: `${new URL(baseURL).origin}/share/state/${id}` },
+      201,
+    );
+  });
+
+  // Public: the link is the capability. Sends no account identity.
+  app.get("/api/shares/:id", async (c) => {
+    if (!c.env.DB || !c.env.SAVES)
+      return failure(
+        c,
+        503,
+        "saves_unavailable",
+        "Cloud saves are not configured",
+      );
+    const id = c.req.param("id");
+    const object = SHARE_ID.test(id)
+      ? await c.env.SAVES.get(shareKey(id))
+      : null;
+    const metadata = object?.customMetadata;
+    if (
+      !object ||
+      !metadata?.userId ||
+      !metadata.hash ||
+      (await accountDeleting(c.env.DB, metadata.userId))
+    ) {
+      await object?.body.cancel();
+      return failure(
+        c,
+        404,
+        "share_not_found",
+        "This shared state has expired or does not exist",
+      );
+    }
+    const title =
+      (await catalogTitles(c.env.DB, [metadata.hash])).get(metadata.hash) ??
+      metadata.title ??
+      `Game ${metadata.hash.slice(0, 8)}`;
+    return new Response(object.body, {
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/octet-stream",
+        "Referrer-Policy": "no-referrer",
+        "X-Zigba-Rom": metadata.hash,
+        "X-Zigba-Title": encodeURIComponent(title),
+        "X-Zigba-Playthrough-Name": encodeURIComponent(
+          metadata.playthroughName ?? "Playthrough",
+        ),
+        "X-Zigba-Digest": metadata.digest ?? "",
+      },
+    });
+  });
+
   app.delete("/api/account", async (c) => {
     const account = await saveAccount(c, true);
     if (account instanceof Response) return account;
@@ -285,14 +417,7 @@ async function saveAccount(c: Context<Env>, allowDeleting = false) {
       "account_mismatch",
       "Account does not match the session",
     );
-  if (
-    !allowDeleting &&
-    (await c.env.DB.prepare(
-      "SELECT user_id FROM account_deletions WHERE user_id = ?",
-    )
-      .bind(session.user.id)
-      .first())
-  )
+  if (!allowDeleting && (await accountDeleting(c.env.DB, session.user.id)))
     return failure(
       c,
       503,
@@ -302,28 +427,58 @@ async function saveAccount(c: Context<Env>, allowDeleting = false) {
   return { userId: session.user.id, baseURL: auth.options.baseURL };
 }
 
-async function readSave(c: Context<Env>, key: string) {
-  const object =
-    c.req.method === "HEAD"
-      ? await c.env.SAVES!.head(key)
-      : await c.env.SAVES!.get(key);
-  if (!object) return failure(c, 404, "save_not_found", "Cloud save not found");
-  const headers = saveHeaders(object);
-  return c.req.method === "HEAD"
-    ? new Response(null, { status: 200, headers })
-    : new Response((object as R2ObjectBody).body, { status: 200, headers });
+/** The account's deletion tombstone closes admissions and hides its shares. */
+async function accountDeleting(
+  db: D1Database,
+  userId: string,
+): Promise<boolean> {
+  return Boolean(
+    await db
+      .prepare("SELECT user_id FROM account_deletions WHERE user_id = ?")
+      .bind(userId)
+      .first(),
+  );
 }
 
-async function putSave(
+/**
+ * Names exact catalog outputs of public releases (hosted patch, not hidden),
+ * so uploads that predate or ignore the catalog show its title. Other ROMs are
+ * absent and keep their uploaded label.
+ */
+async function catalogTitles(
+  db: D1Database,
+  hashes: string[],
+): Promise<Map<string, string>> {
+  if (!hashes.length) return new Map();
+  const { results } = await db
+    .prepare(
+      `SELECT v.output_sha1 AS hash, g.display_name || ' · ' || v.display_name AS title
+       FROM versions v JOIN games g ON g.id = v.game_id
+       WHERE v.patch_url IS NOT NULL AND v.visibility != 'hidden'
+         AND v.output_sha1 IN (${hashes.map(() => "?").join(",")})`,
+    )
+    .bind(...hashes)
+    .all<{ hash: string; title: string }>();
+  return new Map(results.map((row) => [row.hash, row.title]));
+}
+
+function shareKey(id: string): string {
+  return `${SHARE_PREFIX}state/${id}`;
+}
+
+function newShareId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+/** Every upload is a same-origin, raw `application/octet-stream` gzip body. */
+function uploadRejected(
   c: Context<Env>,
   baseURL: string,
-  key: string,
-  kind: SaveKind,
-  userId: string,
-  hash: string,
-  playthroughId: string,
-  quick?: { slot: number },
-) {
+): Response | undefined {
   if (c.req.header("Origin") !== new URL(baseURL).origin)
     return failure(
       c,
@@ -342,102 +497,57 @@ async function putSave(
       "invalid_content_type",
       "A raw application/octet-stream gzip body is required",
     );
+}
 
-  const revision = c.req.header("X-Zigba-Revision");
-  const capturedAt = c.req.header("X-Zigba-Captured-At");
-  const expectedDigest = c.req.header("X-Zigba-Digest");
-  if (
-    !revision ||
-    !UUID.test(revision) ||
-    !capturedAt ||
-    !/^(0|[1-9][0-9]*)$/.test(capturedAt) ||
-    !Number.isSafeInteger(Number(capturedAt)) ||
-    !expectedDigest ||
-    !DIGEST.test(expectedDigest)
-  )
-    return failure(
-      c,
-      400,
-      "invalid_metadata",
-      "Revision, captured timestamp, or digest is invalid",
-    );
-
-  let title: string | undefined;
-  const encodedTitle = c.req.header("X-Zigba-Title");
-  if (encodedTitle !== undefined) {
-    try {
-      title = decodeURIComponent(encodedTitle);
-      if (
-        !title.trim() ||
-        [...title].length > 160 ||
-        /[\u0000-\u001f\u007f]/.test(title)
-      )
-        throw new Error("Invalid title");
-    } catch {
-      return failure(
-        c,
-        400,
-        "invalid_title",
-        "Title must be URI-encoded text of at most 160 characters",
-      );
-    }
-  }
-
-  let playthroughName: string | undefined;
-  const encodedName = c.req.header("X-Zigba-Playthrough-Name");
-  if (encodedName !== undefined) {
-    try {
-      playthroughName = decodeURIComponent(encodedName);
-      if (
-        !playthroughName.trim() ||
-        [...playthroughName].length > 160 ||
-        /[\u0000-\u001f\u007f]/.test(playthroughName)
-      )
-        throw new Error("Invalid name");
-    } catch {
-      return failure(
-        c,
-        400,
-        "invalid_playthrough_name",
-        "Playthrough name must be URI-encoded text of at most 160 characters",
-      );
-    }
-  }
-
-  const ifNoneMatch = c.req.header("If-None-Match");
-  const ifMatch = c.req.header("If-Match");
-  if (
-    !(
-      (ifNoneMatch === "*" && ifMatch === undefined) ||
-      (ifMatch !== undefined &&
-        /^"[^"\s]+"$/.test(ifMatch) &&
-        ifNoneMatch === undefined)
+/**
+ * An optional `encodeURIComponent` header of at most 160 code points of
+ * non-blank text without control characters.
+ */
+function readLabel(
+  c: Context<Env>,
+  header: string,
+  code: string,
+  noun: string,
+): string | undefined | Response {
+  const encoded = c.req.header(header);
+  if (encoded === undefined) return undefined;
+  try {
+    const value = decodeURIComponent(encoded);
+    if (
+      value.trim() &&
+      [...value].length <= 160 &&
+      !/[\u0000-\u001f\u007f]/.test(value)
     )
-  )
-    return failure(
-      c,
-      400,
-      "invalid_precondition",
-      'Use exactly If-None-Match: * or If-Match: "etag"',
-    );
-
-  // Checked before the upload budget: a slot the account cannot use should
-  // not consume requests while a client backs off.
-  if (quick) {
-    const limit = await quickSlotLimit(c.env, userId);
-    if (quick.slot > limit)
-      return c.json(
-        {
-          error: {
-            code: "quick_slot_limit",
-            message: `This account allows ${limit} cloud quick slots per playthrough`,
-            limit,
-          },
-        },
-        409,
-      );
+      return value;
+  } catch {
+    // Malformed escapes fail like any other invalid label.
   }
+  return failure(
+    c,
+    400,
+    code,
+    `${noun} must be URI-encoded text of at most 160 characters`,
+  );
+}
 
+/**
+ * Spends the account's upload budget on one request and then on the body's
+ * compressed bytes, checks the body's SHA-256 and decodes at most
+ * `decodedLimit` bytes. Rejected bodies have still consumed budget.
+ */
+async function receiveUpload(
+  c: Context<Env>,
+  userId: string,
+  expectedDigest: string,
+  decodedLimit: number,
+): Promise<
+  | {
+      compressed: Uint8Array<ArrayBuffer>;
+      decoded: Uint8Array<ArrayBuffer>;
+      digest: string;
+    }
+  | Response
+> {
   if (!(await consumeBudget(c.env.DB!, userId, 1, 0)))
     return failure(
       c,
@@ -473,15 +583,12 @@ async function putSave(
       "Compressed save digest does not match",
     );
 
-  let decoded: Uint8Array<ArrayBuffer>;
   try {
     const stream = new Blob([compressed.buffer])
       .stream()
       .pipeThrough(new DecompressionStream("gzip"));
-    decoded = await readBounded(
-      stream,
-      kind === "battery" ? MAX_BATTERY : MAX_RESUME,
-    );
+    const decoded = await readBounded(stream, decodedLimit);
+    return { compressed, decoded, digest };
   } catch (error) {
     const oversized = error instanceof RangeError;
     return failure(
@@ -491,6 +598,106 @@ async function putSave(
       oversized ? "Decoded save is too large" : "Save body is not valid gzip",
     );
   }
+}
+
+async function readSave(c: Context<Env>, key: string) {
+  const object =
+    c.req.method === "HEAD"
+      ? await c.env.SAVES!.head(key)
+      : await c.env.SAVES!.get(key);
+  if (!object) return failure(c, 404, "save_not_found", "Cloud save not found");
+  const headers = saveHeaders(object);
+  return c.req.method === "HEAD"
+    ? new Response(null, { status: 200, headers })
+    : new Response((object as R2ObjectBody).body, { status: 200, headers });
+}
+
+async function putSave(
+  c: Context<Env>,
+  baseURL: string,
+  key: string,
+  kind: SaveKind,
+  userId: string,
+  hash: string,
+  playthroughId: string,
+  quick?: { slot: number },
+) {
+  const rejected = uploadRejected(c, baseURL);
+  if (rejected) return rejected;
+
+  const revision = c.req.header("X-Zigba-Revision");
+  const capturedAt = c.req.header("X-Zigba-Captured-At");
+  const expectedDigest = c.req.header("X-Zigba-Digest");
+  if (
+    !revision ||
+    !UUID.test(revision) ||
+    !capturedAt ||
+    !/^(0|[1-9][0-9]*)$/.test(capturedAt) ||
+    !Number.isSafeInteger(Number(capturedAt)) ||
+    !expectedDigest ||
+    !DIGEST.test(expectedDigest)
+  )
+    return failure(
+      c,
+      400,
+      "invalid_metadata",
+      "Revision, captured timestamp, or digest is invalid",
+    );
+
+  const titleLabel = readLabel(c, "X-Zigba-Title", "invalid_title", "Title");
+  if (titleLabel instanceof Response) return titleLabel;
+  const nameLabel = readLabel(
+    c,
+    "X-Zigba-Playthrough-Name",
+    "invalid_playthrough_name",
+    "Playthrough name",
+  );
+  if (nameLabel instanceof Response) return nameLabel;
+  let title: string | undefined = titleLabel;
+  let playthroughName: string | undefined = nameLabel;
+
+  const ifNoneMatch = c.req.header("If-None-Match");
+  const ifMatch = c.req.header("If-Match");
+  if (
+    !(
+      (ifNoneMatch === "*" && ifMatch === undefined) ||
+      (ifMatch !== undefined &&
+        /^"[^"\s]+"$/.test(ifMatch) &&
+        ifNoneMatch === undefined)
+    )
+  )
+    return failure(
+      c,
+      400,
+      "invalid_precondition",
+      'Use exactly If-None-Match: * or If-Match: "etag"',
+    );
+
+  // Checked before the upload budget: a slot the account cannot use should
+  // not consume requests while a client backs off.
+  if (quick) {
+    const limit = await quickSlotLimit(c.env, userId);
+    if (quick.slot > limit)
+      return c.json(
+        {
+          error: {
+            code: "quick_slot_limit",
+            message: `This account allows ${limit} cloud quick slots per playthrough`,
+            limit,
+          },
+        },
+        409,
+      );
+  }
+
+  const upload = await receiveUpload(
+    c,
+    userId,
+    expectedDigest,
+    kind === "battery" ? MAX_BATTERY : MAX_RESUME,
+  );
+  if (upload instanceof Response) return upload;
+  const { compressed, decoded, digest } = upload;
   if (kind === "resume" && !startsWith(decoded, STATE_MAGIC))
     return failure(c, 400, "invalid_resume", "Resume state magic is invalid");
   if (kind === "quick" && !startsWith(decoded, STATE_MAGIC))
@@ -532,12 +739,7 @@ async function putSave(
         PLAYTHROUGH_LIMIT,
       )
       .first();
-    if (
-      await db
-        .prepare("SELECT user_id FROM account_deletions WHERE user_id = ?")
-        .bind(userId)
-        .first()
-    )
+    if (await accountDeleting(db, userId))
       return failure(
         c,
         503,
@@ -592,12 +794,7 @@ async function putSave(
       },
       sha256: await crypto.subtle.digest("SHA-256", compressed),
     });
-    if (
-      await db
-        .prepare("SELECT user_id FROM account_deletions WHERE user_id = ?")
-        .bind(userId)
-        .first()
-    ) {
+    if (await accountDeleting(db, userId)) {
       if (object) await c.env.SAVES!.delete(key).catch(() => {});
       return failure(
         c,
@@ -760,13 +957,25 @@ async function consumeBudget(
   requests: number,
   bytes: number,
 ): Promise<boolean> {
-  const now = Date.now();
-  const window = 60 * 60_000;
-  const cutoff = now - window;
-  const limits = [
+  return consumeLimits(db, userId, 60 * 60_000, [
     ["requests", requests, 120],
     ["bytes", bytes, 20 * 1024 * 1024],
-  ] as const;
+  ]);
+}
+
+/**
+ * Atomically adds each positive amount to the account's fixed-window counter
+ * of that name unless it would pass the maximum. The `cloud-save:` keys hold
+ * the user ID, so account deletion removes them.
+ */
+async function consumeLimits(
+  db: D1Database,
+  userId: string,
+  window: number,
+  limits: readonly (readonly [name: string, amount: number, max: number])[],
+): Promise<boolean> {
+  const now = Date.now();
+  const cutoff = now - window;
   const results = await db.batch(
     limits
       .filter(([, amount]) => amount > 0)

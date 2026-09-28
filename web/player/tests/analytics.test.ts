@@ -132,3 +132,56 @@ it("allows only cookieless pageviews without session replay or autocapture", asy
     analyticsConfig.before_send({ ...event, event: "$exception" }),
   ).toBeNull();
 });
+
+it("sends share events without any page, link, game or account", async () => {
+  stubLocation();
+  vi.stubGlobal("location", {
+    ...location,
+    pathname: "/share/state/SECRET-link-id",
+  });
+  const { analyticsConfig } = await import("../src/analytics");
+  const properties = {
+    token: "public-token",
+    distinct_id: "$posthog_cookieless",
+    $cookieless_mode: true,
+    $process_person_profile: false,
+    $session_id: "session",
+    $window_id: "window",
+    $host: "play.evenfall-emu.org",
+    $raw_user_agent: "Test browser UA",
+  };
+  for (const name of ["state_share_created", "state_share_opened"]) {
+    const sent = analyticsConfig.before_send({
+      uuid: "share-event",
+      event: name,
+      properties: {
+        ...properties,
+        $current_url:
+          "https://play.evenfall-emu.org/share/state/SECRET-link-id",
+        $pathname: "/share/state/SECRET-link-id",
+        $referrer: "https://example.com/SECRET-link-id",
+        view: "home",
+        game: "private ROM title",
+      },
+    });
+    expect(sent).toEqual({ uuid: "share-event", event: name, properties });
+    expect(JSON.stringify(sent)).not.toContain("SECRET");
+  }
+  expect(
+    analyticsConfig.before_send({
+      uuid: "other",
+      event: "state_share_failed",
+      properties,
+    }),
+  ).toBeNull();
+
+  vi.resetModules();
+  const enabled = await loadAnalytics({
+    VITE_POSTHOG_KEY: "public-token",
+    VITE_POSTHOG_HOST: "https://eu.i.posthog.com",
+  });
+  enabled.trackShare("state_share_opened");
+  expect(enabled.posthog.capture).toHaveBeenLastCalledWith(
+    "state_share_opened",
+  );
+});

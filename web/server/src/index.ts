@@ -234,7 +234,12 @@ app.delete("/api/admin/bases/:id", async (c) => {
 
 // The player's pages are client-side routes that all load its index.html;
 // wrangler.jsonc sends them to the Worker first. Other paths stay 404s.
-for (const path of ["/library", "/library/:gameId", "/player"])
+for (const path of [
+  "/library",
+  "/library/:gameId",
+  "/player",
+  "/share/state/:shareId",
+])
   app.get(path, (c) =>
     c.env.ASSETS ? c.env.ASSETS.fetch(new URL("/", c.req.url)) : c.notFound(),
   );

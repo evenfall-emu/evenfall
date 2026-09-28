@@ -24,7 +24,7 @@ for entry in args.fixture:
 
 
 # The player's client-side pages, which all load its index.html.
-PAGE = re.compile(r'/(library(/[^/]+)?|player)')
+PAGE = re.compile(r'/(library(/[^/]+)?|player|share/state/[^/]+)')
 
 
 class Handler(SimpleHTTPRequestHandler):

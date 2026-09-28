@@ -47,6 +47,65 @@ export type CloudStatus = CloudIdentity & {
 type CloudSession = { user: { id: string } } | null;
 type RemoteSave = { accountId: string; data: Uint8Array; etag: string };
 const STATE_MAGIC = new TextEncoder().encode("ZIGBAST1");
+const MAX_STATE = 2 * 1024 * 1024;
+
+/** A downloaded, verified shared state and what it was shared as. */
+export type SharedState = {
+  hash: string;
+  title: string;
+  playthroughName: string;
+  data: Uint8Array;
+};
+
+/**
+ * Downloads a shared state by its link ID. Needs no account: the link is the
+ * capability. The body is checked against its digest and the state magic.
+ */
+export async function fetchSharedState(id: string): Promise<SharedState> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/shares/${encodeURIComponent(id)}`, {
+      credentials: "omit",
+      cache: "no-store",
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch {
+    throw new Error("Could not reach the server. Check your connection.");
+  }
+  if (response.status === 404)
+    throw new Error("This share link has expired or does not exist.");
+  if (!response.ok)
+    throw new Error("The shared state is unavailable. Try again later.");
+  const bytes = await readBounded(response.body, MAX_STATE);
+  if ((await sha256(bytes)) !== response.headers.get("X-Zigba-Digest"))
+    throw new Error("The shared state failed its integrity check.");
+  const data = await readBounded(
+    new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip")),
+    MAX_STATE,
+  );
+  const hash = response.headers.get("X-Zigba-Rom") ?? "";
+  if (
+    !STATE_MAGIC.every((byte, index) => data[index] === byte) ||
+    !/^[0-9a-f]{40}$/.test(hash)
+  )
+    throw new Error("This link does not hold a ZiGBA state.");
+  const label = (header: string, fallback: string) => {
+    try {
+      return (
+        privateLabel(decodeURIComponent(response.headers.get(header) ?? "")) ||
+        fallback
+      );
+    } catch {
+      return fallback;
+    }
+  };
+  return {
+    hash,
+    title: label("X-Zigba-Title", `Game ${hash.slice(0, 8)}`),
+    playthroughName: label("X-Zigba-Playthrough-Name", "Shared playthrough"),
+    data,
+  };
+}
 
 export type QuickPlan =
   | { type: "none" }
@@ -296,6 +355,58 @@ export class CloudSync {
         etag,
       } satisfies CloudResume,
     };
+  }
+  /**
+   * Uploads one state and returns its share link. Needs a signed-in account
+   * but not cloud backups: sharing is an explicit, one-off upload.
+   */
+  async share(state: {
+    hash: string;
+    title: string;
+    playthroughName: string;
+    data: Uint8Array;
+  }): Promise<string> {
+    await this.refreshIdentity();
+    const accountId = this.identity.accountId;
+    if (!accountId) throw new Error("Sign in to share a state.");
+    const bytes = await gzip(state.data);
+    const title = privateLabel(state.title);
+    let response: Response;
+    try {
+      response = await fetch("/api/shares", {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "X-Zigba-Account": accountId,
+          "X-Zigba-Rom": state.hash,
+          "X-Zigba-Digest": await sha256(bytes),
+          "X-Zigba-Playthrough-Name": encodeURIComponent(
+            privateLabel(state.playthroughName) || "Playthrough",
+          ),
+          ...(title ? { "X-Zigba-Title": encodeURIComponent(title) } : {}),
+        },
+        body: bytes,
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch {
+      throw new Error("Could not reach the server. Check your connection.");
+    }
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403)
+        await this.refreshIdentity().catch(() => {});
+      throw new Error(
+        response.status === 429
+          ? "Upload limit reached. Try sharing again later."
+          : response.status === 401 || response.status === 403
+            ? "Sign in again to share this state."
+            : "The state could not be shared. Try again.",
+      );
+    }
+    const { url } = (await response.json()) as { url?: string };
+    if (!url) throw new Error("The server returned an invalid share link.");
+    return url;
   }
   private async refreshIdentity() {
     const epoch = this.identityEpoch;

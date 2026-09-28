@@ -31,7 +31,7 @@ const CACHE = ${JSON.stringify(cache)};
 const FILES = ${JSON.stringify(files)};
 const urls = new Set(FILES.map(file => new URL(file, self.registration.scope).href));
 // The player's pages, relative to the scope; each one is index.html.
-const PAGE = /^(library(\\/[^/]+)?|player)?$/;
+const PAGE = /^(library(\\/[^/]+)?|player|share\\/state\\/[^/]+)?$/;
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll([...urls])));
 });

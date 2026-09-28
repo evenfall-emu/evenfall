@@ -11,10 +11,11 @@ privacy notice. This notice does not describe those instances.
 ## Summary
 
 - You can play without an account. Games, saves and progress stay in your
-  browser unless you sign in and keep cloud backups enabled.
+  browser unless you sign in and keep cloud backups enabled, or share a
+  state.
 - ZiGBA never uploads ROM files or BIOS images.
-- Page-view analytics are cookieless and contain no account, game or gameplay
-  information.
+- Analytics (page views and share counts) are cookieless and contain no
+  account, game or gameplay information.
 - An optional account stores your email address (and, with Discord sign-in,
   your Discord identity) plus your cloud backups.
 - Deleting your account removes the account immediately and cloud backups
@@ -40,14 +41,19 @@ you want to keep first. Deleting your account does not touch it.
 
 ## Analytics
 
-Production pages served from play.evenfall-emu.org send page views to PostHog's EU
-cloud (`eu.i.posthog.com`). ZiGBA configures PostHog as follows:
+Production pages served from play.evenfall-emu.org send page views and share
+events to PostHog's EU cloud (`eu.i.posthog.com`). ZiGBA configures PostHog as
+follows:
 
-- Only a page-view event is sent when you open Home, Player or Library, with
+- A page-view event is sent when you open Home, Player or Library, with
   the view name, the page URL without its query string or fragment, the
   hostname, your browser's user-agent string and PostHog's in-memory session
   and window identifiers. Referrers and all other event properties are removed
   before sending.
+- A share event is sent when you create a [share link](#shared-states) and
+  when a shared state starts in your browser. It carries only the event's
+  name, the hostname, your browser's user-agent string and the session and
+  window identifiers: no page URL, link, game or account.
 - PostHog runs in cookieless mode with person profiles disabled: it sets no
   cookie and stores no persistent identifier in your browser. PostHog receives
   your IP address with each request, as any web server does, and uses it with
@@ -55,6 +61,8 @@ cloud (`eu.i.posthog.com`). ZiGBA configures PostHog as follows:
 - Autocapture, session recording and feature flags are disabled, and any
   other event is dropped before sending. ROMs, game titles, gameplay and
   account information are never sent.
+- Pages opened from a share link send no page view, so a link never reaches
+  PostHog.
 - Local development and builds served from any other hostname send nothing.
 
 Retention of analytics events follows the PostHog project's settings.
@@ -109,6 +117,32 @@ Backups are kept until they are replaced or your account is deleted. Deleting
 a playthrough on your device does not delete its cloud backup, and there is
 currently no in-app control for deleting a single cloud backup.
 
+## Shared states
+
+When you are signed in, **Share state** in the player uploads the current save
+state of the game you are playing: a compressed emulator snapshot, which
+includes the in-game save. It is sent with the playthrough name, the game's
+title label and the ROM's SHA-1 hash, and stored in the same EU-jurisdiction
+R2 bucket, outside your account's folder, with your account ID in private
+metadata. You get a link that is the only way to reach it.
+
+For at least 24 hours, anyone with the link can download the snapshot
+without signing in, together with the playthrough name, the game title (the catalog's name for
+known releases, otherwise your label) and the ROM hash. They do not see your
+account ID or email. A snapshot contains the game's memory, which can include
+names or other text you entered in the game, so share links only with people
+you intend to see it.
+
+A storage rule deletes the snapshot once it is 24 hours old, typically
+within a day after that, and the link stops working then. Links cannot
+currently be revoked early except by deleting your account. Shares count toward your account's upload
+limits.
+
+Opening a share link needs no account, and the shared state is downloaded
+without your cookies. It is saved in your browser as a new playthrough, like
+any other local progress; if you are signed in with cloud backups enabled,
+that playthrough is then backed up like your others.
+
 ## Deleting your account
 
 **Account > Delete my account** (one confirmation) does the following:
@@ -119,6 +153,9 @@ currently no in-app control for deleting a single cloud backup.
    pending sign-in links, the playthrough registry, account limits and the
    account- and email-keyed abuse counters.
 3. Deletes every cloud object stored under the account.
+
+Shared-state links stop working as soon as step 1 is recorded, and their
+snapshots are deleted by the storage rule described above.
 
 Step 3 is attempted immediately and repeated by a scheduled job: every five
 minutes during the first hour, then daily. The repeats remove any upload that

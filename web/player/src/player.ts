@@ -21,6 +21,7 @@ import {
   type CloudResume,
   type CloudStatus,
   type QuickConflict,
+  type SharedState,
 } from "./cloud";
 import { acquireSaveLock } from "./storage.js";
 import { type Emulator, type Snapshot, type LoadOptions } from "@evenfall/gba";
@@ -416,22 +417,13 @@ export class Player {
             sampleRate: await this.audio.ready(),
             zipped: Boolean(file && /\.zip$/i.test(file.name)),
           };
-          // ZIP extraction and state validation happen in an isolated Worker.
-          // Wrong media or an incompatible checkpoint cannot replace this
-          // player's machine or any stored progress with a boot fallback.
-          const candidate = await makeEmulator();
-          let validatedRom = rom;
-          try {
-            const cpu = await candidate.load(rom, options);
-            if (cpu.romHash !== hash)
-              throw new Error(
-                "That ROM does not match this backup. Choose the exact same game version.",
-              );
-            await candidate.loadState(remote.data);
-            if (options.zipped) validatedRom = await candidate.exportRom();
-          } finally {
-            candidate.terminate();
-          }
+          const validatedRom = await this.validatedState(
+            rom,
+            options,
+            hash,
+            remote.data,
+            "That ROM does not match this backup. Choose the exact same game version.",
+          );
           if (
             (await this.library.cloudIdentity()).accountId !== remote.accountId
           )
@@ -486,6 +478,130 @@ export class Player {
           await this.play(true);
         }
       });
+    } catch (error) {
+      if (replacing) {
+        this.resumeBlockedRef = ref;
+        this.update({ resumeFailed: true, playing: false });
+      }
+      throw error;
+    } finally {
+      this.update({ changing: false });
+    }
+  }
+  /**
+   * Loads `rom` and then `state` in an isolated Worker, so wrong media or an
+   * incompatible state never replaces this player's machine or stored
+   * progress. Returns the raw ROM, extracted when `options.zipped`.
+   */
+  private async validatedState(
+    rom: Uint8Array,
+    options: LoadOptions,
+    hash: string,
+    state: Uint8Array,
+    mismatch: string,
+  ): Promise<Uint8Array> {
+    const candidate = await makeEmulator();
+    try {
+      const cpu = await candidate.load(rom, options);
+      if (cpu.romHash !== hash) throw new Error(mismatch);
+      await candidate.loadState(state);
+      return options.zipped ? await candidate.exportRom() : rom;
+    } finally {
+      candidate.terminate();
+    }
+  }
+  /** Captures the current machine as a share link; see CloudSync.share. */
+  async shareState() {
+    const game = this.state.game;
+    const playthrough = this.state.playthrough;
+    if (!game || !playthrough || this.state.changing)
+      throw new Error("Open a game to share its state.");
+    if (this.state.resumeFailed)
+      throw new Error("Resolve the local resume failure before sharing.");
+    await this.pause();
+    return this.cloud.share({
+      hash: game.hash,
+      title: game.title,
+      playthroughName: playthrough.name,
+      data: await this.emulator.saveState(),
+    });
+  }
+  /**
+   * Starts a shared state as a new local playthrough called `name`, using the
+   * stored ROM or `file`. Nothing existing is replaced: the run gets a fresh
+   * ID, and the ROM and state are validated before the player changes.
+   */
+  async openSharedState(shared: SharedState, name: string, file?: File) {
+    if (!this.state.ready) throw new Error("Player is still starting.");
+    if (this.state.changing) return;
+    this.update({ changing: true });
+    const ref = { hash: shared.hash, playthroughId: crypto.randomUUID() };
+    let replacing = false;
+    try {
+      await this.pause(true);
+      if (this.persistenceError && this.releaseLock && !this.state.resumeFailed)
+        throw new Error(
+          "Local progress could not be saved. Export it before switching.",
+        );
+      if (file && file.size > 40 * 1024 * 1024)
+        throw new Error("ROM exceeds 40 MiB");
+      let game = (await this.library.list()).find(
+        (item) => item.hash === shared.hash,
+      );
+      const rom = file
+        ? new Uint8Array(await file.arrayBuffer())
+        : game && (await this.library.rom(shared.hash));
+      if (!rom) throw new Error(`Choose the ROM for ${shared.title}.`);
+      const options = {
+        ...this.options,
+        sampleRate: await this.audio.ready(),
+        zipped: Boolean(file && /\.zip$/i.test(file.name)),
+      };
+      const validatedRom = await this.validatedState(
+        rom,
+        options,
+        shared.hash,
+        shared.data,
+        "That ROM does not match this shared state. Choose the exact same game version.",
+      );
+      game ??= await this.library.addRom({
+        hash: shared.hash,
+        title: shared.title,
+        rom: validatedRom,
+        lastPlayed: Date.now(),
+      });
+      await this.library.createPlaythrough(
+        shared.hash,
+        name,
+        ref.playthroughId,
+      );
+      replacing = true;
+      this.resumeBlockedRef = ref;
+      await this.openInternal(
+        game,
+        undefined,
+        { ...options, zipped: false },
+        ref,
+        false,
+        true,
+      );
+      if (!this.releaseLock)
+        throw new Error(
+          "This browser could not lock the new playthrough, so it cannot be stored.",
+        );
+      this.latest = await this.emulator.loadState(shared.data);
+      this.lastInputAt = 0;
+      this.lastResumeCycle = undefined;
+      this.resumeBlockedRef = undefined;
+      this.update({ resumeFailed: false });
+      await this.persist(true);
+      if (this.persistenceError)
+        throw new Error(
+          "The shared state is loaded, but local persistence failed. Export it before closing.",
+        );
+      this.update({ message: "Shared state started as a new playthrough." });
+      await this.emulator.setRewindConfig();
+      await this.play(true);
     } catch (error) {
       if (replacing) {
         this.resumeBlockedRef = ref;

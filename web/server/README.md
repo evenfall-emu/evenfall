@@ -17,7 +17,8 @@ rights.
 The Worker uses [Hono](https://hono.dev/), Drizzle's Cloudflare D1 adapter,
 [Better Auth](https://www.better-auth.com/) 1.7.5 and an R2 bucket. One
 Worker serves the whole site: `/api/*` and the player's page URLs
-(`/library`, `/library/<game ID>`, `/player`) run through this package
+(`/library`, `/library/<game ID>`, `/player`, `/share/state/<ID>`) run
+through this package
 first, the pages answering with the player's `index.html`, and every other
 path is served from the player's Static Assets in `.dist/cloudflare` (see
 [`frontend/README.md`](../frontend/README.md#pages-and-navigation)).
@@ -27,7 +28,7 @@ path is served from the player's Static Assets in `.dist/cloudflare` (see
 | [`src/index.ts`](src/index.ts) | Worker entry, catalog routes, management guard, auth mounting |
 | [`src/catalog.ts`](src/catalog.ts), [`src/schema.ts`](src/schema.ts), [`src/seed.ts`](src/seed.ts) | Catalog queries, Drizzle schema, seed data |
 | [`src/auth.ts`](src/auth.ts), [`src/auth-schema.ts`](src/auth-schema.ts) | Better Auth configuration and generated tables |
-| [`src/cloud-saves.ts`](src/cloud-saves.ts) | Cloud progress, quick slots, account deletion and the cleanup cron |
+| [`src/cloud-saves.ts`](src/cloud-saves.ts) | Cloud progress, quick slots, state shares, account deletion and the cleanup cron |
 | [`migrations/`](migrations/) | Generated D1 migrations |
 | [`wrangler.jsonc`](wrangler.jsonc) | Local-development Wrangler configuration |
 
@@ -254,9 +255,55 @@ readable and listed, but they cannot be replaced.
   the format but does not validate the whole state or its content.
 - Battery saves must have a supported save size (512 B, 8, 32, 64 or
   128 KiB).
-- Each account may make 120 `PUT` attempts and upload 20 MiB of compressed
-  bodies per hour, counting retries and quick slots. The windows are fixed,
-  start with the first request, and are consumed by rejected work too.
+- Each account may make 120 upload attempts and upload 20 MiB of compressed
+  bodies per hour, counting retries, quick slots and
+  [state shares](#state-shares). The windows are fixed, start with the first
+  request, and are consumed by rejected work too.
+
+### State shares
+
+A signed-in account can publish one save state as a link that anyone can
+open, without an account, for 24 hours. The player's side is described in
+[`frontend/README.md`](../frontend/README.md#sharing-a-state).
+
+`POST /api/shares` requires the session, a matching `X-Zigba-Account`, the
+exact configured `Origin` and a gzip state body, exactly as a `resume`
+upload does, plus:
+
+| Header | Meaning |
+|---|---|
+| `X-Zigba-Rom` | Raw playable ROM SHA-1 |
+| `X-Zigba-Digest` | SHA-256 of the compressed body |
+| `X-Zigba-Playthrough-Name` | Required playthrough name, encoded like a save's |
+| `X-Zigba-Title` | Optional game label, encoded like a save's |
+
+It returns `201 {id, url}`. `id` is 128 random bits as 22
+base64url characters and `url` is `<configured origin>/share/state/<id>`.
+Every request creates a new share, even for the same bytes. Shares consume
+the account's [upload budget](#limits) but no playthrough quota.
+
+`GET /api/shares/:id` is public and `no-store`. It returns the compressed
+body with `X-Zigba-Rom`, `X-Zigba-Digest` and URI-encoded `X-Zigba-Title`
+and `X-Zigba-Playthrough-Name`. The title is
+resolved like a listing's: the catalog's name for an exact release first,
+then the uploaded label, then a hash prefix. The response never identifies
+the account. Unknown, malformed and deleted IDs, and shares whose account is
+being deleted, all return `404 share_not_found`.
+
+Shares are stored at `share/state/<id>` in the `SAVES` bucket, outside every
+account prefix, with the owner's ID in private object metadata. The Worker
+never checks a share's age: an R2 lifecycle rule on the `share/` prefix
+deletes it (see [self-hosting](#self-hosting)). R2 applies such rules lazily,
+typically within a day after the age limit, so a 1-day rule keeps a link
+working for at least 24 hours, the lifetime the player promises, and usually
+less than 48.
+
+To prevent abuse, an account can create at most 100 shares per fixed 24-hour
+window (`SHARE_LIMIT` in [`src/cloud-saves.ts`](src/cloud-saves.ts)), counted
+only for valid states. Past it, `POST` answers exactly like the exhausted
+upload budget, `429 save_rate_limited`, so the player shows no separate
+limit. It bounds new links rather than live ones; with the lifecycle rule's
+lag, an account holds at most a few hundred.
 
 ### Account deletion
 
@@ -274,6 +321,10 @@ readable and listed, but they cannot be replaced.
    tombstone keeps the account gated.
 3. An immediate best-effort sweep deletes every R2 key under the account
    prefix, across pages, including quick slots and any other layout.
+
+[State shares](#state-shares) are outside the account prefix. The tombstone
+hides them from step 1 onwards, and the `share/` lifecycle rule deletes them
+within about two days of their upload.
 
 The five-minute cron trigger repairs a crash between steps 1 and 2 and
 retries R2 failures. It sweeps each tombstone every five minutes for the
@@ -357,7 +408,7 @@ cover catalog reads and writes, idempotent seeding, validation, missing
 bindings, auth configuration, cookies, concurrent single-use verification,
 expiry, sign-out, origin and redirect rejection, concurrent limits and window
 boundaries, email failures, Discord linking and OAuth state, cloud saves,
-quotas and account erasure. Only the external services are mocked: no real
+quotas, state shares and account erasure. Only the external services are mocked: no real
 mail is sent and Discord is never contacted. Tests write no database or
 credentials into the checkout.
 
@@ -468,7 +519,7 @@ build environment before the first deploy:
 | Discord client ID | `vars.DISCORD_CLIENT_ID` | Your Discord application; register `https://<your domain>/api/auth/callback/discord`. |
 | Email sender | `vars.EMAIL_FROM`, `send_email[].allowed_sender_addresses` | An address on a domain onboarded to Cloudflare Email Sending. Remove both to disable email sign-in. |
 | D1 database | `d1_databases[].database_name`, `database_id` | Create with `wrangler d1 create <name>`; update the name in the `db:migrate:remote` script if it differs. |
-| R2 bucket | `r2_buckets[].bucket_name` | Create with `wrangler r2 bucket create <name> --jurisdiction eu`; keep public access off. |
+| R2 bucket | `r2_buckets[].bucket_name` | Create with `wrangler r2 bucket create <name> --jurisdiction eu`; keep public access off. Add the share lifecycle rule below. |
 | Analytics | `VITE_POSTHOG_KEY`, `VITE_POSTHOG_HOST`, `VITE_POSTHOG_HOSTNAME` | Build-time; `tools/build-cloudflare.sh` defaults to the official instance. Export your own or empty values. |
 | Privacy notice | `PRIVACY.md`, `VITE_PRIVACY_URL` | Published as `/privacy.txt`. Replace it with your notice, or point `VITE_PRIVACY_URL` elsewhere. |
 
@@ -478,7 +529,14 @@ Then, with Wrangler authenticated against your account:
    for example `openssl rand -hex 32`) and `DISCORD_CLIENT_SECRET` with
    `npx wrangler secret put <NAME> --config wrangler.jsonc`.
 2. Apply all migrations with `npm run db:migrate:remote -w server`.
-3. Build and deploy with the two commands above.
+3. Add the lifecycle rule that deletes [state shares](#state-shares):
+
+   ```sh
+   npx wrangler r2 bucket lifecycle add <bucket> share-expiry share/ \
+     --expire-days 1 --jurisdiction eu
+   ```
+
+4. Build and deploy with the two commands above.
 
 Keep the five-minute cron trigger: it finishes account deletions and removes
 late uploads (see [account deletion](#account-deletion)).
@@ -489,3 +547,5 @@ late uploads (see [account deletion](#account-deletion)).
   deletion removes cloud data.
 - Tombstone retention and the sweep cadence are coupled; there is no policy
   for retiring tombstones.
+- A state share cannot be revoked before it expires, except by deleting the
+  account.

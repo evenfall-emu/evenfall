@@ -821,6 +821,47 @@ kbd:not(:where([data-ui], [data-ui] *)) {
 .cloud-resume-dialog p {
   overflow-wrap: anywhere;
 }
+.shared-state-dialog form > p,
+.shared-state-dialog form > details {
+  margin: 16px 20px;
+  overflow-wrap: anywhere;
+}
+.share-link {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0 20px;
+}
+.share-link input {
+  flex: 1 1 260px;
+}
+.share-name {
+  display: grid;
+  gap: 8px;
+  margin: 16px 20px;
+}
+.share-link input,
+.share-name input {
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid #5f9ebc;
+  background: #05243e;
+  color: inherit;
+  font: inherit;
+}
+.share-name input[aria-invalid="true"] {
+  border-color: #ffb59b;
+}
+.share-link button {
+  flex-shrink: 0;
+  min-height: 44px;
+  padding: 8px 12px;
+}
+.share-dialog [role="alert"],
+.shared-state-dialog [role="alert"] {
+  color: #ffb59b;
+}
 .controls-dialog {
   width: 720px;
   max-height: calc(100dvh - 32px);
