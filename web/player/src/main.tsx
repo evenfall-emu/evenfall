@@ -36,6 +36,7 @@ import type { LibraryDevice } from "./pages/library/catalog";
 import { patchRelease } from "./pages/library/install";
 import { useCatalog, useDumpNames } from "./pages/library/use-catalog";
 import { AppHeader, type AppView } from "./app-header";
+import { AppUpdate } from "./app-update";
 import { Account } from "./account";
 import {
   fetchSharedRom,
@@ -68,6 +69,13 @@ import "./styles.css";
 
 const act = (action: () => Promise<unknown>) =>
   void action().catch(player.error);
+const appUpdate = new AppUpdate({
+  idle: () =>
+    !player.state.game &&
+    !player.state.changing &&
+    !document.querySelector('dialog[open],[role="dialog"]'),
+  beforeReload: () => player.pause(),
+});
 const icons = {
   cloudUpload: (
     <>
@@ -169,6 +177,8 @@ function Modal({
 
 function App() {
   const state = useSyncExternalStore(player.subscribe, player.snapshot);
+  const update = useSyncExternalStore(appUpdate.subscribe, appUpdate.snapshot);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
   const [menu, setMenu] = useState<"speed" | "more" | null>(null);
   // The URL is the page, so a refresh or a shared link lands on it again.
   const navigate = useNavigate();
@@ -1644,25 +1654,46 @@ function App() {
             {display}
           </main>
         )}
-        {romHash && recognizing === romHash && !notice && (
-          <div className="console-notice" role="status">
-            Recognizing game…
-          </div>
-        )}
         <span className="sr-only" role="status">
           {state.message}
         </span>
-        {notice && (
-          <div className="console-notice" role="status">
-            {notice}
-            <button
-              aria-label="Dismiss notification"
-              onClick={() => setNotice("")}
-            >
-              ×
-            </button>
-          </div>
-        )}
+        <div className="console-notices">
+          {romHash && recognizing === romHash && !notice && (
+            <div className="console-notice" role="status">
+              Recognizing game…
+            </div>
+          )}
+          {notice && (
+            <div className="console-notice" role="status">
+              {notice}
+              <button
+                aria-label="Dismiss notification"
+                onClick={() => setNotice("")}
+              >
+                ×
+              </button>
+            </div>
+          )}
+          {update !== "current" && !updateDismissed && (
+            <div className="update-notice" role="status">
+              A new version of Evenfall is ready.
+              <button
+                className="update-reload"
+                disabled={update === "reloading"}
+                onClick={() => act(() => appUpdate.apply())}
+              >
+                {update === "reloading" ? "Updating…" : "Update now"}
+              </button>
+              <button
+                aria-label="Dismiss update"
+                disabled={update === "reloading"}
+                onClick={() => setUpdateDismissed(true)}
+              >
+                ×
+              </button>
+            </div>
+          )}
+        </div>
         {dragging && (
           <div className="drop-message">Drop your game or state</div>
         )}
@@ -1951,8 +1982,8 @@ void gameRegistry
   );
 
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
-  void navigator.serviceWorker
-    .register(
+  void appUpdate
+    .start(
       new URL(`${import.meta.env.BASE_URL}service-worker.js`, location.origin),
     )
     .catch(() => {

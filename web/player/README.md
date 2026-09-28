@@ -451,11 +451,25 @@ the player: every file of the Vite build, including the hashed SDK worker,
 worklet and WASM and the game plugins' lazily loaded layouts. After its first
 successful installation, the player can reload offline, on any of its page
 URLs, and resume an imported local game. API responses, credentials and user
-media are never cached. A new build waits for existing tabs to close before it
-activates, so a running worker never loads an incompatible WASM binary. The
-Vite dev server does not register the service worker. Offline play does not
-protect against browser storage denial or eviction, or against closing the
-page before the installation finishes.
+media are never cached. The Vite dev server does not register the service
+worker. Offline play does not protect against browser storage denial or
+eviction, or against closing the page before the installation finishes.
+
+### Updates
+
+The player looks for a new version when a page loads, when it returns to the
+foreground, when the browser comes back online and every hour
+([`src/app-update.ts`](src/app-update.ts)). A new version installs next to the
+running one. A tab with no game loaded, nothing changing and no dialog open
+reloads into it at once if the user has not touched the page yet or the tab is
+hidden; automatic reloads in one tab are at least a minute apart. Otherwise the
+tab shows _A new version of Evenfall is ready_: **Update now** saves the
+running game's resume checkpoint and reloads, and the notice can be dismissed.
+Once one tab switches to the new version, every other tab follows the same
+rule. A tab still running an older version keeps loading that version's hashed
+Worker, WASM and chunks from its cache, never an incompatible binary; older
+versions' caches are deleted when a page of the new version starts as the only
+open tab, or when the new version activates with no tab open.
 
 ## Game plugins
 
