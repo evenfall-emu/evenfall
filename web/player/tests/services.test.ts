@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi } from "vite-plus/test";
 import { Session } from "../src/services";
 import type { Emulator } from "@evenfall/gba";
 describe("scoped session resources", () => {

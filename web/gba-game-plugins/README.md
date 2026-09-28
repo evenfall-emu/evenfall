@@ -41,13 +41,13 @@ Reviewed support is per **exact build**, identified by the SHA-1 of the raw
 ROM (the `.gba`, or the single ROM inside a ZIP). Title and header codes are
 not enough.
 
-| Game | Build | Raw ROM SHA-1 | Support |
-|---|---|---|---|
-| Pokémon Heart & Soul (ROM hack) | 1.2.1 release | `a4be81f8330d7f223a3ab847c3da822fe6f8a2e0` | reviewed manifest |
-| Pokémon Heart & Soul (ROM hack) | 1.2.0 release | `b8a4b491ca67a76f079a8e7c19fd5512a2147dd2` | located in the player |
-| Pokémon Elite Redux (ROM hack) | 2.65 Beta2 | `f1323126bc043f3ce931bcc670957930559eb515` | reviewed manifest |
-| Pokémon Elite Redux (ROM hack) | 2.65 Beta2 debug build | `299165fb56e19ac8afe5d66f83dd5bada823d58c` | located in the player |
-| Pokémon Elite Redux (ROM hack) | 2.65 Beta3 (2.65.3b) | `5b38a681b6924ef3e0bb9f6cfbf22426c4c4e523` | reviewed manifest |
+| Game                            | Build                  | Raw ROM SHA-1                              | Support               |
+| ------------------------------- | ---------------------- | ------------------------------------------ | --------------------- |
+| Pokémon Heart & Soul (ROM hack) | 1.2.1 release          | `a4be81f8330d7f223a3ab847c3da822fe6f8a2e0` | reviewed manifest     |
+| Pokémon Heart & Soul (ROM hack) | 1.2.0 release          | `b8a4b491ca67a76f079a8e7c19fd5512a2147dd2` | located in the player |
+| Pokémon Elite Redux (ROM hack)  | 2.65 Beta2             | `f1323126bc043f3ce931bcc670957930559eb515` | reviewed manifest     |
+| Pokémon Elite Redux (ROM hack)  | 2.65 Beta2 debug build | `299165fb56e19ac8afe5d66f83dd5bada823d58c` | located in the player |
+| Pokémon Elite Redux (ROM hack)  | 2.65 Beta3 (2.65.3b)   | `5b38a681b6924ef3e0bb9f6cfbf22426c4c4e523` | reviewed manifest     |
 
 Both games carry locators generated from their reviewed builds. When the
 player loads another build of either game, it runs them; a build is accepted
@@ -150,16 +150,16 @@ Unit tests use synthetic records. Tests that need real games skip unless you
 point these variables at files you supply; they verify the documented hashes
 before use:
 
-| Variable | File |
-|---|---|
-| `ZIGBA_HNS_ROM` | Heart & Soul 1.2.1 raw ROM |
-| `ZIGBA_HNS_120_ROM` | Heart & Soul 1.2.0 raw ROM, with `ZIGBA_HNS_ROM` |
-| `ZIGBA_HNS_STATE`, `ZIGBA_HNS_BATTLE` | `game2.state` and `battle.state` ([hashes](docs/profiles.md#test-fixtures)) |
-| `ZIGBA_REDUX_ROM` | Elite Redux 2.65 Beta2 raw ROM |
-| `ZIGBA_REDUX_DEBUG_ROM` | Elite Redux 2.65 Beta2 debug build raw ROM, with `ZIGBA_REDUX_ROM` |
-| `ZIGBA_REDUX_STATE`, `ZIGBA_REDUX_STAGE_STATE` | `redux.state` and `redux-stage-buff.state` ([hashes](docs/profiles.md#test-fixtures)) |
-| `ZIGBA_REDUX_BETA3_ROM` | Elite Redux 2.65 Beta3 raw ROM |
-| `ZIGBA_REDUX_BETA3_STATE` | a Beta3 overworld state, with `ZIGBA_REDUX_BETA3_ROM` ([hash](docs/profiles.md#test-fixtures)) |
+| Variable                                       | File                                                                                           |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `ZIGBA_HNS_ROM`                                | Heart & Soul 1.2.1 raw ROM                                                                     |
+| `ZIGBA_HNS_120_ROM`                            | Heart & Soul 1.2.0 raw ROM, with `ZIGBA_HNS_ROM`                                               |
+| `ZIGBA_HNS_STATE`, `ZIGBA_HNS_BATTLE`          | `game2.state` and `battle.state` ([hashes](docs/profiles.md#test-fixtures))                    |
+| `ZIGBA_REDUX_ROM`                              | Elite Redux 2.65 Beta2 raw ROM                                                                 |
+| `ZIGBA_REDUX_DEBUG_ROM`                        | Elite Redux 2.65 Beta2 debug build raw ROM, with `ZIGBA_REDUX_ROM`                             |
+| `ZIGBA_REDUX_STATE`, `ZIGBA_REDUX_STAGE_STATE` | `redux.state` and `redux-stage-buff.state` ([hashes](docs/profiles.md#test-fixtures))          |
+| `ZIGBA_REDUX_BETA3_ROM`                        | Elite Redux 2.65 Beta3 raw ROM                                                                 |
+| `ZIGBA_REDUX_BETA3_STATE`                      | a Beta3 overworld state, with `ZIGBA_REDUX_BETA3_ROM` ([hash](docs/profiles.md#test-fixtures)) |
 
 No ROM, save or state is committed, and none is needed for the default suites.
 

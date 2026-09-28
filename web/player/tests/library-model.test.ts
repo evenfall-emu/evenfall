@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { previewCatalog, previewDevice } from "./library-fixtures";
 import type { LibraryDevice } from "../src/pages/library/catalog";
 import { formatAgo, formatMoment } from "../src/pages/library/format";

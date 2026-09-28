@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { locatable, resolveGame } from "@evenfall/gba/bridge";
 import { pokemonPlugin } from "../ui";
 import { eliteRedux } from "../src/elite-redux";

@@ -122,7 +122,7 @@ for (let byte = 0; byte < 0xff; byte++) {
 /** Encode international Gen III text, terminated by 0xFF. Throws on a glyph it lacks. */
 export function encodePokemonText(text: string): Uint8Array {
   const bytes: number[] = [];
-  for (let i = 0; i < text.length; ) {
+  for (let i = 0; i < text.length;) {
     // Two-character glyphs (PK, MN) before single characters.
     const pair = text.slice(i, i + 2);
     const byte = encoding.get(pair) ?? encoding.get(text[i]);

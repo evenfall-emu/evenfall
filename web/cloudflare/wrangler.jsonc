@@ -17,7 +17,10 @@
   },
   "secrets": { "required": ["BETTER_AUTH_SECRET", "DISCORD_CLIENT_SECRET"] },
   "send_email": [
-    { "name": "EMAIL", "allowed_sender_addresses": ["noreply@evenfall-emu.org"] },
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": ["noreply@evenfall-emu.org"],
+    },
   ],
   "workers_dev": false,
   "preview_urls": false,

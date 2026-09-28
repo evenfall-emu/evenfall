@@ -1,5 +1,5 @@
 // Compile-only author examples, checked against the real hook and decoders.
-import { expectTypeOf } from "vitest";
+import { expectTypeOf } from "vite-plus/test";
 import { useBridge, useViews } from "@evenfall/gba/bridge/react";
 import {
   createGame,

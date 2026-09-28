@@ -179,15 +179,13 @@ function playthroughs(
             run.id === item.playthroughId && run.release.hash === item.hash,
         ),
     )
-    .map(
-      (item): PlaythroughEntry => ({
-        id: item.playthroughId,
-        name: item.playthroughName,
-        release: releases.get(item.hash)!,
-        lastPlayed: item.capturedAt,
-        sync: "cloud-only",
-      }),
-    );
+    .map((item): PlaythroughEntry => ({
+      id: item.playthroughId,
+      name: item.playthroughName,
+      release: releases.get(item.hash)!,
+      lastPlayed: item.capturedAt,
+      sync: "cloud-only",
+    }));
   return [...local, ...remote].sort(
     (a, b) => b.lastPlayed - a.lastPlayed || a.name.localeCompare(b.name),
   );

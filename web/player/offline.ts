@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { Plugin } from "vite";
+import type { Plugin } from "vite-plus";
 
 // Cache a complete, content-versioned player/SDK together. Never cache API
 // responses or user media. A new version installs next to the running one and

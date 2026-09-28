@@ -1,7 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
-import { expect, it } from "vitest";
+import { expect, it } from "vite-plus/test";
 
 it("adds visibility to a populated catalog without replacing its versions or relationships", async () => {
   const miniflare = new Miniflare(

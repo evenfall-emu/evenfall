@@ -7,7 +7,7 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["@cloudflare/workers-types", "node", "vitest/globals"]
+    "types": ["@cloudflare/workers-types", "node"]
   },
   "include": ["src", "test", "*.ts"]
 }

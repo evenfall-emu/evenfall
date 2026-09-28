@@ -76,7 +76,7 @@ function PixelRows({
 }) {
   const rects: ReactNode[] = [];
   rows.forEach((row, y) => {
-    for (let x = 0; x < row.length; ) {
+    for (let x = 0; x < row.length;) {
       const ink = row[x];
       let end = x + 1;
       while (row[end] === ink) end++;

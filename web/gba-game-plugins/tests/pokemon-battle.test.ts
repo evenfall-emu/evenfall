@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vite-plus/test";
 import { decodeGame, createMemoryReader } from "@evenfall/gba/bridge";
 import { WasmCore, type MemorySnapshot } from "@evenfall/gba/core";
 import { heartNSoul } from "../src/heart-n-soul";

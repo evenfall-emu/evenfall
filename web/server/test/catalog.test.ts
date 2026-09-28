@@ -2,7 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 import app, { type Bindings } from "../src/index";
 import { seedBases, seedGames, seedVersions } from "../src/seed";
 import { baseInput, gameInput, resourceId, versionInput } from "../src/types";
@@ -22,7 +22,8 @@ beforeAll(async () => {
     }),
   );
   database = await miniflare.getD1Database("DB");
-  patches = (await miniflare.getR2Bucket("PATCHES")) as R2Bucket;
+  // Miniflare proxies use Node's Headers types rather than workerd's.
+  patches = (await miniflare.getR2Bucket("PATCHES")) as unknown as R2Bucket;
   const migrationsDirectory = fileURLToPath(
     new URL("../migrations", import.meta.url),
   );

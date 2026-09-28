@@ -27,7 +27,9 @@ async function prepare(page: Page, count = 5) {
     await player.emulator.setRewindConfig(undefined, 60);
     for (let i = 0; i <= count; i++) {
       const cpu = await player.emulator.inspect();
-      await player.emulator.runUntil(cpu.cycle + (i === 0 ? 1n : 60n) * 280896n);
+      await player.emulator.runUntil(
+        cpu.cycle + (i === 0 ? 1n : 60n) * 280896n,
+      );
     }
   }, count);
 }

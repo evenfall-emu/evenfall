@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { frame, type Plate } from "../src/pages/landing/camera";
 
 // An off-center sun, so a solver that centers the plate cannot pass.

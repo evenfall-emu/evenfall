@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { createMemoryReader, ref } from "@evenfall/gba/bridge";
 import {
   gen3BoxPokemon,
@@ -243,9 +243,8 @@ describe("Gen III text", () => {
 
 describe("Gen III text encoding", () => {
   it("round-trips through the decoder, two-character glyphs included", async () => {
-    const { encodePokemonText, decodePokemonText } = await import(
-      "../src/text"
-    );
+    const { encodePokemonText, decodePokemonText } =
+      await import("../src/text");
     for (const text of ["BULBASAUR", "Mr. Mime", "PKMN Center", "Farfetch’d"]) {
       const bytes = encodePokemonText(text);
       expect(bytes.at(-1)).toBe(0xff);

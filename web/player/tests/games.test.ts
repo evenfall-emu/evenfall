@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { defineGame, locatable, ref, u8 } from "@evenfall/gba/bridge";
 import {
   createGameRegistry,

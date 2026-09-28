@@ -203,7 +203,9 @@ export function normalizeCollections(
 
 export function buildSeed({ bases, releases }) {
   const usedBases = new Set(
-    releases.filter((release) => release.patch).map((release) => release.baseSha1),
+    releases
+      .filter((release) => release.patch)
+      .map((release) => release.baseSha1),
   );
   const baseId = (base) => slug(base.noIntroName);
   const baseRows = bases

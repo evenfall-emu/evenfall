@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it } from "vite-plus/test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ArenaStatus } from "../ui/pokemon-dashboard";
 import { TypeBadge } from "../ui/game-layout";

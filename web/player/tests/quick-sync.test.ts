@@ -1,6 +1,13 @@
 import "fake-indexeddb/auto";
 import { deleteDB } from "idb";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 import { CloudSync, planQuickSlot, type CloudStatus } from "../src/cloud";
 import {
   openLibrary,

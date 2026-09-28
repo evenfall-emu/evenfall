@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import worker from "../src/patches";
 
 const key = `${"a".repeat(40)}.ups`;

@@ -8,11 +8,11 @@ the pixel grid by
 no ROM data, game sprites or game locations. They are placeholders for
 hand-finished art on the same grid.
 
-| File | Size | Contents |
-|---|---|---|
+| File          | Size      | Contents                                                                                                                                                                 |
+| ------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `surface.png` | 480 × 252 | 64 rows of starry sky above the coastal sunset: cliffs and lighthouse, a distant castle, the sun over the sea, ending in the waterline: the surface seen from just below |
-| `descent.png` | 480 × 98 | Below the waterline: light shafts under the sun, rock walls at both edges, fading into deep water |
-| `seabed.png` | 480 × 128 | Deep water fading into a seabed with an original sunken ruin at each side, then sand settling into a flat floor under the footer |
+| `descent.png` | 480 × 98  | Below the waterline: light shafts under the sun, rock walls at both edges, fading into deep water                                                                        |
+| `seabed.png`  | 480 × 128 | Deep water fading into a seabed with an original sunken ruin at each side, then sand settling into a flat floor under the footer                                         |
 
 The sun covers art pixels 297–346 across and 159–197 down in
 `surface.png`; its column is the same in every plate. The surface's top row
@@ -31,11 +31,11 @@ The product sections' other illustrations are sprites with binary
 transparency, cut from generated sheets by `sprite.py`. They depict no
 existing game, and none carries text or a logo:
 
-| Folder | Size | Contents |
-|---|---|---|
-| `covers/` | 54 × 80 each | Six box covers for the romhack stack: a mountain valley, a crystal cave, a sunset lake, desert ruins, an aurora over snowy forest, snowy coastal ruins |
-| `creatures/` | 27–41 × 40 | The invented team of the game-panel illustration: a fire fox, a moss turtle, a bat, an owl, a seahorse, a stone golem |
-| `icons/` | 40–96 wide | The account illustration: a laptop (96 × 80), a phone (46 × 74), a cloud (40 × 44) and a link (60 × 50) |
+| Folder       | Size         | Contents                                                                                                                                               |
+| ------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `covers/`    | 54 × 80 each | Six box covers for the romhack stack: a mountain valley, a crystal cave, a sunset lake, desert ruins, an aurora over snowy forest, snowy coastal ruins |
+| `creatures/` | 27–41 × 40   | The invented team of the game-panel illustration: a fire fox, a moss turtle, a bat, an owl, a seahorse, a stone golem                                  |
+| `icons/`     | 40–96 wide   | The account illustration: a laptop (96 × 80), a phone (46 × 74), a cloud (40 × 44) and a link (60 × 50)                                                |
 
 The page draws each at a whole multiple of its size. The rewind thumbnails
 keep their scale from their height and, where three full frames do not fit,

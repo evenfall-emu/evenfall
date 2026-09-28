@@ -12,7 +12,7 @@
     "allowJs": true,
     "checkJs": false,
     "noEmit": true,
-    "types": ["vite/client", "node"]
+    "types": ["vite-plus/client", "node"]
   },
   "include": ["src", "tests", "*.ts"]
 }

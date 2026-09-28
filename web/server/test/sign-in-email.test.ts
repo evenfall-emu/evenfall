@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { signInEmail } from "../src/sign-in-email";
 
 describe("sign-in email", () => {
@@ -31,7 +31,9 @@ describe("sign-in email", () => {
 
   it("carries every image as an inline PNG rather than a remote dependency", () => {
     const { html, attachments } = signInEmail("https://example.com/verify");
-    const sources = [...html.matchAll(/src="([^"]+)"/g)].map((match) => match[1]);
+    const sources = [...html.matchAll(/src="([^"]+)"/g)].map(
+      (match) => match[1],
+    );
     expect(sources).toEqual(["cid:evenfall-logo"]);
     expect(attachments).toHaveLength(1);
     const logo = attachments[0];

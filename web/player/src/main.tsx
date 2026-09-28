@@ -910,9 +910,9 @@ function App() {
       const run = await player.library.getPlaythrough(ref);
       const local = Boolean(
         run?.resumeSavedAt ||
-          (await player.library.getSave(ref))?.length ||
-          (player.activeRef?.hash === ref.hash &&
-            player.activeRef.playthroughId === ref.playthroughId),
+        (await player.library.getSave(ref))?.length ||
+        (player.activeRef?.hash === ref.hash &&
+          player.activeRef.playthroughId === ref.playthroughId),
       );
       const listed =
         player.state.cloud.resumes?.find(

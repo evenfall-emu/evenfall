@@ -10,7 +10,7 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "noEmit": true,
-    "types": ["vite/client", "node"]
+    "types": ["vite-plus/client", "node"]
   },
   "include": ["src", "ui", "tests", "*.ts"]
 }

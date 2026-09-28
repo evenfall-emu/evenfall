@@ -68,11 +68,11 @@ record per item, holding pointers to LZ77-compressed 24x24 4bpp tiles (288
 decoded bytes) and a compressed BGR555 palette (2-32 decoded bytes, with
 omitted trailing colors zero-filled as the game does).
 
-| Build | Table | Records | End |
-|---|---|---|---|
-| Heart & Soul 1.2.1 | `0x08907368` | 398 | `0x08907fd8` |
-| Elite Redux 2.65 Beta2 | `0x08ae4b40` | 1023 | `0x08ae6b38` |
-| Elite Redux 2.65 Beta3 | `0x08ae4b0c` | 1023 | `0x08ae6b04` |
+| Build                  | Table        | Records | End          |
+| ---------------------- | ------------ | ------- | ------------ |
+| Heart & Soul 1.2.1     | `0x08907368` | 398     | `0x08907fd8` |
+| Elite Redux 2.65 Beta2 | `0x08ae4b40` | 1023    | `0x08ae6b38` |
+| Elite Redux 2.65 Beta3 | `0x08ae4b0c` | 1023    | `0x08ae6b04` |
 
 The roots were located by scanning for runs of pointer pairs and checked in
 each identity-pinned ROM: every tile stream decodes to 288 bytes and every
@@ -128,23 +128,23 @@ The profile covers the **1.2.1 release ROM**, not arbitrary builds of the
 `1.2` branch. Source: the
 [Release-v1.2.1 commit](https://github.com/PokemonHnS-Development/pokemonHnS/commit/4aa8fa894db4c890b3d1100abd6aab50f44c22b1).
 
-| Property | Value |
-|---|---|
-| Raw ROM size | 33,554,432 bytes |
-| Raw ROM SHA-1 | `a4be81f8330d7f223a3ab847c3da822fe6f8a2e0` |
-| Raw ROM CRC32 | `96a8425b`, matching the official UPS patch's output checksum |
+| Property          | Value                                                              |
+| ----------------- | ------------------------------------------------------------------ |
+| Raw ROM size      | 33,554,432 bytes                                                   |
+| Raw ROM SHA-1     | `a4be81f8330d7f223a3ab847c3da822fe6f8a2e0`                         |
+| Raw ROM CRC32     | `96a8425b`, matching the official UPS patch's output checksum      |
 | UPS patch SHA-256 | `c8e70f448b481d2980266ca8f021aa8b3c462f4e582cf80228ced4636c6154eb` |
 
 The **1.2.0 release ROM** has no committed manifest: the player locates it
 with the 1.2.1 locators. Source: the
 [Release-v1.2.0 commit](https://github.com/PokemonHnS-Development/pokemonHnS/commit/f54ee7e82d856fa43e5d714c5689304ce92f6f67).
 
-| Property | Value |
-|---|---|
-| Raw ROM SHA-1 | `b8a4b491ca67a76f079a8e7c19fd5512a2147dd2` |
-| Raw ROM CRC32 | `cc143d14`, matching the official 1.2.0 UPS patch's output checksum |
-| Manifest | Located at runtime from the 1.2.1 locators; relocation from 1.2.1 agrees on every address |
-| To review | `rom.catalog.moveDescriptions.count`, inferred from a bounds check |
+| Property      | Value                                                                                     |
+| ------------- | ----------------------------------------------------------------------------------------- |
+| Raw ROM SHA-1 | `b8a4b491ca67a76f079a8e7c19fd5512a2147dd2`                                                |
+| Raw ROM CRC32 | `cc143d14`, matching the official 1.2.0 UPS patch's output checksum                       |
+| Manifest      | Located at runtime from the 1.2.1 locators; relocation from 1.2.1 agrees on every address |
+| To review     | `rom.catalog.moveDescriptions.count`, inferred from a bounds check                        |
 
 Its RAM layout equals 1.2.1's, and every ROM table sits `0x180` bytes lower.
 
@@ -172,10 +172,10 @@ rebuild, and its linker addresses are not used.
 
 ### Party roots
 
-| Global | Address | Notes |
-|---|---|---|
-| `gPlayerPartyCount` | `0x0201d9e9` | u8 |
-| `gPlayerParty` | `0x0201d9ec` | six 100-byte records |
+| Global              | Address      | Notes                |
+| ------------------- | ------------ | -------------------- |
+| `gPlayerPartyCount` | `0x0201d9e9` | u8                   |
+| `gPlayerParty`      | `0x0201d9ec` | six 100-byte records |
 
 Evidence from the release binary:
 
@@ -202,22 +202,22 @@ arm-none-eabi-objdump -D -b binary -m arm -M force-thumb \
 
 ### ROM tables
 
-| Table | Address | Count x stride |
-|---|---|---|
-| Species names | `0x08744798` | 462 x 11 |
-| Species info | `0x0893bd40` | 490 x 40 |
-| Move names | `0x08745b74` | 368 x 13 |
-| Moves (`gBattleMoves`) | `0x08937998` | 368 x 12 |
-| Ability names | `0x086e1e90` | 82 x 13 |
-| Type names | `0x086e152c` | 19 x 7 |
-| Nature name pointers | `0x08965f48` | 25 x 4 |
-| Items (`gItems`) | `0x088fe910` | 398 x 44 |
-| Experience | `0x0893b0a0` | 6 x 404 |
-| `gAbilityDescriptionPointers` | `0x086e22bc` | 82 x 4, by ability ID |
-| `gMoveDescriptionPointers` | `0x089658c8` | 367 x 4, by move ID - 1 |
-| Icon table / index / palettes | `0x08952b3c` / `0x089532e4` / `0x089534d0` | |
-| Front pictures | `0x08732678` | |
-| Normal / shiny / modern-shiny palettes | `0x0872a28c` / `0x0872b1dc` / `0x0872c12c` | |
+| Table                                  | Address                                    | Count x stride          |
+| -------------------------------------- | ------------------------------------------ | ----------------------- |
+| Species names                          | `0x08744798`                               | 462 x 11                |
+| Species info                           | `0x0893bd40`                               | 490 x 40                |
+| Move names                             | `0x08745b74`                               | 368 x 13                |
+| Moves (`gBattleMoves`)                 | `0x08937998`                               | 368 x 12                |
+| Ability names                          | `0x086e1e90`                               | 82 x 13                 |
+| Type names                             | `0x086e152c`                               | 19 x 7                  |
+| Nature name pointers                   | `0x08965f48`                               | 25 x 4                  |
+| Items (`gItems`)                       | `0x088fe910`                               | 398 x 44                |
+| Experience                             | `0x0893b0a0`                               | 6 x 404                 |
+| `gAbilityDescriptionPointers`          | `0x086e22bc`                               | 82 x 4, by ability ID   |
+| `gMoveDescriptionPointers`             | `0x089658c8`                               | 367 x 4, by move ID - 1 |
+| Icon table / index / palettes          | `0x08952b3c` / `0x089532e4` / `0x089534d0` |                         |
+| Front pictures                         | `0x08732678`                               |                         |
+| Normal / shiny / modern-shiny palettes | `0x0872a28c` / `0x0872b1dc` / `0x0872c12c` |                         |
 
 Move priority is the signed byte at `gBattleMoves + 7` (QUICK ATTACK is
 `+1`). Item descriptions come through the pointer at `gItems + 20`; the
@@ -235,10 +235,10 @@ control code or no terminator is unavailable, never partially decoded.
 
 ### Save and storage roots
 
-| Root | Address |
-|---|---|
-| `gSaveBlock1Ptr` | `0x03003740` |
-| `gSaveBlock2Ptr` | `0x03003744` |
+| Root                 | Address      |
+| -------------------- | ------------ |
+| `gSaveBlock1Ptr`     | `0x03003740` |
+| `gSaveBlock2Ptr`     | `0x03003744` |
 | `gPokemonStoragePtr` | `0x03003748` |
 
 `SaveBlock1` is `0x3db8` bytes; the relevant settings begin at `+0x3d9d`.
@@ -252,16 +252,16 @@ and do not match the release.
 
 Release-binary literals and captured structures verify these roots:
 
-| Root | Address | Notes |
-|---|---|---|
-| `gMain` | `0x03001574` | packed `inBattle` is byte `+0x439` bit 1, at `0x030019ad` |
-| `gBattleTypeFlags` | `0x020003a0` | |
-| `gBattlersCount` | `0x02001420` | |
+| Root                   | Address      | Notes                                                                                                                     |
+| ---------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `gMain`                | `0x03001574` | packed `inBattle` is byte `+0x439` bit 1, at `0x030019ad`                                                                 |
+| `gBattleTypeFlags`     | `0x020003a0` |                                                                                                                           |
+| `gBattlersCount`       | `0x02001420` |                                                                                                                           |
 | `gBattlerPartyIndexes` | `0x02001424` | four u16 values; code indexes it from a literal of this address and multiplies the result by the `0x64` party record size |
-| `gBattleMons` | `0x0200143c` | four `0x58`-byte records |
-| `gAbsentBattlerFlags` | `0x020015c8` | |
-| `gEnemyParty` | `0x0201de9c` | six `0x64`-byte records |
-| `gMapHeader` | `0x0200c220` | section and weather bytes at `+0x14`/`+0x16` |
+| `gBattleMons`          | `0x0200143c` | four `0x58`-byte records                                                                                                  |
+| `gAbsentBattlerFlags`  | `0x020015c8` |                                                                                                                           |
+| `gEnemyParty`          | `0x0201de9c` | six `0x64`-byte records                                                                                                   |
+| `gMapHeader`           | `0x0200c220` | section and weather bytes at `+0x14`/`+0x16`                                                                              |
 
 `inBattle` is 1 in the battle fixture and 0 in the overworld fixture. In the
 battle fixture, the personality and trainer IDs of the active battle records
@@ -293,13 +293,13 @@ HP and level, and stage range.
 
 ### Build identity
 
-| Property | Value |
-|---|---|
-| Source | [`06da575972cfed20d471f8bb5b90ea9e4736b16a`](https://github.com/Elite-Redux/eliteredux-source/tree/06da575972cfed20d471f8bb5b90ea9e4736b16a), config submodule `3073176bb3a5abf7a1fe52c23e61bcdf580e4685` |
-| Release | v2.65 Beta2, game version 1048 |
-| Release ZIP SHA-256 | `8c8ac8c6587abc85d1f7472df3adcf847f4d5eef99797a79ab6a14b614a7a432` |
-| Raw ROM size | 33,554,432 bytes |
-| Raw ROM SHA-1 | `f1323126bc043f3ce931bcc670957930559eb515` |
+| Property            | Value                                                                                                                                                                                                     |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Source              | [`06da575972cfed20d471f8bb5b90ea9e4736b16a`](https://github.com/Elite-Redux/eliteredux-source/tree/06da575972cfed20d471f8bb5b90ea9e4736b16a), config submodule `3073176bb3a5abf7a1fe52c23e61bcdf580e4685` |
+| Release             | v2.65 Beta2, game version 1048                                                                                                                                                                            |
+| Release ZIP SHA-256 | `8c8ac8c6587abc85d1f7472df3adcf847f4d5eef99797a79ab6a14b614a7a432`                                                                                                                                        |
+| Raw ROM size        | 33,554,432 bytes                                                                                                                                                                                          |
+| Raw ROM SHA-1       | `f1323126bc043f3ce931bcc670957930559eb515`                                                                                                                                                                |
 
 ### Layout family and build manifests
 
@@ -320,12 +320,12 @@ differs between builds, such as the ability record, is a manifest value
 
 ### Debug build
 
-| Property | Value |
-|---|---|
-| Build | v2.65 Beta2 (1048) debug build |
-| Raw ROM SHA-1 | `299165fb56e19ac8afe5d66f83dd5bada823d58c` |
-| Raw ROM SHA-256 | `4f5bdd1dbcc013d876120b4a09c7e9116513d2a80f28a49591c44eb0e5bf0346` |
-| Manifest | Located at runtime from the release locators; relocation from the release agrees on every address |
+| Property        | Value                                                                                             |
+| --------------- | ------------------------------------------------------------------------------------------------- |
+| Build           | v2.65 Beta2 (1048) debug build                                                                    |
+| Raw ROM SHA-1   | `299165fb56e19ac8afe5d66f83dd5bada823d58c`                                                        |
+| Raw ROM SHA-256 | `4f5bdd1dbcc013d876120b4a09c7e9116513d2a80f28a49591c44eb0e5bf0346`                                |
+| Manifest        | Located at runtime from the release locators; relocation from the release agrees on every address |
 
 The debug build uses about 46 KB more ROM than the release. Its data tables
 sit at five offsets from the release's (+0x5330, +0x55dc, +0xb50c, +0xb534 and
@@ -386,16 +386,16 @@ timer is at `+0x11`.
 
 ### RAM roots
 
-| Root | Address |
-|---|---|
-| Player party count / party | `0x02039905` / `0x02039908` |
-| Enemy party | `0x02039ad0` |
-| `gMain` / `inBattle` | `0x03003420` / `0x03003859` bit 1 |
-| Battle type flags | `0x0201c3f4` |
+| Root                              | Address                                    |
+| --------------------------------- | ------------------------------------------ |
+| Player party count / party        | `0x02039905` / `0x02039908`                |
+| Enemy party                       | `0x02039ad0`                               |
+| `gMain` / `inBattle`              | `0x03003420` / `0x03003859` bit 1          |
+| Battle type flags                 | `0x0201c3f4`                               |
 | Battler count / indexes / records | `0x0201c484` / `0x0201c488` / `0x0201c50c` |
-| Absent-battler mask | `0x0201c6db` |
-| `SaveBlock1` pointer | `0x0300340c` |
-| `SaveBlock2` / storage pointers | `0x03003410` / `0x03003414` |
+| Absent-battler mask               | `0x0201c6db`                               |
+| `SaveBlock1` pointer              | `0x0300340c`                               |
+| `SaveBlock2` / storage pointers   | `0x03003410` / `0x03003414`                |
 
 `gEnemyPartyCount` is zero during trainer battles, so occupied enemy slots
 are determined from their packed species fields. Storage is 26 boxes of 30
@@ -406,26 +406,26 @@ slots, with `0x34`-byte records and names at `+0x9e74`.
 ROM header pointers corroborate these roots; the remaining roots and all
 table bounds are in the typed manifest.
 
-| Table | Address | Stride |
-|---|---|---|
-| Species names (pointer table) | `0x089c16c8` | |
-| Species data | `0x08bf5b0c` | 44 |
-| Move names | `0x089c7a24` | 13 |
-| Moves | `0x08bebfac` | 24 |
-| Items | `0x08ab9674` | 40 |
-| Abilities | `0x08fbc4d8` | 192; name, short and expanded description pointers at `+0`/`+4`/`+8` |
+| Table                         | Address      | Stride                                                               |
+| ----------------------------- | ------------ | -------------------------------------------------------------------- |
+| Species names (pointer table) | `0x089c16c8` |                                                                      |
+| Species data                  | `0x08bf5b0c` | 44                                                                   |
+| Move names                    | `0x089c7a24` | 13                                                                   |
+| Moves                         | `0x08bebfac` | 24                                                                   |
+| Items                         | `0x08ab9674` | 40                                                                   |
+| Abilities                     | `0x08fbc4d8` | 192; name, short and expanded description pointers at `+0`/`+4`/`+8` |
 
 Text reads are bounded, and unrecognized control codes produce warnings
 rather than invented prose.
 
 ### Innates, randomizers and suppression
 
-| Setting | Location | Verified by |
-|---|---|---|
-| Difficulty | `SaveBlock2 +0xc89`, high nibble | `CanDisableInnates` (`0x081b085c`), `getInnateDisableLevel` (`0x081b0878`) |
+| Setting                              | Location                         | Verified by                                                                                   |
+| ------------------------------------ | -------------------------------- | --------------------------------------------------------------------------------------------- |
+| Difficulty                           | `SaveBlock2 +0xc89`, high nibble | `CanDisableInnates` (`0x081b085c`), `getInnateDisableLevel` (`0x081b0878`)                    |
 | Innate, ability and type randomizers | `SaveBlock2 +0xc8a` bits 3, 5, 7 | `RandomizeInnate`/`RandomizeAbility`/`RandomizeType` (`0x081ae08c`/`0x081ae100`/`0x081ae174`) |
-| EV toggle | `SaveBlock2 +0xc8c` bit 2 | |
-| Third badge | `SaveBlock1 +0x1ae1` bit 3 | |
+| EV toggle                            | `SaveBlock2 +0xc8c` bit 2        |                                                                                               |
+| Third badge                          | `SaveBlock1 +0x1ae1` bit 3       |                                                                                               |
 
 Player innate slots unlock at levels 0/0/0 on Easy and Ace, 1/17/24 on Elite
 and 10/17/24 on Hell; enemies bypass those level locks. The battle reader
@@ -479,13 +479,13 @@ fallback Elite and Hell party pointers. Context is per session, search is
 invalidated only when a relevant value changes, and the resolver never writes
 or executes game memory.
 
-| Table | Address | Count x stride |
-|---|---|---|
-| Trainers | `0x089a2ffc` | 932 x `0x38` |
-| Trainer Pokémon | per trainer | stride `0x1c` (two trailing padding bytes, not `0x1a`) |
-| Class names | `0x089be5b4` | 73 x 13 |
-| Portraits / palettes | `0x08963d64` / `0x08964074` | 98 x 8 each |
-| Hell skills | `0x0850da44` | 932 x 24 |
+| Table                | Address                     | Count x stride                                         |
+| -------------------- | --------------------------- | ------------------------------------------------------ |
+| Trainers             | `0x089a2ffc`                | 932 x `0x38`                                           |
+| Trainer Pokémon      | per trainer                 | stride `0x1c` (two trailing padding bytes, not `0x1a`) |
+| Class names          | `0x089be5b4`                | 73 x 13                                                |
+| Portraits / palettes | `0x08963d64` / `0x08964074` | 98 x 8 each                                            |
+| Hell skills          | `0x0850da44`                | 932 x 24                                               |
 
 Results group alphabetically by name, then follow build-authored encounter
 order, with internal ID as the final tie-breaker. The pinned source's
@@ -530,29 +530,29 @@ replacement clears the preview selection.
 
 ### Build identity
 
-| Property | Value |
-|---|---|
-| Release | v2.65 Beta3 (2.65.3b); the ROM's own version strings read `v2.65 Beta2.1` |
-| Source | An unpublished revision of the `upcoming` branch that includes [`156dd545`](https://github.com/Elite-Redux/eliteredux-source/commit/156dd545602c457b154f3c6a5adaf0b44adf5bf8) (`Ability.onModifyTargetFlag`) and still uses the separate Hell-skills table |
-| Raw ROM size | 33,554,432 bytes |
-| Raw ROM SHA-1 | `5b38a681b6924ef3e0bb9f6cfbf22426c4c4e523` |
-| Manifest | `eliteReduxBeta3`, reviewed |
+| Property      | Value                                                                                                                                                                                                                                                      |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Release       | v2.65 Beta3 (2.65.3b); the ROM's own version strings read `v2.65 Beta2.1`                                                                                                                                                                                  |
+| Source        | An unpublished revision of the `upcoming` branch that includes [`156dd545`](https://github.com/Elite-Redux/eliteredux-source/commit/156dd545602c457b154f3c6a5adaf0b44adf5bf8) (`Ability.onModifyTargetFlag`) and still uses the separate Hell-skills table |
+| Raw ROM size  | 33,554,432 bytes                                                                                                                                                                                                                                           |
+| Raw ROM SHA-1 | `5b38a681b6924ef3e0bb9f6cfbf22426c4c4e523`                                                                                                                                                                                                                 |
+| Manifest      | `eliteReduxBeta3`, reviewed                                                                                                                                                                                                                                |
 
 ### Differences from Beta2
 
 RAM is unchanged: every source sits at Beta2's address. The ROM tables move:
 
-| Table | Address | Count x stride |
-|---|---|---|
-| Species names / data | `0x089c1614` / `0x08bf5b84` | 2902 |
-| Move names / moves / descriptions | `0x089c7970` / `0x08bec024` / `0x08ec12b8` | 1032 |
-| Abilities | `0x08fc6de4` | 1034 x 196 |
-| Items | `0x08ab9640` | 1023 x 40 |
-| Types / natures / experience | `0x08517af4` / `0x08ec2398` / `0x08bf4ee4` | |
-| Trainers / classes / Hell skills | `0x089a2f48` / `0x089be500` / `0x0850e4c4` | 932 x `0x38` / 73 x 13 / 932 x 24 |
-| Icons / icon palette indices / icon palettes | `0x08e1fb28` / `0x08e255d8` / `0x08e263d0` | 2902 / 2902 / 7 |
-| Front pictures / palettes / shiny palettes | `0x08955b38` / `0x0857d07c` / `0x08582b2c` | |
-| Trainer pictures / palettes | `0x08963bf0` / `0x08963f00` | 98 |
+| Table                                        | Address                                    | Count x stride                    |
+| -------------------------------------------- | ------------------------------------------ | --------------------------------- |
+| Species names / data                         | `0x089c1614` / `0x08bf5b84`                | 2902                              |
+| Move names / moves / descriptions            | `0x089c7970` / `0x08bec024` / `0x08ec12b8` | 1032                              |
+| Abilities                                    | `0x08fc6de4`                               | 1034 x 196                        |
+| Items                                        | `0x08ab9640`                               | 1023 x 40                         |
+| Types / natures / experience                 | `0x08517af4` / `0x08ec2398` / `0x08bf4ee4` |                                   |
+| Trainers / classes / Hell skills             | `0x089a2f48` / `0x089be500` / `0x0850e4c4` | 932 x `0x38` / 73 x 13 / 932 x 24 |
+| Icons / icon palette indices / icon palettes | `0x08e1fb28` / `0x08e255d8` / `0x08e263d0` | 2902 / 2902 / 7                   |
+| Front pictures / palettes / shiny palettes   | `0x08955b38` / `0x0857d07c` / `0x08582b2c` |                                   |
+| Trainer pictures / palettes                  | `0x08963bf0` / `0x08963f00`                | 98                                |
 
 The ability record grows from 192 to 196 bytes: `Ability` gains the
 `onModifyTargetFlag` handler pointer ahead of its bitfields, so the
@@ -615,18 +615,18 @@ Tests that need real games skip unless these variables point at
 user-supplied files, and they check each file's hash before use: SHA-1 for
 ROMs, SHA-256 for states. None of these files is committed.
 
-| Variable | File | Hash | Decodes to |
-|---|---|---|---|
-| `ZIGBA_HNS_ROM` | Heart & Soul 1.2.1 raw ROM | `a4be81f8330d7f223a3ab847c3da822fe6f8a2e0` | |
-| `ZIGBA_HNS_120_ROM` | Heart & Soul 1.2.0 raw ROM | `b8a4b491ca67a76f079a8e7c19fd5512a2147dd2` | Located at runtime; compared with relocation from `ZIGBA_HNS_ROM` |
-| `ZIGBA_HNS_STATE` | `game2.state` | `71817992f9053560808493c79c3e65b5acba2b4499375cc52d76806b2107fb5f` | Overworld, no battle, 15 named empty PC boxes. Party: TOTODILE (species 158) Lv10 HP 29/33, MODEST, TORRENT, SCRATCH 32/35, LEER 30/30, WATER GUN 25/25; PIDGEY (16) Lv3 HP 16/16 with TACKLE and KEEN EYE; HOPPIP (187) Lv2 HP 14/14 with SPLASH and CHLOROPHYLL |
-| `ZIGBA_HNS_BATTLE` | `battle.state` | `5515f43a8119632270b2f64a447917fd826bc7cf16655f3276bbb0f3c4d42e54` | Single wild battle on Route 29: TOTODILE Lv10 HP 26/33 against HOPPIP Lv3 HP 16/16, neutral stages, stats 33/18/20/16/17/17 and 16/8/8/7/8/9; SCRATCH 30/35, LEER 30/30, WATER GUN 25/25 and SPLASH 40/40 |
-| `ZIGBA_REDUX_ROM` | Elite Redux 2.65 Beta2 raw ROM | `f1323126bc043f3ce931bcc670957930559eb515` | |
-| `ZIGBA_REDUX_DEBUG_ROM` | Elite Redux 2.65 Beta2 debug build raw ROM | `299165fb56e19ac8afe5d66f83dd5bada823d58c` | Located at runtime; compared with relocation from `ZIGBA_REDUX_ROM` |
-| `ZIGBA_REDUX_STATE` | `redux.state` | `bf403592558c7a6cdc0deb493f8ab26f8796dfec829f0a2031fcbbc44af66d23` | Trainer battle on Easy with randomizers off: Frigibax Lv20 62/62 against Mudkip Lv20 58/58; rosters Frigibax/Klink/Aron/Goomy and Mudkip/Goomy; Frigibax has Mountaineer, Thermal Exchange, Heatproof and Freezing Point from live battle slots |
-| `ZIGBA_REDUX_STAGE_STATE` | `redux-stage-buff.state` | `d092f7bd0f323b1720321f16b72291753748c03fba63454fe8d19455ec7b472d` | Mudkip at Attack/Defense +1/+1: raw 41/31, totals 61/46; max HP 58 and Speed 29 unchanged |
-| `ZIGBA_REDUX_BETA3_ROM` | Elite Redux 2.65 Beta3 raw ROM | `5b38a681b6924ef3e0bb9f6cfbf22426c4c4e523` | Probes pass; the Beta2 locators give no value that differs from the manifest |
-| `ZIGBA_REDUX_BETA3_STATE` | a Beta3 state (raw, not gzipped) | `74a207b19b09a228cef36f5122d7f229945d8693192eaf1b75796a347445c359` | Overworld on Ace. Party: Zoroark, Gimmighoul, Flygon, Dipplin, Coalossal and Pawmot, all Lv40 at full HP; Zoroark 110/110 with Opportunist and innates Illusion, Exploit Weakness and Ambush. 26 boxes hold 232 Pokémon, the first a Drilbur Lv25 |
+| Variable                  | File                                       | Hash                                                               | Decodes to                                                                                                                                                                                                                                                        |
+| ------------------------- | ------------------------------------------ | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ZIGBA_HNS_ROM`           | Heart & Soul 1.2.1 raw ROM                 | `a4be81f8330d7f223a3ab847c3da822fe6f8a2e0`                         |                                                                                                                                                                                                                                                                   |
+| `ZIGBA_HNS_120_ROM`       | Heart & Soul 1.2.0 raw ROM                 | `b8a4b491ca67a76f079a8e7c19fd5512a2147dd2`                         | Located at runtime; compared with relocation from `ZIGBA_HNS_ROM`                                                                                                                                                                                                 |
+| `ZIGBA_HNS_STATE`         | `game2.state`                              | `71817992f9053560808493c79c3e65b5acba2b4499375cc52d76806b2107fb5f` | Overworld, no battle, 15 named empty PC boxes. Party: TOTODILE (species 158) Lv10 HP 29/33, MODEST, TORRENT, SCRATCH 32/35, LEER 30/30, WATER GUN 25/25; PIDGEY (16) Lv3 HP 16/16 with TACKLE and KEEN EYE; HOPPIP (187) Lv2 HP 14/14 with SPLASH and CHLOROPHYLL |
+| `ZIGBA_HNS_BATTLE`        | `battle.state`                             | `5515f43a8119632270b2f64a447917fd826bc7cf16655f3276bbb0f3c4d42e54` | Single wild battle on Route 29: TOTODILE Lv10 HP 26/33 against HOPPIP Lv3 HP 16/16, neutral stages, stats 33/18/20/16/17/17 and 16/8/8/7/8/9; SCRATCH 30/35, LEER 30/30, WATER GUN 25/25 and SPLASH 40/40                                                         |
+| `ZIGBA_REDUX_ROM`         | Elite Redux 2.65 Beta2 raw ROM             | `f1323126bc043f3ce931bcc670957930559eb515`                         |                                                                                                                                                                                                                                                                   |
+| `ZIGBA_REDUX_DEBUG_ROM`   | Elite Redux 2.65 Beta2 debug build raw ROM | `299165fb56e19ac8afe5d66f83dd5bada823d58c`                         | Located at runtime; compared with relocation from `ZIGBA_REDUX_ROM`                                                                                                                                                                                               |
+| `ZIGBA_REDUX_STATE`       | `redux.state`                              | `bf403592558c7a6cdc0deb493f8ab26f8796dfec829f0a2031fcbbc44af66d23` | Trainer battle on Easy with randomizers off: Frigibax Lv20 62/62 against Mudkip Lv20 58/58; rosters Frigibax/Klink/Aron/Goomy and Mudkip/Goomy; Frigibax has Mountaineer, Thermal Exchange, Heatproof and Freezing Point from live battle slots                   |
+| `ZIGBA_REDUX_STAGE_STATE` | `redux-stage-buff.state`                   | `d092f7bd0f323b1720321f16b72291753748c03fba63454fe8d19455ec7b472d` | Mudkip at Attack/Defense +1/+1: raw 41/31, totals 61/46; max HP 58 and Speed 29 unchanged                                                                                                                                                                         |
+| `ZIGBA_REDUX_BETA3_ROM`   | Elite Redux 2.65 Beta3 raw ROM             | `5b38a681b6924ef3e0bb9f6cfbf22426c4c4e523`                         | Probes pass; the Beta2 locators give no value that differs from the manifest                                                                                                                                                                                      |
+| `ZIGBA_REDUX_BETA3_STATE` | a Beta3 state (raw, not gzipped)           | `74a207b19b09a228cef36f5122d7f229945d8693192eaf1b75796a347445c359` | Overworld on Ace. Party: Zoroark, Gimmighoul, Flygon, Dipplin, Coalossal and Pawmot, all Lv40 at full HP; Zoroark 110/110 with Opportunist and innates Illusion, Exploit Weakness and Ambush. 26 boxes hold 232 Pokémon, the first a Drilbur Lv25                 |
 
 Coverage by suite:
 

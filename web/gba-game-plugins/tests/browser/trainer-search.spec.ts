@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { build } from "vite";
+import { build } from "vite-plus";
 import { dashboardCss, fixtureBuild, playerCss } from "./support";
 import { resolve } from "node:path";
 import { rm, writeFile } from "node:fs/promises";

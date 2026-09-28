@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { expect, it, vi } from "vitest";
+import { expect, it, vi } from "vite-plus/test";
 import { PokemonDashboard, PokemonRoster } from "../ui/pokemon-dashboard";
 import type { BridgeState } from "@evenfall/gba/bridge";
 import type {

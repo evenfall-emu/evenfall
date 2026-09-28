@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { frame } from "../src/pages/landing/camera";
 import { PLATES, surfaceFraming } from "../src/pages/landing/fresco";
 

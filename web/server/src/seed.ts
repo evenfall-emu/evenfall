@@ -20,8 +20,8 @@ export const seedBases: readonly Seed<BaseInput>[] = [
   ...romhacks.bases.filter((base) => base.id !== "pokemon-emerald-us"),
 ];
 
-export const seedVersions: readonly Seed<VersionInput>[] = romhacks.versions.map(
-  (version) => ({
+export const seedVersions: readonly Seed<VersionInput>[] =
+  romhacks.versions.map((version) => ({
     ...version,
     patch: version.patch && {
       ...version.patch,
@@ -30,8 +30,7 @@ export const seedVersions: readonly Seed<VersionInput>[] = romhacks.versions.map
       >["format"],
     },
     visibility: version.visibility as NonNullable<VersionInput["visibility"]>,
-  }),
-);
+  }));
 
 /** Explicit, idempotent catalog seed. It is never called by a read request or startup. */
 export async function seedCatalog(db: CatalogDatabase): Promise<void> {

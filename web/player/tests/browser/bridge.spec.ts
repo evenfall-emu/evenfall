@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { build, defaultClientConditions } from "vite";
+import { build, defaultClientConditions } from "vite-plus";
 import { resolve } from "node:path";
 import { rm } from "node:fs/promises";
 

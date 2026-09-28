@@ -143,8 +143,8 @@ const requireAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
   const authorization = c.req.header("Authorization");
   const bearer = Boolean(
     secret &&
-      authorization &&
-      (await secretsEqual(authorization, `Bearer ${secret}`)),
+    authorization &&
+    (await secretsEqual(authorization, `Bearer ${secret}`)),
   );
   if (!bearer) {
     const session =

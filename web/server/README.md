@@ -24,14 +24,14 @@ first, the pages answering with the player's `index.html`, and every other
 path is served from the player's Static Assets in `.dist/cloudflare` (see
 [`frontend/README.md`](../frontend/README.md#pages-and-navigation)).
 
-| Path | Contents |
-|---|---|
-| [`src/index.ts`](src/index.ts) | Worker entry, catalog routes, management guard, auth mounting |
-| [`src/catalog.ts`](src/catalog.ts), [`src/schema.ts`](src/schema.ts), [`src/seed.ts`](src/seed.ts) | Catalog queries, Drizzle schema, seed data |
-| [`src/auth.ts`](src/auth.ts), [`src/auth-schema.ts`](src/auth-schema.ts) | Better Auth configuration and generated tables |
-| [`src/cloud-saves.ts`](src/cloud-saves.ts) | Cloud progress, quick slots, state shares, account deletion and the cleanup cron |
-| [`migrations/`](migrations/) | Generated D1 migrations |
-| [`wrangler.jsonc`](wrangler.jsonc) | Local-development Wrangler configuration |
+| Path                                                                                               | Contents                                                                         |
+| -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| [`src/index.ts`](src/index.ts)                                                                     | Worker entry, catalog routes, management guard, auth mounting                    |
+| [`src/catalog.ts`](src/catalog.ts), [`src/schema.ts`](src/schema.ts), [`src/seed.ts`](src/seed.ts) | Catalog queries, Drizzle schema, seed data                                       |
+| [`src/auth.ts`](src/auth.ts), [`src/auth-schema.ts`](src/auth-schema.ts)                           | Better Auth configuration and generated tables                                   |
+| [`src/cloud-saves.ts`](src/cloud-saves.ts)                                                         | Cloud progress, quick slots, state shares, account deletion and the cleanup cron |
+| [`migrations/`](migrations/)                                                                       | Generated D1 migrations                                                          |
+| [`wrangler.jsonc`](wrangler.jsonc)                                                                 | Local-development Wrangler configuration                                         |
 
 ## Data model
 
@@ -72,14 +72,14 @@ All responses are JSON except successful deletes (`204`). IDs use lowercase
 letters and digits with `-` or `.` separators; separators cannot lead, trail
 or repeat.
 
-| Method | Route | Response |
-|---|---|---|
-| `GET` | `/api/games` | `{ games: GameSummary[] }`, including `versionCount`, `tags` and `cloudPlaythroughs` |
-| `GET` | `/api/games/:id` | `{ game }`, including `tags`, `cloudPlaythroughs`, versions and their required bases |
-| `GET` | `/api/versions` | `{ versions }` with required-base metadata, `patch` and `saveCompatibleFrom` |
-| `GET` | `/api/versions/:id` | `{ version }` |
-| `GET` | `/api/bases` | `{ bases }`, each with its `sha1` and `crc32` |
-| `GET` | `/api/bases/:id` | `{ base }` |
+| Method | Route               | Response                                                                             |
+| ------ | ------------------- | ------------------------------------------------------------------------------------ |
+| `GET`  | `/api/games`        | `{ games: GameSummary[] }`, including `versionCount`, `tags` and `cloudPlaythroughs` |
+| `GET`  | `/api/games/:id`    | `{ game }`, including `tags`, `cloudPlaythroughs`, versions and their required bases |
+| `GET`  | `/api/versions`     | `{ versions }` with required-base metadata, `patch` and `saveCompatibleFrom`         |
+| `GET`  | `/api/versions/:id` | `{ version }`                                                                        |
+| `GET`  | `/api/bases`        | `{ bases }`, each with its `sha1` and `crc32`                                        |
+| `GET`  | `/api/bases/:id`    | `{ base }`                                                                           |
 
 Public game and version reads include only releases with a hosted patch and
 exclude `hidden`, including direct ID reads and save-compatibility IDs. A
@@ -220,12 +220,12 @@ in-game save). [Quick slots](#quick-slots) use `.../quick/:slot`.
 application/octet-stream`, and gzip bytes sent without an HTTP
 `Content-Encoding`. Headers identify the upload:
 
-| Header | Meaning |
-|---|---|
-| `X-Zigba-Revision` | UUID of this revision |
-| `X-Zigba-Captured-At` | Capture time, epoch milliseconds |
-| `X-Zigba-Digest` | SHA-256 of the compressed body |
-| `X-Zigba-Title` | Optional private game label, `encodeURIComponent` text of at most 160 code points without control characters |
+| Header                     | Meaning                                                                                                         |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `X-Zigba-Revision`         | UUID of this revision                                                                                           |
+| `X-Zigba-Captured-At`      | Capture time, epoch milliseconds                                                                                |
+| `X-Zigba-Digest`           | SHA-256 of the compressed body                                                                                  |
+| `X-Zigba-Title`            | Optional private game label, `encodeURIComponent` text of at most 160 code points without control characters    |
 | `X-Zigba-Playthrough-Name` | Optional playthrough name, same encoding and limit; defaults to `Playthrough` (`First adventure` for `default`) |
 
 Create with `If-None-Match: *`; replace only with a known quoted `If-Match`
@@ -332,12 +332,12 @@ open, without an account, for 24 hours. The player's side is described in
 exact configured `Origin` and a gzip state body, exactly as a `resume`
 upload does, plus:
 
-| Header | Meaning |
-|---|---|
-| `X-Zigba-Rom` | Raw playable ROM SHA-1 |
-| `X-Zigba-Digest` | SHA-256 of the compressed body |
+| Header                     | Meaning                                          |
+| -------------------------- | ------------------------------------------------ |
+| `X-Zigba-Rom`              | Raw playable ROM SHA-1                           |
+| `X-Zigba-Digest`           | SHA-256 of the compressed body                   |
 | `X-Zigba-Playthrough-Name` | Required playthrough name, encoded like a save's |
-| `X-Zigba-Title` | Optional game label, encoded like a save's |
+| `X-Zigba-Title`            | Optional game label, encoded like a save's       |
 
 It returns `201 {id, url, canIncludeRom}`. `id` is 128 random bits as 22
 base64url characters and `url` is `<configured origin>/share/state/<id>`.
@@ -578,8 +578,8 @@ patch-backed collected releases from the metadata-only
 identity and source revision. Of the releases with registered profiles in
 [`@evenfall/gba-pokemon`](../games/pokemon/README.md), the catalog includes:
 
-| Version | Output ROM SHA-1 | Source revision |
-|---|---|---|
+| Version                       | Output ROM SHA-1                           | Source revision                                                          |
+| ----------------------------- | ------------------------------------------ | ------------------------------------------------------------------------ |
 | Elite Redux 2.65 Beta2 (1048) | `f1323126bc043f3ce931bcc670957930559eb515` | `Elite-Redux/eliteredux-source@06da575972cfed20d471f8bb5b90ea9e4736b16a` |
 
 It requires the `pokemon-emerald-us` base, No-Intro "Pokemon - Emerald
@@ -637,18 +637,18 @@ The official instance's data practices are described in
 Replace every instance-specific value in the root `wrangler.jsonc` and the
 build environment before the first deploy:
 
-| Value | Where | Notes |
-|---|---|---|
-| Worker name | `name` | Any unused Worker name in your account. |
-| Domain | `routes[].pattern` | A custom domain on a zone in your account. Keep `workers_dev` and `preview_urls` off. |
-| Auth origin | `vars.BETTER_AUTH_URL` | Exactly `https://<your domain>`: an HTTPS origin with no path or trailing slash. |
-| Discord client ID | `vars.DISCORD_CLIENT_ID` | Your Discord application; register `https://<your domain>/api/auth/callback/discord`. |
-| Email sender | `vars.EMAIL_FROM`, `send_email[].allowed_sender_addresses` | An address on a domain onboarded to Cloudflare Email Sending. Remove both to disable email sign-in. |
-| D1 database | `d1_databases[].database_name`, `database_id` | Create with `wrangler d1 create <name>`; update the name in the `db:migrate:remote` script if it differs. |
-| R2 bucket | `r2_buckets[].bucket_name` | Create with `wrangler r2 bucket create <name> --jurisdiction eu`; keep public access off. Add the share lifecycle rule below. |
-| Patch bucket/CDN | `PATCHES` R2 binding and `vars.PATCHES_URL` | Bind the patch CDN bucket for uploads and point the URL at its read-only HTTPS Worker origin. |
-| Analytics | `VITE_POSTHOG_KEY`, `VITE_POSTHOG_HOST`, `VITE_POSTHOG_HOSTNAME` | Build-time; `tools/build-cloudflare.sh` defaults to the official instance. Export your own or empty values. |
-| Privacy notice | `PRIVACY.md`, `VITE_PRIVACY_URL` | Published as `/privacy.txt`. Replace it with your notice, or point `VITE_PRIVACY_URL` elsewhere. |
+| Value             | Where                                                            | Notes                                                                                                                         |
+| ----------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Worker name       | `name`                                                           | Any unused Worker name in your account.                                                                                       |
+| Domain            | `routes[].pattern`                                               | A custom domain on a zone in your account. Keep `workers_dev` and `preview_urls` off.                                         |
+| Auth origin       | `vars.BETTER_AUTH_URL`                                           | Exactly `https://<your domain>`: an HTTPS origin with no path or trailing slash.                                              |
+| Discord client ID | `vars.DISCORD_CLIENT_ID`                                         | Your Discord application; register `https://<your domain>/api/auth/callback/discord`.                                         |
+| Email sender      | `vars.EMAIL_FROM`, `send_email[].allowed_sender_addresses`       | An address on a domain onboarded to Cloudflare Email Sending. Remove both to disable email sign-in.                           |
+| D1 database       | `d1_databases[].database_name`, `database_id`                    | Create with `wrangler d1 create <name>`; update the name in the `db:migrate:remote` script if it differs.                     |
+| R2 bucket         | `r2_buckets[].bucket_name`                                       | Create with `wrangler r2 bucket create <name> --jurisdiction eu`; keep public access off. Add the share lifecycle rule below. |
+| Patch bucket/CDN  | `PATCHES` R2 binding and `vars.PATCHES_URL`                      | Bind the patch CDN bucket for uploads and point the URL at its read-only HTTPS Worker origin.                                 |
+| Analytics         | `VITE_POSTHOG_KEY`, `VITE_POSTHOG_HOST`, `VITE_POSTHOG_HOSTNAME` | Build-time; `tools/build-cloudflare.sh` defaults to the official instance. Export your own or empty values.                   |
+| Privacy notice    | `PRIVACY.md`, `VITE_PRIVACY_URL`                                 | Published as `/privacy.txt`. Replace it with your notice, or point `VITE_PRIVACY_URL` elsewhere.                              |
 
 Then, with Wrangler authenticated against your account:
 

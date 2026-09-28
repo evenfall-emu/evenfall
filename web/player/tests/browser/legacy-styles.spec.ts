@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { build } from "vite";
+import { build } from "vite-plus";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "node:path";
 import { rm } from "node:fs/promises";

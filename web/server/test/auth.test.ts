@@ -12,7 +12,7 @@ import {
   expect,
   it,
   vi,
-} from "vitest";
+} from "vite-plus/test";
 import app from "../src/index";
 import { sweepDeletedAccounts } from "../src/cloud-saves";
 

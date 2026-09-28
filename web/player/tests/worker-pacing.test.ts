@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 
 const frameCycles = 280896n;
 
@@ -64,9 +64,14 @@ async function worker(frameWorkMs = 5, messageDelayMs = 0) {
     loaded: true,
     recorder: { snapshotIntervalCycles: 0n },
     setAudioOutput: vi.fn(),
-    setVideoInterval: vi.fn((interval: number) => { videoInterval = interval; }),
+    setVideoInterval: vi.fn((interval: number) => {
+      videoInterval = interval;
+    }),
     videoFrameId: () => cycle / frameCycles / BigInt(videoInterval),
-    videoFrameCycle: () => (cycle / frameCycles / BigInt(videoInterval)) * BigInt(videoInterval) * frameCycles,
+    videoFrameCycle: () =>
+      (cycle / frameCycles / BigInt(videoInterval)) *
+      BigInt(videoInterval) *
+      frameCycles,
     presentationFrame: (pixels: Uint16Array) => pixels,
     wasm: {
       memory: { buffer: new ArrayBuffer(65536) },
@@ -226,7 +231,9 @@ it("uses whole-frame silent execution and wall-time recovery intervals at 16x", 
   expect(emulation.frames).toBeLessThanOrEqual(957);
   expect(emulation.core.runUntil).toHaveBeenCalledTimes(emulation.frames);
   expect(emulation.core.drainAudio).not.toHaveBeenCalled();
-  expect(emulation.events.filter((event) => event.event === "frame").length).toBeLessThanOrEqual(62);
+  expect(
+    emulation.events.filter((event) => event.event === "frame").length,
+  ).toBeLessThanOrEqual(62);
   await emulation.command("setSpeed", 2);
   expect(emulation.core.setAudioOutput).toHaveBeenLastCalledWith(true);
   emulation.advance(100);

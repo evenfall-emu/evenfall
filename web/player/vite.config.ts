@@ -2,7 +2,8 @@ import {
   defaultClientConditions,
   defaultServerConditions,
   defineConfig,
-} from "vite";
+  lazyPlugins,
+} from "vite-plus";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "node:path";
@@ -13,7 +14,7 @@ import { offlinePlayer } from "./offline";
 export const sourceConditions = ["zigba-source"];
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), offlinePlayer()],
+  plugins: lazyPlugins(() => [react(), tailwindcss(), offlinePlayer()]),
   // Absolute, so assets resolve from nested page URLs such as /library/<id>.
   // The router uses the same base path (for example `--base /vite/`).
   base: "/",
@@ -31,7 +32,7 @@ export default defineConfig({
   build: {
     outDir: process.env.ZIGBA_PLAYER_DIR ?? "../zig-out/player",
     emptyOutDir: true,
-    rollupOptions: {
+    rolldownOptions: {
       input: {
         player: resolve(import.meta.dirname, "index.html"),
         validation: resolve(import.meta.dirname, "validation.html"),

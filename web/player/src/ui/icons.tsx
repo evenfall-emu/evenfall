@@ -185,7 +185,7 @@ const pixelPaths = Object.fromEntries(
   Object.entries(pixelGlyphs).map(([name, rows]) => {
     const paths: Record<string, string> = {};
     rows.forEach((row, y) => {
-      for (let x = 0; x < row.length; ) {
+      for (let x = 0; x < row.length;) {
         const ink = row[x];
         let end = x + 1;
         while (row[end] === ink) end++;

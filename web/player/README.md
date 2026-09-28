@@ -9,9 +9,9 @@ players also get private cloud backups of their progress.
 
 The application has two entry points:
 
-| Page | Entry | Purpose |
-|---|---|---|
-| `/` | `index.html`, `src/main.tsx` | The player: Home, Player and Library |
+| Page               | Entry                                  | Purpose                                      |
+| ------------------ | -------------------------------------- | -------------------------------------------- |
+| `/`                | `index.html`, `src/main.tsx`           | The player: Home, Player and Library         |
 | `/validation.html` | `validation.html`, `src/validation.js` | SDK validation harness used by browser tests |
 
 The player consumes the [JavaScript SDK](../docs/sdk.md) as the
@@ -60,7 +60,7 @@ Tailwind's spacing, type, container and radius scales in pixels.
 
 ## Build and run
 
-From the repository root, with Zig 0.16 and Node 24+:
+From the repository root, with Zig 0.16 and Node 24.11+ (24.x) or 26+:
 
 ```sh
 npm ci                     # one install for every npm workspace
@@ -95,13 +95,13 @@ captured by Wrangler's email simulator rather than delivered.
 Each page has a URL, handled by TanStack Router, so a refresh or a shared
 link lands on it again:
 
-| URL | Page |
-|---|---|
-| `/` | Home |
-| `/library` | Library |
-| `/library/<game ID>` | Library, with that game's details |
-| `/player` | Player |
-| `/share/state/<ID>` | Home, starting a [shared state](#sharing-a-state) |
+| URL                  | Page                                              |
+| -------------------- | ------------------------------------------------- |
+| `/`                  | Home                                              |
+| `/library`           | Library                                           |
+| `/library/<game ID>` | Library, with that game's details                 |
+| `/player`            | Player                                            |
+| `/share/state/<ID>`  | Home, starting a [shared state](#sharing-a-state) |
 
 A fresh page load has no running game, so `/player` opens the Library
 instead. The browser's Back and Forward buttons move
@@ -143,18 +143,18 @@ importer normalizes the ROM; its raw SHA-1 identifies the game and its save
 lock. Opening a ROM starts playback from its battery save. Unknown ROMs use
 the generic player without game panels.
 
-| Key | Action |
-|---|---|
-| Arrows | D-pad |
-| X / Z | A / B |
-| Enter / Backspace | Start / Select |
-| A / S | L / R |
-| Space | Play or pause |
-| Tab (hold) | Run at 16x while held; Shift+Tab still moves focus |
-| R | Restore the newest checkpoint at least one emulated second old |
-| Shift+R | Open the rewind timeline |
-| Shift+1-9, Shift+0 | Save quick slot 1-9, 10 |
-| Ctrl+1-9, Ctrl+0 | Load quick slot 1-9, 10 |
+| Key                | Action                                                         |
+| ------------------ | -------------------------------------------------------------- |
+| Arrows             | D-pad                                                          |
+| X / Z              | A / B                                                          |
+| Enter / Backspace  | Start / Select                                                 |
+| A / S              | L / R                                                          |
+| Space              | Play or pause                                                  |
+| Tab (hold)         | Run at 16x while held; Shift+Tab still moves focus             |
+| R                  | Restore the newest checkpoint at least one emulated second old |
+| Shift+R            | Open the rewind timeline                                       |
+| Shift+1-9, Shift+0 | Save quick slot 1-9, 10                                        |
+| Ctrl+1-9, Ctrl+0   | Load quick slot 1-9, 10                                        |
 
 Standard gamepads and captured touch pointers are supported. Game keys work
 without canvas focus, but typing in fields, open dialogs and widgets that
@@ -539,12 +539,12 @@ cookieless Home, Player and Library pageviews, and the share events
 `state_share_created` and `state_share_opened`, to PostHog only when these
 variables are set in the build environment:
 
-| Variable | Meaning |
-|---|---|
-| `VITE_POSTHOG_KEY` | PostHog project key (a public ingestion key, not a secret). |
-| `VITE_POSTHOG_HOST` | PostHog ingestion host, for example `https://eu.i.posthog.com`. |
+| Variable                | Meaning                                                                       |
+| ----------------------- | ----------------------------------------------------------------------------- |
+| `VITE_POSTHOG_KEY`      | PostHog project key (a public ingestion key, not a secret).                   |
+| `VITE_POSTHOG_HOST`     | PostHog ingestion host, for example `https://eu.i.posthog.com`.               |
 | `VITE_POSTHOG_HOSTNAME` | Optional. Send only from pages served on exactly this hostname (recommended). |
-| `VITE_PRIVACY_URL` | Optional. Shows a **Privacy notice** link on Home and in the Account dialog. |
+| `VITE_PRIVACY_URL`      | Optional. Shows a **Privacy notice** link on Home and in the Account dialog.  |
 
 `tools/build-cloudflare.sh` supplies the official instance's values and
 publishes the repository's [`PRIVACY.md`](../PRIVACY.md) as `/privacy.txt`;
@@ -571,13 +571,13 @@ hosted instance's [privacy notice](../PRIVACY.md).
 
 A Git-connected Cloudflare Workers Builds project can use these settings:
 
-| Setting | Value |
-|---|---|
-| Production branch | `main` (no preview-branch deployments) |
-| Root directory | `/` |
-| Build command | `bash tools/build-cloudflare.sh` |
-| Deploy command | `npm run deploy -w frontend` |
-| Build variables | `NODE_VERSION=24.5.0`, `SKIP_DEPENDENCY_INSTALL=true`, `WRANGLER_SEND_METRICS=false` |
+| Setting           | Value                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------ |
+| Production branch | `main` (no preview-branch deployments)                                               |
+| Root directory    | `/`                                                                                  |
+| Build command     | `bash tools/build-cloudflare.sh`                                                     |
+| Deploy command    | `npm run deploy -w frontend`                                                         |
+| Build variables   | `NODE_VERSION=24.5.0`, `SKIP_DEPENDENCY_INSTALL=true`, `WRANGLER_SEND_METRICS=false` |
 
 [`tools/build-cloudflare.sh`](../tools/build-cloudflare.sh) must run from the
 repository root. It installs locked npm dependencies, type-checks and tests

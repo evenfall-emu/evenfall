@@ -615,8 +615,8 @@ test("nonzero wave audio reaches the bounded browser output and sound can be mut
   // Same register program as probe/wave_ramp.c, emitted as a tiny ARM fixture.
   const writes: number[][] = [];
   for (let h = 0; h < 8; h++) {
-    const lo = ((4 * h) % 16 << 4) | (4 * h + 1) % 16;
-    const hi = ((4 * h + 2) % 16 << 4) | (4 * h + 3) % 16;
+    const lo = (((4 * h) % 16) << 4) | ((4 * h + 1) % 16);
+    const hi = (((4 * h + 2) % 16) << 4) | ((4 * h + 3) % 16);
     writes.push([0x90 + h * 2, (hi << 8) | lo]);
   }
   writes.push(

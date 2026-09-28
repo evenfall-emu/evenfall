@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vite-plus/test";
 import { createMemoryReader } from "@evenfall/gba/bridge";
 import { eliteReduxBeta2 } from "../src/elite-redux";
 import { createReduxCatalog } from "../src/redux-catalog";

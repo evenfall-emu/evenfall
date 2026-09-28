@@ -11,7 +11,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { crc32 } from "node:zlib";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vite-plus/test";
 import { CYCLES_PER_FRAME, WasmCore } from "@evenfall/gba/core";
 import { patchRelease } from "../src/pages/library/install";
 import type { CatalogVersion } from "../src/pages/library/catalog";
@@ -174,8 +174,8 @@ describe("romhack install", () => {
       const booted: string[] = [];
       const selected = [
         ...new Set(found.usable.map((record) => record.family)),
-      ].map(
-        (family) => found.usable.find((record) => record.family === family)!,
+      ].map((family) =>
+        found.usable.find((record) => record.family === family)!,
       );
       for (const record of selected) {
         const basePath = join(basesDir, basename(record.baseFile));

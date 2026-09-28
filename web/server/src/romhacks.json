@@ -8,9 +8,7 @@
       "description": "A polished original adventure in Borrius with difficulty modes, missions, character customization, modern battle mechanics, extensive side content, and a large postgame.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-radical-red",
@@ -20,9 +18,7 @@
       "description": "A famous difficulty and enhancement hack with Pokémon and mechanics through Generation 9, strategic boss fights, extensive quality-of-life options, and configurable modes.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-gaia",
@@ -32,9 +28,7 @@
       "description": "An original Orbtus-region adventure centered on seismic mysteries, featuring Pokémon through Generation 6, Mega Evolution, modern mechanics, new music, and polished maps.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-glazed",
@@ -44,9 +38,7 @@
       "description": "A landmark multi-region adventure spanning Tunod, Johto, and Rankor, with five starters, a large cross-generation roster, legendary hunts, and parallel-world storytelling.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-firered-rocket-edition",
@@ -56,9 +48,7 @@
       "description": "Retells Kanto from a Team Rocket grunt's perspective, adding theft, morality, branching side quests, and a darker story interwoven with the original journey.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-emerald-rogue",
@@ -68,9 +58,7 @@
       "description": "Transforms Pokémon into a replayable roguelike with procedural routes, encounters, trainers, and items, plus a persistent hub, unlocks, difficulty settings, and modern mechanics.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-adventures-red-chapter",
@@ -80,9 +68,7 @@
       "description": "Adapts the Pokémon Adventures manga through Kanto and the Orange Archipelago, with expanded events, character portraits, following Pokémon, modern mechanics, and extensive side content.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-clover",
@@ -92,9 +78,7 @@
       "description": "A large 4chan-originated parody with two regions, 386 original monsters, a custom soundtrack, competitive AI, extensive side quests, and intentionally offensive adult humor.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-ashgray",
@@ -104,9 +88,7 @@
       "description": "Recreates Ash Ketchum's early anime journey, rewarding anime-accurate choices while still allowing custom teams, and replaces field HMs with tools.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-liquid-crystal",
@@ -116,9 +98,7 @@
       "description": "A GBA remake of Crystal covering Johto, Kanto, and additional Orange Islands content, with updated audiovisuals, day and night, weather, and new events.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-emerald-kaizo",
@@ -128,9 +108,7 @@
       "description": "A famously punishing Emerald difficulty hack with redesigned trainers and encounters, limited battle options, legendary events, and extra postgame content.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-inclement-emerald",
@@ -140,9 +118,7 @@
       "description": "A Drayano-inspired Hoenn enhancement with three difficulty modes, Pokémon through Generation 7, Mega Evolution, reusable TMs, improved Pokédex data, and broad quality-of-life changes.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-gs-chronicles",
@@ -152,9 +128,7 @@
       "description": "A modernized Gold and Silver reimagining with an altered Johto story, day and night, Mega Evolution, updated mechanics, more than 400 Pokémon, and a completed League path.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-flora-sky",
@@ -164,9 +138,7 @@
       "description": "A classic original-story Emerald hack about Giratina and Shaymin, with Pokémon through Generation 5, new locations, daily events, minigames, and a broad catchable roster.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-blazed-glazed",
@@ -176,9 +148,7 @@
       "description": "A popular rebalance of Glazed that retains its multi-region story while revising encounters, Pokémon stats, moves, typing, and overall progression.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-r-o-w-e",
@@ -188,9 +158,7 @@
       "description": "Rebuilds Hoenn as an open world with badge-scaled gyms, extensive configuration and randomizer modes, modern Pokémon, following partners, and a strong team-building focus.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "elite-redux",
@@ -200,10 +168,7 @@
       "description": "A battle-focused difficulty hack where Pokémon can combine multiple abilities and innates, backed by extensive rebalancing, rapid team building, minimal grinding, and competitive options.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon",
-        "Difficulty Hack"
-      ]
+      "tags": ["Pokémon", "Difficulty Hack"]
     },
     {
       "id": "pokemon-emerald-crest",
@@ -213,9 +178,7 @@
       "description": "An Emerald enhancement with open-world options, many starters, later-generation Pokémon and forms, Mega Evolution, Z-Moves, DexNav, randomizer modes, quests, and broad convenience features.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-the-last-fire-red",
@@ -225,9 +188,7 @@
       "description": "A feature-heavy FireRed enhancement with later-generation Pokémon, Mega Evolution, Z-Moves, Dynamax, level scaling, DexNav, seasons, expanded storage, and updated visuals.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-ultra-shiny-gold-sigma",
@@ -237,9 +198,7 @@
       "description": "An ambitious Gold, Silver, and Crystal remake spanning multiple regions, with more than 800 Pokémon, modern forms and evolutions, Mega Evolution, rematches, and many side systems.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-dark-rising",
@@ -249,9 +208,7 @@
       "description": "A famously difficult, dark original-region adventure in which Arceus recruits the player against an ancient evil, with a large cross-generation roster and sequel-spanning story.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-mega-power",
@@ -261,9 +218,7 @@
       "description": "An original multi-region story starring a scientist seeking funds to perfect Mewtwo, with Mega Evolutions, later-generation Pokémon, custom tiles, and connections to Wind1158's series.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-vega",
@@ -273,9 +228,7 @@
       "description": "A highly regarded English translation of a Japanese hack set in Tohoak, with a substantial original Pokédex, many new moves, custom music, demanding battles, and postgame facilities.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-saiph",
@@ -285,9 +238,7 @@
       "description": "An original Colen-region story loosely continuing Pokémon Ranger: Shadows of Almia, with DS-inspired presentation, Pokémon through Generation 6, reusable TMs, and day-night gameplay.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-sors",
@@ -297,9 +248,7 @@
       "description": "A story-driven Hupest-region hack about eclipse-altered Pokémon, featuring roughly 700 Pokémon, a custom Eclipse type, DS-inspired sprites, modern mechanics, and a day-night cycle.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-nameless",
@@ -309,9 +258,7 @@
       "description": "A story-heavy Wind1158 adventure following Chronya across Cyenn, replacing gyms with arenas and HMs with skills while connecting Resolute and Mega Power.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-fire-red-extended",
@@ -321,9 +268,7 @@
       "description": "A broad FireRed expansion with Pokémon through Generation 8, revamped maps and graphics, field moves, new events, modern interfaces, nature editing, and an extended League.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-orange-islands",
@@ -333,9 +278,7 @@
       "description": "Recreates Ash's Orange Archipelago anime journey with Pikachu as starter, four gyms, altered sprites and maps, a physical-special split, and primarily Generation 1 Pokémon.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-altered-emerald",
@@ -345,9 +288,7 @@
       "description": "Reworks Emerald's maps, encounters, learnsets, abilities, typings, difficulty, and battle engine while keeping Hoenn recognizable and making 386 Pokémon obtainable.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-fused-dimensions",
@@ -357,9 +298,7 @@
       "description": "Replaces FireRed's Pokédex with hundreds of obtainable Pokémon fusions, supported by custom entries, balancing, Mega Evolution, modern typing, reusable TMs, and changed encounters.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-too-many-types",
@@ -369,9 +308,7 @@
       "description": "A comedic Emerald overhaul adding 62 types, triple-typed Pokémon, more than 100 new moves, unusual matchup rules, story edits, special forms, and quality-of-life changes.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-emerald-seaglass",
@@ -381,9 +318,7 @@
       "description": "A cozy GBC-styled visual overhaul of Hoenn with all Generation 1–3 Pokémon, cross-generation evolutions, following partners, modern combat rules, minigames, difficulty options, and cheats.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-odyssey",
@@ -393,9 +328,7 @@
       "description": "Blends Pokémon with Etrian Odyssey in an exploration-first, double-battle-focused journey through the Yggdrasil Labyrinth, with no gyms, multiple difficulties, and three endings.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-victory-fire",
@@ -405,9 +338,7 @@
       "description": "A classic Wind1158 original-region adventure with a new story, rivals and villain team, later-generation Pokémon, Mega Evolution, reusable TMs, and links to Resolute and Nameless.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-resolute",
@@ -417,9 +348,7 @@
       "description": "A Wind1158 sequel to Victory Fire spanning Sylon, Tyron, and Johto, with later-generation Pokémon, Mega Evolution, custom regions, and a connected story continued by Nameless.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-dark-violet",
@@ -429,9 +358,7 @@
       "description": "A ground-up Kanto retelling with rewritten scripts, remapped areas, DS-style sprites, new music and moves, expanded characterization, and a more involved Team Rocket plot.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-sweet-version",
@@ -441,9 +368,7 @@
       "description": "A dessert-themed total conversion with 151 candified PokéSweets, a new flavor-based type chart, heavily altered Kanto-like maps, exploration rewards, and abundant food puns.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-theta-emerald-ex",
@@ -453,9 +378,7 @@
       "description": "An expansive Emerald enhancement known for packing in 721 Pokémon, hundreds of moves, Mega Evolution, Primal Reversion, the physical-special split, Fairy type, and reusable TMs.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-crystaldust",
@@ -465,9 +388,7 @@
       "description": "A highly polished Crystal remake in the Emerald engine, preserving Johto's original feel while upgrading graphics, sound, mechanics, and presentation for the GBA.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-cloud-white",
@@ -477,9 +398,7 @@
       "description": "Begins with FireRed's story and expands into a long multi-region journey, adding later-generation Pokémon, new characters, modern mechanics, and sequels that continue the adventure.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-ultra-violet",
@@ -489,9 +408,7 @@
       "description": "A classic FireRed expansion designed for single-player completion, making all Pokémon obtainable while adding starter choice, new capture areas, events, and quality-of-life adjustments.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-outlaw",
@@ -501,9 +418,7 @@
       "description": "A mature parody following a homeless teenager through a heavily rewritten Kanto, with new dialogue, urban slums, romance, political satire, and a drastically altered League story.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-quetzal-emerald-multiplayer",
@@ -513,9 +428,7 @@
       "description": "Adds local and online multiplayer to Emerald, including cooperative exploration, battles, trades, spectators, following parties, many playable characters, broad starter choice, and customizable rules.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-dark-worship",
@@ -525,9 +438,7 @@
       "description": "An original Seafood-region adventure about stopping an evil sect from capturing a holy Pokémon, with familiar guest characters, modern mechanics, and a completed English translation.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-elysium",
@@ -537,9 +448,7 @@
       "description": "A long, lore-focused two-part story following a 16-year-old trainer from Crysta through side quests, championship trials, and an ancient conspiracy, aimed at casual players.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "pokemon-hyper-emerald-lost-artifacts",
@@ -549,9 +458,7 @@
       "description": "A feature-dense Emerald overhaul with Mega Evolution, Z-Moves, Gigantamax, content through Generation 8, hard mode, expanded side quests, and a translated extended narrative.",
       "imageUrl": null,
       "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
+      "tags": ["Pokémon"]
     },
     {
       "id": "golden-sun-golden-sun-reloaded-gs1",
@@ -561,9 +468,7 @@
       "description": "A linked pair of gameplay overhaul patches for both GBA games, aimed at widening the viable options rather than the story. Classes, Psynergy, equipment, unleashes, enemies, bosses and drops are reworked, summon rushing is removed, and characters' stat growth is fixed so luck rises with levels. Data transfer between the two patched games works.",
       "imageUrl": null,
       "franchise": "Golden Sun",
-      "tags": [
-        "Golden Sun"
-      ]
+      "tags": ["Golden Sun"]
     },
     {
       "id": "golden-sun-golden-sun-reloaded-tla",
@@ -573,9 +478,7 @@
       "description": "A linked pair of gameplay overhaul patches for both GBA games, aimed at widening the viable options rather than the story. Classes, Psynergy, equipment, unleashes, enemies, bosses and drops are reworked, summon rushing is removed, and characters' stat growth is fixed so luck rises with levels. Data transfer between the two patched games works.",
       "imageUrl": null,
       "franchise": "Golden Sun",
-      "tags": [
-        "Golden Sun"
-      ]
+      "tags": ["Golden Sun"]
     },
     {
       "id": "golden-sun-golden-sun-dawn-of-djinn",
@@ -585,9 +488,7 @@
       "description": "A remix of the first game with reworked battles: new classes, Psynergy, weapons, Djinn and Djinni Charms, stronger enemies and bosses, and quality-of-life travel changes. It ships as a veteran patch and an easier casual patch, plus optional add-on patches. Save transfer to The Lost Age is not supported.",
       "imageUrl": null,
       "franchise": "Golden Sun",
-      "tags": [
-        "Golden Sun"
-      ]
+      "tags": ["Golden Sun"]
     },
     {
       "id": "golden-sun-golden-sun-qol",
@@ -597,9 +498,7 @@
       "description": "Adds Dawn of Djinn's convenience features to an otherwise near-original first game: world-map fast travel, an encounter toggle, key-item buyback and optional autorun or cutscene-shortening add-ons. Two patch variants are included, one that keeps the prologue and one that skips it.",
       "imageUrl": null,
       "franchise": "Golden Sun",
-      "tags": [
-        "Golden Sun"
-      ]
+      "tags": ["Golden Sun"]
     },
     {
       "id": "golden-sun-golden-sun-jenna-edition",
@@ -609,9 +508,7 @@
       "description": "Swaps Jenna and Garet's story roles so Jenna stays playable through the whole first game with her Lost Age classes and Psynergy. The released Modern version also skips the prologue and adds fast travel and an encounter toggle. Save transfer to The Lost Age is only semi-compatible.",
       "imageUrl": null,
       "franchise": "Golden Sun",
-      "tags": [
-        "Golden Sun"
-      ]
+      "tags": ["Golden Sun"]
     },
     {
       "id": "golden-sun-golden-retriever-a-golden-sun-dog-mod",
@@ -621,9 +518,7 @@
       "description": "An April Fools adventure in which Vale's people turn into dogs and the dialogue and mind reads change to match. Its altered campaign ends after Vault; later areas play close to the original game.",
       "imageUrl": null,
       "franchise": "Golden Sun",
-      "tags": [
-        "Golden Sun"
-      ]
+      "tags": ["Golden Sun"]
     },
     {
       "id": "golden-sun-golden-sun-fallen-star",
@@ -633,9 +528,7 @@
       "description": "A difficulty and rebalance mod that reworks Psynergy, enemy toolkits, equipment and encounters to demand broader tactics than the original. It is the first half of Vanish Mantle's paired Fallen Star/Risen Star project, and it soft-caps levels around 35.",
       "imageUrl": null,
       "franchise": "Golden Sun",
-      "tags": [
-        "Golden Sun"
-      ]
+      "tags": ["Golden Sun"]
     },
     {
       "id": "golden-sun-golden-sun-book-2-risen-star",
@@ -645,9 +538,7 @@
       "description": "The Lost Age half of the Fallen Star project, rebuilding difficulty and balance through revised Psynergy, equipment, enemies and encounters. Enemies give no experience; they drop stat items instead, so progression comes from fighting rather than grinding.",
       "imageUrl": null,
       "franchise": "Golden Sun",
-      "tags": [
-        "Golden Sun"
-      ]
+      "tags": ["Golden Sun"]
     },
     {
       "id": "golden-sun-golden-sun-the-lost-age-anniversary-mod",
@@ -657,9 +548,7 @@
       "description": "A replay-oriented quality-of-life mod that keeps the original battles while easing travel, puzzles and inventory management. It ships as a normal patch and a no-summon challenge patch, plus an optional patch that changes the battle theme with the party leader.",
       "imageUrl": null,
       "franchise": "Golden Sun",
-      "tags": [
-        "Golden Sun"
-      ]
+      "tags": ["Golden Sun"]
     },
     {
       "id": "golden-sun-golden-sun-tla-convenience-and-inspiration",
@@ -669,9 +558,7 @@
       "description": "A sandbox-leaning mod that speeds up The Lost Age and opens up character builds: earlier third-tier Psynergy, stronger attack Psynergy, higher unleash rates, larger Djinn stat bonuses and equipment that grants elemental power so different party builds stay viable.",
       "imageUrl": null,
       "franchise": "Golden Sun",
-      "tags": [
-        "Golden Sun"
-      ]
+      "tags": ["Golden Sun"]
     },
     {
       "id": "golden-sun-golden-sun-class-transmutation-hack-gs1",
@@ -681,9 +568,7 @@
       "description": "A class-system overhaul for both games: the class-type table is rewritten so every element combination has its own classes, three-element classes are doubled and expanded, and item classes are removed. Psynergy is rebalanced and extended to give each new class something unique.",
       "imageUrl": null,
       "franchise": "Golden Sun",
-      "tags": [
-        "Golden Sun"
-      ]
+      "tags": ["Golden Sun"]
     },
     {
       "id": "golden-sun-golden-sun-class-transmutation-hack-tla",
@@ -693,9 +578,7 @@
       "description": "A class-system overhaul for both games: the class-type table is rewritten so every element combination has its own classes, three-element classes are doubled and expanded, and item classes are removed. Psynergy is rebalanced and extended to give each new class something unique.",
       "imageUrl": null,
       "franchise": "Golden Sun",
-      "tags": [
-        "Golden Sun"
-      ]
+      "tags": ["Golden Sun"]
     },
     {
       "id": "golden-sun-tla-style-hard-mode-for-gs1",
@@ -705,9 +588,7 @@
       "description": "A small patch that applies The Lost Age's hard-mode enemy multipliers to the first game: enemy HP up 50%, attack and defence up 25%. It changes enemy data only, so it can be combined with hacks that leave enemy stats alone.",
       "imageUrl": null,
       "franchise": "Golden Sun",
-      "tags": [
-        "Golden Sun"
-      ]
+      "tags": ["Golden Sun"]
     },
     {
       "id": "golden-sun-golden-sun-1-challenge-pack",
@@ -717,9 +598,7 @@
       "description": "An add-on pack that revisits the first game (and Dawn of Djinn) with twist battles: bosses and encounters are given new rules and restrictions to make fights more interesting. It is meant to be layered on top of an existing playthrough's patch.",
       "imageUrl": null,
       "franchise": "Golden Sun",
-      "tags": [
-        "Golden Sun"
-      ]
+      "tags": ["Golden Sun"]
     },
     {
       "id": "golden-sun-golden-sun-the-lost-age-color-correction",
@@ -729,9 +608,7 @@
       "description": "A palette-only hack that corrects the washed-out colours of The Lost Age on backlit screens and accurate emulators, covering town and dungeon maps, battle backgrounds and the overworld. It changes no gameplay, text or maps.",
       "imageUrl": null,
       "franchise": "Golden Sun",
-      "tags": [
-        "Golden Sun"
-      ]
+      "tags": ["Golden Sun"]
     },
     {
       "id": "fire-emblem-the-last-promise",
@@ -741,9 +618,7 @@
       "description": "The west's first widely played complete campaign and still the most cited entry point to Fire Emblem hacking. Follows Anakin and a band of misfits rebelling against the empire of Magnus on the continent of Solum, with an original cast, maps, soundtrack and a post-game. Built to feel like an expanded Blazing Blade, it is rough in places but historically the hack that made the scene visible.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-elibean-nights",
@@ -753,9 +628,7 @@
       "description": "An anthology sequel to Blazing Blade: each tale is a self-contained chapter about Elibe's surviving cast in the years before Binding Blade, chosen from a hub with achievements, bonus scenes and a support matchmaker. Arch's long-running project trades a single campaign for vignettes, and the Director's Cut reworks the scripts and maps. The thread's final release is a public playtest build rather than a signed-off version.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-the-road-to-ruin",
@@ -765,9 +638,7 @@
       "description": "Primefusion's early complete campaign, still recommended for its polished presentation and tight cast. It follows a small group caught in a war across a custom continent, with clean map design, custom portraits and music and a difficulty curve close to vanilla Blazing Blade. One of the hacks that set the standard for what a fan campaign could look like.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-order-of-the-crimson-arm",
@@ -777,9 +648,7 @@
       "description": "TactHack's 30-chapter campaign about a mercenary company hired into a succession war, one of the more experimental early hacks: defence, escape and timed objectives appear throughout, and the army grows around a named core. Its late game is uneven, and the curated lists say so, but its variety and ambition made it a standard recommendation for players who had finished the classics.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-dark-lord-and-the-maiden-of-light",
@@ -789,9 +658,7 @@
       "description": "A 27-chapter original story about a young lord of Vanheim caught between the empire of Deimos and Enterre. Widely described as the hack that feels most like an official GBA Fire Emblem game: familiar structure, strong unit balance, music drawn from across the series, and no gimmicks. Long a first recommendation for players who want more Blazing Blade rather than a deconstruction of it.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-requiem",
@@ -801,9 +668,7 @@
       "description": "Sacred Blaze's story-driven campaign about the noble house of Olva and the two siblings who inherit its war with house Egarde. It keeps vanilla Blazing Blade mechanics and concentrates on events, maps and a complete support web across 26 chapters. Recommended for players who value a traditional campaign and a plot with a slower burn.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-sword-of-heaven-and-earth",
@@ -813,9 +678,7 @@
       "description": "Japan's first complete GBA campaign, a sequel to Blazing Blade set in the years after its ending, later translated by Nasaelo. It keeps FE7's systems and adds a new cast, new maps and a full scenario across roughly 20 chapters. Notable both for its quality and for showing that the Japanese scene had produced a finished campaign long before the west did.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-project-ember",
@@ -825,9 +688,7 @@
       "description": "A full reimagining of Binding Blade that keeps the story and rebuilds everything around it: rebalanced units and weapons, additional playable characters, new classes, reworked maps and quality-of-life fixes for a game famous for being hostile to its player. The most recommended way to play FE6 without playing FE6, and the reference point for FE6 hacking.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-eckesachs",
@@ -837,9 +698,7 @@
       "description": "Saint Rubenio's FE6 rewrite in which you play the villains: the Bern campaign of Zephiel and his generals, retold from their side with new dialogue, events and recruitments on top of Binding Blade's maps. Part overhaul, part commentary on the original, and the best known of the 'play as the bad guys' projects.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-the-second-scouring",
@@ -849,9 +708,7 @@
       "description": "A 24-chapter sequel campaign set after Binding Blade, following a new generation of lords as Elibe faces a second Scouring. It keeps FE6's engine and mechanics, with custom maps, characters and a complete script, and is one of the few finished full-length FE6 campaigns.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-the-binding-blade-revamp-project-sienna",
@@ -861,9 +718,7 @@
       "description": "A full-length FE6 revamp by Deviation that rebalances the cast, rewrites dialogue, adds new items and classes and smooths the original's rougher maps while keeping Roy's story. Recommended as a lighter-touch alternative to Project Ember for players who want Binding Blade's campaign with modern balance rather than a reimagining.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-vision-quest",
@@ -873,9 +728,7 @@
       "description": "Pandan's 43-chapter campaign about Storch, a farmer turned bandit in the failing state of Belaro, on the continent of Yaska. It is the modern benchmark for GBA hacking: vanilla-feeling systems with light skills, a large replaceable cast built for ironman play, many side objectives, multiple difficulties and consistently strong map design. Krash's compendium names it one of the three starting points for new players.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-the-four-kings",
@@ -885,9 +738,7 @@
       "description": "KrashBoomBang's campaign about three royal brothers whose envoy goes wrong, with every playable character carrying a personal weapon and a mid-game army split that alternates between two parties. Harder than vanilla and closer to Binding Blade's pressure, it is the third of the 'Oifeybot trilogy' that the community treats as the standard first three hacks.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-sacred-echoes",
@@ -897,9 +748,7 @@
       "description": "HyperGammaSpaces' demake of Shadows of Valentia in the Sacred Stones engine: all five acts, roughly 46 maps, Gaiden-style dungeon and magic systems rebuilt with GBA technology, and custom art throughout. The most technically admired hack in the scene and a complete, playable alternative to the 3DS game.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-dream-of-five-definitive-edition",
@@ -909,9 +758,7 @@
       "description": "The finished version of one of the oldest surviving projects: a long campaign with a ten-map route split, two lords' paths, roughly 41 chapters and a fully custom visual identity. Rebuilt for the Sacred Stones engine after beginning life as an FE7 hack, it is regularly called the best all-round hack of its year.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-the-sun-god-s-wrath",
@@ -921,9 +768,7 @@
       "description": "Blademaster's maximalist campaign, a sequel to the same author's Corrupt Theocracy, following Astrea and the mercenary group Propater against the sun god Pyron. It piles on skills, classes, map gimmicks and a famously hard-to-follow plot, and offers a 100% growth mode. Recommended precisely because nothing else in the scene plays like it.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-justice-pride",
@@ -933,9 +778,7 @@
       "description": "DrGreen3339's 30-chapter campaign set on the continent of Irona, among the first hacks built on SkillSystems. It leans into powerful player units, magic fliers and juggernaut tactics, with eight post-game maps, difficulty modes and unusual quality-of-life rules such as free trading. A long-standing recommendation for players who want to steamroll rather than struggle.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-shackled-power",
@@ -945,9 +788,7 @@
       "description": "Sphealnuke's 33-chapter campaign with entirely hand-drawn portraits and battle animations, a bomb weapon type locked to two range, and a story about a rebellion against a magically enforced order. It plays close to vanilla Sacred Stones and has an easy mode, which makes it one of the more approachable modern recommendations.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-souls-of-the-forest",
@@ -957,9 +798,7 @@
       "description": "Scraiza's gameplay-first campaign, built like New Mystery: high offences, low defences, tight maps and powerful class-specific tools such as Galeforce swords for swordmasters. It has three difficulties, 24 chapters and four sidequests. The community consistently cites it for the precision of its design rather than its story.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-iron-emblem",
@@ -969,9 +808,7 @@
       "description": "Mournful Relic's 21-chapter hack built around ironman play: no resetting, no named lords, just a squad of generic soldiers and anti-turtling pressure on nearly every map. Its plain presentation hides careful design, and it is the hack most often recommended to players who want a pure tactical challenge.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-code-of-the-black-knights",
@@ -981,9 +818,7 @@
       "description": "Mycahel's 30-chapter campaign with two protagonists, branching choices and ten endings, built on SkillSystems and styled after 2000s anime. It offers 45 playable maps and a large cast, with difficulty that rewards using the tools it hands out. One of the most replayed hacks in the scene because of its routes.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-bells-of-byelen",
@@ -993,9 +828,7 @@
       "description": "A 24-chapter 'telephone' hack built by a relay of authors around a Thracia 776 framework: fatigue, capture, twenty stat caps and stolen equipment. The story of two officers in the Decian Liberators fighting the Cythean Empire is unusually strong for a collaborative project, and the whole is held together by a shared commitment to FE5 mechanics.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-call-of-the-armor",
@@ -1005,9 +838,7 @@
       "description": "The first 'telephone' hack: a large team each contributed one or two chapters, passing the ROM around like a game of telephone. It stays mechanically close to Sacred Stones, with three character selection interludes and a run of inventive maps. Its sequel, Tales of Kotor, uses the same format.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-storge",
@@ -1017,9 +848,7 @@
       "description": "A short, replayable campaign built like an arcade game: you begin with a purse of gold, hire a party from a large pool and spend the rest on weapons, then play five maps with what you chose. The father-and-daughter story is told economically, and unlockables reward repeat runs. Frequently recommended as a first hack because it can be finished in an evening.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-myrm-emblem",
@@ -1029,9 +858,7 @@
       "description": "A full-length conceit hack whose entire playable cast is made of swordmasters and myrmidons from across the series, plus Kaga's Saga games. There is almost no story; the interest is in seeing how far one class can be stretched across 25 chapters. Krash's compendium recommends it for the joke and the surprisingly solid play.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-void-s-blitzarre-adventure",
@@ -1041,9 +868,7 @@
       "description": "A 31-chapter campaign assembled by the Fire Emblem Universe community in a single week, with each contributor taking a chapter. It pioneered the SkillSystems patch, so the gameplay is skill-driven and experimental, and the tone is comic. Its release set the template for the telephone hacks that followed.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-the-dark-amulet",
@@ -1053,9 +878,7 @@
       "description": "Vorgus' 30-chapter campaign deliberately built to feel like a mainline Fire Emblem: a new continent, a new cast of thirty, shifting party composition reminiscent of Radiant Dawn, and a story that is often praised as the hack's strongest element. Its sequel, The Shadow of Dawn, continues the setting.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-drums-of-war",
@@ -1065,9 +888,7 @@
       "description": "Parrhesia's 22-chapter, story-focused campaign in which defeated bosses can be recruited, filling out an army of unusual characters. It is grounded and political rather than heroic, with custom art and a soundtrack drawn from outside the series, and it keeps Sacred Stones systems so the writing carries the weight.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-the-morrow-s-golden-country",
@@ -1077,9 +898,7 @@
       "description": "Retina's long campaign with party splits, interludes and unusual ways of building powerful units, set in a country rebuilding after war. It is known for its writing, its varied chapter structure and a difficulty that can be pushed high on request, and it is one of the hacks most often named as a favourite by players who have tried everything else.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-curse-of-lagdou",
@@ -1089,9 +908,7 @@
       "description": "A 24-chapter what-if set in Magvel during Sacred Stones' backstory, with overhauled weapons and critical hits that make every combat decision sharper. DoinThangs' campaign reuses the vanilla setting rather than inventing a continent, and the second version rebuilds the maps and script around that premise.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-cerulean-crescent",
@@ -1101,9 +918,7 @@
       "description": "Rivian's 31-chapter campaign about an exiled noble turned adventurer, with highly creative unit tools and a dramedy tone that the curated lists single out. Its maps are built around the specific, unusual things each unit can do, and the 2.0 update expanded the cast and reworked late chapters.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     },
     {
       "id": "fire-emblem-the-hag-in-white",
@@ -1113,9 +928,7 @@
       "description": "Saint Rubenio's 2025 campaign in which healing magic is outlawed and the player's bishop is the most wanted person in the setting. It pairs SkillSystems depth with tight, low-unit maps and a consistently praised script, and was added to the vetted campaign list within months of release.",
       "imageUrl": null,
       "franchise": "Fire Emblem",
-      "tags": [
-        "Fire Emblem"
-      ]
+      "tags": ["Fire Emblem"]
     }
   ],
   "bases": [

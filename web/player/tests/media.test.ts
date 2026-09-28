@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi } from "vite-plus/test";
 import { AudioOutput, VideoOutput } from "../src/media";
 function output(audio = new AudioOutput()) {
   const buffers: Float32Array[][] = [];
@@ -99,7 +99,9 @@ describe("bounded browser audio fallback", () => {
     vi.stubGlobal("document", { baseURI: "http://localhost/" });
     vi.stubGlobal(
       "AudioWorkletNode",
-      vi.fn(() => node),
+      vi.fn(function () {
+        return node;
+      }),
     );
     try {
       const { audio, gain, context } = output();
