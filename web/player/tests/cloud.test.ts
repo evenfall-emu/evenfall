@@ -199,6 +199,78 @@ it("downloads the selected playthrough rather than another run of the same game"
   });
 });
 
+it.each(["success", "offline", "signed-out", "failure", "account-changed"])(
+  "deletes playthroughs with cloud confirmation: %s",
+  async (mode) => {
+    const ref = { hash: "a".repeat(40), playthroughId: "default" };
+    await library.put({
+      hash: ref.hash,
+      title: "Game",
+      rom: new Uint8Array([1]),
+      lastPlayed: 1,
+    });
+    await library.save(ref, new Uint8Array([17]));
+    let locked = false;
+    vi.stubGlobal("navigator", {
+      onLine: mode !== "offline",
+      locks: {
+        request: async (_name: string, operation: () => Promise<unknown>) => {
+          locked = true;
+          try {
+            return await operation();
+          } finally {
+            locked = false;
+          }
+        },
+      },
+    });
+    let deleted = false;
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/auth/get-session")
+        return Response.json({
+          user: { id: mode === "account-changed" ? "bob" : "alice" },
+        });
+      if (url === "/api/saves")
+        return Response.json({
+          saves: deleted ? [] : [listing("a", "2026-09-20T10:00:00Z")],
+          cursor: null,
+        });
+      expect(url).toBe(`/api/saves/${ref.hash}/default`);
+      expect(init?.method).toBe("DELETE");
+      expect(init?.headers).toEqual({ "X-Zigba-Account": "alice" });
+      expect(locked).toBe(true);
+      expect(await library.getSave(ref)).toEqual(new Uint8Array([17]));
+      if (mode === "failure") return new Response(null, { status: 503 });
+      deleted = true;
+      return new Response(null, { status: 204 });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    await library.setCloudIdentity(
+      mode === "signed-out" ? null : "alice",
+      false,
+    );
+    await cloud.setIdentity(mode === "signed-out" ? null : "alice");
+    await vi.waitFor(() => expect(status.discovering).toBe(false));
+    expect(status.enabled).toBe(false);
+    if (mode === "failure" || mode === "account-changed") {
+      await expect(cloud.deletePlaythrough(ref)).rejects.toThrow(
+        mode === "failure"
+          ? "Cloud deletion was not confirmed"
+          : "Account changed",
+      );
+      expect(await library.getSave(ref)).toEqual(new Uint8Array([17]));
+    } else {
+      await cloud.deletePlaythrough(ref);
+      expect(await library.getPlaythrough(ref)).toBeUndefined();
+      expect(deleted).toBe(mode === "success");
+      if (mode === "success") {
+        await vi.waitFor(() => expect(status.discovering).toBe(false));
+        expect(status.resumes).toEqual([]);
+      }
+    }
+  },
+);
+
 it("refuses account deletion when the session changed from the account shown in the dialog", async () => {
   vi.stubGlobal("navigator", {
     locks: {

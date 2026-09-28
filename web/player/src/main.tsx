@@ -890,7 +890,7 @@ function App() {
             "Another tab has this playthrough open. Close it before deleting.",
           );
         try {
-          await player.library.deletePlaythrough(action);
+          await player.cloud.deletePlaythrough(action);
         } finally {
           release?.();
         }

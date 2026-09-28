@@ -1008,7 +1008,7 @@ export class Player {
         }));
       const generation =
         checkpoint && (await this.validatedResume(game, checkpoint));
-      const { next, created } = await this.library.deletePlaythrough(ref);
+      const { next, created } = await this.cloud.deletePlaythrough(ref);
       deleted = true;
       this.persistenceEpoch++;
       this.session.ownSaveLock();
@@ -1038,7 +1038,7 @@ export class Player {
       this.resumeBlockedRef = undefined;
       this.update({
         resumeFailed: false,
-        message: "Playthrough deleted from this device.",
+        message: "Playthrough deleted.",
       });
       await this.emulator.setRewindConfig();
       if (wasPlaying) await this.play(true);

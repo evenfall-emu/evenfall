@@ -110,6 +110,45 @@ export function registerCloudSaveRoutes(app: Hono<Env>): void {
     });
   });
 
+  app.delete("/api/saves/:hash/:playthroughId", async (c) => {
+    const account = await saveAccount(c);
+    if (account instanceof Response) return account;
+    if (c.req.header("Origin") !== new URL(account.baseURL).origin)
+      return failure(
+        c,
+        403,
+        "invalid_origin",
+        "Same-origin requests are required",
+      );
+    const hash = c.req.param("hash");
+    const playthroughId = c.req.param("playthroughId");
+    if (!HASH.test(hash) || !validPlaythroughId(playthroughId))
+      return failure(
+        c,
+        400,
+        "invalid_save_key",
+        "Invalid save hash or playthrough ID",
+      );
+    const prefix = `${account.userId}/${hash}/${playthroughId}/`;
+    while (true) {
+      const page = await c.env.SAVES!.list({ prefix, limit: 1000 });
+      if (!page.objects.length) break;
+      await c.env.SAVES!.delete(page.objects.map((object) => object.key));
+    }
+    if (playthroughId === "default")
+      await c.env.SAVES!.delete([
+        `${account.userId}/${hash}/resume`,
+        `${account.userId}/${hash}/battery`,
+      ]);
+    await c.env
+      .DB!.prepare(
+        "DELETE FROM playthrough WHERE user_id = ? AND hash = ? AND id = ?",
+      )
+      .bind(account.userId, hash, playthroughId)
+      .run();
+    return c.body(null, 204);
+  });
+
   // Registered before the generic kind route, which would otherwise claim
   // `quick` as an invalid kind. Quick slots never use the legacy namespace.
   app.get("/api/saves/:hash/:playthroughId/quick", async (c) => {

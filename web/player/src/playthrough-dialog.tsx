@@ -291,7 +291,8 @@ export function DeletePlaythroughDialog({
           <div className="playthrough-delete-content">
             <Dialog.Description>
               Delete “{name}” and its local saves, checkpoints and quick slots?
-              This cannot be undone. Any cloud backup remains in your account.
+              This cannot be undone. When online and signed in, its cloud backup
+              is also deleted. Offline or signed out, the cloud backup stays.
             </Dialog.Description>
             {error && (
               <p className="playthrough-dialog-error" role="alert">

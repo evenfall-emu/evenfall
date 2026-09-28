@@ -511,11 +511,10 @@ export function DeleteDialog({
         This removes the playthrough&rsquo;s in-game save, resume point and
         quick states from this device.
       </p>
-      {run.sync !== "device-only" && (
-        <p className="mt-3 text-1x5 text-muted">
-          Its cloud backup stays, and can be downloaded again.
-        </p>
-      )}
+      <p className="mt-3 text-1x5 text-muted">
+        When online and signed in, its cloud backup is also deleted. Offline or
+        signed out, the cloud backup stays.
+      </p>
       <DialogActions>
         <button
           className={button("outline", "lg")}

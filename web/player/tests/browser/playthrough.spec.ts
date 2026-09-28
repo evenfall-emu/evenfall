@@ -565,7 +565,7 @@ test("deleting a playthrough requires confirmation and keeps the other adventure
   await trash.click();
   const confirm = page.getByRole("dialog", { name: "Delete playthrough?" });
   await expect(confirm).toContainText("Delete me");
-  await expect(confirm).toContainText("Any cloud backup remains");
+  await expect(confirm).toContainText("its cloud backup is also deleted");
   await expect(confirm.getByRole("button", { name: "Cancel" })).toBeFocused();
   await confirm.getByRole("button", { name: "Cancel" }).click();
   await expect(confirm).toBeHidden();

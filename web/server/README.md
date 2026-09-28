@@ -269,6 +269,14 @@ object stored at the three-segment `default` key counts only after a `PUT`
 through the playthrough route registers it, so `usage` can undercount on
 instances that hold such objects.
 
+`DELETE /api/saves/:hash/:playthroughId` requires a current cookie session,
+a matching `X-Zigba-Account`, and an exact same-origin `Origin`. It removes
+the run's resume, battery and quick-slot objects, including legacy resume and
+battery keys for `default`, then frees its D1 playthrough registration. It
+returns `204` even if the backup is already absent. Other runs and accounts
+are untouched. This removes the current cloud copy, not local copies on other
+devices; later uploads from those devices can create a backup again.
+
 ### Quick slots
 
 `GET`, `HEAD` and `PUT /api/saves/:hash/:playthroughId/quick/:slot` store one
@@ -662,8 +670,6 @@ late uploads (see [account deletion](#account-deletion)).
 
 ## Open questions
 
-- Individual cloud playthroughs cannot be deleted; only whole-account
-  deletion removes cloud data.
 - Tombstone retention and the sweep cadence are coupled; there is no policy
   for retiring tombstones.
 - A state share cannot be revoked before it expires, except by deleting the

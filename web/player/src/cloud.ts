@@ -513,6 +513,47 @@ export class CloudSync {
       );
     return navigator.locks.request("zigba-cloud-sync", operation);
   }
+  async deletePlaythrough(ref: PlaythroughRef) {
+    const { accountId } = await this.library.cloudIdentity();
+    if (!navigator.onLine || !accountId)
+      return this.library.deletePlaythrough(ref);
+    // Hold the upload lock through local removal so queued jobs cannot
+    // recreate the backup after the server confirms deletion.
+    return this.exclusive(async () => {
+      await this.refreshIdentity();
+      if (this.identity.accountId !== accountId)
+        throw new Error("Account changed. Retry deleting the playthrough.");
+      const response = await fetch(
+        `/api/saves/${ref.hash}/${ref.playthroughId}`,
+        {
+          method: "DELETE",
+          credentials: "same-origin",
+          cache: "no-store",
+          headers: { "X-Zigba-Account": accountId },
+          signal: AbortSignal.timeout(30_000),
+        },
+      );
+      if (!response.ok)
+        throw new Error(
+          "Cloud deletion was not confirmed. Local progress was kept. Please retry.",
+        );
+      // Discard any listing started before deletion, then refresh the quota.
+      ++this.identityEpoch;
+      this.discoveryEpoch = undefined;
+      this.resumes = this.resumes.filter(
+        (run) =>
+          run.hash !== ref.hash || run.playthroughId !== ref.playthroughId,
+      );
+      this.quickConflicts = this.quickConflicts.filter(
+        (run) =>
+          run.hash !== ref.hash || run.playthroughId !== ref.playthroughId,
+      );
+      this.report();
+      const result = await this.library.deletePlaythrough(ref);
+      void this.discover();
+      return result;
+    });
+  }
   async deleteAccount(expectedAccountId: string) {
     await this.exclusive(async () => {
       await this.refreshIdentity();

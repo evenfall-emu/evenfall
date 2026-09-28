@@ -883,6 +883,69 @@ describe("playthrough quota and account erasure", () => {
     );
   }
 
+  it("deletes only the selected account's playthrough, including legacy saves and quick slots, and frees its quota", async () => {
+    const game = "d".repeat(40);
+    const user = owner["X-Zigba-Account"];
+    const sibling = crypto.randomUUID();
+    const removed = [
+      `${user}/${game}/resume`,
+      `${user}/${game}/battery`,
+      `${user}/${game}/default/resume`,
+      `${user}/${game}/default/battery`,
+      `${user}/${game}/default/quick/1`,
+      `${user}/${game}/default/quick/10`,
+    ];
+    const kept = [
+      `${user}/${game}/${sibling}/resume`,
+      `${other["X-Zigba-Account"]}/${game}/default/resume`,
+      `${user}/${"e".repeat(40)}/default/resume`,
+    ];
+    for (const key of [...removed, ...kept]) await saves.put(key, "save");
+    await database
+      .prepare(
+        "INSERT INTO playthrough (user_id, hash, id, name) VALUES (?, ?, 'default', 'First')",
+      )
+      .bind(user, game)
+      .run();
+    const path = `${origin}/api/saves/${game}/default`;
+    for (const [headers, expected] of [
+      [{ ...owner, Origin: "https://elsewhere.example" }, 403],
+      [
+        {
+          Cookie: owner.Cookie,
+          "X-Zigba-Account": other["X-Zigba-Account"],
+          Origin: origin,
+        },
+        403,
+      ],
+      [{ Origin: origin }, 401],
+    ] as const) {
+      expect(
+        (await miniflare.dispatchFetch(path, { method: "DELETE", headers }))
+          .status,
+      ).toBe(expected);
+      expect(await saves.head(removed[0])).not.toBeNull();
+    }
+    for (let retry = 0; retry < 2; retry++)
+      expect(
+        (
+          await miniflare.dispatchFetch(path, {
+            method: "DELETE",
+            headers: { ...owner, Origin: origin },
+          })
+        ).status,
+      ).toBe(204);
+    for (const key of removed) expect(await saves.head(key)).toBeNull();
+    for (const key of kept) expect(await saves.head(key)).not.toBeNull();
+    expect(
+      await database
+        .prepare("SELECT id FROM playthrough WHERE user_id = ? AND hash = ?")
+        .bind(user, game)
+        .first(),
+    ).toBeNull();
+    await saves.delete(kept);
+  });
+
   it("reserves one slot per run, not per kind or upload; rejects the 101st under concurrency", async () => {
     const first = crypto.randomUUID();
     const created = await upload(owner, first);

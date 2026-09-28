@@ -439,17 +439,39 @@ test("playthrough menus rename, and delete after confirmation", async ({
   await page.getByRole("button", { name: "Library", exact: true }).click();
   await expect(runsIn(details)).toHaveCount(2);
 
+  const deletions: string[] = [];
+  await page.route("**/api/auth/get-session", (route) =>
+    route.fulfill({ json: { user: { id: "alice" } } }),
+  );
+  await page.route("**/api/saves**", (route) => {
+    if (route.request().method() === "DELETE") {
+      deletions.push(new URL(route.request().url()).pathname);
+      return route.fulfill({ status: 204 });
+    }
+    return route.fulfill({ json: { saves: [], cursor: null } });
+  });
+  await page.evaluate(async () => {
+    await window.player.library.setCloudIdentity("alice", false);
+    await window.player.cloud.setIdentity("alice");
+  });
+
   // Main is no longer the running playthrough.
   await page.getByRole("button", { name: "More options for Main" }).click();
   await page.getByRole("menuitem", { name: "Delete…" }).click();
   const remove = page.getByRole("dialog", { name: "Delete playthrough?" });
+  await expect(remove).toContainText("its cloud backup is also deleted");
+  await expect(remove).toContainText(
+    "Offline or signed out, the cloud backup stays",
+  );
   await remove.getByRole("button", { name: "Cancel" }).click();
   await expect(runsIn(details)).toHaveCount(2);
+  expect(deletions).toEqual([]);
   await page.getByRole("button", { name: "More options for Main" }).click();
   await page.getByRole("menuitem", { name: "Delete…" }).click();
   await remove.getByRole("button", { name: "Delete" }).click();
   await expect(remove).toHaveCount(0);
   await expect(runsIn(details)).toHaveText([/^Second/]);
+  expect(deletions).toEqual([`/api/saves/${sha1(42)}/default`]);
   expect(await stored(page, "playthroughs", sha1(42), true)).toMatchObject([
     { name: "Second" },
   ]);

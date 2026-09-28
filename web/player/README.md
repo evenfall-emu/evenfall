@@ -264,8 +264,11 @@ Each game can have several independent playthroughs. Use the Player's
 **Playthrough** selector (with **New playthrough** at the end), the pencil to
 rename, and the trash icon to delete a local playthrough after confirmation.
 Deletion removes that run's local saves, checkpoints, quick slots and pending
-uploads but keeps any confirmed cloud backup; deleting the last local run
-starts a fresh empty one. New runs get UUIDs and can be created offline.
+uploads. When online and signed in, it also deletes the account's cloud copy,
+even when automatic backups are off. Cloud deletion must succeed before local
+progress is removed. Offline or signed-out deletion is local-only and is not
+queued for cloud deletion. Deleting the last local run starts a fresh empty
+one. New runs get UUIDs and can be created offline.
 
 ## Local saves and resume
 
@@ -655,7 +658,5 @@ are listed in [`docs/testing.md`](../docs/testing.md).
 - External-BIOS portability of cloud snapshots, and the content and legal
   implications of memory snapshots, need review before cloud payloads widen
   beyond states and battery saves.
-- Individual cloud playthroughs cannot be deleted; account deletion is the
-  only way to remove cloud data.
 - Battery-save forwarding between releases of the same game has no
   compatibility policy.
