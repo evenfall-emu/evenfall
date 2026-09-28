@@ -141,6 +141,7 @@ export function GameDetails({
   onAddFile,
   onUpdate,
   onReleaseNotes,
+  onDescription,
   onNewPlaythrough,
   onRename,
   onExport,
@@ -155,6 +156,7 @@ export function GameDetails({
   onAddFile: () => void;
   onUpdate: () => void;
   onReleaseNotes: () => void;
+  onDescription: () => void;
   onNewPlaythrough: () => void;
   onRename: (run: PlaythroughEntry) => void;
   onExport: (run: PlaythroughEntry) => void;
@@ -190,8 +192,8 @@ export function GameDetails({
                   button("ghost", "icon"),
                   "text-mint max-sm:size-9",
                 )}
-                aria-label="Project page"
-                title="Project page"
+                aria-label="Creator's page"
+                title="Creator's page"
               >
                 <Icon name="externalLink" className="size-7" />
               </a>
@@ -209,6 +211,14 @@ export function GameDetails({
           </div>
           {game.summary && (
             <p className="mt-2 max-sm:text-1x5">{game.summary}</p>
+          )}
+          {game.description && game.description !== game.summary && (
+            <button
+              className="mt-2 cursor-pointer rounded-control text-mint underline underline-offset-4 hover:text-mint-hover focus-visible:outline-2 focus-visible:outline-mint"
+              onClick={onDescription}
+            >
+              Show more
+            </button>
           )}
         </div>
         {game.tags.length > 0 && (

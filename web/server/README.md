@@ -9,7 +9,9 @@ are missing.
 The server stores game, release-version, base-ROM identity, source-provenance
 and optional external image-URL metadata, authentication records, and
 compressed save states and battery saves. It does **not** host ROMs, BIOS
-images, patches or image files. Signing in does not grant catalog management
+images, patches or image files: public patch URLs refer to the separate
+`zigba-patches` Worker on `patches.evenfall-emu.org`, backed by the
+`evenfall-patches` R2 bucket. Signing in does not grant catalog management
 rights.
 
 The Worker uses [Hono](https://hono.dev/), Drizzle's Cloudflare D1 adapter,
@@ -31,13 +33,13 @@ path is served from the player's Static Assets in `.dist/cloudflare` (see
 
 ## Data model
 
-- `games`: stable ID, unique internal name, display name, optional summary,
-  HTTP(S) image URL and franchise.
+- `games`: stable ID, unique internal name, display name, optional short
+  `summary` hook, longer `description`, HTTP(S) image URL and franchise.
 - `game_tags`: a game's tags, unique per game ignoring case, in display order.
 - `versions`: stable ID, owning game, unique per-game internal name, globally
   unique exact **playable output ROM SHA-1**, display label, optional
-  required base, and optional source repository and revision, release date
-  (`YYYY-MM-DD`), release notes and hosted patch. A patch is an HTTP(S) URL,
+  required base, creator project or release page, source revision, release
+  date (`YYYY-MM-DD`), release notes and hosted patch. A patch is an HTTP(S) URL,
   a format (`bps`, `ups` or `ips`) and its exact size in bytes, and needs a
   required base; the base SHA-1 in and the output SHA-1 out verify it, so it
   carries no digest of its own. The player downloads patches from the
@@ -382,9 +384,11 @@ the two steps.
 
 ## Seed data
 
-[`src/seed.ts`](src/seed.ts) is explicit and idempotent. It seeds two games
-and the exact releases that have registered profiles in
-[`@evenfall/gba-pokemon`](../games/pokemon/README.md):
+[`src/seed.ts`](src/seed.ts) is explicit and idempotent. It includes the
+collected releases from the metadata-only [`romhacks.json`](src/romhacks.json)
+and the registered Heart & Soul profile. Elite Redux keeps its existing
+catalog identity and source revision. The exact releases with registered
+profiles in [`@evenfall/gba-pokemon`](../games/pokemon/README.md) are:
 
 | Version | Output ROM SHA-1 | Source revision |
 |---|---|---|
@@ -395,9 +399,12 @@ Both require the `pokemon-emerald-us` base, No-Intro "Pokemon - Emerald
 Version (USA, Europe)": SHA-1 `f3ae088181bf583e55daf962a92bb46f4f1d07b7`,
 CRC32 `1f1c08fb`.
 
-These are raw playable ROM identities, not release ZIP or patch hashes. No
-distributable catalog images exist for them, so both `imageUrl` values are
-null.
+These are raw playable ROM identities, not release ZIP or patch hashes. The
+romhack seed and CDN publication procedure are in
+[`tools/catalog/README.md`](../tools/catalog/README.md#romhack-releases-and-patch-cdn).
+The catalog includes patchless ROM releases as metadata, not install actions.
+No distributable catalog images exist for these profiles, so their `imageUrl`
+values are null.
 
 ## Deployment
 
@@ -425,8 +432,10 @@ deliberately set, never as a Wrangler variable or a checked-in file:
 npx wrangler secret put ADMIN_SECRET --config wrangler.jsonc
 ```
 
-An authorized operator may then call `POST /api/admin/seed` once; seeding is
-not part of a deployment.
+An authorized operator may call `POST /api/admin/seed` after the patch CDN is
+populated and verified; seeding is not part of a deployment. The separate
+patch Worker handles the patch-domain route and EU `evenfall-patches` binding;
+the account/backup Worker's private `SAVES` bucket is unchanged.
 
 The D1 location hint and the EU jurisdiction of the R2 bucket do not make
 processing EU-only: Workers, D1, email and logs are not covered by the bucket

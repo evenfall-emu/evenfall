@@ -104,6 +104,32 @@ const frames = (page: Page) =>
     ),
   );
 
+test("details lead with a short hook and reveal longer copy only on request", async ({
+  page,
+}) => {
+  await mockCatalog(page);
+  await openLibrary(page);
+  await page.getByRole("button", { name: "View Birch Quest" }).click();
+  const details = page.getByRole("region", { name: "Game details" });
+  await expect(details).toContainText(
+    "Find your way through an unfamiliar forest.",
+  );
+  await expect(details).not.toContainText("Explore the deep woods");
+  await details.getByRole("button", { name: "Show more" }).click();
+  const dialog = page.getByRole("dialog", { name: "Birch Quest" });
+  await expect(dialog).toContainText("Explore the deep woods with a new cast");
+  await expect(
+    dialog.getByRole("link", { name: "Creator's page" }),
+  ).toHaveAttribute("href", "https://creator.example/birch-quest/release");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+
+  await page.getByRole("button", { name: "View Cedar Saga" }).click();
+  await expect(details.getByRole("button", { name: "Show more" })).toHaveCount(
+    0,
+  );
+});
+
 test("Library joins the catalog with this device's ROMs and filters it", async ({
   page,
 }) => {

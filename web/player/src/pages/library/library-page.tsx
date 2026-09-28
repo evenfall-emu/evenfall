@@ -5,6 +5,7 @@ import type { LibraryAction, LibraryActionHandler } from "./actions";
 import type { LibraryCatalog, LibraryDevice } from "./catalog";
 import {
   DeleteDialog,
+  DescriptionDialog,
   NewPlaythroughDialog,
   ProgressDialog,
   ReleaseNotesDialog,
@@ -24,7 +25,7 @@ import {
 } from "./model";
 
 type OpenDialog =
-  | { kind: "update" | "notes" | "new" }
+  | { kind: "update" | "notes" | "description" | "new" }
   | { kind: "progress" | "rename" | "delete"; run: PlaythroughEntry };
 
 // Matches Tailwind's `md` breakpoint: below it, details replace the list.
@@ -219,6 +220,7 @@ export function LibraryPage({
             onAddFile={() => addFile(selected)}
             onUpdate={() => setDialog({ kind: "update" })}
             onReleaseNotes={() => setDialog({ kind: "notes" })}
+            onDescription={() => setDialog({ kind: "description" })}
             onNewPlaythrough={() => setDialog({ kind: "new" })}
             onRename={(entry) => setDialog({ kind: "rename", run: entry })}
             onExport={exportSave}
@@ -295,6 +297,9 @@ export function LibraryPage({
           busy={working}
           onClose={() => setDialog(null)}
         />
+      )}
+      {selected && dialog?.kind === "description" && (
+        <DescriptionDialog game={selected} onClose={() => setDialog(null)} />
       )}
       {selected && dialog?.kind === "new" && (
         <NewPlaythroughDialog

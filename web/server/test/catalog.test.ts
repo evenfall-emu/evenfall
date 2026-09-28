@@ -105,14 +105,17 @@ describe("catalog API", () => {
     const body = (await gamesResponse.json()) as {
       games: Array<{ id: string; versionCount: number }>;
     };
-    expect(body.games).toHaveLength(2);
+    expect(body.games).toHaveLength(seedGames.length);
     expect(body.games).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "heart-n-soul", versionCount: 1 }),
         expect.objectContaining({ id: "elite-redux", versionCount: 1 }),
       ]),
     );
-  });
+    expect(
+      body.games.reduce((total, game) => total + game.versionCount, 0),
+    ).toBe(seedVersions.length);
+  }, 60_000);
 
   it("returns exact release identity and its No-Intro base", async () => {
     const response = await request("/api/games/heart-n-soul");
@@ -130,6 +133,109 @@ describe("catalog API", () => {
               crc32: "1f1c08fb",
             },
           },
+        ],
+      },
+    });
+  });
+
+  it("serves concise hooks, full descriptions and verified creator pages separately", async () => {
+    const response = await request("/api/games");
+    const { games } = (await response.json()) as {
+      games: Array<{
+        id: string;
+        summary: string | null;
+        description: string | null;
+      }>;
+    };
+    const unbound = games.find((game) => game.id === "pokemon-unbound")!;
+    expect(unbound.summary).toBe(
+      "Explore Borrius in a story-rich adventure built for your own pace.",
+    );
+    expect(unbound.description).toContain("extensive side content");
+    expect(unbound.summary).not.toBe(unbound.description);
+
+    const fireEmblem = await request("/api/games/fire-emblem-vision-quest");
+    expect(await fireEmblem.json()).toMatchObject({
+      game: {
+        versions: [
+          expect.objectContaining({
+            sourceRepositoryUrl:
+              "https://feuniverse.us/t/fe8-complete-fire-emblem-vision-quest-v3-by-pushwall-1-oct-22/3815/1",
+          }),
+        ],
+      },
+    });
+    const ambiguous = await request("/api/games/fire-emblem-elibean-nights");
+    expect(await ambiguous.json()).toMatchObject({
+      game: {
+        versions: [expect.objectContaining({ sourceRepositoryUrl: null })],
+      },
+    });
+    const lastPromise = await request(
+      "/api/games/fire-emblem-the-last-promise",
+    );
+    expect(await lastPromise.json()).toMatchObject({
+      game: {
+        versions: [
+          expect.objectContaining({
+            displayName: "2.1",
+            sourceRepositoryUrl:
+              "https://www.feshrine.net/thelastpromise/download/",
+          }),
+        ],
+      },
+    });
+    const pokemon = await request("/api/games/pokemon-unbound");
+    expect(await pokemon.json()).toMatchObject({
+      game: {
+        versions: [expect.objectContaining({ sourceRepositoryUrl: null })],
+      },
+    });
+  });
+
+  it("offers both Golden Sun games on their own bases and keeps patchless releases non-installable", async () => {
+    for (const [variant, outputSha1, baseSha1, size] of [
+      [
+        "gs1",
+        "448e73f566679fa87980d0eb46b32f395fbc231d",
+        "5c4695205413df7db52b9a184815a07783999971",
+        58352,
+      ],
+      [
+        "tla",
+        "e045d22fabbed374dd0e1a73f7a1f8d2c5cdba40",
+        "b500663220cb9bf56b9f8e8c0c544f1d6fa3a824",
+        207091,
+      ],
+    ] as const) {
+      const response = await request(
+        `/api/games/golden-sun-golden-sun-reloaded-${variant}`,
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        game: {
+          versions: [
+            expect.objectContaining({
+              outputSha1,
+              requiredBase: expect.objectContaining({ sha1: baseSha1 }),
+              patch: expect.objectContaining({
+                url: expect.stringMatching(
+                  /^https:\/\/patches\.evenfall-emu\.org\//,
+                ),
+                format: "ips",
+                size,
+              }),
+            }),
+          ],
+        },
+      });
+    }
+
+    const patchless = await request("/api/games/pokemon-light-platinum");
+    expect(await patchless.json()).toMatchObject({
+      game: {
+        versions: [
+          expect.objectContaining({ patch: null, requiredBase: null }),
         ],
       },
     });
@@ -180,7 +286,7 @@ describe("catalog API", () => {
       expect(write.status).toBe(200);
       expect(await write.json()).toMatchObject({ version: { id } });
     }
-  });
+  }, 60_000);
 
   it("rejects malformed dot-separated IDs", async () => {
     for (const id of [".version", "version.", "version..1", "Version.1"]) {
@@ -282,24 +388,16 @@ describe("catalog API", () => {
         cloudPlaythroughs: number;
       }>;
     };
-    expect(
-      Object.fromEntries(
-        listed.games.map(({ id, franchise, tags, cloudPlaythroughs }) => [
-          id,
-          { franchise, tags, cloudPlaythroughs },
-        ]),
-      ),
-    ).toEqual({
-      "elite-redux": {
-        franchise: "Pokémon",
-        tags: ["Pokémon", "Difficulty Hack"],
-        cloudPlaythroughs: 2,
-      },
-      "heart-n-soul": {
-        franchise: "Pokémon",
-        tags: ["Pokémon", "Remake"],
-        cloudPlaythroughs: 0,
-      },
+    expect(listed.games).toHaveLength(seedGames.length);
+    expect(listed.games.find(({ id }) => id === "elite-redux")).toMatchObject({
+      franchise: "Pokémon",
+      tags: ["Pokémon", "Difficulty Hack"],
+      cloudPlaythroughs: 2,
+    });
+    expect(listed.games.find(({ id }) => id === "heart-n-soul")).toMatchObject({
+      franchise: "Pokémon",
+      tags: ["Pokémon", "Remake"],
+      cloudPlaythroughs: 0,
     });
     expect(
       await (await request("/api/games/elite-redux")).json(),
@@ -379,7 +477,7 @@ describe("catalog API", () => {
           }),
           expect.objectContaining({
             id: previous.id,
-            patch: null,
+            patch: previous.patch,
             saveCompatibleFrom: [],
           }),
         ]),

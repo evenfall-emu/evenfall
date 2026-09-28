@@ -17,6 +17,7 @@ export const games = sqliteTable(
     internalName: text("internal_name").notNull(),
     displayName: text("display_name").notNull(),
     summary: text("summary"),
+    description: text("description"),
     imageUrl: text("image_url"),
     franchise: text("franchise"),
   },

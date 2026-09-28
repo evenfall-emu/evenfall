@@ -19,6 +19,16 @@ const game = (id: string) => games.find((item) => item.id === id)!;
 const sha = (byte: number) => byte.toString(16).padStart(2, "0").repeat(20);
 
 describe("buildLibrary", () => {
+  it("keeps a short hook separate from the optional full description", () => {
+    expect(game("vision-quest")).toMatchObject({
+      summary:
+        "A complete new campaign built on Fire Emblem, with its own cast, maps and story.",
+      description: expect.stringContaining("Storch's band"),
+    });
+    expect(game("elite-redux").description).toBeNull();
+    expect(game(sha(0xe0)).description).toBeNull();
+  });
+
   it("derives availability from ROMs and base ROMs on this device", () => {
     expect(
       Object.fromEntries(games.map((item) => [item.id, item.availability])),

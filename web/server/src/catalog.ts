@@ -199,11 +199,12 @@ export async function putGame(
   input: GameInput,
 ) {
   const { tags, ...row } = input;
+  const values = { ...row, description: input.description ?? null };
   await db.batch([
     db
       .insert(games)
-      .values({ id, ...row })
-      .onConflictDoUpdate({ target: games.id, set: row }),
+      .values({ id, ...values })
+      .onConflictDoUpdate({ target: games.id, set: values }),
     db.delete(gameTags).where(eq(gameTags.gameId, id)),
     ...(tags.length
       ? [

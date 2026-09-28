@@ -65,6 +65,7 @@ export type LibraryGame = {
   id: string;
   title: string;
   summary: string | null;
+  description: string | null;
   imageUrl: string | null;
   franchise: string | null;
   tags: readonly string[];
@@ -225,6 +226,7 @@ export function buildLibrary(
         id: game.id,
         title: game.displayName,
         summary: game.summary,
+        description: game.description ?? null,
         imageUrl: game.imageUrl,
         franchise: game.franchise,
         tags: game.tags,
@@ -284,6 +286,7 @@ export function buildLibrary(
       id: hash,
       title,
       summary: null,
+      description: null,
       imageUrl: null,
       franchise: null,
       tags: [],

@@ -1,5 +1,6 @@
 import { putBase, putGame, putVersion, type CatalogDatabase } from "./catalog";
 import type { BaseInput, GameInput, VersionInput } from "./types";
+import romhacks from "./romhacks.json";
 
 // Seed rows are management inputs, so they go through the same validation and
 // writes as PUT /api/admin/*.
@@ -15,15 +16,7 @@ export const seedGames: readonly Seed<GameInput>[] = [
     franchise: "Pokémon",
     tags: ["Pokémon", "Remake"],
   },
-  {
-    id: "elite-redux",
-    internalName: "pokemon/elite-redux",
-    displayName: "Pokémon Elite Redux",
-    summary: null,
-    imageUrl: null,
-    franchise: "Pokémon",
-    tags: ["Pokémon", "Difficulty Hack"],
-  },
+  ...romhacks.games,
 ];
 
 export const seedBases: readonly Seed<BaseInput>[] = [
@@ -35,6 +28,7 @@ export const seedBases: readonly Seed<BaseInput>[] = [
     sha1: "f3ae088181bf583e55daf962a92bb46f4f1d07b7",
     crc32: "1f1c08fb",
   },
+  ...romhacks.bases.filter((base) => base.id !== "pokemon-emerald-us"),
 ];
 
 export const seedVersions: readonly Seed<VersionInput>[] = [
@@ -52,20 +46,15 @@ export const seedVersions: readonly Seed<VersionInput>[] = [
     patch: null,
     saveCompatibleFrom: [],
   },
-  {
-    id: "elite-redux-2.65-beta2",
-    gameId: "elite-redux",
-    internalName: "v2.65-beta2-1048",
-    displayName: "2.65 Beta2 (1048)",
-    outputSha1: "f1323126bc043f3ce931bcc670957930559eb515",
-    requiredBaseId: "pokemon-emerald-us",
-    sourceRepositoryUrl: "https://github.com/Elite-Redux/eliteredux-source",
-    sourceRevision: "06da575972cfed20d471f8bb5b90ea9e4736b16a",
-    releasedAt: null,
-    releaseNotes: null,
-    patch: null,
-    saveCompatibleFrom: [],
-  },
+  ...romhacks.versions.map((version) => ({
+    ...version,
+    patch: version.patch && {
+      ...version.patch,
+      format: version.patch.format as NonNullable<
+        VersionInput["patch"]
+      >["format"],
+    },
+  })),
 ];
 
 /** Explicit, idempotent catalog seed. It is never called by a read request or startup. */

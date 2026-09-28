@@ -323,6 +323,35 @@ export function ReleaseNotesDialog({ game, busy, onClose }: DialogProps) {
   );
 }
 
+export function DescriptionDialog({
+  game,
+  onClose,
+}: Omit<DialogProps, "busy">) {
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => !open && onClose()}
+      title={game.title}
+      subtitle={game.franchise ?? undefined}
+    >
+      <p className="mt-5 whitespace-pre-line">{game.description}</p>
+      {game.latest.sourceUrl && /^https?:\/\//i.test(game.latest.sourceUrl) && (
+        <a
+          href={game.latest.sourceUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cx(
+            "mt-5 inline-flex items-center gap-2 text-mint underline underline-offset-4 hover:text-mint-hover",
+            focusRing,
+          )}
+        >
+          Creator's page <Icon name="externalLink" className="size-5" />
+        </a>
+      )}
+    </Dialog>
+  );
+}
+
 function NameField({
   value,
   disabled,

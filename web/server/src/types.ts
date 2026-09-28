@@ -53,6 +53,7 @@ export const gameInput = z.strictObject({
   internalName: name,
   displayName: name,
   summary: nullableText,
+  description: nullableText.optional(),
   imageUrl: nullableHttpUrl,
   franchise: z.string().trim().min(1).max(80).nullable(),
   tags: z

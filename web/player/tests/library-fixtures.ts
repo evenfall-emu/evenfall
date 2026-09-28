@@ -85,6 +85,7 @@ export const previewCatalog: LibraryCatalog = {
       displayName: "Elite Redux",
       summary:
         "A reimagining of Pokémon Emerald with higher difficulty, expanded Pokémon, and modern quality of life features.",
+      description: null,
       imageUrl: null,
       versionCount: 3,
       franchise: "Pokémon",
@@ -103,6 +104,7 @@ export const previewCatalog: LibraryCatalog = {
       displayName: "Emerald Seaglass",
       summary:
         "Pokémon Emerald with its original story intact and a lighter touch of modern conveniences.",
+      description: null,
       imageUrl: null,
       versionCount: 1,
       franchise: "Pokémon",
@@ -120,6 +122,8 @@ export const previewCatalog: LibraryCatalog = {
       displayName: "Fire Emblem: Vision Quest",
       summary:
         "A complete new campaign built on Fire Emblem, with its own cast, maps and story.",
+      description:
+        "A complete new campaign built on Fire Emblem, with its own cast, maps and story. Lead Storch's band through a long war across Yaska, with side objectives and a roster built for ironman play.",
       imageUrl: null,
       versionCount: 1,
       franchise: "Fire Emblem",
@@ -131,6 +135,7 @@ export const previewCatalog: LibraryCatalog = {
       internalName: "golden-sun/reloaded",
       displayName: "Golden Sun: Reloaded",
       summary: "The Lost Age rebalanced for a sharper, longer challenge.",
+      description: null,
       imageUrl: null,
       versionCount: 1,
       franchise: "Golden Sun",
@@ -143,6 +148,7 @@ export const previewCatalog: LibraryCatalog = {
       displayName: "Pokémon Unbound",
       summary:
         "A new region and story built on Pokémon FireRed, with selectable difficulty.",
+      description: null,
       imageUrl: null,
       versionCount: 1,
       franchise: "Pokémon",

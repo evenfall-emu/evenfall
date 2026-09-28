@@ -28,6 +28,7 @@ function game(
     internalName: id,
     displayName,
     summary: `${displayName}, a test catalog entry.`,
+    description: null,
     imageUrl: null,
     franchise,
     tags,
@@ -100,7 +101,12 @@ export async function mockCatalog(page: Page, fillers = 0) {
     game(`oak-${index + 1}`, `Oak ${index + 1}`, "Trees", [], 0),
   );
   const games = [
-    game("birch-quest", "Birch Quest", "Trees", ["Adventure", "Hard"], 3),
+    {
+      ...game("birch-quest", "Birch Quest", "Trees", ["Adventure", "Hard"], 3),
+      summary: "Find your way through an unfamiliar forest.",
+      description:
+        "Explore the deep woods with a new cast and discover what waits beyond the old trail.",
+    },
     game("cedar-saga", "Cedar Saga", "Trees", ["Story"], 9),
     game("maple-remix", "Maple Remix", "Leaves", ["Hard"], 1),
     ...oaks,
@@ -109,6 +115,7 @@ export async function mockCatalog(page: Page, fillers = 0) {
     version("birch-quest", "1", sha1(42), "2026-01-01T00:00:00.000Z"),
     version("birch-quest", "2", sha1(43), "2026-06-01T00:00:00.000Z", {
       releaseNotes: "Faster text.",
+      sourceRepositoryUrl: "https://creator.example/birch-quest/release",
     }),
     version("cedar-saga", "1", sha1(44), "2026-03-01T00:00:00.000Z"),
     version("maple-remix", "1", sha1(41), "2026-02-01T00:00:00.000Z", {
