@@ -681,6 +681,49 @@ test("Elite Redux Pokédex links follow selection and open a separate tab", asyn
   });
 });
 
+test("Elite Redux Beta3 opens as a reviewed build with its own ability records", async ({
+  page,
+}) => {
+  const rom = process.env.ZIGBA_REDUX_BETA3_ROM,
+    state = process.env.ZIGBA_REDUX_BETA3_STATE;
+  test.skip(!rom || !state, "Supply the exact Redux Beta3 ROM and its state");
+  expect(romSha(await readFile(rom!))).toBe(
+    "5b38a681b6924ef3e0bb9f6cfbf22426c4c4e523",
+  );
+  expect(sha(await readFile(state!))).toBe(
+    "74a207b19b09a228cef36f5122d7f229945d8693192eaf1b75796a347445c359",
+  );
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.setViewportSize({ width: 1672, height: 941 });
+  await ready(page);
+  await page.getByLabel("Open ROM", { exact: true }).setInputFiles(rom!);
+  await expect(page.locator('[data-game-layout="pokemon"]')).toBeVisible();
+  await expect(page.getByText("Detected build · not reviewed")).toHaveCount(0);
+  await importState(page, state!);
+  const team = page.getByRole("complementary", {
+    name: "Your Pokémon",
+    exact: true,
+  });
+  await expect(team.getByRole("listitem")).toHaveCount(6);
+  await expect(team.getByRole("listitem").first()).toContainText("Zoroark");
+  await expect(team.getByRole("listitem").first()).toContainText("110 / 110");
+  await expect(team.getByRole("listitem").last()).toContainText("Pawmot");
+  const inspector = team.getByRole("region", { name: "Selected Pokémon" });
+  // Names from 196-byte records; Beta2's 192-byte stride reads other abilities.
+  await expect(
+    inspector.getByRole("button", { name: "Innate: Illusion" }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Arena status")).toContainText("Ace");
+  await page.evaluate(() => document.fonts.ready);
+  await page.mouse.move(0, 0);
+  await page.screenshot({
+    path: "../../artifacts/hud/redux-beta3-desktop.png",
+    fullPage: true,
+  });
+  expect(errors).toEqual([]);
+});
+
 test("Elite Redux uses the shared layout with four described abilities and real battle data", async ({
   page,
 }) => {

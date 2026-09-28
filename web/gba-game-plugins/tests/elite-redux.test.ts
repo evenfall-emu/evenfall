@@ -2,10 +2,12 @@ import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
+  buildProvenance,
   createMemoryReader,
   ref,
   createGame,
   decodeGame,
+  locateBuild,
   resolveGame,
   type MemoryRegion,
 } from "@evenfall/gba/bridge";
@@ -15,15 +17,16 @@ import {
   eliteReduxFamily,
   reduxTrainerContext,
   eliteReduxBeta2,
+  eliteReduxBeta3,
   reduxAbilities,
 } from "../src/elite-redux";
+import { createReduxCatalog, type ReduxCatalog } from "../src/redux-catalog";
 import {
   reduxBox,
   reduxParty,
   reduxBattle,
   reduxSettings,
 } from "../src/redux-record";
-import type { ReduxCatalog } from "../src/redux-catalog";
 import { pokemonResources } from "./fixtures/pokemon";
 
 function recordBytes() {
@@ -248,6 +251,42 @@ describe("Redux packed ABI", () => {
         false,
       ),
     ).toBeNull();
+  });
+  it("reads ability records at each build's stride and flags offset", () => {
+    const bytes = new Uint8Array(0x400),
+      view = new DataView(bytes.buffer);
+    const table = 0x100;
+    bytes.set([0xbc, 0xd9, 0xe8, 0xd5, 0xff], 0x300); // Beta
+    bytes.set([0xd1, 0xe6, 0xe3, 0xe2, 0xdb, 0xff], 0x310); // Wrong
+    bytes.set([0xbe, 0xd9, 0xe7, 0xd7, 0xff], 0x320); // Desc
+    // Record 1 at the Beta3 stride, flags word at its +0xbc.
+    view.setUint32(table + 196, 0x08000300, true);
+    view.setUint32(table + 196 + 8, 0x08000320, true);
+    view.setUint16(table + 196 + 0xbc, 0x2800, true);
+    // What a 192-byte stride would read instead: record 0's tail.
+    view.setUint32(table + 192, 0x08000310, true);
+    view.setUint32(table + 192 + 8, 0x08000310, true);
+    const catalog = createReduxCatalog(
+      createMemoryReader([{ address: 0x08000000, bytes }]),
+      {
+        ...eliteReduxBeta3.rom.catalog,
+        abilities: 0x08000000 + table,
+        abilityCount: 2,
+      },
+    );
+    expect(catalog.ability(1)).toMatchObject({
+      name: "Beta",
+      description: "Desc",
+    });
+    expect(catalog.abilityFlags(1)).toEqual({
+      unsuppressable: true,
+      blocksSuppression: true,
+    });
+    // Record 0's own flags word, not record 1's shifted by the stride.
+    expect(catalog.abilityFlags(0)).toEqual({
+      unsuppressable: false,
+      blocksSuppression: false,
+    });
   });
   it("registers compatible builds by exact hash without broadening to unknown revisions", () => {
     const second: typeof eliteReduxBeta2 = {
@@ -601,4 +640,135 @@ describe.skipIf(!romPath || !statePath)("private Redux release/state", () => {
       decode(changed(0x02039905, (bytes) => (bytes[0] = 7))).party.status,
     ).toBe("error");
   });
+});
+
+const beta3RomPath = process.env.ZIGBA_REDUX_BETA3_ROM,
+  beta3StatePath = process.env.ZIGBA_REDUX_BETA3_STATE;
+describe.skipIf(!beta3RomPath)("private Redux Beta3 release", () => {
+  let rom: Uint8Array;
+  let resources: ReturnType<NonNullable<typeof eliteRedux.prepare>>;
+  const romHash = eliteReduxBeta3.romHash;
+  beforeAll(async () => {
+    rom = new Uint8Array(await readFile(beta3RomPath!));
+    expect(createHash("sha1").update(rom).digest("hex")).toBe(romHash);
+    resources = eliteRedux.prepare!({
+      rom: createMemoryReader([{ address: 0x08000000, bytes: rom }]),
+      romHash,
+    });
+  });
+  it("is a reviewed build whose probes pass", () => {
+    expect(resolveGame([eliteRedux], romHash)).toBe(eliteRedux);
+    expect(buildProvenance(eliteRedux, romHash)).toBe("reviewed");
+    for (const probe of Object.values(eliteReduxFamily.probes ?? {}))
+      probe(resources, romHash);
+  });
+  it("reads 196-byte ability records with suppression flags at +0xbc", () => {
+    expect(resources.catalog.ability(1).name).toBe("Stench");
+    expect(resources.catalog.ability(149).name).toBe("Illusion");
+    expect(resources.catalog.ability(1033).name).not.toBe("");
+    expect(resources.catalog.abilityFlags(121).unsuppressable).toBe(true); // Multitype
+    expect(resources.catalog.abilityFlags(256).unsuppressable).toBe(true); // Neutralizing Gas
+    expect(resources.catalog.abilityFlags(149).unsuppressable).toBe(false);
+  });
+  it("gets no wrong value from the Beta2 locators", () => {
+    // Locators that answer must answer the reviewed value; the rest stay empty.
+    const located = locateBuild(eliteReduxFamily, rom);
+    const valueAt = (path: string) =>
+      path
+        .split(".")
+        .reduce<unknown>(
+          (node, key) => (node as Record<string, unknown>)[key],
+          eliteReduxBeta3.rom,
+        );
+    for (const r of located.sources)
+      if (r.address !== null)
+        expect([r.source, r.address]).toEqual([
+          r.source,
+          eliteReduxBeta3.addresses[
+            r.source as keyof typeof eliteReduxBeta3.addresses
+          ],
+        ]);
+    for (const r of located.rom)
+      if (r.address !== null)
+        expect([r.source, r.address]).toEqual([r.source, valueAt(r.source)]);
+  }, 30_000);
+  it.skipIf(!beta3StatePath)(
+    "decodes the party, PC and context of a real state",
+    async () => {
+      const state = new Uint8Array(await readFile(beta3StatePath!));
+      expect(createHash("sha256").update(state).digest("hex")).toBe(
+        "74a207b19b09a228cef36f5122d7f229945d8693192eaf1b75796a347445c359",
+      );
+      const instance = await WebAssembly.instantiate(
+        await WebAssembly.compile(
+          Uint8Array.from(
+            await readFile(
+              new URL("../../../zig-out/web/zigba.wasm", import.meta.url),
+            ),
+          ),
+        ),
+      );
+      const core = new WasmCore(instance.exports);
+      let regions: readonly MemoryRegion[];
+      try {
+        core.load(rom);
+        core.loadState(state);
+        regions = core.captureMemory().regions;
+      } finally {
+        core.dispose();
+      }
+      const result = decodeGame(
+        eliteRedux,
+        { romHash, timeline: "beta3", sequence: 1, cycle: 0n },
+        createMemoryReader(regions),
+        resources,
+      );
+      expect(result.party).toMatchObject({
+        status: "ready",
+        data: {
+          party: [
+            {
+              speciesName: "Zoroark",
+              level: 40,
+              hp: 110,
+              maxHp: 110,
+              abilities: [
+                { name: "Opportunist", kind: "ability" },
+                { name: "Illusion", kind: "innate" },
+                { name: "Exploit Weakness", kind: "innate" },
+                { name: "Ambush", kind: "innate" },
+              ],
+            },
+            { speciesName: "Gimmighoul", level: 40 },
+            { speciesName: "Flygon", level: 40 },
+            { speciesName: "Dipplin", level: 40 },
+            { speciesName: "Coalossal", level: 40 },
+            { speciesName: "Pawmot", level: 40, hp: 118, maxHp: 118 },
+          ],
+        },
+      });
+      expect(result.battle).toMatchObject({
+        status: "ready",
+        data: { active: false },
+      });
+      expect(result.storage.status).toBe("ready");
+      if (result.storage.status === "ready") {
+        const stored = result.storage.data.boxes.flatMap((box) =>
+          box.pokemon.filter(Boolean),
+        );
+        expect(result.storage.data.boxes).toHaveLength(26);
+        expect(stored).toHaveLength(232);
+        expect(stored[0]).toMatchObject({ speciesName: "Drilbur", level: 25 });
+      }
+      expect(result.context).toMatchObject({
+        status: "ready",
+        data: {
+          arena: {
+            fields: [{ id: "difficulty", value: "Ace" }, { id: "battle" }, {}],
+          },
+        },
+      });
+    },
+    30_000,
+  );
 });

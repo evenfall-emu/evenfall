@@ -72,6 +72,7 @@ omitted trailing colors zero-filled as the game does).
 |---|---|---|---|
 | Heart & Soul 1.2.1 | `0x08907368` | 398 | `0x08907fd8` |
 | Elite Redux 2.65 Beta2 | `0x08ae4b40` | 1023 | `0x08ae6b38` |
+| Elite Redux 2.65 Beta3 | `0x08ae4b0c` | 1023 | `0x08ae6b04` |
 
 The roots were located by scanning for runs of pointer pairs and checked in
 each identity-pinned ROM: every tile stream decodes to 288 bytes and every
@@ -312,8 +313,10 @@ resource preparation selects the same hash as live decoding. The player
 locates nearby revisions with the family's locators; to review one, write its
 manifest with `tools/bridge.mjs locate --manifest`, verify it and append it.
 Do not duplicate decoders or React components. A changed struct layout needs
-its own sources or views, not relaxed hash matching. Beta1 has not been
-checked.
+its own sources or views, not relaxed hash matching; a ROM record whose size
+differs between builds, such as the ability record, is a manifest value
+(`abilityStride`, `abilityFlagsOffset`). Beta1 has not been checked;
+[Beta3](#elite-redux-265-beta3) has its own manifest.
 
 ### Debug build
 
@@ -523,6 +526,78 @@ replacement clears the preview selection.
   wrong palette.
 - Turn, live weather, trainer name and map name are not verified.
 
+## Elite Redux 2.65 Beta3
+
+### Build identity
+
+| Property | Value |
+|---|---|
+| Release | v2.65 Beta3 (2.65.3b); the ROM's own version strings read `v2.65 Beta2.1` |
+| Source | An unpublished revision of the `upcoming` branch that includes [`156dd545`](https://github.com/Elite-Redux/eliteredux-source/commit/156dd545602c457b154f3c6a5adaf0b44adf5bf8) (`Ability.onModifyTargetFlag`) and still uses the separate Hell-skills table |
+| Raw ROM size | 33,554,432 bytes |
+| Raw ROM SHA-1 | `5b38a681b6924ef3e0bb9f6cfbf22426c4c4e523` |
+| Manifest | `eliteReduxBeta3`, reviewed |
+
+### Differences from Beta2
+
+RAM is unchanged: every source sits at Beta2's address. The ROM tables move:
+
+| Table | Address | Count x stride |
+|---|---|---|
+| Species names / data | `0x089c1614` / `0x08bf5b84` | 2902 |
+| Move names / moves / descriptions | `0x089c7970` / `0x08bec024` / `0x08ec12b8` | 1032 |
+| Abilities | `0x08fc6de4` | 1034 x 196 |
+| Items | `0x08ab9640` | 1023 x 40 |
+| Types / natures / experience | `0x08517af4` / `0x08ec2398` / `0x08bf4ee4` | |
+| Trainers / classes / Hell skills | `0x089a2f48` / `0x089be500` / `0x0850e4c4` | 932 x `0x38` / 73 x 13 / 932 x 24 |
+| Icons / icon palette indices / icon palettes | `0x08e1fb28` / `0x08e255d8` / `0x08e263d0` | 2902 / 2902 / 7 |
+| Front pictures / palettes / shiny palettes | `0x08955b38` / `0x0857d07c` / `0x08582b2c` | |
+| Trainer pictures / palettes | `0x08963bf0` / `0x08963f00` | 98 |
+
+The ability record grows from 192 to 196 bytes: `Ability` gains the
+`onModifyTargetFlag` handler pointer ahead of its bitfields, so the
+suppression flags word moves from `+0xb8` to `+0xbc`. Name pointers repeat
+every 196 bytes across all 1034 records. At `+0xbc`, bit 11 is set on exactly
+the abilities the source marks `.unsuppressable`, apart from display names
+(both As One riders read "As One", Dual Shadow reads "Two-Faced"); read at
+`+0xb8` or `+0xc0`, no ability matches.
+
+The other records the family reads keep their layout. `BattleMove.target`
+becomes `MoveTarget`, declared `: u16`; the `BattlePokemon` status fields
+become enums declared `: u32`; `SaveBlock2` takes its boss-rush bit from
+filler; renumbered event flags start at 3099, above the badges. Beta2's
+encounter labels still apply: each labelled trainer ID names the same
+trainer, and no map script that battles Roxanne, May or Brendan changes
+between Beta2's revision and the battle-skill rework, which Beta3 predates.
+
+Values the Beta2 locators do not find, and their evidence:
+
+- `playerParty` and `enemyParty`, `0x02039908` and `0x02039ad0`: 639 and 227
+  literal-pool words name them, and the party decodes from a Beta3 state.
+- Both item counts, 1023: item 1022 (Waterium Z) is the last named record,
+  and the item icon table keeps its extra final entry.
+- `classCount`, 73: the two immediate locators read 73 and the literal
+  locator reads 0; class 72 (Skier) is the last name.
+- `iconTable`, `0x08e1fb28`: the Game Freak ROM header's icon pointer
+  (`0x08000138`) names it, four literal pools load it, it starts 2902 x 8
+  bytes before `iconPaletteIndices`, the same spacing as in Beta2, and its
+  entries point to 0x400-byte icon sheets. Beta2's address lies inside this
+  table, so the artwork probe alone accepts it.
+
+The header's other front-picture, palette, icon, species-name and move-name
+pointers (`0x08000128`-`0x08000148`) also equal the manifest's.
+
+### Locators on Beta3
+
+`tools/bridge.mjs detect` scores Beta3 0.50 as Elite Redux, below the 0.75
+the player requires: the first locators of `playerParty`, `enemyParty` and
+`settings` miss. Past detection, the Beta2 locators leave the six values
+above unresolved and the probes reject the ability records, so the player
+cannot locate Beta3 from Beta2. Every value they do resolve equals the
+reviewed manifest's. Some Beta2 code patterns begin with the end of the
+preceding literal pool, a ROM address that moves with every build:
+`enemyParty`'s first pattern starts with Beta2's trainer-table pointer.
+
 ## pokeemerald-expansion
 
 Upstream
@@ -550,6 +625,8 @@ ROMs, SHA-256 for states. None of these files is committed.
 | `ZIGBA_REDUX_DEBUG_ROM` | Elite Redux 2.65 Beta2 debug build raw ROM | `299165fb56e19ac8afe5d66f83dd5bada823d58c` | Located at runtime; compared with relocation from `ZIGBA_REDUX_ROM` |
 | `ZIGBA_REDUX_STATE` | `redux.state` | `bf403592558c7a6cdc0deb493f8ab26f8796dfec829f0a2031fcbbc44af66d23` | Trainer battle on Easy with randomizers off: Frigibax Lv20 62/62 against Mudkip Lv20 58/58; rosters Frigibax/Klink/Aron/Goomy and Mudkip/Goomy; Frigibax has Mountaineer, Thermal Exchange, Heatproof and Freezing Point from live battle slots |
 | `ZIGBA_REDUX_STAGE_STATE` | `redux-stage-buff.state` | `d092f7bd0f323b1720321f16b72291753748c03fba63454fe8d19455ec7b472d` | Mudkip at Attack/Defense +1/+1: raw 41/31, totals 61/46; max HP 58 and Speed 29 unchanged |
+| `ZIGBA_REDUX_BETA3_ROM` | Elite Redux 2.65 Beta3 raw ROM | `5b38a681b6924ef3e0bb9f6cfbf22426c4c4e523` | Probes pass; the Beta2 locators give no value that differs from the manifest |
+| `ZIGBA_REDUX_BETA3_STATE` | a Beta3 state (raw, not gzipped) | `74a207b19b09a228cef36f5122d7f229945d8693192eaf1b75796a347445c359` | Overworld on Ace. Party: Zoroark, Gimmighoul, Flygon, Dipplin, Coalossal and Pawmot, all Lv40 at full HP; Zoroark 110/110 with Opportunist and innates Illusion, Exploit Weakness and Ambush. 26 boxes hold 232 Pokémon, the first a Drilbur Lv25 |
 
 Coverage by suite:
 
@@ -580,6 +657,11 @@ Coverage by suite:
   viewport bounds. Because `redux.state` is in combat, the real-ROM fixture
   masks the battle-active bit in a captured copy of memory; it does not alter
   the emulator.
+- With the Beta3 fixtures, unit tests check the ability stride and flags
+  against named abilities and decode the state's party, PC and context, and a
+  browser test opens Beta3 as a reviewed build and shows Zoroark's innates.
+  A synthetic test reads ability records at the Beta3 stride where a 192-byte
+  stride or the Beta2 flags offset reads other bytes.
 
 These checks do not measure observation cost and make no claim of complete
 gameplay compatibility.

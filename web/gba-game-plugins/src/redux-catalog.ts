@@ -3,7 +3,10 @@ import type { PokemonCatalog, SpeciesMetadata, MoveMetadata } from "./catalog";
 import { statKeys, type PokemonStats, type DescribedValue } from "./model";
 import { decodePokemonText } from "./text";
 
-/** Addresses/counts vary by exact build; the 2.65 table ABI is shared. */
+/**
+ * Addresses and counts vary by exact build, and so does the ability record;
+ * the other 2.65 table layouts are shared.
+ */
 export interface ReduxCatalogConfig {
   readonly species: number;
   readonly speciesNames: number;
@@ -14,6 +17,10 @@ export interface ReduxCatalogConfig {
   readonly moveCount: number;
   readonly abilities: number;
   readonly abilityCount: number;
+  /** Bytes per `gAbilities` record; builds add handler pointers. */
+  readonly abilityStride: number;
+  /** Offset in an ability record of the u16 holding its suppression flags. */
+  readonly abilityFlagsOffset: number;
   readonly items: number;
   readonly itemCount: number;
   readonly types: number;
@@ -134,7 +141,12 @@ export function createReduxCatalog(
     ability(id) {
       const cached = abilityCache.get(id);
       if (cached) return cached;
-      const address = entry(config.abilities, id, config.abilityCount, 192);
+      const address = entry(
+        config.abilities,
+        id,
+        config.abilityCount,
+        config.abilityStride,
+      );
       const value = Object.freeze(
         described(id, rom.u32(address), rom.u32(address + 8)),
       );
@@ -142,9 +154,9 @@ export function createReduxCatalog(
       return value;
     },
     abilityFlags(id) {
-      // Release disassembly, not modern GCC's different bitfield packing (+0xb6).
       const flags = rom.u16(
-        entry(config.abilities, id, config.abilityCount, 192) + 0xb8,
+        entry(config.abilities, id, config.abilityCount, config.abilityStride) +
+          config.abilityFlagsOffset,
       );
       return {
         unsuppressable: Boolean(flags & 0x800),

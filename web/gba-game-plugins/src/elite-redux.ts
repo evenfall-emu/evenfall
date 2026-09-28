@@ -475,6 +475,44 @@ export const eliteReduxFamily = defineFamily<Gen3Views, ReduxRom>()({
   },
 });
 
+/**
+ * Encounter labels by trainer ID, the same in every reviewed build: each
+ * build's map scripts and trainer table were checked against these IDs.
+ */
+const trainerVariants: ReduxRom["trainers"]["variants"] = {
+  265: { label: "Initial encounter", order: 0 },
+  770: { label: "Rematch · Singles · No legends", order: 1 },
+  771: { label: "Rematch · Singles · Legends", order: 2 },
+  772: { label: "Rematch · Doubles · No legends", order: 3 },
+  773: { label: "Rematch · Doubles · Legends", order: 4 },
+  // Pinned map scripts select each rival's teams by the player's starter.
+  // Each group lists May then Brendan, both in Mudkip/Treecko/Torchic order.
+  ...Object.fromEntries(
+    [
+      { location: "Route 103", trainers: [529, 532, 535, 520, 523, 526] },
+      { location: "Rustboro", trainers: [600, 768, 769, 593, 592, 599] },
+      { location: "Route 110", trainers: [530, 533, 536, 521, 524, 527] },
+      {
+        location: "Meteor Falls · Partner",
+        trainers: [87, 63, 70, 122, 104, 113],
+      },
+      { location: "Route 119", trainers: [531, 534, 537, 522, 525, 528] },
+      {
+        location: "Lilycove / Route 103 rematch",
+        trainers: [664, 665, 666, 661, 662, 663],
+      },
+    ].flatMap(({ location, trainers }, encounter) =>
+      trainers.map((id, slot) => [
+        id,
+        {
+          label: `${location} · Your starter: ${["Mudkip", "Treecko", "Torchic"][slot % 3]}`,
+          order: encounter * 3 + (slot % 3),
+        },
+      ]),
+    ),
+  ),
+};
+
 /** The v2.65 Beta2 (1048) release ROM. */
 export const eliteReduxBeta2: ManifestOf<typeof eliteReduxFamily> = {
   family: "pokemon/elite-redux",
@@ -516,6 +554,9 @@ export const eliteReduxBeta2: ManifestOf<typeof eliteReduxFamily> = {
       moveCount: 1032,
       abilities: 0x08fbc4d8,
       abilityCount: 1034,
+      abilityStride: 192,
+      // Release disassembly, not modern GCC's different bitfield packing (+0xb6).
+      abilityFlagsOffset: 0xb8,
       items: 0x08ab9674,
       itemCount: 1023,
       types: 0x08517074,
@@ -529,39 +570,7 @@ export const eliteReduxBeta2: ManifestOf<typeof eliteReduxFamily> = {
       classCount: 73,
       portraitCount: 98,
       hellSkills: 0x0850da44,
-      variants: {
-        265: { label: "Initial encounter", order: 0 },
-        770: { label: "Rematch · Singles · No legends", order: 1 },
-        771: { label: "Rematch · Singles · Legends", order: 2 },
-        772: { label: "Rematch · Doubles · No legends", order: 3 },
-        773: { label: "Rematch · Doubles · Legends", order: 4 },
-        // Pinned map scripts select each rival's teams by the player's starter.
-        // Each group lists May then Brendan, both in Mudkip/Treecko/Torchic order.
-        ...Object.fromEntries(
-          [
-            { location: "Route 103", trainers: [529, 532, 535, 520, 523, 526] },
-            { location: "Rustboro", trainers: [600, 768, 769, 593, 592, 599] },
-            { location: "Route 110", trainers: [530, 533, 536, 521, 524, 527] },
-            {
-              location: "Meteor Falls · Partner",
-              trainers: [87, 63, 70, 122, 104, 113],
-            },
-            { location: "Route 119", trainers: [531, 534, 537, 522, 525, 528] },
-            {
-              location: "Lilycove / Route 103 rematch",
-              trainers: [664, 665, 666, 661, 662, 663],
-            },
-          ].flatMap(({ location, trainers }, encounter) =>
-            trainers.map((id, slot) => [
-              id,
-              {
-                label: `${location} · Your starter: ${["Mudkip", "Treecko", "Torchic"][slot % 3]}`,
-                order: encounter * 3 + (slot % 3),
-              },
-            ]),
-          ),
-        ),
-      },
+      variants: trainerVariants,
     },
     artwork: {
       speciesCount: 2902,
@@ -589,10 +598,100 @@ export const eliteReduxBeta2: ManifestOf<typeof eliteReduxFamily> = {
 };
 
 /**
- * Reviewed builds. Other builds (the Beta2 debug build, for one) are
- * recognized in the player from the locators, with the release as template.
+ * The v2.65 Beta3 (2.65.3b) release ROM. Its own version strings still read
+ * "v2.65 Beta2.1". RAM is Beta2's; ability records gained a handler pointer.
  */
-export const eliteRedux = createGame(eliteReduxFamily, [eliteReduxBeta2]);
+export const eliteReduxBeta3: ManifestOf<typeof eliteReduxFamily> = {
+  family: "pokemon/elite-redux",
+  romHash: "5b38a681b6924ef3e0bb9f6cfbf22426c4c4e523",
+  source: {
+    repository: "https://github.com/Elite-Redux/eliteredux-source",
+    revision:
+      "Unpublished; upcoming after 156dd5456 (Ability.onModifyTargetFlag)",
+    variant: "v2.65 Beta3 (2.65.3b), in-game v2.65 Beta2.1",
+    compiler: "Release compiler unrecorded",
+    options: [
+      "Exact release ROM tables, RAM and disassembly checked; no matched rebuild",
+    ],
+  },
+  addresses: {
+    playerCount: 0x02039905,
+    playerParty: 0x02039908,
+    enemyParty: 0x02039ad0,
+    settings: 0x03003410,
+    thirdBadge: 0x0300340c,
+    storage: 0x03003414,
+    battleActive: 0x03003859,
+    battleFlags: 0x0201c3f4,
+    battlerCount: 0x0201c484,
+    partyIndexes: 0x0201c488,
+    battlers: 0x0201c50c,
+    absent: 0x0201c6db,
+    statuses3: 0x0201c7ac,
+    neutralizingGas: 0x0201cb69,
+    enigmaBerries: 0x0201ca28,
+  },
+  rom: {
+    catalog: {
+      species: 0x08bf5b84,
+      speciesNames: 0x089c1614,
+      speciesCount: 2902,
+      moves: 0x08bec024,
+      moveNames: 0x089c7970,
+      moveDescriptions: 0x08ec12b8,
+      moveCount: 1032,
+      abilities: 0x08fc6de4,
+      abilityCount: 1034,
+      abilityStride: 196,
+      abilityFlagsOffset: 0xbc,
+      items: 0x08ab9640,
+      itemCount: 1023,
+      types: 0x08517af4,
+      natures: 0x08ec2398,
+      experience: 0x08bf4ee4,
+    },
+    trainers: {
+      trainers: 0x089a2f48,
+      trainerCount: 932,
+      classes: 0x089be500,
+      classCount: 73,
+      portraitCount: 98,
+      hellSkills: 0x0850e4c4,
+      variants: trainerVariants,
+    },
+    artwork: {
+      speciesCount: 2902,
+      eggSpecies: 2901,
+      unownSpecies: 201,
+      unownFormsStart: 1603,
+      iconTable: 0x08e1fb28,
+      iconPaletteIndices: 0x08e255d8,
+      iconPalettes: 0x08e263d0,
+      iconPaletteCount: 7,
+      frontTable: 0x08955b38,
+      palettes: 0x0857d07c,
+      shinyPalettes: 0x08582b2c,
+      modernShinyPalettes: 0x08582b2c,
+      itemCount: 1023,
+      itemIconTable: 0x08ae4b0c,
+      spindaSpecies: 327,
+      deoxysSpecies: 386,
+      trainerCount: 98,
+      trainerFrontTable: 0x08963bf0,
+      trainerPalettes: 0x08963f00,
+    },
+  },
+  provenance: { method: "reviewed" },
+};
+
+/**
+ * Reviewed builds. Other builds (the Beta2 debug build, for one) are
+ * recognized in the player from the locators, with Beta2 as template.
+ */
+export const eliteRedux = createGame(eliteReduxFamily, [
+  eliteReduxBeta2,
+  eliteReduxBeta3,
+]);
 
 const rules: PokemonRules = {
   legacyStats: false,
