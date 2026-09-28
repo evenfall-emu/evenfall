@@ -13,6 +13,7 @@
     "BETTER_AUTH_URL": "https://play.evenfall-emu.org",
     "DISCORD_CLIENT_ID": "1551951883109666826",
     "EMAIL_FROM": "noreply@evenfall-emu.org",
+    "PATCHES_URL": "https://patches.evenfall-emu.org",
   },
   "secrets": { "required": ["BETTER_AUTH_SECRET", "DISCORD_CLIENT_SECRET"] },
   "send_email": [
@@ -47,6 +48,11 @@
     {
       "binding": "SAVES",
       "bucket_name": "zigba-saves",
+      "jurisdiction": "eu",
+    },
+    {
+      "binding": "PATCHES",
+      "bucket_name": "evenfall-patches",
       "jurisdiction": "eu",
     },
   ],

@@ -416,7 +416,7 @@ export function registerCloudSaveRoutes(app: Hono<Env>): void {
       !rom ||
       !userId ||
       share.customMetadata?.userId !== userId ||
-      !(await romShared(c.env.DB, userId))
+      !(await activeAdminAccount(c.env.DB, userId))
     ) {
       await rom?.body.cancel();
       return failure(
@@ -470,7 +470,8 @@ export function registerCloudSaveRoutes(app: Hono<Env>): void {
       `Game ${metadata.hash.slice(0, 8)}`;
     const romIncluded =
       (await c.env.SAVES.head(shareRomKey(id)))?.customMetadata?.userId ===
-        metadata.userId && (await romShared(c.env.DB, metadata.userId));
+        metadata.userId &&
+      (await activeAdminAccount(c.env.DB, metadata.userId));
     return new Response(object.body, {
       headers: {
         "Cache-Control": "no-store",
@@ -596,10 +597,7 @@ async function catalogTitles(
   return new Map(results.map((row) => [row.hash, row.title]));
 }
 
-/**
- * Whether the operator flagged the account as admin in `account_limits`.
- * Admins may attach ROMs to their share links; nothing else depends on it.
- */
+/** Whether the operator flagged the account as admin in `account_limits`. */
 async function isAdmin(db: D1Database, userId: string): Promise<boolean> {
   return Boolean(
     await db
@@ -609,8 +607,11 @@ async function isAdmin(db: D1Database, userId: string): Promise<boolean> {
   );
 }
 
-/** Whether a ROM the account attached may be read: it is still an admin. */
-async function romShared(db: D1Database, userId: string): Promise<boolean> {
+/** The account retains admin privileges only while it is not being deleted. */
+export async function activeAdminAccount(
+  db: D1Database,
+  userId: string,
+): Promise<boolean> {
   return (await isAdmin(db, userId)) && !(await accountDeleting(db, userId));
 }
 

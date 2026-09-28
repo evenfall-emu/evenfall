@@ -184,6 +184,71 @@ async function discordCallback(
 }
 
 describe("account authentication", () => {
+  it("lets only active admin sessions manage catalog, with exact-origin writes", async () => {
+    await request(
+      "/api/auth/sign-in/magic-link",
+      post({ email: "catalog-admin@example.com" }, "192.0.2.208"),
+    );
+    const Cookie = sessionCookie(await request(messageLink()));
+    const session = (await (
+      await request("/api/auth/get-session", { headers: { Cookie } })
+    ).json()) as { user: { id: string } };
+    const path = "/api/admin/games/catalog-admin-test";
+    const body = JSON.stringify({
+      internalName: "catalog/admin/test",
+      displayName: "Admin test",
+      summary: null,
+      description: null,
+      imageUrl: null,
+      franchise: null,
+      tags: [],
+    });
+    const write = (headers: Record<string, string>) =>
+      request(path, {
+        method: "PUT",
+        headers: { Cookie, "Content-Type": "application/json", ...headers },
+        body,
+      });
+
+    expect(
+      (await request("/api/admin/games", { headers: { Cookie } })).status,
+    ).toBe(403);
+    expect((await write({ Origin: origin })).status).toBe(403);
+    await database
+      .prepare("INSERT INTO account_limits (user_id, admin) VALUES (?, 1)")
+      .bind(session.user.id)
+      .run();
+    expect((await write({})).status).toBe(403);
+    expect((await write({ Origin: "https://attacker.example" })).status).toBe(
+      403,
+    );
+    const created = await write({ Origin: origin });
+    expect(created.status).toBe(200);
+    expect(await created.json()).toMatchObject({
+      game: { id: "catalog-admin-test" },
+    });
+    const privateRead = await request(path, { headers: { Cookie } });
+    expect(privateRead.status).toBe(200);
+    expect(privateRead.headers.get("Cache-Control")).toBe("no-store");
+    expect((await request("/api/games/catalog-admin-test")).status).toBe(404);
+    await database
+      .prepare("UPDATE account_limits SET admin = 0 WHERE user_id = ?")
+      .bind(session.user.id)
+      .run();
+    expect((await request(path, { headers: { Cookie } })).status).toBe(403);
+    await database
+      .prepare("UPDATE account_limits SET admin = 1 WHERE user_id = ?")
+      .bind(session.user.id)
+      .run();
+    await database
+      .prepare(
+        "INSERT INTO account_deletions (user_id, requested_at) VALUES (?, ?)",
+      )
+      .bind(session.user.id, Date.now())
+      .run();
+    expect((await request(path, { headers: { Cookie } })).status).toBe(403);
+  });
+
   it("keeps native Workers auth responses private, including redirects", async () => {
     const session = await miniflare.dispatchFetch(
       `${origin}/api/auth/get-session`,
@@ -354,7 +419,7 @@ describe("account authentication", () => {
       },
       { ADMIN_SECRET: "test-admin-secret" },
     );
-    expect(admin.status).toBe(401);
+    expect(admin.status).toBe(403); // Signed in, but not flagged as an admin.
     const signedOut = await request("/api/auth/sign-out", {
       ...post({}),
       headers: { ...post({}).headers, Cookie: cookie },
@@ -569,7 +634,9 @@ describe("private cloud resume discovery", () => {
     );
     expect(seeded.status).toBe(200);
     await database
-      .prepare("update versions set visibility = 'hidden' where output_sha1 = ?")
+      .prepare(
+        "update versions set visibility = 'hidden' where output_sha1 = ?",
+      )
       .bind(hiddenHash)
       .run();
     const metadata = { customMetadata: { capturedAt: "12345" } };

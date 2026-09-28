@@ -125,12 +125,19 @@ function catalogVersion(
 
 export async function listGames(
   db: CatalogDatabase,
+  publicOnly = true,
 ): Promise<CatalogGameSummary[]> {
   const [rows, tags, played] = await Promise.all([
     db
       .select({ ...getTableColumns(games), versionCount: count(versions.id) })
       .from(games)
-      .innerJoin(versions, and(eq(versions.gameId, games.id), publicVersion))
+      [publicOnly ? "innerJoin" : "leftJoin"](
+        versions,
+        and(
+          eq(versions.gameId, games.id),
+          publicOnly ? publicVersion : undefined,
+        ),
+      )
       .groupBy(games.id)
       .orderBy(asc(games.displayName)),
     tagsByGame(db),
@@ -201,15 +208,16 @@ export async function getGame(
 
 export async function listVersions(
   db: CatalogDatabase,
+  publicOnly = true,
 ): Promise<CatalogVersion[]> {
   const [rows, compatibility] = await Promise.all([
     db
       .select({ version: versions, base: bases })
       .from(versions)
       .leftJoin(bases, eq(versions.requiredBaseId, bases.id))
-      .where(publicVersion)
+      .where(publicOnly ? publicVersion : undefined)
       .orderBy(asc(versions.displayName)),
-    compatibilityByVersion(db),
+    compatibilityByVersion(db, undefined, publicOnly),
   ]);
   return rows.map(({ version, base }) =>
     catalogVersion(version, base, compatibility),

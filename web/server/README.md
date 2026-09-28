@@ -8,11 +8,12 @@ are missing.
 
 The server stores game, release-version, base-ROM identity, source-provenance
 and optional external image-URL metadata, authentication records, and
-compressed save states and battery saves. It does **not** host ROMs, BIOS
+compressed save states and battery saves. It does **not** serve ROMs, BIOS
 images, patches or image files: public patch URLs refer to the separate
 `zigba-patches` Worker on `patches.evenfall-emu.org`, backed by the
-`evenfall-patches` R2 bucket. Signing in does not grant catalog management
-rights.
+`evenfall-patches` R2 bucket. The catalog Worker uploads patches to that
+bucket, but never serves them. Signing in alone does not grant catalog
+management rights.
 
 The Worker uses [Hono](https://hono.dev/), Drizzle's Cloudflare D1 adapter,
 [Better Auth](https://www.better-auth.com/) 1.7.5 and an R2 bucket. One
@@ -85,27 +86,71 @@ exclude `hidden`, including direct ID reads and save-compatibility IDs. A
 game with no qualifying release returns `404` by ID and is absent from the
 list. Experimental releases remain in the public API for the player to show
 after opt-in; the setting is not access control. Management writes can still
-hold patchless or hidden records. Administrator read access to hidden records
-is not yet exposed as a separate listing API.
+hold patchless or hidden records.
 
-Management is deliberately small: `PUT` and `DELETE` at
-`/api/admin/games/:id`, `/api/admin/versions/:id` and `/api/admin/bases/:id`,
-plus `POST /api/admin/seed`. `PUT` is a validated, full-record upsert that
-also replaces a game's `tags` or a version's `saveCompatibleFrom`, atomically.
-Bodies are strict JSON; unknown fields, malformed IDs, non-HTTP(S) URLs, bad
-hashes and dates, a patch without a base, save compatibility with the same
-version or another game's, and broken foreign-key relations are rejected.
+The admin API has the same `/api/admin/games`, `/api/admin/versions` and
+`/api/admin/bases` collections. `GET` lists every record, including hidden,
+patchless and zero-version games; `GET /:id` returns one, including all
+versions of a game. `PUT /:id` creates or fully replaces a record;
+`PATCH /:id` edits only supplied fields and returns `404` for a missing
+record; `DELETE /:id` removes it (`204`). `PUT` and `PATCH` also replace a
+game's `tags` or a version's `saveCompatibleFrom` when supplied. Bodies are
+strict JSON; unknown fields, malformed IDs, non-HTTP(S) URLs, bad hashes and
+dates, a patch without a base, save compatibility with the same version or
+another game's, and broken foreign-key relations are rejected. Deleting a
+game cascades to its versions; deleted versions' patch objects remain in R2
+because content-addressed keys may be shared.
+
+`PUT /api/admin/versions/:id/patch` attaches or replaces the patch for an
+existing version with a required base. Send raw bytes (`Content-Type:
+application/octet-stream`) and `X-Patch-Format: bps`, `ups` or `ips`. The
+body must have the matching format header and be at most 40 MiB. The Worker
+computes its SHA-1, stores `<sha1>.<format>` in the `PATCHES` bucket, and sets
+the version's patch URL, format and size from the uploaded bytes. A repeat
+upload is safe. The public patch CDN remains read-only. The upload checks the
+header, **not** that the patch applies to the declared base or produces
+`outputSha1`: verify those with your legally supplied base before publishing.
+The player checks both the base SHA-1 and patched output SHA-1 on install.
+Keep new versions `hidden` until the patch has been independently verified;
+`experimental` is still publicly readable.
+
+For another Elite Redux release, `PUT` its metadata with `gameId:
+"elite-redux"`, a new ID, exact playable `outputSha1`, `requiredBaseId:
+"pokemon-emerald-us"`, `patch: null` and `visibility: "hidden"`, along with
+the other required fields in [`versionInput`](src/types.ts). Upload the
+verified patch, then `PATCH` the version's visibility. The catalog does not
+register bridge manifests: runtime recognition still needs its own reviewed
+profile or successful locator pass. Admin changes live in D1, not in seed
+JSON; running `POST /api/admin/seed` again overwrites seeded IDs.
+
+For an existing hidden version with verified output metadata, a bearer-token
+operator can upload and publish its patch like this (replace the origin, ID
+and file with the intended release):
+
+```sh
+curl -X PUT "$ORIGIN/api/admin/versions/<id>/patch" \
+  -H "Authorization: Bearer $ADMIN_SECRET" \
+  -H 'Content-Type: application/octet-stream' -H 'X-Patch-Format: ups' \
+  --data-binary @verified.ups
+curl -X PATCH "$ORIGIN/api/admin/versions/<id>" \
+  -H "Authorization: Bearer $ADMIN_SECRET" \
+  -H 'Content-Type: application/json' -d '{"visibility":"experimental"}'
+```
 
 `cloudPlaythroughs` counts the cloud-backup playthroughs, across all
 accounts, whose ROM SHA-1 is one of the game's public version outputs. It is the
 catalog's measure of popularity and identifies no account.
 
-Every management request requires `Authorization: Bearer <ADMIN_SECRET>`.
-Management fails closed with `503` when the Worker secret is absent. A
-request carrying an `Origin` other than the request URL's origin is rejected
-even with a valid token; requests without `Origin` remain usable from
-command-line tooling. No mutable catalog route is public. Seeding is
-explicit: ordinary reads and Worker startup never seed.
+Every management request requires either `Authorization: Bearer
+<ADMIN_SECRET>` or a current Better Auth session whose account has
+`account_limits.admin = 1` (see [including the ROM](#including-the-rom)).
+Revoking the flag or starting account deletion removes access immediately.
+Management fails closed with `503` when neither auth nor the operator secret
+is configured. Session-based writes require the exact configured `Origin`;
+bearer-token writes accept no `Origin` for command-line tooling, but reject a
+foreign one. Admin responses use `Cache-Control: no-store`. No mutable catalog
+route is public. Seeding is explicit: ordinary reads and Worker startup never
+seed.
 
 ## Accounts
 
@@ -305,8 +350,8 @@ INSERT INTO account_limits (user_id, admin)
 ```
 
 Setting `admin = 0` withdraws every ROM the account attached at once:
-downloads return `404` and shares stop announcing them. Admin grants nothing
-else.
+downloads return `404` and shares stop announcing them. It also withdraws
+catalog management access; grant the flag only to trusted operators.
 
 `PUT /api/shares/:id/rom` requires the same session, `X-Zigba-Account`,
 `Origin` and content type as a share, an `X-Zigba-Digest` of the compressed
@@ -388,13 +433,17 @@ npm run check -w server
 npm test -w server
 npm run db:migrate:local -w server
 npm run dev -w server          # Wrangler on http://127.0.0.1:8787
+npx wrangler dev --config server/patches.wrangler.jsonc --port 8788 # optional local patch CDN
 ```
 
 `server/wrangler.jsonc` is a development-only configuration. Its D1 database
 ID and R2 bucket name are placeholders: `wrangler dev` and `--local`
 migrations simulate both under the ignored `server/.wrangler/` and never
 contact a deployed database or bucket. Never run that configuration with
-`--remote`; deployment uses the root `wrangler.jsonc`.
+`--remote`; deployment uses the root `wrangler.jsonc`. The local `PATCHES_URL`
+points to port 8788; the patch CDN must use the same local R2 persistence
+directory to read back uploaded patches. Neither local Worker uses the
+deployed bucket unless explicitly run with `--remote`.
 
 For login, open exactly `http://127.0.0.1:5173`, not `localhost`, port 8787
 or the static Python server. Vite proxies `/api` to Wrangler on port 8787, so
@@ -523,8 +572,8 @@ compiles the WASM core with a pinned Zig, and publishes only
 never migrates or seeds a database. A Git-connected Cloudflare Workers Builds
 project can run the same two commands as its build and deploy steps.
 
-Catalog management stays disabled unless the `ADMIN_SECRET` Worker secret is
-deliberately set, never as a Wrangler variable or a checked-in file:
+For command-line bearer-token management, set the optional `ADMIN_SECRET`
+Worker secret, never a Wrangler variable or a checked-in file:
 
 ```sh
 npx wrangler secret put ADMIN_SECRET --config wrangler.jsonc
@@ -532,8 +581,9 @@ npx wrangler secret put ADMIN_SECRET --config wrangler.jsonc
 
 An authorized operator may call `POST /api/admin/seed` after the patch CDN is
 populated and verified; seeding is not part of a deployment. The separate
-patch Worker handles the patch-domain route and EU `evenfall-patches` binding;
-the account/backup Worker's private `SAVES` bucket is unchanged.
+patch Worker handles the patch-domain route. The catalog Worker also binds
+the EU `evenfall-patches` bucket for admin uploads; its private `SAVES` bucket
+is unchanged.
 
 The D1 location hint and the EU jurisdiction of the R2 bucket do not make
 processing EU-only: Workers, D1, email and logs are not covered by the bucket
@@ -555,6 +605,7 @@ build environment before the first deploy:
 | Email sender | `vars.EMAIL_FROM`, `send_email[].allowed_sender_addresses` | An address on a domain onboarded to Cloudflare Email Sending. Remove both to disable email sign-in. |
 | D1 database | `d1_databases[].database_name`, `database_id` | Create with `wrangler d1 create <name>`; update the name in the `db:migrate:remote` script if it differs. |
 | R2 bucket | `r2_buckets[].bucket_name` | Create with `wrangler r2 bucket create <name> --jurisdiction eu`; keep public access off. Add the share lifecycle rule below. |
+| Patch bucket/CDN | `PATCHES` R2 binding and `vars.PATCHES_URL` | Bind the patch CDN bucket for uploads and point the URL at its read-only HTTPS Worker origin. |
 | Analytics | `VITE_POSTHOG_KEY`, `VITE_POSTHOG_HOST`, `VITE_POSTHOG_HOSTNAME` | Build-time; `tools/build-cloudflare.sh` defaults to the official instance. Export your own or empty values. |
 | Privacy notice | `PRIVACY.md`, `VITE_PRIVACY_URL` | Published as `/privacy.txt`. Replace it with your notice, or point `VITE_PRIVACY_URL` elsewhere. |
 

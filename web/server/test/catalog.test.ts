@@ -1,4 +1,5 @@
 import { readFile, readdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -8,6 +9,7 @@ import { seedBases, seedGames, seedVersions } from "../src/seed";
 const adminSecret = "test-only-secret";
 let miniflare: Miniflare;
 let database: D1Database;
+let patches: R2Bucket;
 
 beforeAll(async () => {
   miniflare = new Miniflare(
@@ -15,9 +17,11 @@ beforeAll(async () => {
       modules: true,
       script: "export default { fetch() { return new Response('test') } }",
       d1Databases: ["DB"],
+      r2Buckets: ["PATCHES"],
     }),
   );
   database = await miniflare.getD1Database("DB");
+  patches = (await miniflare.getR2Bucket("PATCHES")) as R2Bucket;
   const migrationsDirectory = fileURLToPath(
     new URL("../migrations", import.meta.url),
   );
@@ -649,5 +653,147 @@ describe("catalog API", () => {
       (await write({ saveCompatibleFrom: ["elite-redux-missing"] })).status,
     ).toBe(409);
     expect((await write({ patch })).status).toBe(200);
+  });
+
+  it("lists drafts privately, edits selected fields, and uploads a content-addressed patch", async () => {
+    const id = "admin-upload-test";
+    const { id: _id, ...seed } = seedVersions.find(
+      (item) => item.gameId === "elite-redux",
+    )!;
+    const create = await request(`/api/admin/versions/${id}`, {
+      method: "PUT",
+      headers: adminHeaders(),
+      body: JSON.stringify({
+        ...seed,
+        internalName: id,
+        outputSha1: "9".repeat(40),
+        patch: null,
+        visibility: "hidden",
+      }),
+    });
+    expect(create.status).toBe(200);
+    expect((await request(`/api/versions/${id}`)).status).toBe(404);
+    expect((await request(`/api/admin/versions/${id}`)).status).toBe(401);
+    const privateRead = await request(`/api/admin/versions/${id}`, {
+      headers: adminHeaders(),
+    });
+    expect(privateRead.headers.get("Cache-Control")).toBe("no-store");
+    expect(await privateRead.json()).toMatchObject({
+      version: { patch: null, visibility: "hidden" },
+    });
+    const list = await request("/api/admin/versions", {
+      headers: adminHeaders(),
+    });
+    expect(
+      ((await list.json()) as { versions: Array<{ id: string }> }).versions.map(
+        (item) => item.id,
+      ),
+    ).toContain(id);
+    const games = await request("/api/admin/games", {
+      headers: adminHeaders(),
+    });
+    expect(
+      ((await games.json()) as { games: Array<{ id: string }> }).games.map(
+        (item) => item.id,
+      ),
+    ).toContain("hidden-game-test");
+
+    const edit = await request(`/api/admin/versions/${id}`, {
+      method: "PATCH",
+      headers: adminHeaders(),
+      body: JSON.stringify({ releaseNotes: "Reviewed notes" }),
+    });
+    expect(edit.status).toBe(200);
+    expect(await edit.json()).toMatchObject({
+      version: {
+        releaseNotes: "Reviewed notes",
+        visibility: "hidden",
+        requiredBaseId: seed.requiredBaseId,
+        patch: null,
+      },
+    });
+    const rejected = await request(`/api/admin/versions/${id}`, {
+      method: "PATCH",
+      headers: adminHeaders(),
+      body: JSON.stringify({ requiredBaseId: null, patch: seed.patch }),
+    });
+    expect(rejected.status).toBe(400);
+    const gameEdit = await request("/api/admin/games/elite-redux", {
+      method: "PATCH",
+      headers: adminHeaders(),
+      body: JSON.stringify({ description: "Updated description" }),
+    });
+    expect(gameEdit.status).toBe(200);
+    expect(await gameEdit.json()).toMatchObject({
+      game: {
+        description: "Updated description",
+        tags: ["Pokémon", "Difficulty Hack"],
+      },
+    });
+
+    const bytes = new Uint8Array([
+      80, 65, 84, 67, 72, 0, 0, 1, 0, 1, 90, 69, 79, 70,
+    ]); // PATCH, one byte at offset 1, EOF
+    const hash = createHash("sha1").update(bytes).digest("hex");
+    const bindings: Bindings = {
+      DB: database,
+      ADMIN_SECRET: adminSecret,
+      PATCHES: patches,
+      PATCHES_URL: "https://patches.test",
+    };
+    const upload = (body: Uint8Array, format = "ips") =>
+      request(
+        `/api/admin/versions/${id}/patch`,
+        {
+          method: "PUT",
+          headers: adminHeaders({
+            "Content-Type": "application/octet-stream",
+            "X-Patch-Format": format,
+          }),
+          body: new Uint8Array(body),
+        },
+        bindings,
+      );
+    expect(
+      (
+        await request(`/api/admin/versions/${id}/patch`, {
+          method: "PUT",
+          headers: adminHeaders({
+            "Content-Type": "application/octet-stream",
+            "X-Patch-Format": "ips",
+          }),
+          body: new Uint8Array(bytes),
+        })
+      ).status,
+    ).toBe(503);
+    expect((await upload(bytes, "bps")).status).toBe(400);
+    expect(await patches.head(`${hash}.bps`)).toBeNull();
+    const uploaded = await upload(bytes);
+    expect(uploaded.status).toBe(200);
+    expect(await uploaded.json()).toMatchObject({
+      version: {
+        patch: {
+          url: `https://patches.test/${hash}.ips`,
+          format: "ips",
+          size: bytes.length,
+        },
+        visibility: "hidden",
+        releaseNotes: "Reviewed notes",
+      },
+    });
+    expect(
+      new Uint8Array(await (await patches.get(`${hash}.ips`))!.arrayBuffer()),
+    ).toEqual(bytes);
+    expect((await upload(bytes)).status).toBe(200);
+    expect((await request(`/api/versions/${id}`)).status).toBe(404);
+    const visible = await request(`/api/admin/versions/${id}`, {
+      method: "PATCH",
+      headers: adminHeaders(),
+      body: JSON.stringify({ visibility: "experimental" }),
+    });
+    expect(visible.status).toBe(200);
+    expect(await (await request(`/api/versions/${id}`)).json()).toMatchObject({
+      version: { patch: { url: `https://patches.test/${hash}.ips` } },
+    });
   });
 });
