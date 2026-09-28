@@ -201,6 +201,8 @@ export const accountLimits = sqliteTable(
   {
     userId: text("user_id").primaryKey(),
     quickSlots: integer("quick_slots"),
+    /** Operator-granted; lets the account attach ROMs to its share links. */
+    admin: integer("admin", { mode: "boolean" }).notNull().default(false),
   },
   (table) => [
     check(

@@ -1,10 +1,41 @@
 import { useRef, useState } from "react";
 import type { SharedState } from "./cloud";
+import type {
+  CatalogBase,
+  CatalogPatch,
+  CatalogVersion,
+} from "./pages/library/catalog";
+
+/** A catalog release that its hosted patch builds from a base ROM. */
+export type PatchedRelease = CatalogVersion & {
+  patch: CatalogPatch;
+  requiredBase: CatalogBase;
+};
+
+/** The catalog release whose ROM has SHA-1 `hash`, when a patch builds it. */
+export function patchedRelease(
+  versions: readonly CatalogVersion[],
+  hash: string,
+) {
+  return versions.find(
+    (version): version is PatchedRelease =>
+      version.outputSha1 === hash &&
+      Boolean(version.patch && version.requiredBase),
+  );
+}
 
 export type ShareProgress =
   | { status: "signed-out" }
   | { status: "creating" }
-  | { status: "ready"; url: string }
+  | {
+      status: "ready";
+      id: string;
+      url: string;
+      /** SHA-1 of the shared state's ROM. */
+      hash: string;
+      /** The account is an admin, so it may include the ROM. */
+      canIncludeRom: boolean;
+    }
   | { status: "failed"; message: string };
 
 const comparable = (name: string) => name.trim().toLocaleLowerCase();
@@ -13,19 +44,24 @@ export function nameTaken(names: string[], name: string) {
   return names.some((taken) => comparable(taken) === comparable(name));
 }
 
-/** The sharer's side: creating a link to the current state, then copying it. */
+/**
+ * The sharer's side: creating a link to the current state, then copying it.
+ * With `includeRom`, offered to admins, the link can also carry the ROM.
+ */
 export function ShareLink({
   progress,
   title,
   playthroughName,
   retry,
   signIn,
+  includeRom,
 }: {
   progress: ShareProgress;
   title: string;
   playthroughName: string;
   retry: () => void;
   signIn: () => void;
+  includeRom?: () => Promise<void>;
 }) {
   const [copied, setCopied] = useState<"" | "copied" | "failed">("");
   const link = useRef<HTMLInputElement>(null);
@@ -91,8 +127,52 @@ export function ShareLink({
           {copied === "failed" && (
             <p role="alert">Copying failed. Select the link and copy it.</p>
           )}
+          {includeRom && (
+            <IncludeGame key={progress.url} include={includeRom} />
+          )}
         </>
       )}
+    </>
+  );
+}
+
+/** Uploads the game's ROM with one share link, once the sharer asks. */
+function IncludeGame({ include }: { include: () => Promise<void> }) {
+  const [state, setState] = useState<
+    | { status: "idle" | "uploading" | "included" }
+    | { status: "failed"; message: string }
+  >({ status: "idle" });
+  if (state.status === "included")
+    return (
+      <p role="status">The game is included: this link starts without a ROM.</p>
+    );
+  const uploading = state.status === "uploading";
+  return (
+    <>
+      <p>
+        Include the game to let people without it play too. Anyone with this
+        link can then download the ROM.
+      </p>
+      {state.status === "failed" && <p role="alert">{state.message}</p>}
+      <div className="resume-recovery-actions">
+        <button
+          disabled={uploading}
+          onClick={() => {
+            setState({ status: "uploading" });
+            include().then(
+              () => setState({ status: "included" }),
+              (error: unknown) =>
+                setState({
+                  status: "failed",
+                  message:
+                    error instanceof Error ? error.message : String(error),
+                }),
+            );
+          }}
+        >
+          {uploading ? "Including the game…" : "Include the game"}
+        </button>
+      </div>
     </>
   );
 }
@@ -100,10 +180,12 @@ export function ShareLink({
 /**
  * The recipient's side, shown only when starting needs input: a new name
  * when the shared one is already used for this game, or the game's ROM.
+ * With `base`, the ROM may also be that base, which a patch turns into it.
  */
 export function SharedStateChoices({
   shared,
   needsRom,
+  base,
   takenNames,
   busy,
   error,
@@ -111,6 +193,7 @@ export function SharedStateChoices({
 }: {
   shared: SharedState;
   needsRom: boolean;
+  base?: CatalogBase;
   takenNames: string[];
   busy: boolean;
   error: string;
@@ -176,15 +259,28 @@ export function SharedStateChoices({
           {nameError && <p role="alert">{nameError}</p>}
         </>
       )}
-      {needsRom && (
-        <p>
-          This state needs the exact game version it was shared from. Choose
-          that ROM; it stays on this device and is never uploaded.
-        </p>
-      )}
+      {needsRom &&
+        (base ? (
+          <p>
+            This state needs the exact game version it was shared from. Choose{" "}
+            {base.displayName}, which is patched here, or the patched ROM
+            itself. Your file stays on this device and is never uploaded.
+          </p>
+        ) : (
+          <p>
+            This state needs the exact game version it was shared from. Choose
+            that ROM; it stays on this device and is never uploaded.
+          </p>
+        ))}
       <details className="cloud-rom-identity">
         <summary>ROM details</summary>
-        SHA-1: <code>{shared.hash}</code>
+        {base ? "Patched ROM SHA-1" : "SHA-1"}: <code>{shared.hash}</code>
+        {base && (
+          <>
+            <br />
+            Base ROM SHA-1: <code>{base.sha1}</code>
+          </>
+        )}
       </details>
       {error && <p role="alert">{error}</p>}
       {busy && <p role="status">Validating and starting…</p>}

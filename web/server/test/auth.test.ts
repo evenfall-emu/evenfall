@@ -1777,6 +1777,130 @@ describe("state shares", () => {
     }
   });
 
+  function setAdmin(account: typeof owner, admin: boolean) {
+    return database
+      .prepare(
+        `INSERT INTO account_limits (user_id, admin) VALUES (?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET admin = excluded.admin`,
+      )
+      .bind(account["X-Zigba-Account"], admin ? 1 : 0)
+      .run();
+  }
+  function attachRom(
+    account: Record<string, string>,
+    id: string,
+    body: Buffer,
+    headers: Record<string, string> = {},
+  ) {
+    return miniflare.dispatchFetch(`${origin}/api/shares/${id}/rom`, {
+      method: "PUT",
+      body,
+      headers: {
+        ...account,
+        Origin: origin,
+        "Content-Type": "application/octet-stream",
+        "X-Zigba-Digest": createHash("sha256").update(body).digest("hex"),
+        ...headers,
+      },
+    });
+  }
+  const readRom = (id: string) =>
+    miniflare.dispatchFetch(`${origin}/api/shares/${id}/rom`);
+  const romIncluded = async (id: string) => {
+    const read = await miniflare.dispatchFetch(`${origin}/api/shares/${id}`);
+    await read.arrayBuffer();
+    return read.headers.get("X-Zigba-Rom-Included");
+  };
+  type Shared = Created & { canIncludeRom: boolean };
+
+  it("lets only an admin account attach a ROM, readable while it stays admin", async () => {
+    const rom = gzipSync(Buffer.from("a game ROM, gzip-compressed"));
+    const plain = (await (
+      await share(owner, catalogHash, state("no admin"))
+    ).json()) as Shared;
+    expect(plain.canIncludeRom).toBe(false);
+    const refused = await attachRom(owner, plain.id, rom);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({
+      error: { code: "rom_sharing_forbidden" },
+    });
+    expect((await saves.list({ prefix: "share/rom/" })).objects).toHaveLength(
+      0,
+    );
+
+    await setAdmin(owner, true);
+    try {
+      const created = (await (
+        await share(owner, catalogHash, state("admin"))
+      ).json()) as Shared;
+      expect(created.canIncludeRom).toBe(true);
+      expect(await romIncluded(created.id)).toBeNull();
+      expect((await readRom(created.id)).status).toBe(404);
+
+      // Only the admin's own share, from the exact origin, with its digest.
+      const othersId = "B".repeat(22);
+      await saves.put(`share/state/${othersId}`, state("not yours"), {
+        customMetadata: {
+          userId: other["X-Zigba-Account"],
+          hash: unknownHash,
+          playthroughName: name,
+        },
+      });
+      expect((await attachRom(owner, othersId, rom)).status).toBe(404);
+      expect((await attachRom(owner, "A".repeat(22), rom)).status).toBe(404);
+      expect(
+        (
+          await attachRom(owner, created.id, rom, {
+            Origin: "https://evil.example",
+          })
+        ).status,
+      ).toBe(403);
+      expect((await attachRom({}, created.id, rom)).status).toBe(401);
+      const tampered = await attachRom(owner, created.id, rom, {
+        "X-Zigba-Digest": "0".repeat(64),
+      });
+      expect(tampered.status).toBe(400);
+      expect(await tampered.json()).toMatchObject({
+        error: { code: "digest_mismatch" },
+      });
+      const oversized = await attachRom(
+        owner,
+        created.id,
+        Buffer.alloc(33 * 1024 * 1024 + 1),
+      );
+      expect(oversized.status).toBe(413);
+      expect(await romIncluded(created.id)).toBeNull();
+
+      expect((await attachRom(owner, created.id, rom)).status).toBe(204);
+      expect(await romIncluded(created.id)).toBe("1");
+      // No cookie, no account header: the link alone is enough.
+      const read = await readRom(created.id);
+      expect(read.status).toBe(200);
+      expect(Buffer.from(await read.arrayBuffer())).toEqual(rom);
+      expect(read.headers.get("X-Zigba-Digest")).toBe(
+        createHash("sha256").update(rom).digest("hex"),
+      );
+      expect(read.headers.get("Cache-Control")).toBe("no-store");
+      expect(read.headers.get("Referrer-Policy")).toBe("no-referrer");
+      for (const [, value] of read.headers)
+        expect(value).not.toContain(owner["X-Zigba-Account"]);
+
+      // Clearing the flag withdraws every ROM the account attached at once.
+      await setAdmin(owner, false);
+      const withdrawn = await readRom(created.id);
+      expect(withdrawn.status).toBe(404);
+      expect(await withdrawn.json()).toMatchObject({
+        error: { code: "rom_not_found" },
+      });
+      expect(await romIncluded(created.id)).toBeNull();
+      expect((await attachRom(owner, created.id, rom)).status).toBe(403);
+      await setAdmin(owner, true);
+      expect((await readRom(created.id)).status).toBe(200);
+    } finally {
+      await setAdmin(owner, false);
+    }
+  });
+
   it("silently caps new links per day like the upload budget", async () => {
     const userId = owner["X-Zigba-Account"];
     const key = `cloud-save:shares:${userId}:${24 * 60 * 60_000}`;
@@ -1846,12 +1970,17 @@ describe("state shares", () => {
   });
 
   it("hides an account's shares as soon as its deletion begins", async () => {
+    await setAdmin(other, true);
     const { id } = (await (
       await share(other, unknownHash, state("deleted"))
     ).json()) as Created;
     expect(
+      (await attachRom(other, id, gzipSync(Buffer.from("rom")))).status,
+    ).toBe(204);
+    expect(
       (await miniflare.dispatchFetch(`${origin}/api/shares/${id}`)).status,
     ).toBe(200);
+    expect((await readRom(id)).status).toBe(200);
     const erased = await request(
       "/api/account",
       { method: "DELETE", headers: { ...other, Origin: origin } },
@@ -1861,6 +1990,7 @@ describe("state shares", () => {
     expect(
       (await miniflare.dispatchFetch(`${origin}/api/shares/${id}`)).status,
     ).toBe(404);
+    expect((await readRom(id)).status).toBe(404);
     expect((await share(other, unknownHash, state("late"))).status).toBe(401);
   });
 });

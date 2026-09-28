@@ -277,23 +277,58 @@ upload does, plus:
 | `X-Zigba-Playthrough-Name` | Required playthrough name, encoded like a save's |
 | `X-Zigba-Title` | Optional game label, encoded like a save's |
 
-It returns `201 {id, url}`. `id` is 128 random bits as 22
+It returns `201 {id, url, canIncludeRom}`. `id` is 128 random bits as 22
 base64url characters and `url` is `<configured origin>/share/state/<id>`.
-Every request creates a new share, even for the same bytes. Shares consume
-the account's [upload budget](#limits) but no playthrough quota.
+`canIncludeRom` is true for [admin accounts](#including-the-rom). Every
+request creates a new share, even for the same bytes. Shares consume the
+account's [upload budget](#limits) but no playthrough quota.
 
 `GET /api/shares/:id` is public and `no-store`. It returns the compressed
 body with `X-Zigba-Rom`, `X-Zigba-Digest` and URI-encoded `X-Zigba-Title`
-and `X-Zigba-Playthrough-Name`. The title is
+and `X-Zigba-Playthrough-Name`, plus `X-Zigba-Rom-Included: 1` when the ROM
+can be downloaded with it. The title is
 resolved like a listing's: the catalog's name for an exact release first,
 then the uploaded label, then a hash prefix. The response never identifies
 the account. Unknown, malformed and deleted IDs, and shares whose account is
 being deleted, all return `404 share_not_found`.
 
-Shares are stored at `share/state/<id>` in the `SAVES` bucket, outside every
-account prefix, with the owner's ID in private object metadata. The Worker
-never checks a share's age: an R2 lifecycle rule on the `share/` prefix
-deletes it (see [self-hosting](#self-hosting)). R2 applies such rules lazily,
+#### Including the ROM
+
+An admin account can attach the game's ROM to its own share, so the link
+starts on a device without the game. No other account can. The operator
+grants admin in D1; there is no HTTP route for it:
+
+```sql
+INSERT INTO account_limits (user_id, admin)
+  SELECT id, 1 FROM user WHERE email = '<email>'
+  ON CONFLICT(user_id) DO UPDATE SET admin = 1;
+```
+
+Setting `admin = 0` withdraws every ROM the account attached at once:
+downloads return `404` and shares stop announcing them. Admin grants nothing
+else.
+
+`PUT /api/shares/:id/rom` requires the same session, `X-Zigba-Account`,
+`Origin` and content type as a share, an `X-Zigba-Digest` of the compressed
+body, and a share the account created. Non-admins get
+`403 rom_sharing_forbidden`; another account's, expired or unknown share is
+`404 share_not_found`. The gzip body may be at most 33 MiB (a GBA ROM is at
+most 32 MiB), else `413 compressed_too_large`. It costs one upload attempt
+but no upload bytes. R2 checks the digest (`400 digest_mismatch`); the
+Worker neither decodes nor hashes the ROM, so readers must check its SHA-1
+against the share's `X-Zigba-Rom`, as the player does. It returns `204`, and
+a repeated `PUT` replaces the ROM.
+
+`GET /api/shares/:id/rom` is public, `no-store` and never identifies the
+account. It returns the compressed ROM with `X-Zigba-Digest` while its share
+is readable and its account is still an admin, otherwise
+`404 rom_not_found`.
+
+Shares are stored at `share/state/<id>` in the `SAVES` bucket, and included
+ROMs at `share/rom/<id>`, outside every account prefix, with the owner's ID
+in private object metadata. The Worker never checks a share's age: an R2
+lifecycle rule on the `share/` prefix deletes both (see
+[self-hosting](#self-hosting)). R2 applies such rules lazily,
 typically within a day after the age limit, so a 1-day rule keeps a link
 working for at least 24 hours, the lifetime the player promises, and usually
 less than 48.
@@ -322,9 +357,9 @@ lag, an account holds at most a few hundred.
 3. An immediate best-effort sweep deletes every R2 key under the account
    prefix, across pages, including quick slots and any other layout.
 
-[State shares](#state-shares) are outside the account prefix. The tombstone
-hides them from step 1 onwards, and the `share/` lifecycle rule deletes them
-within about two days of their upload.
+[State shares](#state-shares) and their included ROMs are outside the
+account prefix. The tombstone hides them from step 1 onwards, and the
+`share/` lifecycle rule deletes them within about two days of their upload.
 
 The five-minute cron trigger repairs a crash between steps 1 and 2 and
 retries R2 failures. It sweeps each tombstone every five minutes for the

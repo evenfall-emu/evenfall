@@ -519,19 +519,27 @@ export class Player {
     if (this.state.resumeFailed)
       throw new Error("Resolve the local resume failure before sharing.");
     await this.pause();
-    return this.cloud.share({
+    const link = await this.cloud.share({
       hash: game.hash,
       title: game.title,
       playthroughName: playthrough.name,
       data: await this.emulator.saveState(),
     });
+    return { ...link, hash: game.hash };
+  }
+  /** Includes the stored ROM `hash` with share `id`; see CloudSync.includeRom. */
+  async includeShareRom(id: string, hash: string) {
+    const rom = await this.library.rom(hash);
+    if (!rom) throw new Error("This game's ROM is no longer on this device.");
+    await this.cloud.includeRom(id, rom);
   }
   /**
-   * Starts a shared state as a new local playthrough called `name`, using the
-   * stored ROM or `file`. Nothing existing is replaced: the run gets a fresh
-   * ID, and the ROM and state are validated before the player changes.
+   * Starts a shared state as a new local playthrough called `name`, from the
+   * stored ROM with the state's SHA-1. Nothing existing is replaced: the run
+   * gets a fresh ID, and the state is validated against the ROM in an
+   * isolated emulator before the player changes.
    */
-  async openSharedState(shared: SharedState, name: string, file?: File) {
+  async openSharedState(shared: SharedState, name: string) {
     if (!this.state.ready) throw new Error("Player is still starting.");
     if (this.state.changing) return;
     this.update({ changing: true });
@@ -543,33 +551,23 @@ export class Player {
         throw new Error(
           "Local progress could not be saved. Export it before switching.",
         );
-      if (file && file.size > 40 * 1024 * 1024)
-        throw new Error("ROM exceeds 40 MiB");
-      let game = (await this.library.list()).find(
+      const game = (await this.library.list()).find(
         (item) => item.hash === shared.hash,
       );
-      const rom = file
-        ? new Uint8Array(await file.arrayBuffer())
-        : game && (await this.library.rom(shared.hash));
-      if (!rom) throw new Error(`Choose the ROM for ${shared.title}.`);
+      const rom = game && (await this.library.rom(shared.hash));
+      if (!game || !rom) throw new Error(`Choose the ROM for ${shared.title}.`);
       const options = {
         ...this.options,
         sampleRate: await this.audio.ready(),
-        zipped: Boolean(file && /\.zip$/i.test(file.name)),
+        zipped: false,
       };
-      const validatedRom = await this.validatedState(
+      await this.validatedState(
         rom,
         options,
         shared.hash,
         shared.data,
-        "That ROM does not match this shared state. Choose the exact same game version.",
+        "The stored ROM does not match this shared state.",
       );
-      game ??= await this.library.addRom({
-        hash: shared.hash,
-        title: shared.title,
-        rom: validatedRom,
-        lastPlayed: Date.now(),
-      });
       await this.library.createPlaythrough(
         shared.hash,
         name,
@@ -577,14 +575,7 @@ export class Player {
       );
       replacing = true;
       this.resumeBlockedRef = ref;
-      await this.openInternal(
-        game,
-        undefined,
-        { ...options, zipped: false },
-        ref,
-        false,
-        true,
-      );
+      await this.openInternal(game, undefined, options, ref, false, true);
       if (!this.releaseLock)
         throw new Error(
           "This browser could not lock the new playthrough, so it cannot be stored.",

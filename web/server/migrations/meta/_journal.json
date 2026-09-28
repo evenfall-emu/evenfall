@@ -57,6 +57,13 @@
       "when": 1790593655919,
       "tag": "0007_needy_the_liberteens",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1790614208012,
+      "tag": "0008_account_admin",
+      "breakpoints": true
     }
   ]
 }

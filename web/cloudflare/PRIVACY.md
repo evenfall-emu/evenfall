@@ -13,7 +13,9 @@ privacy notice. This notice does not describe those instances.
 - You can play without an account. Games, saves and progress stay in your
   browser unless you sign in and keep cloud backups enabled, or share a
   state.
-- ZiGBA never uploads ROM files or BIOS images.
+- ZiGBA never uploads BIOS images, and never uploads ROM files except when
+  an admin account, designated by the operator, includes one with its own
+  [share link](#shared-states).
 - Analytics (page views and share counts) are cookieless and contain no
   account, game or gameplay information.
 - An optional account stores your email address (and, with Discord sign-in,
@@ -138,8 +140,19 @@ within a day after that, and the link stops working then. Links cannot
 currently be revoked early except by deleting your account. Shares count toward your account's upload
 limits.
 
+Accounts the operator has made admin can also press **Include the game**,
+which uploads the game's ROM with that one link, stored and deleted like the
+snapshot. Anyone with the link can then download the ROM. No other account
+is offered this or can do it, and no ROM is ever uploaded without that
+button.
+
 Opening a share link needs no account, and the shared state is downloaded
-without your cookies. It is saved in your browser as a new playthrough, like
+without your cookies. If it is for a catalog game and your device has, or you
+choose, that game's base ROM, the player downloads the game's public patch
+and builds the ROM in your browser, as the Library does. Otherwise, if the
+link includes the game, the player downloads that ROM, also without your
+cookies, and stores it in your browser like a ROM you imported. Opening a
+link never uploads your ROM files. The state is saved in your browser as a new playthrough, like
 any other local progress; if you are signed in with cloud backups enabled,
 that playthrough is then backed up like your others.
 

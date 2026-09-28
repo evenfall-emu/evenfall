@@ -33,6 +33,8 @@ const SHARE_LIMIT = 100;
 const SHARE_WINDOW_MS = 24 * 60 * 60_000;
 // 128 random bits as unpadded base64url.
 const SHARE_ID = /^[A-Za-z0-9_-]{22}$/;
+// A GBA ROM is at most 32 MiB; gzip can grow incompressible data slightly.
+const MAX_ROM_COMPRESSED = 33 * 1024 * 1024;
 
 export interface CloudSaveBindings extends AuthBindings {
   SAVES?: R2Bucket;
@@ -301,9 +303,137 @@ export function registerCloudSaveRoutes(app: Hono<Env>): void {
     if (!object)
       return failure(c, 500, "share_failed", "The state could not be shared");
     return c.json(
-      { id, url: `${new URL(baseURL).origin}/share/state/${id}` },
+      {
+        id,
+        url: `${new URL(baseURL).origin}/share/state/${id}`,
+        canIncludeRom: await isAdmin(c.env.DB!, userId),
+      },
       201,
     );
+  });
+
+  // Attaches the game's ROM to one of an admin account's shares. R2 checks
+  // the body's SHA-256; readers check the ROM's SHA-1 against the share
+  // before storing it, so the Worker neither decodes nor hashes the body.
+  app.put("/api/shares/:id/rom", async (c) => {
+    const account = await saveAccount(c);
+    if (account instanceof Response) return account;
+    const { userId, baseURL } = account;
+    const rejected = uploadRejected(c, baseURL);
+    if (rejected) return rejected;
+    if (!(await isAdmin(c.env.DB!, userId)))
+      return failure(
+        c,
+        403,
+        "rom_sharing_forbidden",
+        "This account cannot share games",
+      );
+    const id = c.req.param("id");
+    const share = SHARE_ID.test(id)
+      ? await c.env.SAVES!.head(shareKey(id))
+      : null;
+    if (!share?.customMetadata?.hash || share.customMetadata.userId !== userId)
+      return failure(
+        c,
+        404,
+        "share_not_found",
+        "This shared state has expired or does not exist",
+      );
+    const expectedDigest = c.req.header("X-Zigba-Digest");
+    if (!expectedDigest || !DIGEST.test(expectedDigest))
+      return failure(c, 400, "invalid_metadata", "Digest is invalid");
+    // One attempt from the request budget; ROM bytes bypass the byte budget,
+    // which is sized for saves.
+    if (!(await consumeBudget(c.env.DB!, userId, 1, 0)))
+      return failure(
+        c,
+        429,
+        "save_rate_limited",
+        "Cloud-save upload budget exceeded",
+      );
+    let body: Uint8Array<ArrayBuffer>;
+    try {
+      body = await readBounded(c.req.raw.body, MAX_ROM_COMPRESSED);
+    } catch {
+      return failure(
+        c,
+        413,
+        "compressed_too_large",
+        "Compressed ROM exceeds 33 MiB",
+      );
+    }
+    const key = shareRomKey(id);
+    try {
+      await c.env.SAVES!.put(key, body, {
+        httpMetadata: { contentType: "application/octet-stream" },
+        customMetadata: {
+          userId,
+          hash: share.customMetadata.hash,
+          digest: expectedDigest,
+        },
+        sha256: expectedDigest,
+      });
+    } catch {
+      return failure(
+        c,
+        400,
+        "digest_mismatch",
+        "Compressed ROM digest does not match",
+      );
+    }
+    if (await accountDeleting(c.env.DB!, userId)) {
+      await c.env.SAVES!.delete(key).catch(() => {});
+      return failure(
+        c,
+        503,
+        "deletion_in_progress",
+        "Account deletion is in progress",
+      );
+    }
+    return c.body(null, 204);
+  });
+
+  // Public like the state: the link is the capability. Readable while its
+  // share is, and only while the sharer is still an admin.
+  app.get("/api/shares/:id/rom", async (c) => {
+    if (!c.env.DB || !c.env.SAVES)
+      return failure(
+        c,
+        503,
+        "saves_unavailable",
+        "Cloud saves are not configured",
+      );
+    const id = c.req.param("id");
+    const [share, rom] = SHARE_ID.test(id)
+      ? await Promise.all([
+          c.env.SAVES.head(shareKey(id)),
+          c.env.SAVES.get(shareRomKey(id)),
+        ])
+      : [null, null];
+    const userId = rom?.customMetadata?.userId;
+    if (
+      !share ||
+      !rom ||
+      !userId ||
+      share.customMetadata?.userId !== userId ||
+      !(await romShared(c.env.DB, userId))
+    ) {
+      await rom?.body.cancel();
+      return failure(
+        c,
+        404,
+        "rom_not_found",
+        "This shared game has expired or does not exist",
+      );
+    }
+    return new Response(rom.body, {
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/octet-stream",
+        "Referrer-Policy": "no-referrer",
+        "X-Zigba-Digest": rom.customMetadata?.digest ?? "",
+      },
+    });
   });
 
   // Public: the link is the capability. Sends no account identity.
@@ -338,11 +468,15 @@ export function registerCloudSaveRoutes(app: Hono<Env>): void {
       (await catalogTitles(c.env.DB, [metadata.hash])).get(metadata.hash) ??
       metadata.title ??
       `Game ${metadata.hash.slice(0, 8)}`;
+    const romIncluded =
+      (await c.env.SAVES.head(shareRomKey(id)))?.customMetadata?.userId ===
+        metadata.userId && (await romShared(c.env.DB, metadata.userId));
     return new Response(object.body, {
       headers: {
         "Cache-Control": "no-store",
         "Content-Type": "application/octet-stream",
         "Referrer-Policy": "no-referrer",
+        ...(romIncluded ? { "X-Zigba-Rom-Included": "1" } : {}),
         "X-Zigba-Rom": metadata.hash,
         "X-Zigba-Title": encodeURIComponent(title),
         "X-Zigba-Playthrough-Name": encodeURIComponent(
@@ -462,8 +596,30 @@ async function catalogTitles(
   return new Map(results.map((row) => [row.hash, row.title]));
 }
 
+/**
+ * Whether the operator flagged the account as admin in `account_limits`.
+ * Admins may attach ROMs to their share links; nothing else depends on it.
+ */
+async function isAdmin(db: D1Database, userId: string): Promise<boolean> {
+  return Boolean(
+    await db
+      .prepare("SELECT 1 FROM account_limits WHERE user_id = ? AND admin = 1")
+      .bind(userId)
+      .first(),
+  );
+}
+
+/** Whether a ROM the account attached may be read: it is still an admin. */
+async function romShared(db: D1Database, userId: string): Promise<boolean> {
+  return (await isAdmin(db, userId)) && !(await accountDeleting(db, userId));
+}
+
 function shareKey(id: string): string {
   return `${SHARE_PREFIX}state/${id}`;
+}
+
+function shareRomKey(id: string): string {
+  return `${SHARE_PREFIX}rom/${id}`;
 }
 
 function newShareId(): string {

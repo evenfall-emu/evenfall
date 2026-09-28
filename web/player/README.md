@@ -417,13 +417,27 @@ name, the game's title and the ROM's SHA-1, never the ROM itself. The
 server's side is in
 [`server/README.md`](../server/README.md#state-shares).
 
-Opening `/share/state/<ID>` needs no account. The player downloads the state,
-checks its digest, and validates it against the ROM in an isolated emulator
-before anything changes. It then starts the state at once as a new
-playthrough under the shared name, never replacing an existing one. It asks
-first only when it needs something:
+For an [admin account](../server/README.md#including-the-rom), the dialog
+also offers **Include the game**, which uploads the stored ROM, gzip
+compressed, with that link. Other accounts never see it, and the server
+refuses them.
 
-- the game's ROM, if this device does not have it; the ROM stays local;
+Opening `/share/state/<ID>` needs no account. The player downloads the state,
+checks its digest and waits for the catalog request to settle, so it knows
+whether the shared ROM is a catalog release. It uses the shared ROM if this
+device has it. Otherwise, for a release whose base ROM is here, it builds the
+release with the hosted patch, as **Install** does; failing that, it
+downloads a ROM the sharer included and stores it once its SHA-1 matches the
+state's. It validates the state
+against the ROM in an isolated emulator before the player changes, then
+starts the state at once as a new playthrough under the shared name, never
+replacing an existing one. It asks first only when it needs something:
+
+- a ROM, if this device has neither the shared ROM nor the release's base
+  and the link does not include it. The prompt accepts either one and
+  patches a base locally. The chosen file
+  is stored as **Choose file** stores it, so it stays in the Library even if
+  the state or patch then fails, and it is never uploaded;
 - a new name, if a playthrough of this game already has the shared name,
   ignoring case and surrounding spaces. Cloud-only runs count.
 

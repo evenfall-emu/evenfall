@@ -48,6 +48,9 @@ type CloudSession = { user: { id: string } } | null;
 type RemoteSave = { accountId: string; data: Uint8Array; etag: string };
 const STATE_MAGIC = new TextEncoder().encode("ZIGBAST1");
 const MAX_STATE = 2 * 1024 * 1024;
+// A GBA ROM is at most 32 MiB; gzip can grow incompressible data slightly.
+const MAX_ROM = 32 * 1024 * 1024;
+const MAX_ROM_COMPRESSED = 33 * 1024 * 1024;
 
 /** A downloaded, verified shared state and what it was shared as. */
 export type SharedState = {
@@ -55,6 +58,8 @@ export type SharedState = {
   title: string;
   playthroughName: string;
   data: Uint8Array;
+  /** The sharer included the ROM; see fetchSharedRom. */
+  romIncluded: boolean;
 };
 
 /**
@@ -104,7 +109,42 @@ export async function fetchSharedState(id: string): Promise<SharedState> {
     title: label("X-Zigba-Title", `Game ${hash.slice(0, 8)}`),
     playthroughName: label("X-Zigba-Playthrough-Name", "Shared playthrough"),
     data,
+    romIncluded: response.headers.get("X-Zigba-Rom-Included") === "1",
   };
+}
+
+/**
+ * Downloads the ROM included with a share, checked against its digest. The
+ * caller checks its SHA-1 against the shared state before storing it.
+ */
+export async function fetchSharedRom(id: string): Promise<File> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/shares/${encodeURIComponent(id)}/rom`, {
+      credentials: "omit",
+      cache: "no-store",
+      signal: AbortSignal.timeout(300_000),
+    });
+  } catch {
+    throw new Error("Could not reach the server. Check your connection.");
+  }
+  if (response.status === 404)
+    throw new Error("The shared game has expired or is no longer available.");
+  if (!response.ok)
+    throw new Error("The shared game is unavailable. Try again later.");
+  const bytes = await readBounded(response.body, MAX_ROM_COMPRESSED);
+  if ((await sha256(bytes)) !== response.headers.get("X-Zigba-Digest"))
+    throw new Error("The shared game failed its integrity check.");
+  let rom: Uint8Array<ArrayBuffer>;
+  try {
+    rom = await readBounded(
+      new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip")),
+      MAX_ROM,
+    );
+  } catch {
+    throw new Error("The shared game is damaged.");
+  }
+  return new File([rom], "shared.gba", { type: "application/octet-stream" });
 }
 
 export type QuickPlan =
@@ -357,15 +397,16 @@ export class CloudSync {
     };
   }
   /**
-   * Uploads one state and returns its share link. Needs a signed-in account
-   * but not cloud backups: sharing is an explicit, one-off upload.
+   * Uploads one state and returns its share link, and whether this account
+   * may include the game's ROM with it (see includeRom). Needs a signed-in
+   * account but not cloud backups: sharing is an explicit, one-off upload.
    */
   async share(state: {
     hash: string;
     title: string;
     playthroughName: string;
     data: Uint8Array;
-  }): Promise<string> {
+  }): Promise<{ id: string; url: string; canIncludeRom: boolean }> {
     await this.refreshIdentity();
     const accountId = this.identity.accountId;
     if (!accountId) throw new Error("Sign in to share a state.");
@@ -404,9 +445,50 @@ export class CloudSync {
             : "The state could not be shared. Try again.",
       );
     }
-    const { url } = (await response.json()) as { url?: string };
-    if (!url) throw new Error("The server returned an invalid share link.");
-    return url;
+    const { id, url, canIncludeRom } = (await response.json()) as {
+      id?: string;
+      url?: string;
+      canIncludeRom?: boolean;
+    };
+    if (!id || !url)
+      throw new Error("The server returned an invalid share link.");
+    return { id, url, canIncludeRom: canIncludeRom === true };
+  }
+  /**
+   * Includes the game's raw ROM with a share this account created, so the
+   * link starts without one. The server allows only admin accounts.
+   */
+  async includeRom(id: string, rom: Uint8Array) {
+    const accountId = this.identity.accountId;
+    if (!accountId) throw new Error("Sign in to include the game.");
+    const bytes = await gzip(rom);
+    let response: Response;
+    try {
+      response = await fetch(`/api/shares/${encodeURIComponent(id)}/rom`, {
+        method: "PUT",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "X-Zigba-Account": accountId,
+          "X-Zigba-Digest": await sha256(bytes),
+        },
+        body: bytes,
+        signal: AbortSignal.timeout(300_000),
+      });
+    } catch {
+      throw new Error("Could not reach the server. Check your connection.");
+    }
+    if (!response.ok)
+      throw new Error(
+        response.status === 403
+          ? "This account cannot include games."
+          : response.status === 404
+            ? "This link has expired. Share the state again."
+            : response.status === 429
+              ? "Upload limit reached. Try again later."
+              : "The game could not be included. Try again.",
+      );
   }
   private async refreshIdentity() {
     const epoch = this.identityEpoch;

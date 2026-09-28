@@ -37,11 +37,18 @@ import { patchRelease } from "./pages/library/install";
 import { useCatalog, useDumpNames } from "./pages/library/use-catalog";
 import { AppHeader, type AppView } from "./app-header";
 import { Account } from "./account";
-import { fetchSharedState, type CloudResume, type SharedState } from "./cloud";
+import {
+  fetchSharedRom,
+  fetchSharedState,
+  type CloudResume,
+  type SharedState,
+} from "./cloud";
 import {
   nameTaken,
+  patchedRelease,
   ShareLink,
   SharedStateChoices,
+  type PatchedRelease,
   type ShareProgress,
 } from "./share-state";
 import {
@@ -181,7 +188,11 @@ function App() {
     page.routeId === "/share/state/$shareId" ? page.params.shareId : undefined;
   const home = view === "home";
   const library = view === "library";
-  const { catalog, offline: catalogOffline } = useCatalog();
+  const {
+    catalog,
+    offline: catalogOffline,
+    settled: catalogSettled,
+  } = useCatalog();
   const dumpNames = useDumpNames(library);
   const [cloudJobs, setCloudJobs] = useState<CloudJob[]>([]);
   const libraryDevice = useMemo(
@@ -217,6 +228,9 @@ function App() {
   const [sharedOpen, setSharedOpen] = useState<{
     id: string;
     shared?: SharedState;
+    /** The catalog release the shared ROM is, when a patch builds it. */
+    release?: PatchedRelease;
+    /** Neither the shared ROM nor the release's base is on this device. */
     needsRom?: boolean;
     /** The user was asked for a name or ROM, so the choices stay on screen. */
     prompted?: boolean;
@@ -359,20 +373,21 @@ function App() {
   useEffect(() => {
     if (!shareId) trackView(view);
   }, [view, shareId]);
+  // The shared ROM may be a catalog release that a base on this device
+  // becomes, so a link opens once the catalog is as fresh as it will get.
   useEffect(() => {
-    if (!shareId || !state.ready) return;
+    if (!shareId || !state.ready || !catalogSettled) return;
     let current = true;
     setSharedOpen({ id: shareId });
     void fetchSharedState(shareId).then(
       (shared) => {
         if (!current) return;
-        const needsRom = !player.state.games.some(
-          (game) => game.hash === shared.hash,
-        );
+        const release = patchedRelease(catalog.versions, shared.hash);
+        const needsRom = needsSharedRom(shared, release);
         const prompted =
           needsRom ||
           nameTaken(playthroughNames(shared.hash), shared.playthroughName);
-        const open = { id: shareId, shared, needsRom, prompted };
+        const open = { id: shareId, shared, release, needsRom, prompted };
         if (prompted) setSharedOpen(open);
         else void startShared(open, shared.playthroughName);
       },
@@ -387,7 +402,7 @@ function App() {
     return () => {
       current = false;
     };
-  }, [shareId, state.ready]);
+  }, [shareId, state.ready, catalogSettled]);
   useEffect(() => {
     if ((home || library) && state.ready && state.cloud.accountId)
       void player.cloud.discover();
@@ -492,9 +507,9 @@ function App() {
     }
     setShare({ status: "creating" });
     player.shareState().then(
-      (url) => {
+      (link) => {
         trackShare("state_share_created");
-        setShare({ status: "ready", url });
+        setShare({ status: "ready", ...link });
       },
       (error: unknown) =>
         setShare({
@@ -518,15 +533,72 @@ function App() {
         .map((run) => run.playthroughName),
     ];
   }
+  const romStored = (hash: string) =>
+    player.state.games.some((game) => game.hash === hash);
+  /**
+   * Whether a file is needed: the ROM is not here, nor its patch's base, and
+   * the sharer did not include it.
+   */
+  function needsSharedRom(shared: SharedState, release?: PatchedRelease) {
+    return (
+      !romStored(shared.hash) &&
+      !(release && romStored(release.requiredBase.sha1)) &&
+      !shared.romIncluded
+    );
+  }
+  /**
+   * Starts a shared state from the stored ROM. A chosen `file` is stored
+   * first if it is that ROM or the release's base, as the Library's Choose
+   * file does. Without the ROM, a stored base is patched into the release, as
+   * Install does; failing that, an included ROM is downloaded and stored once
+   * its SHA-1 matches.
+   */
   async function startShared(
     open: NonNullable<typeof sharedOpen> & { shared: SharedState },
     name: string,
     file?: File,
   ) {
+    const { id, shared, release } = open;
     setSharedOpen({ ...open, busy: true, error: undefined });
     try {
       await exclusive(async () => {
-        await player.openSharedState(open.shared, name, file);
+        const rom = {
+          sha1: shared.hash,
+          title:
+            (release &&
+              catalog.games.find((game) => game.id === release.gameId)
+                ?.displayName) ??
+            shared.title,
+        };
+        const base = release?.requiredBase;
+        if (file)
+          await libraryAction({
+            type: "add-file",
+            file,
+            wanted: [
+              rom,
+              ...(base ? [{ sha1: base.sha1, title: base.displayName }] : []),
+            ],
+          });
+        if (!romStored(shared.hash)) {
+          if (release && romStored(release.requiredBase.sha1))
+            await libraryAction({ type: "install", versionId: release.id });
+          else if (shared.romIncluded) {
+            const downloaded = await player.inspectRom(
+              await fetchSharedRom(id),
+            );
+            if (downloaded.hash !== shared.hash)
+              throw new Error("The shared game does not match this state.");
+            await player.library.addRom({
+              hash: downloaded.hash,
+              title: rom.title,
+              rom: downloaded.rom,
+              lastPlayed: 0,
+            });
+            await player.refresh();
+          }
+        }
+        await player.openSharedState(shared, name);
         trackShare("state_share_opened");
         navigationResume.current = false;
         // Replace the link, so Back cannot start it a second time.
@@ -536,6 +608,8 @@ function App() {
     } catch (error) {
       setSharedOpen({
         ...open,
+        // A chosen base stays stored even when its patch then fails.
+        needsRom: needsSharedRom(shared, release),
         prompted: true,
         busy: false,
         error: error instanceof Error ? error.message : String(error),
@@ -1615,6 +1689,11 @@ function App() {
                 openAccount();
                 accountResume.current = resume;
               }}
+              includeRom={
+                share.status === "ready" && share.canIncludeRom
+                  ? () => player.includeShareRom(share.id, share.hash)
+                  : undefined
+              }
             />
           </Modal>
         )}
@@ -1632,6 +1711,11 @@ function App() {
               <SharedStateChoices
                 shared={sharedOpen.shared}
                 needsRom={Boolean(sharedOpen.needsRom)}
+                base={
+                  sharedOpen.needsRom
+                    ? sharedOpen.release?.requiredBase
+                    : undefined
+                }
                 takenNames={playthroughNames(sharedOpen.shared.hash)}
                 busy={Boolean(sharedOpen.busy)}
                 error={sharedOpen.error ?? ""}

@@ -33,11 +33,14 @@ async function get<T>(path: string, signal: AbortSignal): Promise<T> {
 
 /**
  * The public catalog, fetched once per mount. The last catalog read stays in
- * localStorage, so the Library shows it at once and while offline.
+ * localStorage, so the Library shows it at once and while offline. `settled`
+ * turns true once the fetch has answered or failed, so `catalog` is as fresh
+ * as it will get.
  */
 export function useCatalog() {
   const [catalog, setCatalog] = useState(cached);
   const [offline, setOffline] = useState(false);
+  const [settled, setSettled] = useState(false);
   useEffect(() => {
     const request = new AbortController();
     Promise.all([
@@ -48,6 +51,7 @@ export function useCatalog() {
         const next = { games, versions };
         setCatalog(next);
         setOffline(false);
+        setSettled(true);
         try {
           localStorage.setItem(storageKey, JSON.stringify(next));
         } catch {
@@ -55,12 +59,14 @@ export function useCatalog() {
         }
       },
       () => {
-        if (!request.signal.aborted) setOffline(true);
+        if (request.signal.aborted) return;
+        setOffline(true);
+        setSettled(true);
       },
     );
     return () => request.abort();
   }, []);
-  return { catalog, offline };
+  return { catalog, offline, settled };
 }
 
 /**
