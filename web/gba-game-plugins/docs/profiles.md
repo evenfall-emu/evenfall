@@ -514,6 +514,11 @@ replacement clears the preview selection.
 
 - Randomized party types and abilities are `null` with a warning; active
   battlers use live values.
+- Front artwork with a short normal or shiny palette is available only when
+  its pixels use colors present in that palette. If a pixel needs an omitted
+  color, the artwork stays unavailable: the game copies stale
+  decompression-buffer contents for omitted entries, not zeroes or additional
+  colors from the ROM.
 - Rare and legendary shiny artwork is unavailable rather than drawn with a
   wrong palette.
 - Turn, live weather, trainer name and map name are not verified.

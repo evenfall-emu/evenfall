@@ -247,13 +247,12 @@ function rgbaImage(
     throw new RangeError(
       `4bpp artwork needs ${required} bytes, received ${tiles.length}`,
     );
-  if (paletteBytes.length < 32)
-    throw new RangeError(
-      `Pokémon palette needs 32 bytes, received ${paletteBytes.length}`,
-    );
+  if (paletteBytes.length < 2 || paletteBytes.length % 2 !== 0)
+    throw new RangeError(`Invalid Pokémon palette size ${paletteBytes.length}`);
 
-  const palette = new Uint8Array(16 * 4);
-  for (let i = 0; i < 16; i++) {
+  const colorCount = Math.min(paletteBytes.length / 2, 16);
+  const palette = new Uint8Array(colorCount * 4);
+  for (let i = 0; i < colorCount; i++) {
     const color = paletteBytes[i * 2] | (paletteBytes[i * 2 + 1] << 8);
     palette[i * 4] = expand5(color & 31);
     palette[i * 4 + 1] = expand5((color >>> 5) & 31);
@@ -269,6 +268,8 @@ function rgbaImage(
       const inTile = (y & 7) * 8 + (x & 7);
       const packed = tiles[tile * 32 + (inTile >>> 1)];
       const index = (inTile & 1) === 0 ? packed & 15 : packed >>> 4;
+      if (index >= colorCount)
+        throw new RangeError(`Pokémon palette is missing color index ${index}`);
       pixels.set(
         palette.subarray(index * 4, index * 4 + 4),
         (y * width + x) * 4,

@@ -215,6 +215,41 @@ describe("Pokémon artwork", () => {
     ).toEqual([0, 0, 255, 255]);
   });
 
+  it("accepts short front palettes only when every pixel has a color, for each palette kind", () => {
+    for (const [palette, offset] of [
+      ["normal", 0x8040],
+      ["shiny", 0x9040],
+      ["modern-shiny", 0xa040],
+    ] as const) {
+      const { bytes } = fixture();
+      const colors = new Uint8Array(28); // Indices 0–13 exist, 14–15 do not.
+      new DataView(colors.buffer).setUint16(2, 0x001f, true); // Red at 1.
+      new DataView(colors.buffer).setUint16(26, 0x7c00, true); // Blue at 13.
+      write(bytes, offset, lzLiterals(colors));
+      const front = new Uint8Array(2048);
+      front[0] = 0xd1; // Both first pixels use colors that exist.
+      front[2047] = 0xe0; // Last pixel uses missing index 14.
+      write(bytes, 0x11000, lzLiterals(front));
+      const decode = createPokemonArtwork(
+        createMemoryReader([{ address: base, bytes }]),
+        config,
+      );
+      const artwork = ref({ kind: "front", palette });
+      expect(() => decode(artwork)).toThrow(/palette.*index 14/i);
+
+      front[2047] = 0;
+      write(bytes, 0x11000, lzLiterals(front));
+      const valid = createPokemonArtwork(
+        createMemoryReader([{ address: base, bytes }]),
+        config,
+      );
+      const image = valid(artwork);
+      expect(pixel(image, 0, 0)).toEqual([255, 0, 0, 255]);
+      expect(pixel(image, 1, 0)).toEqual([0, 0, 255, 255]);
+      expect(pixel(image, 63, 63)[3]).toBe(0);
+    }
+  });
+
   it("returns owned pixels when serving cached artwork", () => {
     const { decode } = fixture();
     const first = decode(ref());
