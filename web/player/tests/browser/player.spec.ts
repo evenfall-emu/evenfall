@@ -15,7 +15,7 @@ const rom = {
 };
 async function ready(page: Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: "Enter player" }).click();
+  await page.getByRole("button", { name: "Open player" }).click();
   await expect(page.getByLabel("Open ROM", { exact: true })).toBeEnabled();
 }
 async function openRom(page: Page, file: typeof rom) {
@@ -314,7 +314,7 @@ test("an older library is dropped; a new battery save survives gameplay, refresh
     db.close();
   }, hash);
   await page.goto("/");
-  await page.getByRole("button", { name: "Enter player" }).click();
+  await page.getByRole("button", { name: "Open player" }).click();
   await openRom(page, {
     name: "Save.gba",
     mimeType: "application/octet-stream",
@@ -524,7 +524,7 @@ test("library lists metadata and reads only the selected ROM", async ({
   });
   await page.goto("/");
   // Home offers the most recent game from metadata alone.
-  await expect(page.locator(".about-resume")).toContainText("Game 2");
+  await expect(page.locator(".landing-resume")).toContainText("Game 2");
   const reads = () =>
     page.evaluate(() => (window as unknown as { romReads: string[] }).romReads);
   expect(await reads()).toEqual([]);

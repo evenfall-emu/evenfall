@@ -133,7 +133,7 @@ test("quick slots back up on save, sync silently, and ask once about true diverg
 }) => {
   const server = await cloud(page);
   await page.goto("/");
-  await page.getByRole("button", { name: "Enter player" }).click();
+  await page.getByRole("button", { name: "Open player" }).click();
   await page.getByLabel("Open ROM", { exact: true }).setInputFiles(loop);
   await expect(
     page.getByRole("button", { name: "How to play", exact: true }),

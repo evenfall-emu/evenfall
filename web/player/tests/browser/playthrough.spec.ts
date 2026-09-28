@@ -27,7 +27,7 @@ test("Reset retains progress, while playthroughs isolate checkpoints and quick s
   // A native prompt is not an accessible in-page naming form.
   page.on("dialog", (dialog) => dialog.dismiss());
   await page.goto("/");
-  await page.getByRole("button", { name: "Enter player" }).click();
+  await page.getByRole("button", { name: "Open player" }).click();
   await page.getByLabel("Open ROM", { exact: true }).setInputFiles(loop);
   await expect(page.getByRole("heading", { name: "Two runs" })).toBeVisible();
   await expect(selectedRun(page)).toHaveText(/Playthrough 1/);
@@ -152,7 +152,7 @@ test("Reset boots the current battery save and preserves play/pause state", asyn
   );
   rom.write("SRAM_V110", 256);
   await page.goto("/");
-  await page.getByRole("button", { name: "Enter player" }).click();
+  await page.getByRole("button", { name: "Open player" }).click();
   await page.getByLabel("Open ROM", { exact: true }).setInputFiles({
     name: "Battery.gba",
     mimeType: "application/octet-stream",
@@ -213,7 +213,7 @@ test("storage failure keeps a supplied ROM playable without attaching the prior 
   page,
 }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Enter player" }).click();
+  await page.getByRole("button", { name: "Open player" }).click();
   await page.getByLabel("Open ROM", { exact: true }).setInputFiles(loop);
   await expect(page.getByRole("button", { name: "Reset" })).toBeEnabled();
   const oldHash = await page.evaluate(() => window.player.state.game!.hash);

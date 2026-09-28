@@ -13,7 +13,7 @@ const romSha = (bytes: Uint8Array) =>
   createHash("sha1").update(bytes).digest("hex");
 async function ready(page: Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: "Enter player" }).click();
+  await page.getByRole("button", { name: "Open player" }).click();
   await expect(page.getByLabel("Open ROM", { exact: true })).toBeEnabled();
 }
 async function importState(page: Page, path: string) {

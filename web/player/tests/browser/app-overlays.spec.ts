@@ -135,7 +135,7 @@ for (const width of [1280, 390]) {
       });
     await capture("account");
     await page.getByRole("button", { name: "Close dialog" }).click();
-    await page.getByRole("button", { name: "Enter player" }).click();
+    await page.getByRole("button", { name: "Open player" }).click();
     await page.getByRole("button", { name: "Playback speed" }).click();
     await expect(
       page.getByRole("dialog", { name: "Playback speed" }),

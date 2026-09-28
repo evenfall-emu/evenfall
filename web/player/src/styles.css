@@ -5,7 +5,6 @@
 
 @import "tailwindcss";
 @import "./console.css" layer(legacy);
-@import "./about.css" layer(legacy);
 @import "./account.css" layer(legacy);
 @import "./rewind-timeline.css" layer(legacy);
 

@@ -16,7 +16,7 @@ const sha = (bytes: Uint8Array) =>
   createHash("sha256").update(bytes).digest("hex");
 async function ready(page: Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: "Enter player" }).click();
+  await page.getByRole("button", { name: "Open player" }).click();
   await expect(page.getByLabel("Open ROM", { exact: true })).toBeEnabled();
 }
 async function importState(page: Page, path: string) {
@@ -73,7 +73,7 @@ test("sound volume opens on hover or focus and persists independently of mute", 
   ).toHaveAttribute("aria-pressed", "true");
   await expect(slider).toHaveValue("1");
   await page.goto("/");
-  await page.getByRole("button", { name: "Enter player" }).click();
+  await page.getByRole("button", { name: "Open player" }).click();
   await page.getByRole("button", { name: "Mute sound" }).hover();
   await expect(slider).toHaveValue("1");
   await expect(slider).toBeVisible();
@@ -713,7 +713,7 @@ test("Home cancels an in-flight rewind without restoring or restarting play", as
     () => (window as unknown as { rewindPaused: boolean }).rewindPaused,
   );
   await page.getByRole("button", { name: "evenfall home" }).click();
-  await expect(page.locator(".about-page")).toBeVisible();
+  await expect(page.locator(".landing")).toBeVisible();
   const paused = await snapshotHash(page);
   await page.evaluate(() =>
     (window as unknown as { releaseRewind: () => void }).releaseRewind(),

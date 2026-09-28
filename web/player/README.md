@@ -43,8 +43,8 @@ text sizes name how many screen pixels one font pixel covers: `text-2x`
 (16px), `text-3x`, `text-4x` and `text-5x` keep every font pixel square and
 sharp, and `text-1x5` (12px) is the one half step, for secondary text.
 
-The stylesheets that predate Tailwind (`console.css`, `about.css`,
-`account.css` and `rewind-timeline.css`) are imported by `styles.css` into a
+The stylesheets that predate Tailwind (`console.css`, `account.css` and
+`rewind-timeline.css`) are imported by `styles.css` into a
 `legacy` cascade layer, above Tailwind's base styles and below its
 utilities. Their global element rules skip any subtree marked `data-ui`,
 which every Tailwind-built root carries, including popups rendered into a
@@ -105,21 +105,27 @@ instead. The browser's Back and Forward buttons move
 between pages like the tabs. Other paths are 404s, and servers answer only
 these URLs with the player's `index.html`.
 
-Home is the default destination. It introduces ZiGBA and, after a reload,
-offers **Resume adventure** for the last played local game's selected
-playthrough, with its name and checkpoint time; if no game is installed, it
-can offer a cloud-only run. Its footer carries the trademark and
-non-affiliation notice and, when [configured](#analytics), a privacy-notice
-link. Opening a ROM from Home switches to Player and starts it.
+Home is the default destination: a pixel-art fresco that scrolls from a
+coastal sunset down to a seabed, with the product story in the water
+between. Its artwork and rendering are described in
+[`src/assets/landing`](src/assets/landing/README.md). Its main action,
+**Open player**, becomes **Resume adventure** after a reload for the last
+played local game's selected playthrough, shown with its name and checkpoint
+time; if no game is installed, it can offer a cloud-only run. **Features** in
+its header scrolls down to the product story, smoothly unless reduced motion
+is preferred. Its footer carries the trademark and non-affiliation notice
+and, when [configured](#analytics), a privacy-notice link. Opening a ROM from
+Home switches to Player and starts it.
 
 Library and Player share one header with a tab for each, the evenfall logo
-and **Account**; Home, the landing page, has none. Playback actions live in a
-separate Player toolbar below the header. The logo returns Home without
-unloading the current game. Returning to Player resumes the session only if
-it was playing before navigation, including through the browser's Back and
-Forward buttons. On narrow screens the tabs move to a second row beside an
-Account button, where the Library's details replace them with **Back to
-Library**.
+and **Account**; Home has its own with **Features**, **Library** and
+**Account**, which on phones shows only Library and Account, as icons.
+Playback actions live in a separate Player toolbar below the header. The
+logo returns Home without unloading the current game. Returning to Player
+resumes the session only if it was playing before navigation, including
+through the browser's Back and Forward buttons. On narrow screens the tabs
+move to a second row beside an Account button, where the Library's details
+replace them with **Back to Library**.
 
 **Account** is available on Home and in the header. Opening it pauses play
 and persists progress before Discord can navigate away; closing it resumes a
@@ -190,7 +196,7 @@ License, with its license beside it in `src/assets/`.
 
 ### Library
 
-The header's Library tab, or **Browse library** on Home, opens the game
+The header's Library tab, or **Library** in Home's header, opens the game
 collection: a filterable list beside the selected game's details. Selecting a
 game changes the URL to `/library/<game ID>`; filtering the list keeps that
 game's details. On narrow screens the details replace the list, and Back or

@@ -52,7 +52,7 @@ function Tabs({
 }
 
 /**
- * The pixel horizon from the Home scene, anchored to the header's right edge
+ * The pixel horizon of `coast.png`, anchored to the header's right edge
  * so the sun stays in view at any width, and faded in from the left. Between
  * the phone layout and wide desktops the tabs leave it too little room.
  */
@@ -70,9 +70,9 @@ function Banner({ className }: { className: string }) {
 }
 
 /**
- * The navigation shared by Library and Player. Home, the landing page, has no
- * header; the logo returns there. On narrow screens a page can replace the
- * tabs with a Back button.
+ * The navigation shared by Library and Player. Home has its own header; the
+ * logo returns there. On narrow screens a page can replace the tabs with a
+ * Back button.
  */
 export function AppHeader({
   view,

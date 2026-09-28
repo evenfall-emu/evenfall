@@ -10,6 +10,9 @@ const buttonVariants = {
   /** The one main action in a region. */
   primary:
     "bg-mint text-on-accent hover:bg-mint-hover active:bg-mint-pressed disabled:border disabled:border-line disabled:bg-raised disabled:text-muted",
+  /** The main action set over bright artwork, where a mint fill would glare. */
+  primaryDark:
+    "border-2 border-mint bg-hover text-mint hover:border-mint-hover hover:text-mint-hover active:bg-selected disabled:border-line disabled:bg-raised disabled:text-muted",
   /** Attention without urgency: updates and other offers. */
   accent:
     "bg-peach text-on-accent hover:bg-peach-hover active:bg-peach-pressed disabled:border disabled:border-line disabled:bg-raised disabled:text-muted",

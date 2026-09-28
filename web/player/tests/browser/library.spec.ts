@@ -4,7 +4,7 @@ import { loop, maplePatch, mockCatalog, sha1 } from "./catalog.fixture";
 
 async function openLibrary(page: Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: "Browse library" }).click();
+  await page.getByRole("button", { name: "Library", exact: true }).click();
   await expect(page.getByRole("main", { name: "Library" })).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
 }
@@ -12,7 +12,7 @@ async function openLibrary(page: Page) {
 /** Opens loop ROMs in the Player, which stores each with a playthrough. */
 async function importRoms(page: Page, roms: [number, string][]) {
   await page.goto("/");
-  await page.getByRole("button", { name: "Enter player" }).click();
+  await page.getByRole("button", { name: "Open player" }).click();
   for (const [marker, name] of roms) {
     await expect(page.getByLabel("Open ROM", { exact: true })).toBeEnabled();
     await page

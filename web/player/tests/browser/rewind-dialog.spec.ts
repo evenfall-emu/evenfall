@@ -4,7 +4,7 @@ import type { Player } from "../../src/player";
 const dialogName = "Rewind timeline";
 async function prepare(page: Page, count = 5) {
   await page.goto("/");
-  await page.getByRole("button", { name: "Enter player" }).click();
+  await page.getByRole("button", { name: "Open player" }).click();
   await page.getByLabel("Open ROM", { exact: true }).setInputFiles({
     name: "Rewind.gba",
     mimeType: "application/octet-stream",

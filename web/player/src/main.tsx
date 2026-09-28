@@ -29,7 +29,7 @@ import {
   DeletePlaythroughDialog,
   PlaythroughDialog,
 } from "./playthrough-dialog";
-import { AboutPage } from "./about";
+import { LandingPage } from "./pages/landing/landing-page";
 import { LibraryPage } from "./pages/library/library-page";
 import type { LibraryAction } from "./pages/library/actions";
 import type { LibraryDevice } from "./pages/library/catalog";
@@ -1619,7 +1619,7 @@ function App() {
           />
         ) : home ? (
           <>
-            <AboutPage
+            <LandingPage
               onPlay={resumeFromHome}
               onLibrary={() => browse("library")}
               onAccount={openAccount}

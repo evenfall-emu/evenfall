@@ -8,7 +8,7 @@ const hns120 = "b8a4b491ca67a76f079a8e7c19fd5512a2147dd2";
 
 async function ready(page: Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: "Enter player" }).click();
+  await page.getByRole("button", { name: "Open player" }).click();
   await expect(page.getByLabel("Open ROM", { exact: true })).toBeEnabled();
 }
 

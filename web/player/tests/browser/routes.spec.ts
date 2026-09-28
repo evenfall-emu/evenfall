@@ -14,7 +14,7 @@ test("each page has a URL that survives a reload", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await mockCatalog(page);
   await page.goto("/");
-  await page.getByRole("button", { name: "Browse library" }).click();
+  await page.getByRole("button", { name: "Library", exact: true }).click();
   await expect(page).toHaveURL(/\/library$/);
   await page.getByRole("button", { name: "View Cedar Saga" }).click();
   await expect(page).toHaveURL(/\/library\/cedar-saga$/);
@@ -38,9 +38,7 @@ test("each page has a URL that survives a reload", async ({ page }) => {
   ).toHaveAttribute("aria-current", "page");
   await page.getByRole("button", { name: "evenfall home" }).click();
   await expect(page).toHaveURL(/\/$/);
-  await expect(
-    page.getByRole("button", { name: "Enter player" }),
-  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open player" })).toBeVisible();
 });
 
 test("a shared game link opens its details on a phone, and Back returns to the list", async ({
@@ -74,7 +72,7 @@ test("browser Back and Forward pause and resume the player like the tabs", async
   page,
 }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Enter player" }).click();
+  await page.getByRole("button", { name: "Open player" }).click();
   await expect(page).toHaveURL(/\/player$/);
   await page.getByLabel("Open ROM", { exact: true }).setInputFiles({
     name: "Loop.gba",

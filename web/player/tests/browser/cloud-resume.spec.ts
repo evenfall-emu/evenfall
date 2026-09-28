@@ -236,10 +236,10 @@ test("first connection discovers cloud progress, rejects the wrong ROM, and then
     await expect(
       phone.getByRole("button", { name: "Resume adventure" }),
     ).toBeEnabled();
-    await expect(phone.locator(".about-resume")).toContainText(
+    await expect(phone.locator(".landing-resume")).toContainText(
       "Cloud adventure",
     );
-    await expect(phone.locator(".about-resume-detail")).toContainText(
+    await expect(phone.locator(".landing-resume-detail")).toContainText(
       "Cloud checkpoint",
     );
     expect(control.downloads).toBe(0);
@@ -336,10 +336,12 @@ test("existing device progress remains an explicit alternative to a cloud checkp
   await expect(
     page.getByRole("button", { name: "Resume adventure" }),
   ).toBeEnabled();
-  await expect(page.locator(".about-resume-detail")).toContainText(
+  await expect(page.locator(".landing-resume-detail")).toContainText(
     "On this device",
   );
-  await expect(page.locator(".about-resume")).toContainText("Local adventure");
+  await expect(page.locator(".landing-resume")).toContainText(
+    "Local adventure",
+  );
   await recordRestores(page);
   await page.getByRole("button", { name: "Resume adventure" }).click();
   const dialog = page.getByRole("dialog", { name: "Resume from cloud" });
@@ -391,7 +393,7 @@ test("Home resumes the last local run, while Player resolves the selected other 
   );
   const control = await remote(page, await checkpoint(page, "1234567"));
   await page.goto("/");
-  await expect(page.locator(".about-resume")).toContainText("Run B");
+  await expect(page.locator(".landing-resume")).toContainText("Run B");
   await recordRestores(page);
   await page.getByRole("button", { name: "Resume adventure" }).click();
   await expect(page.getByLabel(/^Game screen/)).toBeVisible();
@@ -526,7 +528,7 @@ test("battery-only local progress remains an explicit alternative to cloud resto
   );
   const control = await remote(page, saved);
   await page.goto("/");
-  await expect(page.locator(".about-resume")).toContainText("Battery only");
+  await expect(page.locator(".landing-resume")).toContainText("Battery only");
   await page.getByRole("button", { name: "Resume adventure" }).click();
   const dialog = page.getByRole("dialog", { name: "Resume from cloud" });
   await expect(dialog).toContainText("In-game save available");
@@ -558,7 +560,7 @@ test("restoring another cloud playthrough keeps this device's existing run intac
   const cloudId = "15b285c2-f844-451f-85e6-c5bbcc98dd09";
   await remote(page, cloud, cloudId);
   await page.goto("/");
-  await expect(page.locator(".about-resume-detail")).toContainText(
+  await expect(page.locator(".landing-resume-detail")).toContainText(
     "On this device",
   );
   await page.getByRole("button", { name: "Resume adventure" }).click();
@@ -684,7 +686,7 @@ for (const failure of ["incompatible checkpoint", "local storage failure"])
         : local,
     );
     await page.goto("/");
-    await expect(page.locator(".about-resume-detail")).toContainText(
+    await expect(page.locator(".landing-resume-detail")).toContainText(
       "On this device",
     );
     await page.getByRole("button", { name: "Resume adventure" }).click();
@@ -746,9 +748,7 @@ test("a different account at download time cannot launch the previously selected
   await expect(
     page.getByRole("dialog", { name: "Resume from cloud" }),
   ).toBeHidden();
-  await expect(
-    page.getByRole("button", { name: "Enter player" }),
-  ).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Open player" })).toBeEnabled();
   expect(control.downloads).toBe(0);
   expect(await localResume(page)).toBeNull();
 });

@@ -9,12 +9,10 @@ const loop = {
 
 async function ready(page: Page) {
   await page.goto("/");
-  await expect(
-    page.getByRole("button", { name: "Enter player" }),
-  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open player" })).toBeVisible();
 }
 
-// The shared header; Home, the landing page, has none.
+// The shared header; Home has its own.
 const header = (page: Page) =>
   page.locator("header").filter({
     has: page.getByRole("button", { name: "evenfall home" }),
@@ -34,18 +32,24 @@ test("Home is the default and preserves a playing session across navigation", as
   await page.setViewportSize({ width: 1440, height: 1000 });
   await ready(page);
 
-  await expect(page.locator(".about-page")).toBeVisible();
+  await expect(page.locator(".landing")).toBeVisible();
   await expect(header(page)).toHaveCount(0);
   await expect(page.locator(".player-tools")).toBeHidden();
-  await expect(
-    page.getByRole("navigation", { name: "Main navigation" }),
-  ).toHaveCount(0);
+  // Home's own navigation, without the shared header's tabs.
+  const nav = page.getByRole("navigation", { name: "Main navigation" });
+  await expect(nav.getByRole("link", { name: "Features" })).toBeVisible();
+  await expect(nav.getByRole("button", { name: "Player" })).toHaveCount(0);
   await expect(page.getByText(/Made by/)).toHaveCount(0);
+  // The hero scene fills the first view.
   expect(
-    await page.locator(".about-screen").evaluate((element) => {
-      const rect = element.getBoundingClientRect();
-      return rect.top < 32 && rect.bottom <= innerHeight;
-    }),
+    await page
+      .getByRole("region", {
+        name: "The games you love. Worlds you haven’t met.",
+      })
+      .evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.top === 0 && rect.bottom === innerHeight;
+      }),
   ).toBe(true);
   await expect(page.getByRole("button", { name: "About" })).toHaveCount(0);
   await page.evaluate(() => document.fonts.ready);
@@ -54,7 +58,7 @@ test("Home is the default and preserves a playing session across navigation", as
     fullPage: true,
   });
 
-  await page.getByRole("button", { name: "Enter player" }).click();
+  await page.getByRole("button", { name: "Open player" }).click();
   await expect(header(page)).toHaveCount(1);
   await expect(page.locator(".player-tools")).toBeVisible();
   await expect(
@@ -68,7 +72,7 @@ test("Home is the default and preserves a playing session across navigation", as
   await expect.poll(() => frames(page)).toBeGreaterThan(started);
 
   await page.getByRole("button", { name: "evenfall home" }).click();
-  await expect(page.locator(".about-page")).toBeVisible();
+  await expect(page.locator(".landing")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Resume adventure" }),
   ).toBeVisible();
@@ -101,7 +105,7 @@ test("Home navigation remains usable on mobile", async ({ page }) => {
     fullPage: true,
   });
 
-  await page.getByRole("button", { name: "Enter player" }).click();
+  await page.getByRole("button", { name: "Open player" }).click();
   await expect(page.getByLabel(/^Game screen/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Library" })).toBeVisible();
   await page.getByRole("button", { name: "Library", exact: true }).click();
@@ -111,7 +115,7 @@ test("Home navigation remains usable on mobile", async ({ page }) => {
   ).toHaveAttribute("aria-current", "page");
   await expect(page.locator(".player-tools")).toBeHidden();
   await page.getByRole("button", { name: "evenfall home" }).click();
-  await expect(page.locator(".about-page")).toBeVisible();
+  await expect(page.locator(".landing")).toBeVisible();
   await expect(header(page)).toHaveCount(0);
   await expect(page.locator(".player-tools")).toBeHidden();
 });
@@ -122,7 +126,7 @@ test("shared navigation fits mobile when pixel fonts cannot load", async ({
   await page.setViewportSize({ width: 360, height: 800 });
   await page.route("**/*.ttf", (route) => route.abort());
   await ready(page);
-  await page.getByRole("button", { name: "Enter player" }).click();
+  await page.getByRole("button", { name: "Open player" }).click();
   await expect(header(page)).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
 

@@ -9,7 +9,7 @@ const loopRom = (marker: number, name: string) => ({
 
 async function enterPlayer(page: Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: "Enter player" }).click();
+  await page.getByRole("button", { name: "Open player" }).click();
   await expect(page.getByLabel(/^Game screen/)).toBeVisible();
 }
 
@@ -468,7 +468,7 @@ test("trying another game after a failed resume cannot overwrite the failed game
   const recovery = page.getByRole("dialog", { name: "Resume needs attention" });
   await expect(recovery).toBeVisible();
   await recovery.getByRole("button", { name: "Close" }).click();
-  await page.getByRole("button", { name: "Browse library" }).click();
+  await page.getByRole("button", { name: "Library", exact: true }).click();
   await page.getByRole("button", { name: "View Healthy" }).click();
   await page.getByRole("button", { name: "Play Healthy" }).click();
   await expect(page.getByLabel(/^Game screen/)).toBeVisible();

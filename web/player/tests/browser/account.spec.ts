@@ -29,7 +29,7 @@ test("email sign-in stays optional and reports a generic delivery result", async
   await page.evaluate(() => document.fonts.ready);
   await page.screenshot({ path: "../artifacts/account-email-desktop.png" });
   await page.getByRole("button", { name: "Close dialog" }).click();
-  await page.getByRole("button", { name: "Enter player" }).click();
+  await page.getByRole("button", { name: "Open player" }).click();
   await expect(page.getByLabel(/^Game screen/)).toBeVisible();
 });
 
@@ -51,7 +51,7 @@ test("toolbar cloud upload runs backup for an active game only when enabled", as
     route.fulfill({ json: { saves: [], cursor: null } }),
   );
   await page.goto("/");
-  await page.getByRole("button", { name: "Enter player" }).click();
+  await page.getByRole("button", { name: "Open player" }).click();
   const backup = page.locator(".console-toolbar").getByRole("button", {
     name: "Back up now",
   });
@@ -244,9 +244,7 @@ test("closing Account cancels a pending Discord navigation", async ({
   finish();
   await page.waitForTimeout(300);
   expect(navigated).toBe(false);
-  await expect(
-    page.getByRole("button", { name: "Enter player" }),
-  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open player" })).toBeVisible();
 });
 
 test("an expired link explains how to retry without hiding sign-in options", async ({
@@ -283,6 +281,6 @@ test("failed login and offline backend do not block local gameplay", async ({
     path: "../artifacts/account-unavailable-desktop.png",
   });
   await page.getByRole("button", { name: "Close dialog" }).click();
-  await page.getByRole("button", { name: "Enter player" }).click();
+  await page.getByRole("button", { name: "Open player" }).click();
   await expect(page.getByLabel(/^Game screen/)).toBeVisible();
 });

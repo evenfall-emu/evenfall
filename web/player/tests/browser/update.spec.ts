@@ -228,7 +228,7 @@ test("a running game keeps its version and assets until its player updates, and 
   try {
     const game = await host.context.newPage();
     await game.goto("/");
-    await game.getByRole("button", { name: "Enter player" }).click();
+    await game.getByRole("button", { name: "Open player" }).click();
     await game.getByLabel("Open ROM", { exact: true }).setInputFiles(rom);
     await expect
       .poll(() => game.evaluate(() => window.player.state.playing))
