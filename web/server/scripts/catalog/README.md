@@ -60,9 +60,9 @@ Fire Emblem collections under `.amp/in/` to one release shape. It validates
 the recorded base identity and each patch's SHA-1, then writes the
 metadata-only [`romhacks.json`](../../server/src/romhacks.json) seed and an
 ignored `normalized.json` beside each collection. No base, patched ROM, save,
-or patch bytes enter the repository. Releases without a verified patch remain
-in the catalog with `patch: null`; entries without a playable output hash do
-not become versions. Because the Library installs only a game's latest
+or patch bytes enter the repository. A release needs a verified patch and a
+playable output hash to enter the seed; patchless collected ROMs remain local
+media, not catalog games. Because the Library installs only a game's latest
 release, a hack with patches for Golden Sun and for its sequel The Lost Age
 has two catalog games, each with its own base.
 
@@ -82,6 +82,11 @@ in the local collection; ambiguous pairings remain unlinked. Mirror and
 aggregator URLs are not presented as official attribution. The Pokémon
 collection has no verified author-post links apart from the Elite Redux
 project repository, so the other project links remain unset.
+
+Confirmed selected Fire Emblem patch/author pairings enter as `normal`;
+other patch-backed imports enter as `experimental` until reviewed. The seed
+does not assign `featured` or `hidden`. Visibility is per release, and a
+management write can set any of the four levels without changing the patch.
 
 ```sh
 node tools/catalog/romhacks.mjs build   # regenerate the metadata and local test inventories

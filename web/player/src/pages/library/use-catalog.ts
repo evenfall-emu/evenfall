@@ -11,7 +11,13 @@ const empty: LibraryCatalog = { games: [], versions: [] };
 function cached(): LibraryCatalog {
   try {
     const stored = JSON.parse(localStorage.getItem(storageKey) ?? "null");
-    return Array.isArray(stored?.games) && Array.isArray(stored?.versions)
+    return Array.isArray(stored?.games) &&
+      Array.isArray(stored?.versions) &&
+      stored.versions.every((version: CatalogVersion) =>
+        ["featured", "normal", "experimental", "hidden"].includes(
+          version.visibility,
+        ),
+      )
       ? stored
       : empty;
   } catch {

@@ -150,7 +150,7 @@ test("Library joins the catalog with this device's ROMs and filters it", async (
   );
   await expect(
     page.getByRole("button", {
-      name: "Add the Cedar Saga v1 ROM for Cedar Saga",
+      name: "Add the Shared Source ROM for Cedar Saga",
     }),
   ).toBeVisible();
   await expect(
@@ -204,6 +204,40 @@ test("Library joins the catalog with this device's ROMs and filters it", async (
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
+});
+
+test("experimental releases need a persistent Library opt-in", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await mockCatalog(page, 0, true);
+  await openLibrary(page);
+  await expect.poll(() => titles(page)).toEqual(["Birch Quest", "Maple Remix"]);
+  await page.getByText("Library settings").click();
+  const optIn = page.getByRole("checkbox", {
+    name: /Show experimental romhacks/,
+  });
+  await expect(optIn).not.toBeChecked();
+  await page.screenshot({ path: "../.amp/in/artifacts/library-default.png" });
+
+  await optIn.check();
+  await expect
+    .poll(() => titles(page))
+    .toEqual(["Birch Quest", "Cedar Saga", "Maple Remix"]);
+  await page.getByRole("button", { name: "View Cedar Saga" }).click();
+  await expect(
+    page.getByRole("region", { name: "Game details" }),
+  ).toContainText("Experimental · Release details need review");
+  await page.screenshot({
+    path: "../.amp/in/artifacts/library-experimental.png",
+  });
+  await page.reload();
+  await expect.poll(() => titles(page)).toContain("Cedar Saga");
+  await page.getByText("Library settings").click();
+  await expect(optIn).toBeChecked();
+  await optIn.uncheck();
+  await expect.poll(() => titles(page)).not.toContain("Cedar Saga");
+  await expect(page).toHaveURL(/\/library$/);
 });
 
 test("Library keeps the last catalog it read for offline use", async ({
@@ -282,10 +316,10 @@ test("Choose file stores only a ROM the game wants, then plays it", async ({
   await openLibrary(page);
   await page.getByRole("button", { name: "View Cedar Saga" }).click();
   const details = page.getByRole("region", { name: "Game details" });
-  await expect(details).toContainText("Needs the Cedar Saga v1 ROM");
+  await expect(details).toContainText("Needs the Shared Source ROM");
   await chooseFile(page, "Choose file…", loop(45, "Wrong"));
   await expect(page.getByRole("alert")).toContainText(
-    "That file isn’t Cedar Saga.",
+    "That file isn’t Cedar Saga or the Shared Source ROM.",
   );
   expect(await stored(page, "games", sha1(45))).toEqual([]);
 

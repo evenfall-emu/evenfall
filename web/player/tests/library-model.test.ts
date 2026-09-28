@@ -58,22 +58,62 @@ describe("buildLibrary", () => {
     );
   });
 
-  it("requires the finished ROM rather than its base when no patch is hosted", () => {
+  it("omits patchless catalog games without losing a local ROM", () => {
     const original = previewCatalog.versions.find(
       (version) => version.gameId === "vision-quest",
     )!;
-    const [unpatched] = buildLibrary(
-      {
-        games: previewCatalog.games.filter((item) => item.id === "vision-quest"),
-        versions: [{ ...original, patch: null }],
-      },
-      { games: [], playthroughs: [], cloud: [], jobs: [] },
-    );
-    expect(unpatched.availability).toBe("needs-file");
-    expect(unpatched.latest.patchAvailable).toBe(false);
-    expect(unpatched.wantedFiles).toEqual([
-      { sha1: original.outputSha1, title: "Fire Emblem: Vision Quest" },
+    const catalog = {
+      games: previewCatalog.games.filter((item) => item.id === "vision-quest"),
+      versions: [{ ...original, patch: null }],
+    };
+    expect(
+      buildLibrary(catalog, {
+        games: [],
+        playthroughs: [],
+        cloud: [],
+        jobs: [],
+      }),
+    ).toEqual([]);
+    const local = buildLibrary(catalog, {
+      games: [
+        { ...device.games[0], hash: original.outputSha1, title: "My ROM" },
+      ],
+      playthroughs: [],
+      cloud: [],
+      jobs: [],
+    });
+    expect(local).toMatchObject([
+      { id: original.outputSha1, title: "My ROM", availability: "installed" },
     ]);
+  });
+
+  it("shows featured and normal by default, experiments by opt-in, and never hidden", () => {
+    const catalog = {
+      ...previewCatalog,
+      versions: previewCatalog.versions.map((version) => ({
+        ...version,
+        visibility: (version.gameId === "vision-quest"
+          ? "experimental"
+          : version.gameId === "emerald-seaglass"
+            ? "hidden"
+            : version.gameId === "unbound"
+              ? "featured"
+              : "normal") as "experimental" | "hidden" | "featured" | "normal",
+      })),
+    };
+    const defaultGames = buildLibrary(catalog, device);
+    expect(defaultGames.map((item) => item.id)).toContain("unbound");
+    expect(defaultGames.map((item) => item.id)).toContain("elite-redux");
+    expect(defaultGames.map((item) => item.id)).not.toContain("vision-quest");
+    expect(defaultGames.map((item) => item.id)).not.toContain(
+      "emerald-seaglass",
+    );
+    // An installed, hidden release is still available as this device's ROM.
+    expect(defaultGames.map((item) => item.id)).toContain(sha(0x12));
+
+    const optedIn = buildLibrary(catalog, device, {}, true);
+    expect(optedIn.map((item) => item.id)).toContain("vision-quest");
+    expect(optedIn.map((item) => item.id)).not.toContain("emerald-seaglass");
   });
 
   it("lists ROMs and cloud copies the catalog does not know", () => {

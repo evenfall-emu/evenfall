@@ -194,7 +194,7 @@ app.put("/api/admin/games/:id", async (c) => {
   const id = parseId(c.req.param("id"));
   const input = await parseJson(c, gameInput);
   await putGame(database(c.env.DB!), id, input);
-  return c.json({ game: await getGame(database(c.env.DB!), id) });
+  return c.json({ game: await getGame(database(c.env.DB!), id, false) });
 });
 
 app.put("/api/admin/bases/:id", async (c) => {
@@ -208,7 +208,7 @@ app.put("/api/admin/versions/:id", async (c) => {
   const id = parseId(c.req.param("id"));
   const input = await parseJson(c, versionInput);
   await putVersion(database(c.env.DB!), id, input);
-  return c.json({ version: await getVersion(database(c.env.DB!), id) });
+  return c.json({ version: await getVersion(database(c.env.DB!), id, false) });
 });
 
 app.delete("/api/admin/games/:id", async (c) => {

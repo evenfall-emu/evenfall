@@ -195,6 +195,12 @@ on this device and the release's patch is hosted, so the game plays at once.
 **Sort** orders by Played (the default, with unplayed titles following by
 name), Recently updated (latest release date, undated releases last) or
 Popularity (cloud playthroughs across accounts).
+**Library settings → Show experimental romhacks** is off by default and
+remembered on this device. Featured and reviewed normal releases appear by
+default; experimental releases carry a label and appear only with this opt-in.
+Hidden and patchless releases do not appear in the public catalog. An already
+installed ROM or cloud playthrough whose release is omitted remains available
+as an unlisted, user-owned game instead of losing its progress.
 Each row shows whether the game is installed, ready, or needs a ROM from the
 user. ROMs on this device and cloud playthroughs the catalog does not list
 as a release appear as games of their own. A catalog base keeps the catalog's

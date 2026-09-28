@@ -30,6 +30,7 @@ type OpenDialog =
 
 // Matches Tailwind's `md` breakpoint: below it, details replace the list.
 const narrow = () => window.matchMedia("(max-width: 767.98px)").matches;
+const experimentalKey = "evenfall-show-experimental";
 
 /**
  * The game collection: a filterable list beside the selected game's details.
@@ -61,9 +62,16 @@ export function LibraryPage({
   onAddGame: () => void;
   onAction: LibraryActionHandler;
 }) {
+  const [showExperimental, setShowExperimental] = useState(() => {
+    try {
+      return localStorage.getItem(experimentalKey) === "true";
+    } catch {
+      return false;
+    }
+  });
   const games = useMemo(
-    () => buildLibrary(catalog, device, dumpNames),
-    [catalog, device, dumpNames],
+    () => buildLibrary(catalog, device, dumpNames, showExperimental),
+    [catalog, device, dumpNames, showExperimental],
   );
   const franchises = useMemo(() => franchisesOf(games), [games]);
   const tags = useMemo(() => tagsOf(games), [games]);
@@ -154,6 +162,23 @@ export function LibraryPage({
     fileInput.current?.click();
   }
 
+  function changeExperimental(show: boolean) {
+    if (
+      !show &&
+      selectedId &&
+      !buildLibrary(catalog, device, dumpNames).some(
+        (game) => game.id === selectedId,
+      )
+    )
+      onBack();
+    setShowExperimental(show);
+    try {
+      localStorage.setItem(experimentalKey, String(show));
+    } catch {
+      // A disabled store makes the setting last only for this visit.
+    }
+  }
+
   const ref = (entry: PlaythroughEntry) => ({
     hash: entry.release.hash,
     playthroughId: entry.id,
@@ -194,6 +219,8 @@ export function LibraryPage({
           selectedId={selected?.id}
           selectedRef={selectedButton}
           disabled={disabled}
+          showExperimental={showExperimental}
+          onShowExperimentalChange={changeExperimental}
           onSelect={select}
           onAddGame={onAddGame}
           onPlay={(game) => play(game, game.playthroughs[0])}

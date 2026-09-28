@@ -83,6 +83,10 @@ export function normalizeCollections(
           : family === "Golden Sun" && goldenSunAuthorPages.has(entry.index)
             ? entry.pageUrl
             : null,
+      visibility:
+        family === "Fire Emblem" && entry.attribution?.status === "confirmed"
+          ? "normal"
+          : "experimental",
       variant: rom.variant ?? null,
       gameSlug:
         family === "Pokémon" || family === "Fire Emblem"
@@ -199,7 +203,7 @@ export function normalizeCollections(
 
 export function buildSeed({ bases, releases }) {
   const usedBases = new Set(
-    releases.map((release) => release.baseSha1).filter(Boolean),
+    releases.filter((release) => release.patch).map((release) => release.baseSha1),
   );
   const baseId = (base) => slug(base.noIntroName);
   const baseRows = bases
@@ -220,6 +224,7 @@ export function buildSeed({ bases, releases }) {
   const patches = new Map();
   const outputs = new Set();
   for (const release of releases) {
+    if (!release.patch) continue;
     const id =
       release.family === "Pokémon" && release.gameSlug === "elite-redux"
         ? "elite-redux"
@@ -251,7 +256,7 @@ export function buildSeed({ bases, releases }) {
         ? "elite-redux-2.65-beta2"
         : `${id}-${release.outputSha1.slice(0, 12)}`;
     const label = versionLabels[id] ?? release.version;
-    const patch = release.patch && {
+    const patch = {
       url: `https://patches.evenfall-emu.org/${release.patchSha1}.${release.patch.split(".").at(-1)}`,
       format: release.patch.split(".").at(-1),
       size: release.patchBytes,
@@ -283,15 +288,14 @@ export function buildSeed({ bases, releases }) {
           : null,
       releasedAt: null,
       releaseNotes: null,
-      patch: patch || null,
+      patch,
+      visibility: release.visibility,
       saveCompatibleFrom: [],
     });
-    if (patch) {
-      const key = patch.url.split("/").at(-1);
-      if (patches.has(key) && sha1(patches.get(key)) !== release.patchSha1)
-        throw new Error(`Conflicting CDN key ${key}`);
-      patches.set(key, release.patch);
-    }
+    const key = patch.url.split("/").at(-1);
+    if (patches.has(key) && sha1(patches.get(key)) !== release.patchSha1)
+      throw new Error(`Conflicting CDN key ${key}`);
+    patches.set(key, release.patch);
   }
   for (const id of Object.keys(versionLabels))
     if (!games.has(id)) throw new Error(`Version label has no game: ${id}`);

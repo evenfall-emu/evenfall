@@ -65,6 +65,7 @@ export type LibraryGame = {
   /** The catalog ID, or the ROM SHA-1 for a game the catalog does not know. */
   id: string;
   title: string;
+  visibility: CatalogVersion["visibility"] | null;
   summary: string | null;
   description: string | null;
   imageUrl: string | null;
@@ -198,10 +199,19 @@ export function buildLibrary(
   catalog: LibraryCatalog,
   device: LibraryDevice,
   dumps: Readonly<Record<string, string>> = {},
+  showExperimental = false,
 ): LibraryGame[] {
   const roms = new Set(device.games.map((game) => game.hash));
+  const publicVersions = catalog.versions.filter(
+    (version) =>
+      version.patch &&
+      version.visibility !== "hidden" &&
+      (showExperimental ||
+        version.visibility === "featured" ||
+        version.visibility === "normal"),
+  );
   const listed = catalog.games.flatMap((game): LibraryGame[] => {
-    const versions = catalog.versions
+    const versions = publicVersions
       .filter((version) => version.gameId === game.id)
       .map((version) => ({ version, release: release(version, roms) }))
       .sort(
@@ -230,6 +240,7 @@ export function buildLibrary(
       {
         id: game.id,
         title: game.displayName,
+        visibility: newest.visibility ?? "experimental",
         summary: game.summary,
         description: game.description ?? null,
         imageUrl: game.imageUrl,
@@ -264,11 +275,9 @@ export function buildLibrary(
       },
     ];
   });
-  const outputs = new Set(
-    catalog.versions.map((version) => version.outputSha1),
-  );
+  const outputs = new Set(publicVersions.map((version) => version.outputSha1));
   const bases = new Map(
-    catalog.versions.flatMap((version) =>
+    publicVersions.flatMap((version) =>
       version.requiredBase
         ? [[version.requiredBase.sha1, version.requiredBase.displayName]]
         : [],
@@ -290,6 +299,7 @@ export function buildLibrary(
     return {
       id: hash,
       title,
+      visibility: null,
       summary: null,
       description: null,
       imageUrl: null,

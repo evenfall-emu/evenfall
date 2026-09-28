@@ -6,18 +6,7 @@ import romhacks from "./romhacks.json";
 // writes as PUT /api/admin/*.
 type Seed<T> = { id: string } & T;
 
-export const seedGames: readonly Seed<GameInput>[] = [
-  {
-    id: "heart-n-soul",
-    internalName: "pokemon/heart-n-soul",
-    displayName: "Pokémon Heart & Soul",
-    summary: null,
-    imageUrl: null,
-    franchise: "Pokémon",
-    tags: ["Pokémon", "Remake"],
-  },
-  ...romhacks.games,
-];
+export const seedGames: readonly Seed<GameInput>[] = romhacks.games;
 
 export const seedBases: readonly Seed<BaseInput>[] = [
   {
@@ -31,22 +20,8 @@ export const seedBases: readonly Seed<BaseInput>[] = [
   ...romhacks.bases.filter((base) => base.id !== "pokemon-emerald-us"),
 ];
 
-export const seedVersions: readonly Seed<VersionInput>[] = [
-  {
-    id: "heart-n-soul-1.2.1",
-    gameId: "heart-n-soul",
-    internalName: "Release-v1.2.1",
-    displayName: "1.2.1",
-    outputSha1: "a4be81f8330d7f223a3ab847c3da822fe6f8a2e0",
-    requiredBaseId: "pokemon-emerald-us",
-    sourceRepositoryUrl: "https://github.com/PokemonHnS-Development/pokemonHnS",
-    sourceRevision: "4aa8fa894db4c890b3d1100abd6aab50f44c22b1",
-    releasedAt: null,
-    releaseNotes: null,
-    patch: null,
-    saveCompatibleFrom: [],
-  },
-  ...romhacks.versions.map((version) => ({
+export const seedVersions: readonly Seed<VersionInput>[] = romhacks.versions.map(
+  (version) => ({
     ...version,
     patch: version.patch && {
       ...version.patch,
@@ -54,8 +29,9 @@ export const seedVersions: readonly Seed<VersionInput>[] = [
         VersionInput["patch"]
       >["format"],
     },
-  })),
-];
+    visibility: version.visibility as NonNullable<VersionInput["visibility"]>,
+  }),
+);
 
 /** Explicit, idempotent catalog seed. It is never called by a read request or startup. */
 export async function seedCatalog(db: CatalogDatabase): Promise<void> {

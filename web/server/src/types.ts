@@ -2,6 +2,12 @@ import { z } from "zod";
 import type { Base, Game, Version } from "./schema";
 
 export const patchFormats = ["bps", "ups", "ips"] as const;
+export const visibilityLevels = [
+  "featured",
+  "normal",
+  "experimental",
+  "hidden",
+] as const;
 
 /** The hosted patch that turns a version's required base into its output. */
 export type CatalogPatch = {
@@ -91,6 +97,7 @@ export const versionInput = z
           .max(2 ** 31 - 1),
       })
       .nullable(),
+    visibility: z.enum(visibilityLevels).optional(),
     saveCompatibleFrom: z
       .array(id)
       .max(64)

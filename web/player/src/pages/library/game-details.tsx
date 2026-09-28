@@ -212,6 +212,11 @@ export function GameDetails({
           {game.summary && (
             <p className="mt-2 max-sm:text-1x5">{game.summary}</p>
           )}
+          {game.visibility === "experimental" && (
+            <p className="mt-2 text-1x5 text-warning">
+              Experimental · Release details need review
+            </p>
+          )}
           {game.description && game.description !== game.summary && (
             <button
               className="mt-2 cursor-pointer rounded-control text-mint underline underline-offset-4 hover:text-mint-hover focus-visible:outline-2 focus-visible:outline-mint"

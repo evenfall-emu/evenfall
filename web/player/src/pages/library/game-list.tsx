@@ -149,6 +149,8 @@ export function GameList({
   selectedId,
   selectedRef,
   disabled,
+  showExperimental,
+  onShowExperimentalChange,
   onSelect,
   onAddGame,
   onPlay,
@@ -164,6 +166,8 @@ export function GameList({
   selectedId?: string;
   selectedRef: Ref<HTMLButtonElement>;
   disabled: boolean;
+  showExperimental: boolean;
+  onShowExperimentalChange: (show: boolean) => void;
   onSelect: (game: LibraryGame) => void;
   onAddGame: () => void;
   onPlay: (game: LibraryGame) => void;
@@ -235,6 +239,28 @@ export function GameList({
           disabled={disabled}
           onChange={(next) => set({ tags: next })}
         />
+        <details className="rounded-control border border-line bg-surface px-4 py-2 text-1x5">
+          <summary className="cursor-pointer text-mint focus-visible:outline-2 focus-visible:outline-mint">
+            Library settings
+          </summary>
+          <label className="mt-3 flex cursor-pointer items-start gap-3 pb-1">
+            <input
+              type="checkbox"
+              className="mt-1 size-5 accent-mint"
+              checked={showExperimental}
+              disabled={disabled}
+              onChange={(event) =>
+                onShowExperimentalChange(event.target.checked)
+              }
+            />
+            <span>
+              Show experimental romhacks
+              <span className="mt-1 block text-muted">
+                These patches work, but their release details need review.
+              </span>
+            </span>
+          </label>
+        </details>
       </div>
       {games.length ? (
         <ul aria-label="Games" className="px-3 pb-6 sm:px-6">
@@ -274,6 +300,11 @@ export function GameList({
                       <span className="line-clamp-2 font-bold">
                         {game.title}
                       </span>
+                      {game.visibility === "experimental" && (
+                        <span className="mt-1 inline-block text-1x5 text-warning">
+                          Experimental
+                        </span>
+                      )}
                       <Tags tags={game.tags} />
                     </span>
                   </button>

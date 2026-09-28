@@ -108,7 +108,6 @@ describe("catalog API", () => {
     expect(body.games).toHaveLength(seedGames.length);
     expect(body.games).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: "heart-n-soul", versionCount: 1 }),
         expect.objectContaining({ id: "elite-redux", versionCount: 1 }),
       ]),
     );
@@ -118,15 +117,15 @@ describe("catalog API", () => {
   }, 60_000);
 
   it("returns exact release identity and its No-Intro base", async () => {
-    const response = await request("/api/games/heart-n-soul");
+    const response = await request("/api/games/elite-redux");
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
       game: {
-        internalName: "pokemon/heart-n-soul",
+        internalName: "pokemon/elite-redux",
         imageUrl: null,
         versions: [
           {
-            outputSha1: "a4be81f8330d7f223a3ab847c3da822fe6f8a2e0",
+            outputSha1: "f1323126bc043f3ce931bcc670957930559eb515",
             requiredBase: {
               id: "pokemon-emerald-us",
               sha1: "f3ae088181bf583e55daf962a92bb46f4f1d07b7",
@@ -193,7 +192,7 @@ describe("catalog API", () => {
     });
   });
 
-  it("offers both Golden Sun games on their own bases and keeps patchless releases non-installable", async () => {
+  it("offers both Golden Sun games on their own bases and omits patchless releases", async () => {
     for (const [variant, outputSha1, baseSha1, size] of [
       [
         "gs1",
@@ -232,13 +231,123 @@ describe("catalog API", () => {
     }
 
     const patchless = await request("/api/games/pokemon-light-platinum");
-    expect(await patchless.json()).toMatchObject({
-      game: {
-        versions: [
-          expect.objectContaining({ patch: null, requiredBase: null }),
-        ],
-      },
+    expect(patchless.status).toBe(404);
+    expect((await request("/api/games/heart-n-soul")).status).toBe(404);
+  });
+
+  it("keeps hidden and unpatched releases out of every public catalog read", async () => {
+    const source = seedVersions.find(
+      (version) => version.gameId === "fire-emblem-vision-quest",
+    )!;
+    const { id: _id, ...input } = source;
+    const put = (id: string, changes: Record<string, unknown>) =>
+      request(`/api/admin/versions/${id}`, {
+        method: "PUT",
+        headers: adminHeaders(),
+        body: JSON.stringify({
+          ...input,
+          internalName: id,
+          outputSha1:
+            id === "hidden-test"
+              ? "1".repeat(40)
+              : id === "unpatched-test"
+                ? "2".repeat(40)
+                : "3".repeat(40),
+          ...changes,
+        }),
+      });
+    const hidden = await put("hidden-test", { visibility: "hidden" });
+    expect(hidden.status).toBe(200);
+    expect(await hidden.json()).toMatchObject({
+      version: { visibility: "hidden" },
     });
+    expect(
+      (await put("unpatched-test", { patch: null, visibility: "normal" }))
+        .status,
+    ).toBe(200);
+    expect(
+      (
+        await put("featured-test", {
+          visibility: "featured",
+          saveCompatibleFrom: ["hidden-test"],
+        })
+      ).status,
+    ).toBe(200);
+    for (const id of ["hidden-test", "unpatched-test"])
+      expect((await request(`/api/versions/${id}`)).status).toBe(404);
+
+    const versions = (await (await request("/api/versions")).json()) as {
+      versions: Array<{
+        id: string;
+        visibility: string;
+        saveCompatibleFrom: string[];
+      }>;
+    };
+    expect(versions.versions.map((version) => version.id)).toContain(
+      "featured-test",
+    );
+    expect(versions.versions.map((version) => version.id)).toContain(
+      "elite-redux-2.65-beta2",
+    ); // Experimental remains available for opt-in.
+    expect(versions.versions.map((version) => version.id)).not.toContain(
+      "hidden-test",
+    );
+    expect(versions.versions.map((version) => version.id)).not.toContain(
+      "unpatched-test",
+    );
+    expect(
+      versions.versions.find((version) => version.id === "featured-test")
+        ?.saveCompatibleFrom,
+    ).toEqual([]);
+    const detail = (await (
+      await request("/api/games/fire-emblem-vision-quest")
+    ).json()) as {
+      game: { versions: Array<{ id: string; saveCompatibleFrom: string[] }> };
+    };
+    expect(
+      detail.game.versions.find((version) => version.id === "featured-test")
+        ?.saveCompatibleFrom,
+    ).toEqual([]);
+    expect(detail.game.versions.map((version) => version.id)).not.toContain(
+      "hidden-test",
+    );
+    const listed = (await (await request("/api/games")).json()) as {
+      games: Array<{ id: string; versionCount: number }>;
+    };
+    expect(
+      listed.games.find((game) => game.id === "fire-emblem-vision-quest")
+        ?.versionCount,
+    ).toBe(2);
+
+    const { id: _gameId, ...gameInput } = seedGames[0];
+    expect(
+      (
+        await request("/api/admin/games/hidden-game-test", {
+          method: "PUT",
+          headers: adminHeaders(),
+          body: JSON.stringify({
+            ...gameInput,
+            internalName: "hidden/game/test",
+          }),
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await put("hidden-only-test", {
+          gameId: "hidden-game-test",
+          visibility: "hidden",
+          outputSha1: "4".repeat(40),
+        })
+      ).status,
+    ).toBe(200);
+    expect((await request("/api/games/hidden-game-test")).status).toBe(404);
+    const after = (await (await request("/api/games")).json()) as {
+      games: Array<{ id: string }>;
+    };
+    expect(after.games.map((game) => game.id)).not.toContain(
+      "hidden-game-test",
+    );
   });
 
   it("addresses every seeded row by ID through reads and management", async () => {
@@ -296,11 +405,11 @@ describe("catalog API", () => {
   });
 
   it("supports multiple versions of one game with base relationships", async () => {
-    const response = await request("/api/admin/versions/heart-n-soul-next", {
+    const response = await request("/api/admin/versions/elite-redux-next", {
       method: "PUT",
       headers: adminHeaders({ Origin: "https://zigba.test" }),
       body: JSON.stringify({
-        gameId: "heart-n-soul",
+        gameId: "elite-redux",
         internalName: "test-second-version",
         displayName: "Test second version",
         outputSha1: "a".repeat(40),
@@ -309,15 +418,19 @@ describe("catalog API", () => {
         sourceRevision: null,
         releasedAt: null,
         releaseNotes: null,
-        patch: null,
+        patch: {
+          url: "https://patches.example/next.ups",
+          format: "ups",
+          size: 42,
+        },
         saveCompatibleFrom: [],
       }),
     });
     expect(response.status).toBe(200);
 
-    const detail = (await (
-      await request("/api/games/heart-n-soul")
-    ).json()) as { game: { versions: Array<{ requiredBase: unknown }> } };
+    const detail = (await (await request("/api/games/elite-redux")).json()) as {
+      game: { versions: Array<{ requiredBase: unknown }> };
+    };
     expect(detail.game.versions).toHaveLength(2);
     expect(detail.game.versions.every((version) => version.requiredBase)).toBe(
       true,
@@ -329,7 +442,7 @@ describe("catalog API", () => {
       method: "PUT",
       headers: adminHeaders(),
       body: JSON.stringify({
-        gameId: "heart-n-soul",
+        gameId: "elite-redux",
         internalName: "invalid",
         displayName: "Invalid",
         outputSha1: "not-a-hash",
@@ -394,18 +507,13 @@ describe("catalog API", () => {
       tags: ["Pokémon", "Difficulty Hack"],
       cloudPlaythroughs: 2,
     });
-    expect(listed.games.find(({ id }) => id === "heart-n-soul")).toMatchObject({
-      franchise: "Pokémon",
-      tags: ["Pokémon", "Remake"],
-      cloudPlaythroughs: 0,
-    });
     expect(
       await (await request("/api/games/elite-redux")).json(),
     ).toMatchObject({ game: { cloudPlaythroughs: 2 } });
   });
 
   it("keeps tags in order, replaces them on write and rejects duplicates", async () => {
-    const game = seedGames.find((item) => item.id === "heart-n-soul")!;
+    const game = seedGames.find((item) => item.id === "elite-redux")!;
     const { id, ...input } = game;
     const write = (tags: string[]) =>
       request(`/api/admin/games/${id}`, {
@@ -414,10 +522,10 @@ describe("catalog API", () => {
         body: JSON.stringify({ ...input, tags }),
       });
 
-    const reordered = await write(["Remake", "Johto", "Pokémon"]);
+    const reordered = await write(["Difficulty Hack", "Johto", "Pokémon"]);
     expect(reordered.status).toBe(200);
     expect(await reordered.json()).toMatchObject({
-      game: { tags: ["Remake", "Johto", "Pokémon"] },
+      game: { tags: ["Difficulty Hack", "Johto", "Pokémon"] },
     });
     expect((await write(["Remake", "remake"])).status).toBe(400);
     expect((await write([])).status).toBe(200);
@@ -531,7 +639,11 @@ describe("catalog API", () => {
       (await write({ saveCompatibleFrom: ["elite-redux-rules"] })).status,
     ).toBe(400);
     expect(
-      (await write({ saveCompatibleFrom: ["heart-n-soul-1.2.1"] })).status,
+      (
+        await write({
+          saveCompatibleFrom: ["fire-emblem-vision-quest-16d772195bd3"],
+        })
+      ).status,
     ).toBe(400);
     expect(
       (await write({ saveCompatibleFrom: ["elite-redux-missing"] })).status,

@@ -44,7 +44,11 @@ path is served from the player's Static Assets in `.dist/cloudflare` (see
   required base; the base SHA-1 in and the output SHA-1 out verify it, so it
   carries no digest of its own. The player downloads patches from the
   browser, so their host must allow cross-origin `GET`. A game can have many
-  versions.
+  versions. Each version also has a visibility level: `featured` (reserved for
+  future placement) and `normal` (reviewed) appear in the player by default;
+  `experimental` requires a device-side Library opt-in; `hidden` is absent
+  from public catalog reads. An omitted level on a management write defaults
+  to `experimental`.
 - `version_save_compatibility`: for a version, the earlier versions of the
   same game whose in-game saves are verified to load in it.
 - `bases`: stable ID, unique internal name, display label, and the unique
@@ -75,6 +79,14 @@ or repeat.
 | `GET` | `/api/bases` | `{ bases }`, each with its `sha1` and `crc32` |
 | `GET` | `/api/bases/:id` | `{ base }` |
 
+Public game and version reads include only releases with a hosted patch and
+exclude `hidden`, including direct ID reads and save-compatibility IDs. A
+game with no qualifying release returns `404` by ID and is absent from the
+list. Experimental releases remain in the public API for the player to show
+after opt-in; the setting is not access control. Management writes can still
+hold patchless or hidden records. Administrator read access to hidden records
+is not yet exposed as a separate listing API.
+
 Management is deliberately small: `PUT` and `DELETE` at
 `/api/admin/games/:id`, `/api/admin/versions/:id` and `/api/admin/bases/:id`,
 plus `POST /api/admin/seed`. `PUT` is a validated, full-record upsert that
@@ -84,7 +96,7 @@ hashes and dates, a patch without a base, save compatibility with the same
 version or another game's, and broken foreign-key relations are rejected.
 
 `cloudPlaythroughs` counts the cloud-backup playthroughs, across all
-accounts, whose ROM SHA-1 is one of the game's version outputs. It is the
+accounts, whose ROM SHA-1 is one of the game's public version outputs. It is the
 catalog's measure of popularity and identifies no account.
 
 Every management request requires `Authorization: Bearer <ADMIN_SECRET>`.
@@ -384,25 +396,25 @@ the two steps.
 
 ## Seed data
 
-[`src/seed.ts`](src/seed.ts) is explicit and idempotent. It includes the
-collected releases from the metadata-only [`romhacks.json`](src/romhacks.json)
-and the registered Heart & Soul profile. Elite Redux keeps its existing
-catalog identity and source revision. The exact releases with registered
-profiles in [`@evenfall/gba-pokemon`](../games/pokemon/README.md) are:
+[`src/seed.ts`](src/seed.ts) is explicit and idempotent. It includes only
+patch-backed collected releases from the metadata-only
+[`romhacks.json`](src/romhacks.json). Elite Redux keeps its existing catalog
+identity and source revision. Of the releases with registered profiles in
+[`@evenfall/gba-pokemon`](../games/pokemon/README.md), the catalog includes:
 
 | Version | Output ROM SHA-1 | Source revision |
 |---|---|---|
-| Heart & Soul 1.2.1 | `a4be81f8330d7f223a3ab847c3da822fe6f8a2e0` | `PokemonHnS-Development/pokemonHnS@4aa8fa894db4c890b3d1100abd6aab50f44c22b1` |
 | Elite Redux 2.65 Beta2 (1048) | `f1323126bc043f3ce931bcc670957930559eb515` | `Elite-Redux/eliteredux-source@06da575972cfed20d471f8bb5b90ea9e4736b16a` |
 
-Both require the `pokemon-emerald-us` base, No-Intro "Pokemon - Emerald
+It requires the `pokemon-emerald-us` base, No-Intro "Pokemon - Emerald
 Version (USA, Europe)": SHA-1 `f3ae088181bf583e55daf962a92bb46f4f1d07b7`,
 CRC32 `1f1c08fb`.
 
 These are raw playable ROM identities, not release ZIP or patch hashes. The
 romhack seed and CDN publication procedure are in
 [`tools/catalog/README.md`](../tools/catalog/README.md#romhack-releases-and-patch-cdn).
-The catalog includes patchless ROM releases as metadata, not install actions.
+Heart & Soul has no verified hosted patch and is not seeded. Existing
+patchless rows in a database remain stored but are not returned publicly.
 No distributable catalog images exist for these profiles, so their `imageUrl`
 values are null.
 

@@ -537,7 +537,8 @@ describe("account authentication", () => {
 });
 
 describe("private cloud resume discovery", () => {
-  const knownHash = "a4be81f8330d7f223a3ab847c3da822fe6f8a2e0";
+  const knownHash = "f1323126bc043f3ce931bcc670957930559eb515";
+  const hiddenHash = "16d772195bd3b6a561595ecb71be7bef1185e7ea";
   const otherHash = "f".repeat(40);
   let owner: { Cookie: string; "X-Zigba-Account": string };
   let other: typeof owner;
@@ -567,6 +568,10 @@ describe("private cloud resume discovery", () => {
       { ADMIN_SECRET: "test-seed-secret" },
     );
     expect(seeded.status).toBe(200);
+    await database
+      .prepare("update versions set visibility = 'hidden' where output_sha1 = ?")
+      .bind(hiddenHash)
+      .run();
     const metadata = { customMetadata: { capturedAt: "12345" } };
     await Promise.all(
       Array.from({ length: 101 }, (_, index) =>
@@ -580,6 +585,11 @@ describe("private cloud resume discovery", () => {
     await saves.put(
       `${owner["X-Zigba-Account"]}/${knownHash}/resume`,
       "known checkpoint",
+      metadata,
+    );
+    await saves.put(
+      `${owner["X-Zigba-Account"]}/${hiddenHash}/resume`,
+      "hidden release checkpoint",
       metadata,
     );
     // Keyed by a ROM SHA-256, before games were identified by SHA-1: unlisted.
@@ -642,12 +652,15 @@ describe("private cloud resume discovery", () => {
       expect(++pages).toBeLessThan(5);
     } while (cursor);
     expect(pages).toBeGreaterThan(1);
-    expect(entries).toHaveLength(102);
-    expect(new Set(entries.map((entry) => entry.hash)).size).toBe(102);
+    expect(entries).toHaveLength(103);
+    expect(new Set(entries.map((entry) => entry.hash)).size).toBe(103);
     expect(entries.some((entry) => entry.hash === otherHash)).toBe(false);
     expect(entries.find((entry) => entry.hash === knownHash)).toMatchObject({
-      title: "Pokémon Heart & Soul · 1.2.1",
+      title: "Pokémon Elite Redux · 2.65 Beta2 (1048)",
       capturedAt: 12345,
+    });
+    expect(entries.find((entry) => entry.hash === hiddenHash)).toMatchObject({
+      title: `Game ${hiddenHash.slice(0, 8)}`,
     });
     expect(
       entries.every((entry) => Number.isFinite(Date.parse(entry.uploadedAt))),

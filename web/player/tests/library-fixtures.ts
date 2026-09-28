@@ -72,6 +72,7 @@ function version(
       format: "bps",
       size: 4_194_304,
     },
+    visibility: "normal",
     saveCompatibleFrom: [],
     ...extra,
   };

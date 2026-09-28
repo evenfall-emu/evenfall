@@ -61,18 +61,6 @@
       ]
     },
     {
-      "id": "pokemon-light-platinum",
-      "internalName": "pokemon/light-platinum",
-      "displayName": "Pokémon Light Platinum",
-      "summary": "Explore Zhery and Lauren on the road to a world championship.",
-      "description": "A classic original-region hack with Zhery and Lauren, Pokémon through Generation 5, many legendary encounters, new rivals and leagues, and a World Championship finale.",
-      "imageUrl": null,
-      "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
-    },
-    {
       "id": "pokemon-emerald-rogue",
       "internalName": "pokemon/emerald-rogue",
       "displayName": "Pokémon Emerald Rogue",
@@ -410,30 +398,6 @@
       ]
     },
     {
-      "id": "pokemon-snakewood",
-      "internalName": "pokemon/snakewood",
-      "displayName": "Pokémon Snakewood",
-      "summary": "Survive Hoenn's zombie apocalypse and its gloriously bizarre mysteries.",
-      "description": "A notorious zombie-apocalypse reinterpretation of Hoenn with dark comedy, an original mystery, altered creatures and evolutions, unusual puzzles, and deliberately bizarre encounters.",
-      "imageUrl": null,
-      "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
-    },
-    {
-      "id": "pokemon-ruby-destiny-reign-of-legends",
-      "internalName": "pokemon/ruby-destiny-reign-of-legends",
-      "displayName": "Pokémon Ruby Destiny: Reign of Legends",
-      "summary": "Begin the Ruby Destiny saga amid rival factions and Shadow Lugia.",
-      "description": "The first Ruby Destiny game sends the player through a new region against Luminous Cenaries and Royal Darkness in a story involving Shadow Lugia and linked sequels.",
-      "imageUrl": null,
-      "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
-    },
-    {
       "id": "pokemon-victory-fire",
       "internalName": "pokemon/victory-fire",
       "displayName": "Pokémon Victory Fire",
@@ -499,18 +463,6 @@
       "displayName": "Pokémon CrystalDust",
       "summary": "Return to classic Johto in a faithful, polished GBA remake of Crystal.",
       "description": "A highly polished Crystal remake in the Emerald engine, preserving Johto's original feel while upgrading graphics, sound, mechanics, and presentation for the GBA.",
-      "imageUrl": null,
-      "franchise": "Pokémon",
-      "tags": [
-        "Pokémon"
-      ]
-    },
-    {
-      "id": "pokemon-advanced-adventure",
-      "internalName": "pokemon/advanced-adventure",
-      "displayName": "Pokémon Advanced Adventure",
-      "summary": "Rise from underdog to hero in an original LeafGreen adventure.",
-      "description": "A rare LeafGreen hack with an original underdog story, a villainous rival, altered starter choices, shadow Pokémon, catchable non-legendaries through Generation 5, and no trade evolutions.",
       "imageUrl": null,
       "franchise": "Pokémon",
       "tags": [
@@ -775,18 +727,6 @@
       "displayName": "Golden Sun The Lost Age Color Correction",
       "summary": "Restore richer colors to The Lost Age without changing its gameplay.",
       "description": "A palette-only hack that corrects the washed-out colours of The Lost Age on backlit screens and accurate emulators, covering town and dungeon maps, battle backgrounds and the overworld. It changes no gameplay, text or maps.",
-      "imageUrl": null,
-      "franchise": "Golden Sun",
-      "tags": [
-        "Golden Sun"
-      ]
-    },
-    {
-      "id": "golden-sun-golden-sun-tla-maheo-s-path",
-      "internalName": "golden-sun/golden-sun-tla-maheo-s-path",
-      "displayName": "Golden Sun TLA: Maheo's Path",
-      "summary": "Explore an Alex-focused new path through The Lost Age.",
-      "description": "The original Alex-focused Lost Age story mod that Alex Path continues: a new path through the game with Alex as a party member, its own weapons, class-change items and quests. The author published it as a prepatched stand-alone ROM rather than a patch.",
       "imageUrl": null,
       "franchise": "Golden Sun",
       "tags": [
@@ -1246,6 +1186,7 @@
         "format": "ups",
         "size": 26489729
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1264,6 +1205,7 @@
         "format": "ups",
         "size": 18629021
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1282,6 +1224,7 @@
         "format": "ups",
         "size": 25656435
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1300,6 +1243,7 @@
         "format": "ups",
         "size": 20414120
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1318,20 +1262,7 @@
         "format": "ups",
         "size": 3184374
       },
-      "saveCompatibleFrom": []
-    },
-    {
-      "id": "pokemon-light-platinum-ea5f6f9a9660",
-      "gameId": "pokemon-light-platinum",
-      "internalName": "Final Version",
-      "displayName": "Final Version",
-      "outputSha1": "ea5f6f9a9660bc8eb5afda7208390fa8842f2bad",
-      "requiredBaseId": null,
-      "sourceRepositoryUrl": null,
-      "sourceRevision": null,
-      "releasedAt": null,
-      "releaseNotes": null,
-      "patch": null,
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1350,6 +1281,7 @@
         "format": "ups",
         "size": 32538084
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1368,6 +1300,7 @@
         "format": "ups",
         "size": 22170806
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1386,6 +1319,7 @@
         "format": "ups",
         "size": 12595069
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1404,6 +1338,7 @@
         "format": "ups",
         "size": 4018544
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1422,6 +1357,7 @@
         "format": "ups",
         "size": 5886488
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1440,6 +1376,7 @@
         "format": "ups",
         "size": 112420
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1458,6 +1395,7 @@
         "format": "ups",
         "size": 33361511
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1476,6 +1414,7 @@
         "format": "ups",
         "size": 21034649
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1494,6 +1433,7 @@
         "format": "ups",
         "size": 21149653
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1512,6 +1452,7 @@
         "format": "ups",
         "size": 19778369
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1530,6 +1471,7 @@
         "format": "ups",
         "size": 30600237
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1548,6 +1490,7 @@
         "format": "ups",
         "size": 32816048
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1566,6 +1509,7 @@
         "format": "ups",
         "size": 30909352
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1584,6 +1528,7 @@
         "format": "ups",
         "size": 21200165
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1602,6 +1547,7 @@
         "format": "ups",
         "size": 9833377
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1620,6 +1566,7 @@
         "format": "ups",
         "size": 3035435
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1638,6 +1585,7 @@
         "format": "ups",
         "size": 11925293
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1656,6 +1604,7 @@
         "format": "ups",
         "size": 6860684
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1674,6 +1623,7 @@
         "format": "ups",
         "size": 25662451
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1692,6 +1642,7 @@
         "format": "ups",
         "size": 23370791
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1710,6 +1661,7 @@
         "format": "ups",
         "size": 8991101
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1728,6 +1680,7 @@
         "format": "ups",
         "size": 25859042
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1746,6 +1699,7 @@
         "format": "ups",
         "size": 4938621
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1764,6 +1718,7 @@
         "format": "ups",
         "size": 2820314
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1782,6 +1737,7 @@
         "format": "ups",
         "size": 4602811
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1800,6 +1756,7 @@
         "format": "ups",
         "size": 33245576
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1818,6 +1775,7 @@
         "format": "ups",
         "size": 15354604
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1836,34 +1794,7 @@
         "format": "ups",
         "size": 22085639
       },
-      "saveCompatibleFrom": []
-    },
-    {
-      "id": "pokemon-snakewood-a7210846ea96",
-      "gameId": "pokemon-snakewood",
-      "internalName": "Final (Fixed)",
-      "displayName": "Final (Fixed)",
-      "outputSha1": "a7210846ea96a043e8e437c8e8eae4b752941584",
-      "requiredBaseId": null,
-      "sourceRepositoryUrl": null,
-      "sourceRevision": null,
-      "releasedAt": null,
-      "releaseNotes": null,
-      "patch": null,
-      "saveCompatibleFrom": []
-    },
-    {
-      "id": "pokemon-ruby-destiny-reign-of-legends-97b2106002d1",
-      "gameId": "pokemon-ruby-destiny-reign-of-legends",
-      "internalName": "4.1 (2016)",
-      "displayName": "4.1 (2016)",
-      "outputSha1": "97b2106002d1685d941adc087db3435856f4ee9a",
-      "requiredBaseId": null,
-      "sourceRepositoryUrl": null,
-      "sourceRevision": null,
-      "releasedAt": null,
-      "releaseNotes": null,
-      "patch": null,
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1882,6 +1813,7 @@
         "format": "ups",
         "size": 4388850
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1900,6 +1832,7 @@
         "format": "ups",
         "size": 8624276
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1918,6 +1851,7 @@
         "format": "ups",
         "size": 3623641
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1936,6 +1870,7 @@
         "format": "ups",
         "size": 1587450
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1954,6 +1889,7 @@
         "format": "ups",
         "size": 21567387
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -1972,20 +1908,7 @@
         "format": "ups",
         "size": 14970756
       },
-      "saveCompatibleFrom": []
-    },
-    {
-      "id": "pokemon-advanced-adventure-bef004d305b3",
-      "gameId": "pokemon-advanced-adventure",
-      "internalName": "Final (2018)",
-      "displayName": "Final (2018)",
-      "outputSha1": "bef004d305b30b0b0364e7736e65567f72a6ca2a",
-      "requiredBaseId": null,
-      "sourceRepositoryUrl": null,
-      "sourceRevision": null,
-      "releasedAt": null,
-      "releaseNotes": null,
-      "patch": null,
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2004,6 +1927,7 @@
         "format": "ups",
         "size": 20695504
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2022,6 +1946,7 @@
         "format": "ups",
         "size": 206874
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2040,6 +1965,7 @@
         "format": "ups",
         "size": 191189
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2058,6 +1984,7 @@
         "format": "ups",
         "size": 30971329
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2076,6 +2003,7 @@
         "format": "ups",
         "size": 20288584
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2094,6 +2022,7 @@
         "format": "ups",
         "size": 5681251
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2112,6 +2041,7 @@
         "format": "ups",
         "size": 13868788
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2130,6 +2060,7 @@
         "format": "ips",
         "size": 58352
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2148,6 +2079,7 @@
         "format": "ips",
         "size": 207091
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2166,6 +2098,7 @@
         "format": "ips",
         "size": 999705
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2184,6 +2117,7 @@
         "format": "ips",
         "size": 557865
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2202,6 +2136,7 @@
         "format": "ips",
         "size": 622697
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2220,6 +2155,7 @@
         "format": "ips",
         "size": 211889
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2238,6 +2174,7 @@
         "format": "ips",
         "size": 228132
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2256,6 +2193,7 @@
         "format": "ips",
         "size": 293676
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2274,6 +2212,7 @@
         "format": "ips",
         "size": 28069
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2292,6 +2231,7 @@
         "format": "ips",
         "size": 39993
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2310,6 +2250,7 @@
         "format": "ips",
         "size": 112804
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2328,6 +2269,7 @@
         "format": "ips",
         "size": 3944477
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2346,6 +2288,7 @@
         "format": "ips",
         "size": 1940
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2364,6 +2307,7 @@
         "format": "ips",
         "size": 563670
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2382,20 +2326,7 @@
         "format": "ips",
         "size": 6846320
       },
-      "saveCompatibleFrom": []
-    },
-    {
-      "id": "golden-sun-golden-sun-tla-maheo-s-path-06544ff6cfdb",
-      "gameId": "golden-sun-golden-sun-tla-maheo-s-path",
-      "internalName": "Stand-alone build",
-      "displayName": "Stand-alone build",
-      "outputSha1": "06544ff6cfdb3697d4803d89dd8006c229287f3d",
-      "requiredBaseId": null,
-      "sourceRepositoryUrl": null,
-      "sourceRevision": null,
-      "releasedAt": null,
-      "releaseNotes": null,
-      "patch": null,
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2414,6 +2345,7 @@
         "format": "ups",
         "size": 15218488
       },
+      "visibility": "normal",
       "saveCompatibleFrom": []
     },
     {
@@ -2432,6 +2364,7 @@
         "format": "ups",
         "size": 13109861
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2450,6 +2383,7 @@
         "format": "ups",
         "size": 7871715
       },
+      "visibility": "normal",
       "saveCompatibleFrom": []
     },
     {
@@ -2468,6 +2402,7 @@
         "format": "ups",
         "size": 3013797
       },
+      "visibility": "normal",
       "saveCompatibleFrom": []
     },
     {
@@ -2486,6 +2421,7 @@
         "format": "ups",
         "size": 9026825
       },
+      "visibility": "normal",
       "saveCompatibleFrom": []
     },
     {
@@ -2504,6 +2440,7 @@
         "format": "ups",
         "size": 3275782
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2522,6 +2459,7 @@
         "format": "ups",
         "size": 25157548
       },
+      "visibility": "normal",
       "saveCompatibleFrom": []
     },
     {
@@ -2540,6 +2478,7 @@
         "format": "ups",
         "size": 12864469
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2558,6 +2497,7 @@
         "format": "ups",
         "size": 4001601
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2576,6 +2516,7 @@
         "format": "ups",
         "size": 2115063
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2594,6 +2535,7 @@
         "format": "ups",
         "size": 3071588
       },
+      "visibility": "normal",
       "saveCompatibleFrom": []
     },
     {
@@ -2612,6 +2554,7 @@
         "format": "ups",
         "size": 12198726
       },
+      "visibility": "normal",
       "saveCompatibleFrom": []
     },
     {
@@ -2630,6 +2573,7 @@
         "format": "ups",
         "size": 14895705
       },
+      "visibility": "normal",
       "saveCompatibleFrom": []
     },
     {
@@ -2648,6 +2592,7 @@
         "format": "ups",
         "size": 9232522
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2666,6 +2611,7 @@
         "format": "ups",
         "size": 15706039
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2684,6 +2630,7 @@
         "format": "ups",
         "size": 20500472
       },
+      "visibility": "normal",
       "saveCompatibleFrom": []
     },
     {
@@ -2702,6 +2649,7 @@
         "format": "ups",
         "size": 11438717
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2720,6 +2668,7 @@
         "format": "ups",
         "size": 11128320
       },
+      "visibility": "normal",
       "saveCompatibleFrom": []
     },
     {
@@ -2738,6 +2687,7 @@
         "format": "ups",
         "size": 16825900
       },
+      "visibility": "normal",
       "saveCompatibleFrom": []
     },
     {
@@ -2756,6 +2706,7 @@
         "format": "ups",
         "size": 1891521
       },
+      "visibility": "normal",
       "saveCompatibleFrom": []
     },
     {
@@ -2774,6 +2725,7 @@
         "format": "ups",
         "size": 17586203
       },
+      "visibility": "normal",
       "saveCompatibleFrom": []
     },
     {
@@ -2792,6 +2744,7 @@
         "format": "ups",
         "size": 8668399
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2810,6 +2763,7 @@
         "format": "ups",
         "size": 3418394
       },
+      "visibility": "normal",
       "saveCompatibleFrom": []
     },
     {
@@ -2828,6 +2782,7 @@
         "format": "ups",
         "size": 4238717
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2846,6 +2801,7 @@
         "format": "ups",
         "size": 7295615
       },
+      "visibility": "normal",
       "saveCompatibleFrom": []
     },
     {
@@ -2864,6 +2820,7 @@
         "format": "ups",
         "size": 2573684
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2882,6 +2839,7 @@
         "format": "ups",
         "size": 5306598
       },
+      "visibility": "normal",
       "saveCompatibleFrom": []
     },
     {
@@ -2900,6 +2858,7 @@
         "format": "ups",
         "size": 14890601
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2918,6 +2877,7 @@
         "format": "ups",
         "size": 17260280
       },
+      "visibility": "normal",
       "saveCompatibleFrom": []
     },
     {
@@ -2936,6 +2896,7 @@
         "format": "ups",
         "size": 11372877
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2954,6 +2915,7 @@
         "format": "ups",
         "size": 17819622
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     },
     {
@@ -2972,6 +2934,7 @@
         "format": "ups",
         "size": 10589905
       },
+      "visibility": "experimental",
       "saveCompatibleFrom": []
     }
   ]

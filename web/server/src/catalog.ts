@@ -1,4 +1,13 @@
-import { and, asc, count, eq, getTableColumns, inArray, ne } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  eq,
+  getTableColumns,
+  inArray,
+  isNotNull,
+  ne,
+} from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import {
   bases,
@@ -23,6 +32,13 @@ export type CatalogDatabase = DrizzleD1Database<typeof schema>;
 
 /** A write that breaks a catalog rule no column constraint can express. */
 export class CatalogRuleError extends Error {}
+
+// Public catalog reads never disclose hidden or unpatchable releases. The
+// Experimental setting only changes what the player displays, not this API.
+const publicVersion = and(
+  isNotNull(versions.patchUrl),
+  ne(versions.visibility, "hidden"),
+);
 
 function group<T>(
   rows: T[],
@@ -53,17 +69,34 @@ async function cloudPlaythroughsByGame(db: CatalogDatabase, gameId?: string) {
     .select({ gameId: versions.gameId, count: count() })
     .from(versions)
     .innerJoin(playthrough, eq(playthrough.hash, versions.outputSha1))
-    .where(gameId ? eq(versions.gameId, gameId) : undefined)
+    .where(and(gameId ? eq(versions.gameId, gameId) : undefined, publicVersion))
     .groupBy(versions.gameId);
   return new Map(rows.map((row) => [row.gameId, row.count]));
 }
 
-async function compatibilityByVersion(db: CatalogDatabase, versionId?: string) {
+async function compatibilityByVersion(
+  db: CatalogDatabase,
+  versionId?: string,
+  publicOnly = true,
+) {
   const rows = await db
     .select()
     .from(versionSaveCompatibility)
     .where(
-      versionId ? eq(versionSaveCompatibility.versionId, versionId) : undefined,
+      and(
+        versionId
+          ? eq(versionSaveCompatibility.versionId, versionId)
+          : undefined,
+        publicOnly
+          ? inArray(
+              versionSaveCompatibility.fromVersionId,
+              db
+                .select({ id: versions.id })
+                .from(versions)
+                .where(publicVersion),
+            )
+          : undefined,
+      ),
     )
     .orderBy(asc(versionSaveCompatibility.fromVersionId));
   return group(
@@ -97,7 +130,7 @@ export async function listGames(
     db
       .select({ ...getTableColumns(games), versionCount: count(versions.id) })
       .from(games)
-      .leftJoin(versions, eq(versions.gameId, games.id))
+      .innerJoin(versions, and(eq(versions.gameId, games.id), publicVersion))
       .groupBy(games.id)
       .orderBy(asc(games.displayName)),
     tagsByGame(db),
@@ -113,6 +146,7 @@ export async function listGames(
 export async function getGame(
   db: CatalogDatabase,
   id: string,
+  publicOnly = true,
 ): Promise<CatalogGame | null> {
   const game = await db.select().from(games).where(eq(games.id, id)).get();
   if (!game) return null;
@@ -121,7 +155,9 @@ export async function getGame(
       .select({ version: versions, base: bases })
       .from(versions)
       .leftJoin(bases, eq(versions.requiredBaseId, bases.id))
-      .where(eq(versions.gameId, id))
+      .where(
+        and(eq(versions.gameId, id), publicOnly ? publicVersion : undefined),
+      )
       .orderBy(asc(versions.displayName)),
     tagsByGame(db, id),
     cloudPlaythroughsByGame(db, id),
@@ -129,7 +165,20 @@ export async function getGame(
       .select()
       .from(versionSaveCompatibility)
       .innerJoin(versions, eq(versions.id, versionSaveCompatibility.versionId))
-      .where(eq(versions.gameId, id))
+      .where(
+        and(
+          eq(versions.gameId, id),
+          publicOnly
+            ? inArray(
+                versionSaveCompatibility.fromVersionId,
+                db
+                  .select({ id: versions.id })
+                  .from(versions)
+                  .where(publicVersion),
+              )
+            : undefined,
+        ),
+      )
       .orderBy(asc(versionSaveCompatibility.fromVersionId))
       .then((rows) =>
         group(
@@ -139,6 +188,7 @@ export async function getGame(
         ),
       ),
   ]);
+  if (publicOnly && !releases.length) return null;
   return {
     ...game,
     tags: tags.get(id) ?? [],
@@ -157,6 +207,7 @@ export async function listVersions(
       .select({ version: versions, base: bases })
       .from(versions)
       .leftJoin(bases, eq(versions.requiredBaseId, bases.id))
+      .where(publicVersion)
       .orderBy(asc(versions.displayName)),
     compatibilityByVersion(db),
   ]);
@@ -168,15 +219,16 @@ export async function listVersions(
 export async function getVersion(
   db: CatalogDatabase,
   id: string,
+  publicOnly = true,
 ): Promise<CatalogVersion | null> {
   const [row, compatibility] = await Promise.all([
     db
       .select({ version: versions, base: bases })
       .from(versions)
       .leftJoin(bases, eq(versions.requiredBaseId, bases.id))
-      .where(eq(versions.id, id))
+      .where(and(eq(versions.id, id), publicOnly ? publicVersion : undefined))
       .get(),
-    compatibilityByVersion(db, id),
+    compatibilityByVersion(db, id, publicOnly),
   ]);
   return row ? catalogVersion(row.version, row.base, compatibility) : null;
 }
@@ -254,6 +306,7 @@ export async function putVersion(
   }
   const columns = {
     ...row,
+    visibility: row.visibility ?? "experimental",
     patchUrl: patch?.url ?? null,
     patchFormat: patch?.format ?? null,
     patchSize: patch?.size ?? null,

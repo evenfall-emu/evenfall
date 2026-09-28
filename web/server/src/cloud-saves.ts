@@ -88,7 +88,8 @@ export function registerCloudSaveRoutes(app: Hono<Env>): void {
             .DB!.prepare(
               `SELECT v.output_sha1 AS hash, g.display_name || ' · ' || v.display_name AS title
            FROM versions v JOIN games g ON g.id = v.game_id
-           WHERE v.output_sha1 IN (${saves.map(() => "?").join(",")})`,
+           WHERE v.patch_url IS NOT NULL AND v.visibility != 'hidden'
+             AND v.output_sha1 IN (${saves.map(() => "?").join(",")})`,
             )
             .bind(...saves.map((save) => save.hash))
             .all<{ hash: string; title: string }>()

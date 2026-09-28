@@ -50,13 +50,24 @@ function version(
     internalName: displayName,
     displayName,
     outputSha1,
-    requiredBaseId: null,
-    requiredBase: null,
+    requiredBaseId: "shared-source",
+    requiredBase: {
+      id: "shared-source",
+      internalName: "shared/source",
+      displayName: "the Shared Source ROM",
+      sha1: sha1(50),
+      crc32: "00000000",
+    },
     sourceRepositoryUrl: null,
     sourceRevision: null,
     releasedAt,
     releaseNotes: null,
-    patch: null,
+    patch: {
+      url: `https://example.invalid/${gameId}-${displayName}.bps`,
+      format: "bps",
+      size: 1024,
+    },
+    visibility: "normal",
     saveCompatibleFrom: [],
     ...extra,
   };
@@ -96,7 +107,11 @@ export const maplePatch = bps(romBytes(40), romBytes(41));
  * v2 marker 43, Cedar Saga marker 44, and Maple Remix is marker 41, patched
  * from marker 40 by `maplePatch`.
  */
-export async function mockCatalog(page: Page, fillers = 0) {
+export async function mockCatalog(
+  page: Page,
+  fillers = 0,
+  experimental = false,
+) {
   const oaks = Array.from({ length: fillers }, (_, index) =>
     game(`oak-${index + 1}`, `Oak ${index + 1}`, "Trees", [], 0),
   );
@@ -117,7 +132,9 @@ export async function mockCatalog(page: Page, fillers = 0) {
       releaseNotes: "Faster text.",
       sourceRepositoryUrl: "https://creator.example/birch-quest/release",
     }),
-    version("cedar-saga", "1", sha1(44), "2026-03-01T00:00:00.000Z"),
+    version("cedar-saga", "1", sha1(44), "2026-03-01T00:00:00.000Z", {
+      visibility: experimental ? "experimental" : "normal",
+    }),
     version("maple-remix", "1", sha1(41), "2026-02-01T00:00:00.000Z", {
       requiredBaseId: mapleBase.id,
       requiredBase: mapleBase,

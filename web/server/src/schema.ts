@@ -86,6 +86,11 @@ export const versions = sqliteTable(
     patchUrl: text("patch_url"),
     patchFormat: text("patch_format", { enum: ["bps", "ups", "ips"] }),
     patchSize: integer("patch_size"),
+    visibility: text("visibility", {
+      enum: ["featured", "normal", "experimental", "hidden"],
+    })
+      .notNull()
+      .default("experimental"),
   },
   (table) => [
     foreignKey({ columns: [table.gameId], foreignColumns: [games.id] })
@@ -124,6 +129,10 @@ export const versions = sqliteTable(
     check(
       "versions_patch_size",
       sql`${table.patchSize} is null or ${table.patchSize} > 0`,
+    ),
+    check(
+      "versions_visibility",
+      sql`${table.visibility} in ('featured', 'normal', 'experimental', 'hidden')`,
     ),
   ],
 );
