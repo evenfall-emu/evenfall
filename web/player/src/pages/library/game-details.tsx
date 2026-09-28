@@ -276,9 +276,10 @@ export function GameDetails({
         >
           <p className="font-bold">Needs {game.missingFile}</p>
           <p className="text-1x5 text-muted">
-            Add your own copy
-            {latest.label ? ` to install ${latest.label}` : " to play"}. It
-            stays on this device.
+            {latest.patchAvailable
+              ? `Add your own copy to install ${latest.label}.`
+              : "No patch is available for this release. Add your own finished ROM to play."}{" "}
+            It stays on this device.
           </p>
         </Offer>
       )}

@@ -69,6 +69,12 @@ has two catalog games, each with its own base.
 [`hooks.json`](hooks.json) contains the short, game-specific hooks shown in
 the Library; the collections' complete blurbs remain in `description` for
 Show more. The builder requires a distinct concise hook for every game. A
+version uses the collection's release label unless
+[`version-labels.json`](version-labels.json) supplies a concise label for a
+selected archive or patch. Research notes and conflicting page claims are not
+version numbers; an unnumbered build remains unnumbered rather than acquiring
+an unsupported numeric release. These labels identify the selected files, not
+an author-confirmed release unless the attribution evidence says so. A
 version's project-page link is populated only from an author-controlled
 release thread, page or repository backed by the collection's evidence. For
 Fire Emblem the selected patch/version must also have `confirmed` attribution

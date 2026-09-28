@@ -58,6 +58,24 @@ describe("buildLibrary", () => {
     );
   });
 
+  it("requires the finished ROM rather than its base when no patch is hosted", () => {
+    const original = previewCatalog.versions.find(
+      (version) => version.gameId === "vision-quest",
+    )!;
+    const [unpatched] = buildLibrary(
+      {
+        games: previewCatalog.games.filter((item) => item.id === "vision-quest"),
+        versions: [{ ...original, patch: null }],
+      },
+      { games: [], playthroughs: [], cloud: [], jobs: [] },
+    );
+    expect(unpatched.availability).toBe("needs-file");
+    expect(unpatched.latest.patchAvailable).toBe(false);
+    expect(unpatched.wantedFiles).toEqual([
+      { sha1: original.outputSha1, title: "Fire Emblem: Vision Quest" },
+    ]);
+  });
+
   it("lists ROMs and cloud copies the catalog does not know", () => {
     const homebrew = sha(0x42);
     const library = buildLibrary(previewCatalog, {
@@ -143,7 +161,25 @@ describe("buildLibrary", () => {
       library
         .find((item) => item.id === "elite-redux")!
         .releases.map((item) => item.label),
-    ).toEqual(["v2.6", "v2.5", "v2.4", "vnightly"]);
+    ).toEqual(["v2.6", "v2.5", "v2.4", "nightly"]);
+  });
+
+  it("adds a version prefix only to numeric release labels", () => {
+    const original = previewCatalog.versions[0];
+    for (const [displayName, expected] of [
+      ["2.1.1-EX", "v2.1.1-EX"],
+      ["v1.334", "v1.334"],
+      ["Decisive Edition", "Decisive Edition"],
+    ]) {
+      const library = buildLibrary(
+        {
+          games: previewCatalog.games,
+          versions: [{ ...original, displayName }],
+        },
+        device,
+      );
+      expect(library[0].latest.label).toBe(expected);
+    }
   });
 
   it("joins local runs with cloud copies and outbox state", () => {

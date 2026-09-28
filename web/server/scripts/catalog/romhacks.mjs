@@ -17,6 +17,7 @@ const defaultPacks = {
 const seedPath = join(root, "server/src/romhacks.json");
 const json = (path) => JSON.parse(readFileSync(path, "utf8"));
 const hooks = json(join(root, "tools/catalog/hooks.json"));
+const versionLabels = json(join(root, "tools/catalog/version-labels.json"));
 // These Golden Sun records point to the author's forum post, release page or
 // repository. Other pageUrl values are third-party listings, not attribution.
 const goldenSunAuthorPages = new Set([0, 1, 2, 3, 4, 6, 7, 10, 11, 12, 13]);
@@ -249,6 +250,7 @@ export function buildSeed({ bases, releases }) {
       id === "elite-redux"
         ? "elite-redux-2.65-beta2"
         : `${id}-${release.outputSha1.slice(0, 12)}`;
+    const label = versionLabels[id] ?? release.version;
     const patch = release.patch && {
       url: `https://patches.evenfall-emu.org/${release.patchSha1}.${release.patch.split(".").at(-1)}`,
       format: release.patch.split(".").at(-1),
@@ -261,14 +263,14 @@ export function buildSeed({ bases, releases }) {
         id === "elite-redux"
           ? "v2.65-beta2-1048"
           : release.variant && !release.splitGame
-            ? `${release.version} (${release.variant})`
-            : release.version,
+            ? `${label} (${release.variant})`
+            : label,
       displayName:
         id === "elite-redux"
           ? "2.65 Beta2 (1048)"
           : release.variant && !release.splitGame
-            ? `${release.version} (${release.variant})`
-            : release.version,
+            ? `${label} (${release.variant})`
+            : label,
       outputSha1: release.outputSha1,
       requiredBaseId: release.baseSha1 ? byHash.get(release.baseSha1) : null,
       sourceRepositoryUrl:
@@ -291,6 +293,8 @@ export function buildSeed({ bases, releases }) {
       patches.set(key, release.patch);
     }
   }
+  for (const id of Object.keys(versionLabels))
+    if (!games.has(id)) throw new Error(`Version label has no game: ${id}`);
   return { games: [...games.values()], bases: baseRows, versions, patches };
 }
 

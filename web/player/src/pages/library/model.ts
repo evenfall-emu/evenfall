@@ -24,6 +24,7 @@ export type Release = {
   releasedAt: number | null;
   releaseNotes: string | null;
   sourceUrl: string | null;
+  patchAvailable: boolean;
   requiredBase: CatalogBase | null;
   /** Release IDs whose in-game saves are verified to load in this one. */
   saveCompatibleFrom: readonly string[];
@@ -93,11 +94,14 @@ function release(version: CatalogVersion, roms: Set<string>): Release {
   return {
     id: version.id,
     hash: version.outputSha1,
-    label: `v${version.displayName}`,
+    label: /^\d/.test(version.displayName)
+      ? `v${version.displayName}`
+      : version.displayName,
     installed: roms.has(version.outputSha1),
     releasedAt: version.releasedAt ? Date.parse(version.releasedAt) : null,
     releaseNotes: version.releaseNotes,
     sourceUrl: version.sourceRepositoryUrl,
+    patchAvailable: Boolean(version.patch),
     requiredBase: version.requiredBase,
     saveCompatibleFrom: version.saveCompatibleFrom,
   };
@@ -113,6 +117,7 @@ function unlisted(hash: string, installed: boolean): Release {
     releasedAt: null,
     releaseNotes: null,
     sourceUrl: null,
+    patchAvailable: false,
     requiredBase: null,
     saveCompatibleFrom: [],
   };
