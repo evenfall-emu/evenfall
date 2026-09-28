@@ -118,6 +118,13 @@
   body {
     @apply bg-canvas text-content;
   }
+  /* The legacy layer gives pages the browser's line height and their own
+     text color; Tailwind-built roots, including portaled popups, start from
+     Tailwind's again. Nested roots inherit from the outer one. */
+  [data-ui]:not([data-ui] *) {
+    @apply text-content;
+    line-height: 1.5;
+  }
   /* The face has one weight: never fake bold or italics, which smear pixels. */
   [data-ui] {
     font-synthesis: none;

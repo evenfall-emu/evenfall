@@ -48,7 +48,11 @@ The stylesheets that predate Tailwind (`console.css`, `about.css`,
 `legacy` cascade layer, above Tailwind's base styles and below its
 utilities. Their global element rules skip any subtree marked `data-ui`,
 which every Tailwind-built root carries, including popups rendered into a
-portal. Because they set a fluid root font size, `styles.css` restates
+portal. `console.css` also gives the page the browser's default line height
+and its cream text color in place of Tailwind's `1.5` and `text-content`, so
+legacy pages and game-plugin dashboards keep the metrics they were laid out
+on; the outermost `data-ui` roots set Tailwind's two values again. Because
+the legacy stylesheets set a fluid root font size, `styles.css` restates
 Tailwind's spacing, type, container and radius scales in pixels.
 
 ## Build and run

@@ -6,7 +6,9 @@
 :root {
   font-family: "VT323", monospace;
   font-size: clamp(19px, 1.55vw, 26px);
-  color: #fff0c8;
+  /* These pages are laid out on the browser's line height, not the 1.5 that
+     Tailwind's base styles set; styles.css restores 1.5 on [data-ui] roots. */
+  line-height: normal;
   background: #05243e;
   font-synthesis: none;
   color-scheme: dark;
@@ -22,6 +24,8 @@
 body {
   margin: 0;
   min-width: 360px;
+  /* On body, where Tailwind's base styles set their text color. */
+  color: #fff0c8;
   background: #05243e;
   min-height: 100vh;
 }
