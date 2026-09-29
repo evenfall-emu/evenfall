@@ -77,6 +77,26 @@ impl VideoMemory<'_> {
             }
             return;
         }
+        if width == AccessWidth::Half && address & 1 == 0 {
+            // Both bytes map alike and share a memo page.
+            let Some(index) = vram_index(address, self.dispcnt) else {
+                return;
+            };
+            let bytes = (value as u16).to_le_bytes();
+            let slot: &mut [u8; 2] =
+                (&mut self.vram[index..index + 2]).try_into().expect("two bytes");
+            if *slot != bytes {
+                self.memo.mark_vram(index);
+                *slot = bytes;
+            }
+            return;
+        }
+        self.write_vram_bytes(address, width, value);
+    }
+
+    /// A halfword or word VRAM write a byte at a time: the reference for
+    /// the halfword path above.
+    fn write_vram_bytes(&mut self, address: u32, width: AccessWidth, value: u32) {
         for offset in 0..width.bytes() {
             if let Some(index) = vram_index(address.wrapping_add(offset as u32), self.dispcnt) {
                 self.write_vram_byte(index, (value >> (offset * 8)) as u8);
@@ -467,4 +487,43 @@ impl Bus {
 /// the prefetch buffer's duty is valid until there.
 fn block_end(address: u32) -> u32 {
     (address | 0x1ffff).wrapping_add(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An aligned halfword VRAM write in one step stores, skips and marks
+    /// exactly what two byte writes do, in every display mode, across the
+    /// mirrors and the bitmap-mode hole.
+    #[test]
+    fn halfword_vram_writes_match_byte_writes() {
+        let mut seed = 0x1234_5679_u32;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let (mut fast, mut reference) = (Bus::init(&[]), Bus::init(&[]));
+        let mut writes = 0;
+        for trial in 0..20_000 {
+            let dispcnt = (trial % 6) as u16;
+            let address = 0x0600_0000 + (next() & 0x1_fffe);
+            let value = if trial % 3 == 0 { next() & 0xff } else { next() };
+            fast.dispcnt = dispcnt;
+            reference.dispcnt = dispcnt;
+            *fast.scanline_memo = Default::default();
+            *reference.scanline_memo = Default::default();
+            fast.video_memory().write_vram(address, AccessWidth::Half, value);
+            reference.video_memory().write_vram_bytes(address, AccessWidth::Half, value);
+            assert!(fast.vram[..] == reference.vram[..], "{address:08x} mode {dispcnt}");
+            assert!(
+                fast.scanline_memo.same_changes(&reference.scanline_memo),
+                "marks {address:08x} mode {dispcnt}"
+            );
+            writes += usize::from(vram_index(address, dispcnt).is_some());
+        }
+        assert!(writes > 15_000, "only {writes} writes reached VRAM");
+    }
 }

@@ -210,6 +210,15 @@ impl Bus {
         if self.dispcnt & 7 >= 3 { 0x14000 } else { 0x10000 }
     }
 
+    /// Whether this line's history can hold no further VRAM write, so that
+    /// [`Self::record_vram_write`] would record nothing: a write records two
+    /// segments per byte it snapshots, and at least one byte or none.
+    #[inline(always)]
+    pub(crate) fn vram_history_full(&self) -> bool {
+        self.backdrop_segment_line == self.ppu_timing.line
+            && usize::from(self.backdrop_segment_count) + 2 > MAX_SEGMENTS
+    }
+
     pub(crate) fn record_vram_write(&mut self, snapshot: VramWriteSnapshot) {
         let Some(x) = self.visible_dot() else {
             return;

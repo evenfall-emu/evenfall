@@ -3457,6 +3457,7 @@ impl Bus {
         // marks VRAM dirty and each beat still advances to its own endpoint.
         if usize::from(self.ppu_timing.line) >= SCREEN_HEIGHT
             || self.ppu_timing.cycle_in_line >= 960
+            || self.vram_history_full()
         {
             self.write_vram(address, width, value);
             return;
@@ -4726,5 +4727,50 @@ mod tests {
         assert_eq!(bus.external_inputs_consumed(), 1);
         bus.end_device_batch();
         bus.end_external_inputs();
+    }
+
+    /// VRAM writes during one visible line past the point where its history
+    /// is full record exactly what snapshotting and recording every write
+    /// records, in bitmap and tiled modes, with writes that change one byte,
+    /// both or none and writes into the bitmap-mode hole.
+    #[test]
+    fn vram_writes_skip_snapshots_only_when_history_is_full() {
+        let mut seed = 0x0bad_5eed_u32;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let mut skipped = 0;
+        for trial in 0..200 {
+            let (mut fast, mut reference) = (Bus::init(&[]), Bus::init(&[]));
+            for bus in [&mut fast, &mut reference] {
+                dma_half(bus, 0x0400_0000, [3, 4, 0][trial % 3]);
+                bus.elapse(5 * 1232 + 40);
+            }
+            for _ in 0..60 {
+                let address = 0x0600_0000 + (next() & 0x1_fffe);
+                let width = [AccessWidth::Byte, AccessWidth::Half, AccessWidth::Word]
+                    [(next() % 3) as usize];
+                let value = if next() & 1 == 0 { 0 } else { next() };
+                skipped += usize::from(fast.vram_history_full());
+                fast.write_vram_at_current_dot(address, width, value);
+                let snapshot = reference.snapshot_vram_write(address, width);
+                reference.write_vram(address, width, value);
+                reference.record_vram_write(snapshot);
+                let history = |bus: &Bus| {
+                    let count = usize::from(bus.backdrop_segment_count);
+                    let segments: Vec<_> = bus.backdrop_segments[..count]
+                        .iter()
+                        .map(|segment| (segment.start_x, segment.color))
+                        .collect();
+                    (bus.backdrop_segment_line, segments)
+                };
+                assert_eq!(history(&fast), history(&reference), "trial {trial}");
+                assert!(fast.vram[..] == reference.vram[..], "trial {trial}");
+            }
+        }
+        assert!(skipped > 2_000, "only {skipped} writes found the history full");
     }
 }
