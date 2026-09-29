@@ -56,6 +56,9 @@ struct Surfaces {
     top_meta: [u16; SCREEN_WIDTH],
     second: [u16; SCREEN_WIDTH],
     second_meta: [u16; SCREEN_WIDTH],
+    /// The backdrop's color and meta when the line showed nothing else;
+    /// the rows then hold an earlier line.
+    backdrop_only: Option<(u16, u16)>,
 }
 
 /// The front and minimum-priority object rows.
@@ -83,7 +86,13 @@ pub(crate) struct LineLayers {
 impl Default for LineLayers {
     fn default() -> Self {
         let plane = [0; SCREEN_WIDTH];
-        let surfaces = Surfaces { top: plane, top_meta: plane, second: plane, second_meta: plane };
+        let surfaces = Surfaces {
+            top: plane,
+            top_meta: plane,
+            second: plane,
+            second_meta: plane,
+            backdrop_only: None,
+        };
         Self {
             backgrounds: [[0; ROW]; 4],
             offsets: [0; 4],
@@ -142,7 +151,11 @@ impl Bus {
             }
         }
         self.resolve_window_masks(line);
-        self.tile_row_cache.prepare_palette(&self.palette);
+        // Layers and color effects read the decoded palette; a line of
+        // backdrop alone needs only its first color, read below.
+        if self.dispcnt & 0x1F00 != 0 || effects {
+            self.tile_row_cache.prepare_palette(&self.palette);
+        }
 
         let bldcnt = self.bldcnt;
         let effect = (bldcnt >> 6) & 3;
@@ -179,12 +192,12 @@ impl Bus {
         }
 
         let blend = effects && second;
-        let backdrop = self.tile_row_cache.words[0];
+        let backdrop = u16::from_le_bytes([self.palette[0], self.palette[1]]) & 0x7FFF;
         let backdrop_meta = meta(5, 4);
         let layers = &mut *self.line_layers;
+        layers.surfaces.backdrop_only = None;
         if count == 0 && !objects && !effects {
-            layers.surfaces.top.fill(backdrop);
-            layers.surfaces.top_meta.fill(backdrop_meta);
+            layers.surfaces.backdrop_only = Some((backdrop, backdrop_meta));
             self.frame_pixels[first..first + SCREEN_WIDTH].fill(backdrop);
             if self.green_swap_enabled {
                 self.apply_green_swap(line);
@@ -328,6 +341,13 @@ impl Bus {
         let surfaces = &self.line_layers.surfaces;
         let decode =
             |color: u16, meta: u16| (color, (meta >> PRIORITY_SHIFT) as u8, (meta & LAYER) as u8);
+        if let Some((color, meta)) = surfaces.backdrop_only {
+            return (
+                decode(color, meta),
+                false,
+                decode(surfaces.second[x], surfaces.second_meta[x]),
+            );
+        }
         (
             decode(surfaces.top[x], surfaces.top_meta[x]),
             surfaces.top_meta[x] & SEMI != 0,
@@ -551,6 +571,7 @@ mod tests {
             top_meta: [0; SCREEN_WIDTH],
             second: [0; SCREEN_WIDTH],
             second_meta: [0; SCREEN_WIDTH],
+            backdrop_only: None,
         };
         let (mut vector, mut scalar) = (empty, empty);
         let (mut vector_out, mut scalar_out) = ([0; SCREEN_WIDTH], [0; SCREEN_WIDTH]);
