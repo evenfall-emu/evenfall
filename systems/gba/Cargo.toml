@@ -1,6 +1,7 @@
 [package]
 name = "evenfall-gba"
 description = "A deterministic, cycle-aware Game Boy Advance core"
+autotests = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

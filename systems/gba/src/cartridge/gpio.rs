@@ -357,7 +357,7 @@ impl Rtc {
             self.transfer = Transfer::Complete;
             return;
         }
-        self.register = command >> 4;
+        self.register = (command >> 4) & 7;
         self.payload_length = [0, 0, 7, 0, 1, 0, 3, 0][self.register as usize];
         self.byte_index = 0;
         let reading = command & 0x80 != 0;
