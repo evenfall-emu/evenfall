@@ -10,11 +10,10 @@ const WINDOW_KEY_INVALID: u64 = 1 << 63;
 impl Bus {
     pub(crate) fn render_scanline(&mut self, line: usize) {
         self.object_line_index = 0xFFFF;
-        let registers = self.scanline_registers();
         if self.scanline_memo.changes_registers {
-            self.scanline_memo.set_registers(registers);
+            self.scanline_memo.set_registers(self.scanline_registers());
         } else if scanline_memo::CHECK {
-            self.scanline_memo.verify_registers(registers);
+            self.scanline_memo.verify_registers(self.scanline_registers());
         }
         self.scanline_memo.observe(
             line,
@@ -144,7 +143,7 @@ impl Bus {
             self.finish_scanline(line, &history);
             return;
         }
-        if mode <= 2 {
+        if mode <= 2 && self.dispcnt & 0x0F00 != 0 {
             'passes: for priority in 0..4 {
                 let range = match mode {
                     0 => 0..4,

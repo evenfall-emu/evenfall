@@ -84,9 +84,8 @@ impl Bus {
         row: &TextRow,
         source_start: usize,
         length: usize,
-        simple: bool,
+        lanes: &TextLanes,
     ) {
-        let lanes = self.text_open_lanes(layout, x, length, simple);
         if row.fully_opaque && source_start == 0 && length == 8 && lanes.top == [true; 8] {
             let i = layout.first + x;
             self.frame_pixels[i..i + 8].copy_from_slice(&row.colors);
@@ -164,8 +163,12 @@ impl Bus {
             let column = (world_x / 8) & (width / 8 - 1);
             let start = world_x % 8;
             let length = (8 - start).min(SCREEN_WIDTH - x);
-            if let Some(row) = self.decode_text_row(entries[column], row_bases[column], color_256) {
-                self.write_text_row(&layout, x, &row, start, length, simple);
+            let lanes = self.text_open_lanes(&layout, x, length, simple);
+            if (lanes.top.contains(&true) || lanes.second.contains(&true))
+                && let Some(row) =
+                    self.decode_text_row(entries[column], row_bases[column], color_256)
+            {
+                self.write_text_row(&layout, x, &row, start, length, &lanes);
             }
             x += length;
         }
@@ -303,8 +306,10 @@ impl Bus {
                 if control & (1 << 13) == 0 {
                     continue;
                 }
-                source_x = source_x.rem_euclid(dimension);
-                source_y = source_y.rem_euclid(dimension);
+                // Affine dimensions are powers of two: masking is Euclidean
+                // modulo even for negative source coordinates.
+                source_x &= dimension - 1;
+                source_y &= dimension - 1;
             }
             let sx = source_x as usize;
             let sy = source_y as usize;
