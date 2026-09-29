@@ -1,5 +1,4 @@
-//! Thumb code running from IWRAM, EWRAM or Game Pak ROM with the prefetch
-//! buffer disabled.
+//! Thumb code running from IWRAM, EWRAM or Game Pak ROM.
 //!
 //! Flags are lazy: N and Z come from a sign-extended result, C from a bit
 //! and V from bit 31 of an overflow word, so a flag-setting instruction
@@ -7,11 +6,16 @@
 //!
 //! RAM fetches cost the same whether sequential or not. A ROM fetch without
 //! prefetch is sequential unless the instruction before it accessed data or
-//! spent internal cycles, so a ROM run carries the cost of its next fetch.
+//! spent internal cycles, so such a run carries the cost of its next fetch.
+//! With the prefetch buffer enabled, a run follows the Thumb ROM kernel's
+//! closed-form schedule of the buffer (see [`PrefetchClock`]), expressed in
+//! the run's budget.
 
 use super::mem::{Mem, Running};
 use super::{Op, PAGE_SHIFT, ROM_PAGE_SLOTS, fresh_ops, split_memory};
-use crate::bus::{AccessKind, AccessWidth, Bus, EWRAM_SIZE, IWRAM_SIZE, read_ram};
+use crate::bus::{
+    AccessKind, AccessWidth, Bus, EWRAM_SIZE, IWRAM_SIZE, PrefetchClock, RomData, read_ram,
+};
 use evenfall_cpu_arm::{Core, InstructionSet, Pipeline};
 
 /// Op kinds; ALU, register-offset transfer and conditional branch kinds are
@@ -56,6 +60,10 @@ mod k {
     pub const B: u8 = 26;
     pub const BL_HI: u8 = 27;
     pub const BL_LO: u8 = 28;
+    /// Branches through a high register: ADD pc, MOV pc, and BX to Thumb.
+    pub const ADD_PC_H: u8 = 29;
+    pub const MOV_PC_H: u8 = 30;
+    pub const BX: u8 = 31;
     /// Format 4 ALU operations, plus the opcode.
     pub const ALU: u8 = 32;
     /// Register-offset transfers, plus the opcode (STR, STRH, STRB, LDRSB,
@@ -102,14 +110,16 @@ pub(super) fn decode(i: u16) -> Op {
             op(kind, high, high, imm8)
         }
         0x40..=0x43 => op(k::ALU + ((i >> 6) & 15) as u8, low, mid, 0),
-        0x44..=0x46 => {
+        0x44..=0x47 => {
             let rd = (i & 7) | ((i >> 4) & 8);
             let rs = (i >> 3) & 15;
             match (i >> 8) & 3 {
                 0 if rd != 15 => op(k::ADD_H, rd, rs, 0),
+                0 => op(k::ADD_PC_H, 0, rs, 0),
                 1 => op(k::CMP_H, rd, rs, 0),
                 2 if rd != 15 => op(k::MOV_H, rd, rs, 0),
-                _ => EXIT_OP,
+                2 => op(k::MOV_PC_H, 0, rs, 0),
+                _ => op(k::BX, 0, rs, 0),
             }
         }
         0x48..=0x4f => op(k::LDR_PC, high, 0, imm8 << 2),
@@ -147,12 +157,24 @@ fn mode(i: u16, store: u8, load: u8) -> u8 {
 trait Timing: Copy {
     /// The fetch of the instruction about to run.
     fn fetch(self, h: &Hot) -> i64;
-    /// Notes whether the instruction that ran accessed data or spent
-    /// internal cycles, which makes the next fetch nonsequential.
-    fn after(self, h: &mut Hot, breaking: bool);
-    /// A branch's two refill fetches at `target`, after which fetches are
-    /// sequential.
-    fn refill(self, h: &mut Hot, target: u32) -> i64;
+    /// Advances fetch state after an instruction that ran from budget
+    /// `before`; `breaking` if it accessed data or spent internal cycles.
+    fn after(self, h: &mut Hot, before: i64, breaking: bool);
+    /// A branch's two refill fetches at `target`, from the state after the
+    /// branch instruction; `head` is the address the buffer was fetching.
+    fn refill(self, h: &mut Hot, target: u32, head: u32) -> i64;
+    /// Extra cycles of a ROM data load by an instruction that runs from
+    /// budget `before`, or None if the engine must leave it.
+    fn rom_load(
+        self,
+        h: &Hot,
+        before: i64,
+        rom: &RomData<'_>,
+        address: u32,
+        width: AccessWidth,
+    ) -> Option<i64>;
+    /// A ROM data load stopped the buffer.
+    fn discard(self, h: &mut Hot, c: &mut Ctx<'_>);
 }
 
 #[derive(Clone, Copy)]
@@ -164,11 +186,17 @@ impl<const EW: bool> Timing for Ram<EW> {
         if EW { 3 } else { 1 }
     }
     #[inline(always)]
-    fn after(self, _h: &mut Hot, _breaking: bool) {}
+    fn after(self, _h: &mut Hot, _before: i64, _breaking: bool) {}
     #[inline(always)]
-    fn refill(self, h: &mut Hot, _target: u32) -> i64 {
+    fn refill(self, h: &mut Hot, _target: u32, _head: u32) -> i64 {
         2 * self.fetch(h)
     }
+    #[inline(always)]
+    fn rom_load(self, _: &Hot, _: i64, _: &RomData<'_>, _: u32, _: AccessWidth) -> Option<i64> {
+        Some(0)
+    }
+    #[inline(always)]
+    fn discard(self, _h: &mut Hot, _c: &mut Ctx<'_>) {}
 }
 
 /// Game Pak ROM with the prefetch buffer disabled: every fetch is a plain
@@ -185,13 +213,85 @@ impl Timing for Rom {
         h.fetch
     }
     #[inline(always)]
-    fn after(self, h: &mut Hot, breaking: bool) {
+    fn after(self, h: &mut Hot, _before: i64, breaking: bool) {
         h.fetch = if breaking { self.n } else { self.s };
     }
     #[inline(always)]
-    fn refill(self, h: &mut Hot, target: u32) -> i64 {
+    fn refill(self, h: &mut Hot, target: u32, _head: u32) -> i64 {
         h.fetch = self.s;
         self.n + if (target + 2) & 0x1ffff == 0 { self.n } else { self.s }
+    }
+    #[inline(always)]
+    fn rom_load(self, _: &Hot, _: i64, _: &RomData<'_>, _: u32, _: AccessWidth) -> Option<i64> {
+        Some(0)
+    }
+    #[inline(always)]
+    fn discard(self, _h: &mut Hot, _c: &mut Ctx<'_>) {}
+}
+
+/// Game Pak ROM with the prefetch buffer enabled. In budget terms, the
+/// buffer head is ready when the budget reaches `h.ready`; each fetch waits
+/// for it and the buffer runs one `duty` ahead, at most `fill` early.
+#[derive(Clone, Copy)]
+struct Prefetch {
+    duty: i64,
+    miss: i64,
+    fill: i64,
+}
+
+impl Timing for Prefetch {
+    #[inline(always)]
+    fn fetch(self, h: &Hot) -> i64 {
+        (h.budget - h.ready).max(1)
+    }
+    #[inline(always)]
+    fn after(self, h: &mut Hot, before: i64, _breaking: bool) {
+        h.ready = h.ready.min(before + self.fill) - self.duty;
+    }
+    #[inline(always)]
+    fn refill(self, h: &mut Hot, target: u32, head: u32) -> i64 {
+        let clock = h.budget;
+        let offset = target.wrapping_sub(head);
+        if offset != 0 {
+            let lands = h.ready.min(clock + self.fill) - i64::from(offset / 2) * self.duty;
+            h.ready = if offset < 16 && lands < clock && lands + self.duty >= clock {
+                lands
+            } else {
+                clock - self.miss
+            };
+        }
+        let mut budget = clock;
+        for _ in 0..2 {
+            let before = budget;
+            budget = (before - 1).min(h.ready);
+            h.ready = h.ready.min(before + self.fill) - self.duty;
+        }
+        clock - budget
+    }
+    #[inline(always)]
+    fn rom_load(
+        self,
+        h: &Hot,
+        before: i64,
+        rom: &RomData<'_>,
+        address: u32,
+        width: AccessWidth,
+    ) -> Option<i64> {
+        if address >= 0x0d00_0000 || !rom.plain(address, width.bytes() as u32) {
+            return None;
+        }
+        // A data access that meets a buffer fetch in flight waits a cycle.
+        let fetched = before - (before - h.ready).max(1);
+        let ready = h.ready.min(before + self.fill) - self.duty;
+        let next = fetched - 1;
+        let ahead = ready - next;
+        Some(i64::from(ahead >= 0 && ahead <= self.fill && ahead % self.duty == 0))
+    }
+    #[inline(always)]
+    fn discard(self, h: &mut Hot, c: &mut Ctx<'_>) {
+        // The load's internal cycle ends as the buffer restarts.
+        h.ready = h.budget - self.miss;
+        c.discard_mark = h.budget;
     }
 }
 
@@ -222,10 +322,12 @@ struct Ctx<'a> {
     place: Place,
     /// The address of the page's first slot.
     base: u32,
-    /// The budget left after the last load, store and internal cycle.
+    /// The budget left after the last load, store, internal cycle and
+    /// buffer discard.
     load_mark: i64,
     store_mark: i64,
     internal_mark: i64,
+    discard_mark: i64,
     /// The last load's bus value, the open-bus latch if it ends the run.
     data: u32,
     /// Whether every slot of the page and the halfwords after them are
@@ -273,8 +375,10 @@ struct Hot {
     nz: i64,
     /// V, in bit 31.
     overflow: u32,
-    /// The cost of the next fetch, for ROM runs.
+    /// The cost of the next fetch, without prefetch.
     fetch: i64,
+    /// The budget at which the prefetch buffer's head is ready.
+    ready: i64,
 }
 
 /// N and Z both set, which no result produces.
@@ -354,6 +458,7 @@ impl Hot {
             nz,
             overflow: (cpsr & (1 << 28)) << 3,
             fetch: 0,
+            ready: 0,
         }
     }
 
@@ -410,6 +515,7 @@ fn run_ram<const EW: bool>(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
         load_mark: -1,
         store_mark: -1,
         internal_mark: -1,
+        discard_mark: -1,
         data: 0,
         clean: true,
     };
@@ -446,29 +552,34 @@ fn run_ram<const EW: bool>(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
 
 fn run_rom(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
     let pc = core.next_instruction_address;
-    // With the prefetch buffer enabled, the Thumb ROM kernel prices fetches.
-    if pc & 1 != 0
-        || bus.waitcnt & (1 << 14) != 0
-        || bus.game_pak_prefetch.active
-        || bus.prefetch_buffer_was_disabled
-    {
+    if pc & 1 != 0 {
         return false;
     }
+    let start = bus.now();
     let first_fetch_n =
         bus.fetch_kind == AccessKind::Nonsequential || bus.prefetch_disabled_bug_pending;
-    let start = bus.now();
+    let prefetch = if bus.waitcnt & (1 << 14) != 0 {
+        let memory = bus.engine_memory();
+        let (miss, _) = memory.rom.window_cycles(pc);
+        let Some(clock) = bus.thumb_prefetch_entry(pc) else {
+            return false;
+        };
+        Some((clock, miss))
+    } else if bus.game_pak_prefetch.active || bus.prefetch_buffer_was_disabled {
+        return false;
+    } else {
+        None
+    };
     let memory = bus.engine_memory();
     let (n, s) = memory.rom.window_cycles(pc);
-    let timing = Rom { n: n as i64, s: s as i64 };
     let (mem, pages) = split_memory(memory);
     if pages.is_empty() {
         pages.resize_with(mem.rom.len().div_ceil(PAGE_BYTES as usize).max(1), || None);
     }
-    let Some(mut ops) = pages.get_mut(page_of(pc)).map(|page| page.take().unwrap_or_else(rom_page))
-    else {
+    let Some(slot) = pages.get_mut(page_of(pc)) else {
         return false;
     };
-    let mut page = page_of(pc);
+    let ops = slot.take().unwrap_or_else(rom_page);
     let mut c = Ctx {
         mem,
         place: Place::Rom,
@@ -476,37 +587,87 @@ fn run_rom(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
         load_mark: -1,
         store_mark: -1,
         internal_mark: -1,
+        discard_mark: -1,
         data: 0,
         clean: false,
     };
     c.clean = clean_page(&c);
     let budget = (limit - start) as i64;
-    let mut exit = None;
-    if let Some(mut hot) = enter(core, &c, pc, budget) {
-        hot.fetch = if first_fetch_n { timing.n } else { timing.s };
-        loop {
-            let slots = (&mut *ops).try_into().expect("ROM Thumb page");
-            let (next, stop) = run_loop::<ROM_PAGE_SLOTS, _>(slots, &mut c, core, timing, hot);
-            hot = next;
-            let Stop::Far(target) = stop else {
-                break;
-            };
-            let next_page = pages[page_of(target)].take().unwrap_or_else(rom_page);
-            pages[page] = Some(std::mem::replace(&mut ops, next_page));
-            page = page_of(target);
-            c.base = target & !(PAGE_BYTES - 1);
-            c.clean = clean_page(&c);
-            hot.idx = (target & (PAGE_BYTES - 1)) >> 1;
+    let (exit, ready) = match (enter(core, &c, pc, budget), prefetch) {
+        (None, _) => {
+            pages[page_of(pc)] = Some(ops);
+            return false;
         }
-        exit = leave(core, &c, hot, start, budget);
-    }
-    pages[page] = Some(ops);
+        (Some(mut hot), None) => {
+            hot.fetch = (if first_fetch_n { n } else { s }) as i64;
+            let timing = Rom { n: n as i64, s: s as i64 };
+            rom_runs(core, &mut c, pages, ops, hot, timing, start, budget)
+        }
+        (Some(mut hot), Some((clock, miss))) => {
+            hot.ready = limit as i64 - clock.head_ready as i64;
+            let timing =
+                Prefetch { duty: clock.duty as i64, miss: miss as i64, fill: clock.fill as i64 };
+            rom_runs(core, &mut c, pages, ops, hot, timing, start, budget)
+        }
+    };
     let Some(exit) = exit else {
         return false;
     };
-    bus.engine_finish(exit.cycle, exit.open_bus, exit.data_last);
-    bus.prefetch_disabled_bug_pending = exit.internal_last;
+    let pc = core.next_instruction_address;
+    match prefetch {
+        None => {
+            bus.engine_finish(exit.cycle, exit.open_bus, exit.data_last);
+            bus.prefetch_disabled_bug_pending = exit.internal_last;
+        }
+        Some((clock, _)) => {
+            let clock = PrefetchClock { head_ready: (limit as i64 - ready) as u64, ..clock };
+            if exit.load_last {
+                bus.open_bus_value = exit.open_bus;
+            }
+            bus.thumb_prefetch_finish(
+                pc,
+                exit.cycle,
+                &clock,
+                exit.discarded,
+                exit.data_last,
+                exit.load_last,
+                exit.open_bus,
+            );
+        }
+    }
     true
+}
+
+/// Runs ROM pages from `hot` until a run stops, switching pages on far
+/// branches; returns what the run leaves and the final buffer readiness.
+#[allow(clippy::too_many_arguments)]
+fn rom_runs<T: Timing>(
+    core: &mut Core,
+    c: &mut Ctx<'_>,
+    pages: &mut [Option<Box<[Op]>>],
+    mut ops: Box<[Op]>,
+    mut hot: Hot,
+    timing: T,
+    start: u64,
+    budget: i64,
+) -> (Option<Exit>, i64) {
+    let mut page = page_of(c.base);
+    loop {
+        let slots = (&mut *ops).try_into().expect("ROM Thumb page");
+        let (next, stop) = run_loop::<ROM_PAGE_SLOTS, _>(slots, c, core, timing, hot);
+        hot = next;
+        let Stop::Far(target) = stop else {
+            break;
+        };
+        let next_page = pages[page_of(target)].take().unwrap_or_else(rom_page);
+        pages[page] = Some(std::mem::replace(&mut ops, next_page));
+        page = page_of(target);
+        c.base = target & !(PAGE_BYTES - 1);
+        c.clean = clean_page(c);
+        hot.idx = (target & (PAGE_BYTES - 1)) >> 1;
+    }
+    pages[page] = Some(ops);
+    (leave(core, c, hot, start, budget), hot.ready)
 }
 
 /// Bytes of Game Pak ROM per page of Thumb ops.
@@ -523,7 +684,8 @@ fn rom_page() -> Box<[Op]> {
 /// Whether the ROM page at `c.base` and the halfwords just after it are
 /// plain image bytes, so that any branch within it may run.
 fn clean_page(c: &Ctx<'_>) -> bool {
-    c.mem.rom.plain(c.base, PAGE_BYTES + 4)
+    // The last page of a 128 KiB block holds code the buffer cannot run.
+    (c.base + PAGE_BYTES) & 0x1ffff != 0 && c.mem.rom.plain(c.base, PAGE_BYTES + 4)
 }
 
 /// The state of a run at its first instruction, if the pipeline holds what
@@ -541,7 +703,9 @@ struct Exit {
     cycle: u64,
     open_bus: u32,
     data_last: bool,
+    load_last: bool,
     internal_last: bool,
+    discarded: bool,
 }
 
 /// Publishes the CPU state after a run; None if no instruction ran.
@@ -562,7 +726,9 @@ fn leave(core: &mut Core, c: &Ctx<'_>, hot: Hot, start: u64, budget: i64) -> Opt
         cycle: start + spent as u64,
         open_bus: if loaded { c.data } else { pipeline[1] },
         data_last: loaded || c.store_mark == hot.budget,
+        load_last: loaded,
         internal_last: c.internal_mark == hot.budget,
+        discarded: c.discard_mark == hot.budget,
     })
 }
 
@@ -785,6 +951,18 @@ fn run_ops<const N: usize, T: Timing>(
                 }
                 go!(h, flow)
             }
+            k::ADD_PC_H | k::MOV_PC_H | k::BX => {
+                let pc4 = c.pc(h.idx).wrapping_add(4);
+                r[15] = pc4;
+                let source = r[usize::from(op.rn)];
+                let target = match op.kind {
+                    k::ADD_PC_H => pc4.wrapping_add(source),
+                    // BX to ARM switches instruction sets: the interpreter's.
+                    k::BX if source & 1 == 0 => return (h, Stop::Refused),
+                    _ => source,
+                } & !1;
+                go!(h, jump::<N, T>(&mut h, c, t, slot_of(c, target), 0))
+            }
             32 => go!(h, logical(&mut h, t, r, op, |a, b| a & b)),
             33 => go!(h, logical(&mut h, t, r, op, |a, b| a ^ b)),
             34 => go!(h, shift::<N, T>(&mut h, c, t, r, op, 0)),
@@ -908,12 +1086,13 @@ fn decode_slot(ops: &mut [Op], c: &mut Ctx<'_>, idx: u32) {
 /// An instruction with only its fetch.
 #[inline(always)]
 fn alu<T: Timing>(h: &mut Hot, t: T, body: impl FnOnce(&mut Hot)) -> Flow {
+    let before = h.budget;
     if !h.charge(t.fetch(h)) {
         return Flow::Refused;
     }
     body(h);
     h.idx += 1;
-    t.after(h, false);
+    t.after(h, before, false);
     Flow::Next
 }
 
@@ -941,12 +1120,13 @@ fn internal<T: Timing>(
     cycles: i64,
     body: impl FnOnce(&mut Hot),
 ) -> Flow {
+    let before = h.budget;
     if !h.charge(t.fetch(h) + cycles) {
         return Flow::Refused;
     }
     body(h);
     h.idx += 1;
-    t.after(h, true);
+    t.after(h, before, true);
     c.internal_mark = h.budget;
     Flow::Next
 }
@@ -997,16 +1177,25 @@ fn jump<const N: usize, T: Timing>(
 ) -> Flow {
     let target = c.pc(slot);
     if (slot as usize) < N && (c.clean || c.code(target).is_some()) {
-        let mut next = *h;
-        let refill = t.refill(&mut next, target);
-        if !next.charge(t.fetch(h) + extra + refill) {
+        let Some(next) = branch(*h, c, t, target, extra) else {
             return Flow::Refused;
-        }
-        next.idx = slot;
-        *h = next;
+        };
+        *h = Hot { idx: slot, ..next };
         return Flow::Next;
     }
     far_jump(h, c, t, target, extra)
+}
+
+/// The state after a branch to `target`, if it fits.
+#[inline(always)]
+fn branch<T: Timing>(h: Hot, c: &Ctx<'_>, t: T, target: u32, extra: i64) -> Option<Hot> {
+    let mut next = h;
+    if !next.charge(t.fetch(&h) + extra) {
+        return None;
+    }
+    t.after(&mut next, h.budget, extra != 0);
+    let refill = t.refill(&mut next, target, c.pc(h.idx).wrapping_add(6));
+    next.charge(refill).then_some(next)
 }
 
 /// A branch out of the page, if the target is code the engine may run in
@@ -1026,14 +1215,9 @@ fn far_jump<T: Timing>(h: &mut Hot, c: &mut Ctx<'_>, t: T, target: u32, extra: i
             target >> 24 == region && target & !mask != (region << 24 | (0x00ff_ffff & !mask))
         }
     };
-    if !same {
+    let Some(next) = same.then(|| branch(*h, c, t, target, extra)).flatten() else {
         return Flow::Refused;
-    }
-    let mut next = *h;
-    let refill = t.refill(&mut next, target);
-    if !next.charge(t.fetch(h) + extra + refill) {
-        return Flow::Refused;
-    }
+    };
     *h = next;
     Flow::Far(target)
 }
@@ -1096,19 +1280,30 @@ fn transfer<const N: usize, T: Timing, const MODE: u8>(
         let Some(cycles) = c.mem.store_cycles(running(c, ops, h.idx), bus_address, width) else {
             return Flow::Refused;
         };
+        let before = h.budget;
         if !h.charge(t.fetch(h) + cycles) {
             return Flow::Refused;
         }
         c.mem.store(bus_address, width, r[usize::from(op.rd)]);
         h.idx += 1;
-        t.after(h, true);
+        t.after(h, before, true);
         c.store_mark = h.budget;
         return Flow::Next;
     }
     let Some((value, cycles)) = c.mem.load(bus_address, width) else {
         return Flow::Refused;
     };
-    if !h.charge(t.fetch(h) + cycles + 1) {
+    let before = h.budget;
+    let rom = bus_address >> 24 >= 8;
+    let collision = if rom {
+        let Some(collision) = t.rom_load(h, before, &c.mem.rom, bus_address, width) else {
+            return Flow::Refused;
+        };
+        collision
+    } else {
+        0
+    };
+    if !h.charge(t.fetch(h) + cycles + collision + 1) {
         return Flow::Refused;
     }
     r[usize::from(op.rd)] = match MODE {
@@ -1120,7 +1315,10 @@ fn transfer<const N: usize, T: Timing, const MODE: u8>(
         _ => value,
     };
     h.idx += 1;
-    t.after(h, true);
+    t.after(h, before, true);
+    if rom {
+        t.discard(h, c);
+    }
     c.data = value;
     c.load_mark = h.budget;
     c.internal_mark = h.budget;
@@ -1159,6 +1357,7 @@ fn push<const N: usize, T: Timing>(
     {
         return Flow::Refused;
     }
+    let before = h.budget;
     if !h.charge(t.fetch(h) + i64::from(count) * per_word) {
         return Flow::Refused;
     }
@@ -1173,7 +1372,7 @@ fn push<const N: usize, T: Timing>(
     }
     r[13] = start;
     h.idx += 1;
-    t.after(h, true);
+    t.after(h, before, true);
     c.store_mark = h.budget;
     Flow::Next
 }
@@ -1206,13 +1405,14 @@ fn pop<const N: usize, T: Timing>(
         }
         return flow;
     }
+    let before = h.budget;
     if !h.charge(t.fetch(h) + data) {
         return Flow::Refused;
     }
     load_block(c, r, first, list);
     r[13] = start.wrapping_add(count * 4);
     h.idx += 1;
-    t.after(h, true);
+    t.after(h, before, true);
     c.load_mark = h.budget;
     c.internal_mark = h.budget;
     Flow::Next
@@ -1260,6 +1460,7 @@ fn multiple<const N: usize, T: Timing>(
             return Flow::Refused;
         }
     }
+    let before = h.budget;
     if !h.charge(t.fetch(h) + i64::from(count) * per_word + i64::from(load)) {
         return Flow::Refused;
     }
@@ -1283,7 +1484,7 @@ fn multiple<const N: usize, T: Timing>(
         r[rb] = final_base;
     }
     h.idx += 1;
-    t.after(h, true);
+    t.after(h, before, true);
     if load {
         c.load_mark = h.budget;
         c.internal_mark = h.budget;

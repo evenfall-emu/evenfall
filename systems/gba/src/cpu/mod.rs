@@ -3,9 +3,8 @@
 pub(crate) mod engine;
 
 use crate::bus::{
-    Access, AccessKind, AccessSource, AccessWidth, ArmIwramExecutionRegion, Bus,
-    InstructionFetchRegion, PowerState, ThumbRomRun, ThumbStream, begin_arm_iwram_slice,
-    fetch_arm_iwram_in_slice, is_arm_iwram_slice_fetch,
+    Access, AccessKind, AccessSource, AccessWidth, Bus, InstructionFetchRegion, PowerState,
+    ThumbStream, begin_arm_iwram_slice, fetch_arm_iwram_in_slice, is_arm_iwram_slice_fetch,
 };
 pub use crate::multiboot::{
     Encoder as MultiBootEncoder, Mode as MultiBootMode, Parameters as MultiBootParameters,
@@ -13,47 +12,6 @@ pub use crate::multiboot::{
 use evenfall_cpu_arm::{Core, Pipeline};
 use evenfall_state::Codec;
 use std::ops::{Deref, DerefMut};
-
-/// Diagnostic only: one atomic update per attempted kernel entry, not per opcode.
-#[cfg(feature = "kernel-census")]
-mod census {
-    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
-
-    // attempts, productive entries, instructions, branches, zero/one/2-7/8-31/32+ lengths.
-    pub static ARM: [AtomicU64; 9] = [const { AtomicU64::new(0) }; 9];
-    pub static THUMB: [AtomicU64; 9] = [const { AtomicU64::new(0) }; 9];
-    pub static ARM_CLASS: [AtomicU64; 9] = [const { AtomicU64::new(0) }; 9];
-    pub static THUMB_CLASS: [AtomicU64; 16] = [const { AtomicU64::new(0) }; 16];
-
-    pub fn entry(counters: &[AtomicU64; 9], instructions: u64, branches: u64) {
-        counters[1].fetch_add(u64::from(instructions != 0), Relaxed);
-        counters[2].fetch_add(instructions, Relaxed);
-        counters[3].fetch_add(branches, Relaxed);
-        let bin = match instructions {
-            0 => 4,
-            1 => 5,
-            2..=7 => 6,
-            8..=31 => 7,
-            _ => 8,
-        };
-        counters[bin].fetch_add(1, Relaxed);
-    }
-}
-
-#[cfg(feature = "kernel-census")]
-pub fn kernel_census() -> [[u64; 9]; 2] {
-    use std::sync::atomic::Ordering::Relaxed;
-    [&census::ARM, &census::THUMB].map(|counters| counters.each_ref().map(|v| v.load(Relaxed)))
-}
-
-#[cfg(feature = "kernel-census")]
-pub fn kernel_classes() -> ([u64; 9], [u64; 16]) {
-    use std::sync::atomic::Ordering::Relaxed;
-    (
-        census::ARM_CLASS.each_ref().map(|v| v.load(Relaxed)),
-        census::THUMB_CLASS.each_ref().map(|v| v.load(Relaxed)),
-    )
-}
 
 pub use evenfall_cpu_arm::{ExecuteResult, InstructionSet};
 
@@ -138,113 +96,6 @@ impl evenfall_cpu_arm::Bus for Bus {
 
     #[inline]
     fn finish_cpu_ram_store_block(&mut self, cycles: evenfall_cpu_arm::Cycle) {
-        self.finish_cpu_ram_store_block(cycles);
-    }
-}
-
-impl evenfall_cpu_arm::Bus for ArmIwramExecutionRegion<'_> {
-    #[inline]
-    fn read_cpu_data(
-        &mut self,
-        address: u32,
-        width: evenfall_cpu_arm::AccessWidth,
-        kind: evenfall_cpu_arm::AccessKind,
-    ) -> u32 {
-        self.read_cpu_data(address, width.into(), kind.into())
-    }
-
-    #[inline]
-    fn write_cpu_data(
-        &mut self,
-        address: u32,
-        width: evenfall_cpu_arm::AccessWidth,
-        kind: evenfall_cpu_arm::AccessKind,
-        value: u32,
-    ) {
-        self.write(
-            Access {
-                address,
-                width: width.into(),
-                kind: kind.into(),
-                source: AccessSource::CpuData,
-            },
-            value,
-        );
-    }
-
-    #[inline]
-    fn elapse_cpu_internal(&mut self, cycles: u64) {
-        self.elapse_cpu_internal(cycles);
-    }
-
-    // The ARM kernel's block preflight admits RAM, but the shared executor
-    // uses its ordinary per-beat path rather than a second optimized path.
-    fn cpu_ram_word(&self, _address: u32) -> u32 {
-        unreachable!("the ARM region does not admit a fast block")
-    }
-    fn set_cpu_ram_word(&mut self, _address: u32, _value: u32) {
-        unreachable!("the ARM region does not admit a fast block")
-    }
-    fn finish_cpu_ram_load_block(&mut self, _cycles: u64, _last_word: u32) {
-        unreachable!("the ARM region does not admit a fast block")
-    }
-    fn finish_cpu_ram_store_block(&mut self, _cycles: u64) {
-        unreachable!("the ARM region does not admit a fast block")
-    }
-}
-
-impl evenfall_cpu_arm::Bus for ThumbRomRun<'_> {
-    #[inline]
-    fn read_cpu_data(
-        &mut self,
-        address: u32,
-        width: evenfall_cpu_arm::AccessWidth,
-        kind: evenfall_cpu_arm::AccessKind,
-    ) -> u32 {
-        self.read_cpu_data(address, width.into(), kind.into())
-    }
-
-    #[inline]
-    fn write_cpu_data(
-        &mut self,
-        address: u32,
-        width: evenfall_cpu_arm::AccessWidth,
-        _kind: evenfall_cpu_arm::AccessKind,
-        value: u32,
-    ) {
-        self.write_cpu_data(
-            Access {
-                address,
-                width: width.into(),
-                kind: AccessKind::Nonsequential,
-                source: AccessSource::CpuData,
-            },
-            value,
-        );
-    }
-
-    #[inline]
-    fn elapse_cpu_internal(&mut self, cycles: u64) {
-        self.elapse_cpu_internal(cycles);
-    }
-
-    fn cpu_ram_block_cycles(&self, first: u32, beats: u32, internal: u64) -> Option<u64> {
-        self.cpu_ram_block_cycles(first, beats, internal)
-    }
-
-    fn cpu_ram_word(&self, address: u32) -> u32 {
-        self.cpu_ram_word(address)
-    }
-
-    fn set_cpu_ram_word(&mut self, address: u32, value: u32) {
-        self.set_cpu_ram_word(address, value);
-    }
-
-    fn finish_cpu_ram_load_block(&mut self, cycles: u64, last_word: u32) {
-        self.finish_cpu_ram_load_block(cycles, last_word);
-    }
-
-    fn finish_cpu_ram_store_block(&mut self, cycles: u64) {
         self.finish_cpu_ram_store_block(cycles);
     }
 }
@@ -1104,306 +955,10 @@ impl Cpu {
         }
     }
 
-    #[cfg(feature = "kernel-stage-profile")]
-    #[inline(never)]
-    fn profile_thumb_execute(
-        &mut self,
-        run: &mut ThumbRomRun<'_>,
-        instruction: u16,
-    ) -> ExecuteResult {
-        self.core.execute_thumb(run, instruction)
-    }
-
-    #[cfg(feature = "kernel-stage-profile")]
-    #[inline(never)]
-    fn profile_thumb_fetch(run: &mut ThumbRomRun<'_>, address: u32) -> u32 {
-        run.fetch(address)
-    }
-
     /// The engine entry the ported ARM kernel tests exercise.
     #[cfg(test)]
     fn run_arm_iwram_kernel(&mut self, bus: &mut Bus, yield_at: u64) -> bool {
         self.run_engine(bus, yield_at)
-    }
-
-    /// The next Thumb instruction's work after its successor fetch. Refuse
-    /// accesses whose timing or target cannot be represented by ThumbRomRun.
-    /// In particular, an empty register list and BX to ARM stay with the
-    /// ordinary interpreter rather than relaxing the ROM run's admission.
-    #[cfg_attr(feature = "kernel-stage-profile", inline(never))]
-    fn thumb_kernel_work(
-        &self,
-        run: &ThumbRomRun<'_>,
-        instruction: u16,
-    ) -> Option<(u64, Option<u32>, bool)> {
-        let high = instruction >> 8;
-        let pc = self.core.next_instruction_address;
-        let mut branch = None;
-        let mut data = false;
-        let cycles = match high {
-            0x00..=0x3f | 0xa0..=0xb0 | 0xf0..=0xf7 => 0,
-            0x40..=0x43 => {
-                let opcode = (instruction >> 6) & 15;
-                match opcode {
-                    2 | 3 | 4 | 7 => 1,
-                    13 => {
-                        Core::multiply_iterations(self.registers[(instruction & 7) as usize], true)
-                    }
-                    _ => 0,
-                }
-            }
-            0x44..=0x47 => {
-                let operation = (instruction >> 8) & 3;
-                let rd = ((instruction & 7) | ((instruction >> 4) & 8)) as usize;
-                let source = self.registers[((instruction >> 3) & 15) as usize];
-                if operation == 3 {
-                    if source & 1 == 0 {
-                        return None;
-                    }
-                    branch = Some(source & !1);
-                } else if rd == 15 && operation != 1 {
-                    branch = Some(
-                        if operation == 0 {
-                            pc.wrapping_add(4).wrapping_add(source)
-                        } else {
-                            source
-                        } & !1,
-                    );
-                }
-                0
-            }
-            0x48..=0x9f => {
-                let (address, width, load) = match high {
-                    0x48..=0x4f => (
-                        (pc.wrapping_add(4) & !3).wrapping_add(u32::from(instruction & 255) << 2),
-                        AccessWidth::Word,
-                        true,
-                    ),
-                    0x50..=0x5f => {
-                        let operation = (instruction >> 9) & 7;
-                        let address = self.registers[((instruction >> 3) & 7) as usize]
-                            .wrapping_add(self.registers[((instruction >> 6) & 7) as usize]);
-                        let width = match operation {
-                            0 | 4 => AccessWidth::Word,
-                            1 | 5 | 7 => AccessWidth::Half,
-                            _ => AccessWidth::Byte,
-                        };
-                        (address, width, operation >= 3)
-                    }
-                    0x60..=0x7f => {
-                        let byte = instruction & (1 << 12) != 0;
-                        let address = self.registers[((instruction >> 3) & 7) as usize]
-                            .wrapping_add(
-                                u32::from((instruction >> 6) & 31) << if byte { 0 } else { 2 },
-                            );
-                        (
-                            address,
-                            if byte { AccessWidth::Byte } else { AccessWidth::Word },
-                            instruction & (1 << 11) != 0,
-                        )
-                    }
-                    0x80..=0x8f => (
-                        self.registers[((instruction >> 3) & 7) as usize]
-                            .wrapping_add(u32::from((instruction >> 6) & 31) << 1),
-                        AccessWidth::Half,
-                        instruction & (1 << 11) != 0,
-                    ),
-                    _ => (
-                        self.registers[13].wrapping_add(u32::from(instruction & 255) << 2),
-                        AccessWidth::Word,
-                        instruction & (1 << 11) != 0,
-                    ),
-                };
-                let aligned = match width {
-                    AccessWidth::Byte => address,
-                    AccessWidth::Half => address & !1,
-                    AccessWidth::Word => address & !3,
-                };
-                data = true;
-                if load {
-                    run.load_cycles(aligned, width)? + 1
-                } else {
-                    ThumbRomRun::store_cycles(aligned, width)?
-                }
-            }
-            0xb4 | 0xb5 | 0xbc | 0xbd | 0xc0..=0xcf => {
-                let pop = instruction & (1 << 11) != 0;
-                let stack = high < 0xc0;
-                let count = (instruction as u8).count_ones()
-                    + u32::from(stack && instruction & (1 << 8) != 0);
-                if count == 0 {
-                    return None;
-                }
-                let base =
-                    self.registers[if stack { 13 } else { ((instruction >> 8) & 7) as usize }];
-                let start = if stack && !pop { base.wrapping_sub(count * 4) } else { base };
-                let cycles = ThumbRomRun::block_cycles(start & !3, count, u64::from(pop))?;
-                if stack && pop && instruction & (1 << 8) != 0 {
-                    branch = Some(run.cpu_ram_word(start.wrapping_add((count - 1) * 4) & !3) & !1);
-                }
-                data = true;
-                cycles
-            }
-            0xd0..=0xdd => {
-                if self.core.condition_passed(u32::from(high & 15)) {
-                    let offset = ((i32::from(instruction as u8 as i8)) << 1) as u32;
-                    branch = Some(pc.wrapping_add(4).wrapping_add(offset));
-                }
-                0
-            }
-            0xe0..=0xe7 => {
-                let offset = (((u32::from(instruction & 0x7ff) << 21) as i32) >> 20) as u32;
-                branch = Some(pc.wrapping_add(4).wrapping_add(offset));
-                0
-            }
-            0xf8..=0xff => {
-                branch =
-                    Some(self.registers[14].wrapping_add(u32::from(instruction & 0x7ff) << 1) & !1);
-                0
-            }
-            // SWI and ARMv4T undefined instructions must enter via the
-            // ordinary step (which also owns HLE and exception refills).
-            _ => return None,
-        };
-        Some((cycles, branch, data))
-    }
-
-    /// Bounded ROM execution with a runtime high-byte dispatch instead of
-    /// Zig's 49 comptime-labelled handler classes. The shared ISA executor
-    /// remains the semantics source of truth; this loop only admits work.
-    #[inline(never)]
-    fn run_thumb_rom_kernel(
-        &mut self,
-        bus: &mut Bus,
-        view: &mut InstructionFetchRegion,
-        yield_at: u64,
-    ) -> usize {
-        #[cfg(feature = "kernel-census")]
-        census::THUMB[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if bus.irq_line && self.cpsr & (1 << 7) == 0 {
-            return 0;
-        }
-        let pipeline = self.pipeline.expect("ordinary Thumb runner has a pipeline");
-        if pipeline.instruction_set != InstructionSet::Thumb
-            || pipeline.instructions.iter().any(|&word| word > 0xffff)
-        {
-            return 0;
-        }
-        let mut pc = self.core.next_instruction_address;
-        let Some(mut run) = ThumbRomRun::begin(bus, view, pc, yield_at) else {
-            return 0;
-        };
-        let started = run.cycle;
-        let mut executed = 0;
-        #[cfg(feature = "kernel-census")]
-        let mut branches = 0;
-        #[cfg(feature = "kernel-census")]
-        let mut classes = [0_u64; 16];
-        let mut waiting = pipeline.instructions[0] as u16;
-        let mut next = pipeline.instructions[1] as u16;
-        loop {
-            let saved_cycle = run.cycle;
-            let saved_ready = run.head_ready;
-            #[cfg(not(feature = "kernel-stage-profile"))]
-            let fetched = run.fetch(pc.wrapping_add(4)) as u16;
-            #[cfg(feature = "kernel-stage-profile")]
-            let fetched = Self::profile_thumb_fetch(&mut run, pc.wrapping_add(4)) as u16;
-            let work = self.thumb_kernel_work(&run, waiting);
-            let admitted = work.and_then(|(cycles, branch, data)| {
-                if !run.fits(cycles) {
-                    return None;
-                }
-                if let Some(target) = branch {
-                    if !run.admits(target) {
-                        return None;
-                    }
-                    // Predict the two refill fetches without touching the
-                    // run or CPU; a refusal leaves the waiting opcode intact.
-                    let mut clock = run.cycle + cycles;
-                    let mut ready = run.head_ready;
-                    let offset = target.wrapping_sub(pc.wrapping_add(6));
-                    if offset != 0 {
-                        let lands = ready.max(clock - run.fill) + u64::from(offset / 2) * run.duty;
-                        ready = if offset < 16 && lands > clock && lands - run.duty <= clock {
-                            lands
-                        } else {
-                            clock + run.miss
-                        };
-                    }
-                    for _ in 0..2 {
-                        let now = clock;
-                        clock = (now + 1).max(ready);
-                        ready = ready.max(now - run.fill) + run.duty;
-                    }
-                    if clock > run.bound {
-                        return None;
-                    }
-                }
-                Some((branch, data))
-            });
-            let Some((branch, data)) = admitted else {
-                run.cycle = saved_cycle;
-                run.head_ready = saved_ready;
-                break;
-            };
-            #[cfg(feature = "kernel-census")]
-            {
-                classes[(waiting >> 12) as usize] += 1;
-            }
-            self.registers[15] = pc.wrapping_add(4);
-            #[cfg(not(feature = "kernel-stage-profile"))]
-            let execution = self.core.execute_thumb(&mut run, waiting);
-            #[cfg(feature = "kernel-stage-profile")]
-            let execution = self.profile_thumb_execute(&mut run, waiting);
-            executed += 1;
-            debug_assert!(execution.software_interrupt.is_none());
-            debug_assert_eq!(execution.branched, branch.is_some());
-            if data {
-                run.complete_data(
-                    waiting & (1 << 11) != 0
-                        || (waiting >> 8 & 0xf8) == 0x48
-                        || ((waiting >> 8) & 0xf0) == 0x50 && (waiting >> 9) & 7 >= 3,
-                );
-            }
-            if let Some(target) = branch {
-                #[cfg(feature = "kernel-census")]
-                {
-                    branches += 1;
-                }
-                debug_assert_eq!(self.core.next_instruction_address, target);
-                let words = run.refill(pc.wrapping_add(6), target);
-                waiting = words[0] as u16;
-                next = words[1] as u16;
-                pc = target;
-                run.enter(pc);
-            } else {
-                pc = pc.wrapping_add(2);
-                self.core.next_instruction_address = pc;
-                waiting = next;
-                next = fetched;
-            }
-            self.registers[15] = pc.wrapping_add(4);
-        }
-        if executed == 0 {
-            debug_assert_eq!(run.cycle, started);
-            #[cfg(feature = "kernel-census")]
-            census::entry(&census::THUMB, 0, 0);
-            return 0;
-        }
-        self.core.next_instruction_address = pc;
-        self.pipeline = Some(Pipeline {
-            instructions: [u32::from(waiting), u32::from(next)],
-            instruction_set: InstructionSet::Thumb,
-        });
-        run.finish(pc, u32::from(next));
-        #[cfg(feature = "kernel-census")]
-        {
-            census::entry(&census::THUMB, executed as u64, branches);
-            for (counter, n) in census::THUMB_CLASS.iter().zip(classes) {
-                counter.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
-            }
-        }
-        executed
     }
 
     /// Ordinary instruction loop; HLE, power transitions and SWIs return to
@@ -1456,15 +1011,6 @@ impl Cpu {
                 if !arm_slice {
                     begin_arm_iwram_slice(bus);
                     arm_slice = true;
-                }
-            } else if set == InstructionSet::Thumb {
-                arm_slice = false;
-                if self.run_thumb_rom_kernel(bus, &mut region, yield_at) != 0 {
-                    stream.armed = false;
-                    if bus.now() >= yield_at {
-                        return ChunkOutcome::Deadline;
-                    }
-                    continue;
                 }
             } else {
                 arm_slice = false;
@@ -2025,10 +1571,11 @@ mod tests {
     }
 
     /// ZiGBA: "Thumb ROM kernel matches ordinary stepping for random code, queues and horizons".
-    /// The reference takes the exact number of instructions admitted by the
-    /// kernel; comparing only final clocks would miss mispredicted branches.
+    /// The engine replaces the kernel; the reference steps to the engine's
+    /// clock and must land on it with the same registers and pipeline, so a
+    /// mispredicted branch shows as a different PC.
     #[test]
-    fn thumb_rom_kernel_matches_ordinary_steps_for_random_code_queues_and_horizons() {
+    fn thumb_rom_engine_matches_ordinary_steps_for_random_code_queues_and_horizons() {
         fn next(seed: &mut u32) -> u32 {
             *seed ^= *seed << 13;
             *seed ^= *seed >> 17;
@@ -2195,22 +1742,23 @@ mod tests {
             let before = cpu.clone();
             let started = bus.now();
             let yield_at = started + 1 + u64::from(next(&mut seed) % 400);
-            let mut view = InstructionFetchRegion::default();
-            let count = cpu.run_thumb_rom_kernel(&mut bus, &mut view, yield_at);
-            if count == 0 {
+            let ran = cpu.run_engine(&mut bus, yield_at);
+            if !ran {
                 refusals += 1;
                 assert_eq!(cpu, before, "refused trial {trial}");
                 assert_eq!(bus.now(), started, "refused trial {trial}");
                 assert_eq!(bus.game_pak_prefetch, reference_bus.game_pak_prefetch);
             } else {
                 runs += 1;
-                executed += count;
-                for _ in 0..count {
+                let mut count = 0;
+                while reference_bus.now() < bus.now() {
                     assert!(
                         matches!(reference.step(&mut reference_bus), StepOutcome::Executed(_)),
                         "trial {trial}"
                     );
+                    count += 1;
                 }
+                executed += count;
                 assert_eq!(cpu, reference, "CPU trial {trial}, {count} instructions");
                 assert_eq!(bus.now(), reference_bus.now(), "clock trial {trial}");
                 assert!(bus.now() <= yield_at && bus.now() < bus.batch_deadline);
@@ -2230,7 +1778,7 @@ mod tests {
             }
             bus.end_device_batch();
             reference_bus.end_device_batch();
-            if count != 0 && trial % 64 == 0 {
+            if ran && trial % 64 == 0 {
                 use evenfall_state::Codec as _;
                 let mut actual = Vec::new();
                 let mut expected = Vec::new();
@@ -2281,24 +1829,11 @@ mod tests {
             let required = reference_bus.now() - started;
             assert!(required > 1);
             let before = cpu.clone();
-            assert_eq!(
-                cpu.run_thumb_rom_kernel(
-                    &mut bus,
-                    &mut InstructionFetchRegion::default(),
-                    started + required - 1,
-                ),
-                0,
-            );
+            assert!(!cpu.run_engine(&mut bus, started + required - 1));
             assert_eq!(cpu, before);
             assert_eq!(bus.now(), started);
-            assert_eq!(
-                cpu.run_thumb_rom_kernel(
-                    &mut bus,
-                    &mut InstructionFetchRegion::default(),
-                    started + required,
-                ),
-                1,
-            );
+            // Exactly the branch runs: the PC and pipeline match one step.
+            assert!(cpu.run_engine(&mut bus, started + required));
             assert_eq!(cpu, reference);
             assert_eq!(bus.now(), reference_bus.now());
             assert_eq!(bus.open_bus_value, reference_bus.open_bus_value);

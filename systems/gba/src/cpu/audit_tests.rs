@@ -154,31 +154,6 @@ fn thumb_runner_with_prefetch_runs_sequentially_across_the_gpio_view_split() {
             expect_thumb_runner_matches_stepping(&rom, start, waitcnt, 200);
         }
     }
-    let mut bus = Bus::init(&rom);
-    bus.write(
-        Access {
-            address: 0x0400_0204,
-            width: AccessWidth::Half,
-            kind: AccessKind::Nonsequential,
-            source: AccessSource::CpuData,
-        },
-        0x4000,
-    );
-    bus.begin_device_batch();
-    bus.elapse(100);
-    let mut cpu = Cpu::init(0x0800_00c8, 0x3f, true);
-    cpu.refill_pipeline(&mut bus);
-    let mut view = InstructionFetchRegion::default();
-    bus.fetch_instruction_in_region(&mut view, 0x0800_00ca, AccessWidth::Half);
-    let before = view;
-    assert!(before.bytes.is_some());
-    let deadline = bus.now() + 1000;
-    assert_eq!(cpu.run_thumb_rom_kernel(&mut bus, &mut view, deadline), 0);
-    assert_eq!(before.bytes, view.bytes);
-    assert_eq!(before.address, view.address);
-    assert_eq!(before.valid_starts, view.valid_starts);
-    assert_eq!(before.region_class, view.region_class);
-    bus.end_device_batch();
 }
 
 /// Zig: Thumb runner with prefetch runs sequentially across a 32 MiB image's window seam.

@@ -68,10 +68,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if seconds <= 0.0 || machine.now() < target {
         return Err("benchmark timer did not advance or machine stopped early".into());
     }
-    #[cfg(feature = "kernel-census")]
-    eprintln!("kernel-census: {:?}", evenfall_gba::cpu::kernel_census());
-    #[cfg(feature = "kernel-census")]
-    eprintln!("kernel-classes: {:?}", evenfall_gba::cpu::kernel_classes());
     let pixels = machine.framebuffer();
     let mut hash: u64 = 14_695_981_039_346_656_037;
     for &pixel in pixels {

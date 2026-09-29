@@ -380,9 +380,95 @@ fn thumb_cpu(random: &mut Random, pc: u32) -> Cpu {
     cpu
 }
 
-/// Thumb code from IWRAM, EWRAM and Game Pak ROM without prefetch: every
-/// run of random code, flags, wait states, horizons and page edges matches
-/// single stepping.
+/// Zig: "Thumb ROM kernel matches ordinary stepping for random code, queues
+/// and horizons", its closed-form half. From every prefetch buffer state
+/// at entry (stopped, filling at each depth, full), an instruction with no,
+/// one or several internal cycles or a ROM data load, then a branch to each
+/// distance from the buffer head, near block and image ends and on short
+/// horizons, runs as single stepping does. Code the buffer cannot run from
+/// is refused without a trace.
+#[test]
+fn thumb_rom_engine_matches_stepping_from_every_buffer_state() {
+    use crate::bus::GamePakPrefetch;
+    let mut random = Random(0x7eed_7b01);
+    let mut rom = vec![0u8; 0x3_0000];
+    for byte in &mut rom {
+        *byte = random.next() as u8;
+    }
+    let (mut compared, mut refused, mut loads, mut branches, mut full) = (0, 0, 0, 0, 0);
+    let mut combination = 0;
+    for wait in [0x4000_u16, 0x4317, 0x43a8] {
+        for pc in [0x0800_00d0_u32, 0x0801_ffd0, 0x0a02_ffd0, 0x0c00_0100, 0x0801_fff0, 0x0802_fffc]
+        {
+            let edge = matches!(pc, 0x0801_fff0 | 0x0802_fffc);
+            // MOVS r1, #3; LSL r1, r2; LDR r0, [r3]; MUL r0, r2.
+            for body in [0x2103_u16, 0x4091, 0x6818, 0x4350] {
+                for queued in [None, Some(0), Some(1), Some(4), Some(7), Some(8)] {
+                    for offset in [None, Some(0_u32), Some(2), Some(6), Some(18), Some(0xffff_fff4)]
+                    {
+                        combination += 1;
+                        let mut image = rom.clone();
+                        let at = (pc & 0x01ff_ffff) as usize;
+                        image[at..at + 2].copy_from_slice(&body.to_le_bytes());
+                        if let Some(offset) = offset {
+                            let b = 0xe000 | ((offset >> 1) & 0x7ff) as u16;
+                            image[at + 2..at + 4].copy_from_slice(&b.to_le_bytes());
+                        }
+                        let mut cpu = Cpu::init(pc, 0x3f, true);
+                        cpu.registers[2] = 0x0012_3456;
+                        cpu.registers[3] = (pc & 0xfe00_0000) + 0x120;
+                        let mut pair = Pair::new(&image, |bus| set_waitcnt(bus, wait), cpu, 100);
+                        let head = pc + 4;
+                        for bus in [&mut pair.engine_bus, &mut pair.reference_bus] {
+                            let window = ((pc - 0x0800_0000) >> 25) as usize;
+                            let duty = u64::from(bus.game_pak_s_cycles[window]);
+                            bus.game_pak_code_active = true;
+                            bus.duty_valid_until = (pc | 0x1ffff) + 1;
+                            bus.game_pak_prefetch = match queued {
+                                None => {
+                                    bus.fetch_kind = AccessKind::Nonsequential;
+                                    GamePakPrefetch::default()
+                                }
+                                Some(count) => GamePakPrefetch {
+                                    active: true,
+                                    head_address: head,
+                                    last_address: head + 2 * u32::from(count.min(7)),
+                                    count,
+                                    capacity: 8,
+                                    opcode_bytes: 2,
+                                    countdown: if count == 8 { 0 } else { duty - 1 },
+                                    duty,
+                                },
+                            };
+                        }
+                        let budget = if combination % 2 == 0 { 2 } else { 250 };
+                        let yield_at = pair.engine_bus.now() + budget;
+                        let context = format!(
+                            "wait {wait:04x} pc {pc:08x} body {body:04x} queued {queued:?} \
+                             offset {offset:?} budget {budget}"
+                        );
+                        if pair.compare(yield_at, &context) {
+                            assert!(!edge, "{context}: ran at a block or image end");
+                            compared += 1;
+                            loads += usize::from(body == 0x6818);
+                            branches += usize::from(offset.is_some());
+                            full += usize::from(queued == Some(8));
+                        } else {
+                            refused += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(compared > 800, "only {compared} runs compared");
+    assert!(loads > 150 && branches > 600 && full > 100, "{loads} {branches} {full}");
+    assert!(refused > 400, "only {refused} refusals");
+}
+
+/// Thumb code from IWRAM, EWRAM and Game Pak ROM, with and without the
+/// prefetch buffer: every run of random code, flags, wait states, buffer
+/// states, horizons and page edges matches single stepping.
 #[test]
 fn thumb_engine_matches_interpreter_for_random_code() {
     let mut random = Random(0x7eed_7b01);
@@ -390,7 +476,7 @@ fn thumb_engine_matches_interpreter_for_random_code() {
     for byte in &mut rom {
         *byte = random.next() as u8;
     }
-    let (mut runs, mut refusals, mut cycles) = (0, 0, 0);
+    let (mut runs, mut refusals, mut cycles, mut prefetch_runs) = (0, 0, 0, 0);
     for trial in 0..4000 {
         let place = trial % 4;
         let base = match place {
@@ -413,7 +499,8 @@ fn thumb_engine_matches_interpreter_for_random_code() {
         }
         let (iwram, ewram) = data_setup(&mut random);
         let cpu = thumb_cpu(&mut random, pc);
-        let waitcnt = random.next() as u16 & 0x3fff;
+        // Mostly with the prefetch buffer, as games run.
+        let waitcnt = random.next() as u16 & 0x3fff | if trial % 3 == 0 { 0 } else { 0x4000 };
         let mut pair = Pair::new(
             &image,
             |bus| {
@@ -437,13 +524,41 @@ fn thumb_engine_matches_interpreter_for_random_code() {
             cpu,
             1 + u64::from(random.below(1200)),
         );
+        // Enter with the buffer filling, full, or stopped.
+        match random.below(4) {
+            0 => {}
+            1 => {
+                let pause = 1 + u64::from(random.below(80));
+                pair.engine_bus.elapse(pause);
+                pair.reference_bus.elapse(pause);
+            }
+            2 => {
+                let pause = 1 + u64::from(random.below(12));
+                pair.engine_bus.elapse(pause);
+                pair.reference_bus.elapse(pause);
+            }
+            _ => {
+                let kind = if random.below(2) == 0 {
+                    AccessKind::Sequential
+                } else {
+                    AccessKind::Nonsequential
+                };
+                for bus in [&mut pair.engine_bus, &mut pair.reference_bus] {
+                    bus.game_pak_prefetch = Default::default();
+                    bus.fetch_kind = kind;
+                }
+            }
+        }
         for attempt in 0..6 {
             let budget = 1 + u64::from(random.below(if attempt == 0 { 30 } else { 300 }));
             let yield_at = pair.engine_bus.now() + budget;
             let before = pair.engine_bus.now();
+            let prefetch =
+                pair.engine.core.next_instruction_address >> 24 >= 8 && waitcnt & 0x4000 != 0;
             if pair.compare(yield_at, &format!("trial {trial} attempt {attempt}")) {
                 runs += 1;
                 cycles += pair.engine_bus.now() - before;
+                prefetch_runs += usize::from(prefetch);
             } else {
                 refusals += 1;
                 let outcome = pair.engine.step(&mut pair.engine_bus);
@@ -458,4 +573,5 @@ fn thumb_engine_matches_interpreter_for_random_code() {
     }
     assert!(runs > 5000, "only {runs} runs ({refusals} refusals)");
     assert!(cycles > 60_000, "only {cycles} cycles in engine runs");
+    assert!(prefetch_runs > 1000, "only {prefetch_runs} runs with the prefetch buffer");
 }

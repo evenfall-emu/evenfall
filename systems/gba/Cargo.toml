@@ -11,8 +11,6 @@ publish.workspace = true
 
 [features]
 scanline-memo-check = []
-kernel-census = []
-kernel-stage-profile = []
 
 [dependencies]
 blake3.workspace = true

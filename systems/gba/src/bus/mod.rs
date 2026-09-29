@@ -17,10 +17,8 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 mod kernel;
-pub use kernel::{
-    ArmIwramExecutionRegion, RamWords, ThumbRomRun, begin_arm_iwram_slice, fetch_arm_iwram_in_slice,
-};
-pub(crate) use kernel::{EngineMemory, RomData};
+pub(crate) use kernel::{EngineMemory, PrefetchClock, RomData};
+pub use kernel::{begin_arm_iwram_slice, fetch_arm_iwram_in_slice};
 
 pub const SCREEN_WIDTH: usize = 240;
 pub const SCREEN_HEIGHT: usize = 160;
@@ -2112,12 +2110,7 @@ impl Bus {
     }
 
     fn refresh_game_pak_timing(&mut self) {
-        for window in 0..3 {
-            self.game_pak_n_cycles[window] =
-                [5, 4, 3, 9][usize::from((self.waitcnt >> (2 + window * 3)) & 3)];
-            self.game_pak_s_cycles[window] =
-                if self.waitcnt & (1 << (4 + window * 3)) != 0 { 2 } else { [3, 5, 9][window] };
-        }
+        (self.game_pak_n_cycles, self.game_pak_s_cycles) = game_pak_timing(self.waitcnt);
         self.game_pak_timing_key = self.waitcnt;
     }
 
@@ -3873,6 +3866,17 @@ fn prefetch_duty_valid_until(address: u32, opcode_bytes: u8) -> u32 {
     } else {
         address.wrapping_add(0x20000) & !0x1ffff
     }
+}
+
+/// The nonsequential and sequential halfword cycles of the three Game Pak
+/// windows under `waitcnt`.
+fn game_pak_timing(waitcnt: u16) -> ([u8; 3], [u8; 3]) {
+    let n =
+        std::array::from_fn(|window| [5, 4, 3, 9][usize::from((waitcnt >> (2 + window * 3)) & 3)]);
+    let s = std::array::from_fn(|window| {
+        if waitcnt & (1 << (4 + window * 3)) != 0 { 2 } else { [3, 5, 9][window] }
+    });
+    (n, s)
 }
 
 fn ewram_cycles(width: AccessWidth) -> Cycle {
