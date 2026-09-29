@@ -55,19 +55,20 @@ guest correctness or which individual optimization to retain.
 Native x86-64, HLE boot, pinned CPU 3, five measured rounds and one warmup;
 ZiGBA `ReleaseFast` versus Evenfall Cargo `release` (opt-level 3, incremental,
 **no LTO**). Both render fully and emulate exact audio. Each row's final image
-agrees and is deterministic across observations. The source revisions and
-frame counts are part of this measured configuration:
+agrees and is deterministic across observations. ZiGBA is the pinned
+reference commit; each figure belongs to the binaries it was measured on, and
+the runner's `result.json` records both source revisions and binary hashes.
 
-| Workload — Evenfall `0b9ede6e776e1a580f395a292acc18fbc7659f43`, ZiGBA `add59e5957b75f29d084813336ee20e300fc0b6e` | Frames | Evenfall/ZiGBA loop time |
-| ---------------------------------------------------------------------------------------------------------------- | -----: | -----------------------: |
-| Idle / HALT and empty mode-0 frame                                                                               |  3,600 |                    1.24× |
-| ARM mixer / IWRAM code                                                                                           |    600 |                    3.08× |
-| Thumb logic / Game Pak ROM                                                                                       |    600 |                    1.87× |
-| Tiles / text backgrounds, sprites, effects and windows                                                           |    600 |                    1.66× |
-| Affine / backgrounds, sprites and HBlank DMA                                                                     |    600 |                    1.42× |
-| Bitmap DMA / page flips and small transfers                                                                      |    600 |                    1.42× |
-| Audio / Direct Sound FIFO DMA and PSG                                                                            |    600 |                    1.53× |
-| **Geometric mean of workload ratios**                                                                            |      — |                **1.67×** |
+| Workload                                               | Frames | Evenfall/ZiGBA loop time |
+| ------------------------------------------------------ | -----: | -----------------------: |
+| Idle / HALT and empty mode-0 frame                     |  3,600 |                    1.18× |
+| ARM mixer / IWRAM code                                 |    600 |                    2.67× |
+| Thumb logic / Game Pak ROM                             |    600 |                    1.84× |
+| Tiles / text backgrounds, sprites, effects and windows |    600 |                    1.65× |
+| Affine / backgrounds, sprites and HBlank DMA           |    600 |                    1.36× |
+| Bitmap DMA / page flips and small transfers            |    600 |                    1.43× |
+| Audio / Direct Sound FIFO DMA and PSG                  |    600 |                    1.50× |
+| **Geometric mean of workload ratios**                  |      — |                **1.61×** |
 
 Ratios above one mean Evenfall takes longer; all seven paths remain slower in
 this comparison. ARM mixer points to the IWRAM kernel and timed RAM/bus
