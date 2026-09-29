@@ -15,9 +15,16 @@
 
 use super::backgrounds::{ROW, affine_row, apply_horizontal_mosaic, bitmap_row, text_row};
 use super::history::{AffineState, VideoHistoryView};
-use super::lanes::{Lanes, Native};
+use super::lanes::Lanes;
 use super::scanline_memo::ALL_VRAM_PAGES;
 use crate::bus::{Bus, LineScan, SCREEN_WIDTH};
+
+#[cfg(target_arch = "x86_64")]
+type Native = super::lanes::Sse2;
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+type Native = super::lanes::Simd128;
+#[cfg(not(any(target_arch = "x86_64", all(target_arch = "wasm32", target_feature = "simd128"))))]
+type Native = super::lanes::Scalar;
 
 const LAYER: u16 = 7;
 /// The front object is semi-transparent.
@@ -548,10 +555,10 @@ fn brightness<V: Lanes>(color: V, factor: V, brighten: V) -> V {
     red.or(green.shl::<5>()).or(blue.shl::<10>())
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "x86_64"))]
 mod tests {
     use super::*;
-    use crate::video::lanes::Scalar;
+    use crate::video::lanes::{Scalar, Sse2};
 
     fn next(seed: &mut u32) -> u32 {
         *seed ^= *seed << 13;
@@ -570,7 +577,7 @@ mod tests {
         };
         let (mut vector, mut scalar) = (empty, empty);
         let (mut vector_out, mut scalar_out) = ([0; SCREEN_WIDTH], [0; SCREEN_WIDTH]);
-        compose_line::<Native, OBJECTS, MODE>(inputs, &mut vector, &mut vector_out);
+        compose_line::<Sse2, OBJECTS, MODE>(inputs, &mut vector, &mut vector_out);
         compose_line::<Scalar, OBJECTS, MODE>(inputs, &mut scalar, &mut scalar_out);
         assert_eq!(vector_out, scalar_out);
         assert_eq!(vector.top, scalar.top);
@@ -579,8 +586,7 @@ mod tests {
         assert_eq!(vector.second_meta, scalar.second_meta);
     }
 
-    /// The vector lanes `wide` selects for this target compute exactly what
-    /// the scalar reference lane does.
+    /// The SSE2 lanes compute exactly what the scalar reference lane does.
     #[test]
     fn vector_lanes_match_the_scalar_kernel() {
         let mut seed = 0x1A4E_5EED;

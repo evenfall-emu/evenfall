@@ -49,12 +49,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bytemuck"
-version = "1.25.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797"
-
-[[package]]
 name = "cc"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -212,7 +206,6 @@ dependencies = [
  "miniz_oxide 0.8.9",
  "sha1",
  "sha2",
- "wide",
 ]
 
 [[package]]
@@ -372,15 +365,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "safe_arch"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42c6efa15875e6ecb39ca61fb0b0c1a40b84fac5a5ffe71eef7d1000c8eb3f5f"
-dependencies = [
- "bytemuck",
-]
-
-[[package]]
 name = "serde"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -500,16 +484,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "wide"
-version = "1.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d920ac99c3c8edce110cb8d07dbb324d6d026011dce85b1e9355b70f0adacc4f"
-dependencies = [
- "bytemuck",
- "safe_arch",
-]
 
 [[package]]
 name = "windows-link"
