@@ -999,7 +999,11 @@ mod tests {
         }
     }
 
-    /// Zig: "rewind bundles reject corrupt envelopes metadata codecs and foreign media atomically"
+    /// Zig: "rewind bundles reject corrupt envelopes metadata codecs and foreign media atomically".
+    /// Also checks the owned-import rollback boundary from "rewind bundle allocation
+    /// failures preserve both live state and old history" for recoverable errors.
+    /// Zig's injected allocator-failure half is deliberately not ported: a
+    /// Rust allocation failure normally aborts instead of returning an error.
     #[test]
     fn rewind_bundles_reject_corrupt_envelopes_metadata_codecs_and_foreign_media_atomically() {
         let mut session = Session::create(Config {
@@ -1043,7 +1047,7 @@ mod tests {
             let hash = blake3::hash(&corrupt[..corrupt.len() - 32]);
             let end = corrupt.len() - 32;
             corrupt[end..].copy_from_slice(hash.as_bytes());
-            assert!(session.load_rewind_bundle(&corrupt).is_err(), "offset {offset}");
+            assert!(session.load_rewind_bundle_owned(corrupt).is_err(), "offset {offset}");
             assert_eq!(session.write_rewind_bundle().unwrap(), before, "offset {offset}");
         }
         for length in [0, 47, bundle.len() - 1] {
