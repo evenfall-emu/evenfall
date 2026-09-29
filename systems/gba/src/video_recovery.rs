@@ -50,12 +50,10 @@ pub struct VideoRecovery {
 
 impl VideoRecovery {
     pub fn create(machine: &Machine) -> Result<Self, Error> {
-        let scratch = Machine::new(Config {
-            rom: &machine.bus.rom,
-            bios: &machine.bus.bios,
-            boot: machine.boot_mode,
-            ..Config::default()
-        });
+        let scratch = Machine::new_with_shared_media(
+            machine,
+            Config { boot: machine.boot_mode, ..Config::default() },
+        );
         let mut recovery = Self {
             anchor: Vec::new(),
             anchor_cycle: 0,

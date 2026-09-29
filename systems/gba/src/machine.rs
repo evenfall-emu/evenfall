@@ -7,6 +7,7 @@ use evenfall_host::Cycle;
 use evenfall_state::{Codec, Sink, Source};
 use std::io::Write;
 use std::ops::Range;
+use std::sync::Arc;
 
 pub use cpu::FaultReason;
 
@@ -338,8 +339,6 @@ pub struct StepWithInputResult {
 pub struct Config<'a> {
     pub rom: &'a [u8],
     pub bios: &'a [u8],
-    /// The owner promises to keep the ROM and BIOS immutable.
-    pub immutable_media: bool,
     pub boot: BootMode,
     pub save_type: SaveType,
     pub save_data: Option<&'a [u8]>,
@@ -355,7 +354,6 @@ impl Default for Config<'_> {
         Self {
             rom: &[],
             bios: &[],
-            immutable_media: false,
             boot: BootMode::Hle,
             save_type: SaveType::Auto,
             save_data: None,
@@ -385,7 +383,7 @@ pub struct Machine {
     pub bus: Bus,
     pub cpu: Cpu,
     latched_fault: Option<Fault>,
-    media_identity: Option<MediaIdentity>,
+    media_identity: MediaIdentity,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -402,10 +400,43 @@ impl Machine {
     pub const MAX_STATE_PAYLOAD: usize = 1024 * 1024;
     pub const STATE_HEADER_SIZE: usize = 133;
 
-    /// Allocates the large machine directly in its final heap location.
+    /// Allocates the large machine directly in its final heap location. Input
+    /// slices become owned immutable media; no borrowed mutable-media mode
+    /// exists. The media digest is computed once and reused by scratch loads.
     pub fn new(config: Config<'_>) -> Box<Self> {
+        Self::new_with_owned_media(config, Arc::new(config.rom.to_vec()), Arc::from(config.bios))
+    }
+
+    /// Adopts an already-owned ROM buffer without moving its bytes. ROM and
+    /// BIOS in `config` are ignored in favor of these immutable handles.
+    pub(crate) fn new_with_owned_media(
+        config: Config<'_>,
+        rom: Arc<Vec<u8>>,
+        bios: Arc<[u8]>,
+    ) -> Box<Self> {
+        let identity = MediaIdentity::new(&rom, &bios);
+        Self::init_with_media(config, rom, bios, identity)
+    }
+
+    /// Reuses the owner's immutable media and cached digests for reset and
+    /// transactional scratch machines. ROM and BIOS in `config` are ignored.
+    pub(crate) fn new_with_shared_media(source: &Self, config: Config<'_>) -> Box<Self> {
+        Self::init_with_media(
+            config,
+            Arc::clone(&source.bus.rom),
+            Arc::clone(&source.bus.bios),
+            source.media_identity,
+        )
+    }
+
+    fn init_with_media(
+        config: Config<'_>,
+        rom: Arc<Vec<u8>>,
+        bios: Arc<[u8]>,
+        identity: MediaIdentity,
+    ) -> Box<Self> {
         assert!(
-            matches!(config.boot, BootMode::Hle) == config.bios.is_empty(),
+            matches!(config.boot, BootMode::Hle) == bios.is_empty(),
             "HLE boot does not accept BIOS; external boot requires BIOS"
         );
         let entry_address = if config.boot == BootMode::ExternalBios { 0 } else { 0x0800_0000 };
@@ -416,10 +447,10 @@ impl Machine {
         // own large arrays directly into the allocated field, never on stack.
         unsafe {
             std::ptr::addr_of_mut!((*ptr).boot_mode).write(config.boot);
-            Bus::init_in_place(
+            Bus::init_in_place_shared(
                 std::ptr::addr_of_mut!((*ptr).bus),
-                config.rom,
-                config.bios,
+                rom,
+                bios,
                 config.save_type,
                 config.save_data,
             );
@@ -429,8 +460,7 @@ impl Machine {
                 config.boot == BootMode::Hle,
             ));
             std::ptr::addr_of_mut!((*ptr).latched_fault).write(None);
-            std::ptr::addr_of_mut!((*ptr).media_identity)
-                .write(config.immutable_media.then(|| MediaIdentity::new(config.rom, config.bios)));
+            std::ptr::addr_of_mut!((*ptr).media_identity).write(identity);
             let mut machine = storage.assume_init();
             if let Some(epoch) = config.rtc_epoch_seconds {
                 machine.bus.enable_rtc(epoch);
@@ -846,9 +876,7 @@ impl Machine {
         if payload_len > Self::MAX_STATE_PAYLOAD as u64 {
             return Err(StateError::Codec(evenfall_state::Error::InvalidSaveState));
         }
-        let identity = self
-            .media_identity
-            .unwrap_or_else(|| MediaIdentity::new(&self.bus.rom, &self.bus.bios));
+        let identity = self.media_identity;
         let mut sink = Sink::new(Some(header), None);
         sink.write_all(Self::STATE_MAGIC)?;
         Self::STATE_VERSION.encode(&mut sink)?;
@@ -898,6 +926,17 @@ impl Machine {
 
     /// Verifies into heap-allocated scratch and publishes only on success.
     pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), StateError> {
+        let mut scratch =
+            Self::new_with_shared_media(self, Config { boot: self.boot_mode, ..Config::default() });
+        scratch.load_state_in_place(bytes)?;
+        std::mem::swap(self, &mut scratch);
+        Ok(())
+    }
+
+    /// Validates into a private scratch machine without creating another one.
+    /// The caller must not expose this machine if decoding fails. All durable
+    /// fields are decoded and Bus::read_state resets transient output/caches.
+    pub(crate) fn load_state_in_place(&mut self, bytes: &[u8]) -> Result<(), StateError> {
         let mut input = Source::new(bytes);
         let mut magic = [0; 8];
         input.read_all(&mut magic)?;
@@ -928,9 +967,7 @@ impl Machine {
         let mut rom_digest = [0; 32];
         rom_len.decode(&mut input)?;
         input.read_all(&mut rom_digest)?;
-        let identity = self
-            .media_identity
-            .unwrap_or_else(|| MediaIdentity::new(&self.bus.rom, &self.bus.bios));
+        let identity = self.media_identity;
         if rom_len != self.bus.rom.len() as u64 || rom_digest != identity.rom {
             return Err(evenfall_state::Error::SaveStateRomMismatch.into());
         }
@@ -946,26 +983,18 @@ impl Machine {
             return Err(evenfall_state::Error::InvalidSaveState.into());
         }
         let (payload, digest) = input.input.split_at(payload_len as usize);
-        let mut scratch = Self::new(Config {
-            rom: &self.bus.rom,
-            bios: &self.bus.bios,
-            boot: self.boot_mode,
-            ..Config::default()
-        });
-        scratch.media_identity = self.media_identity;
         let mut payload_source = Source::new(payload);
         let mut cycle = 0;
         cycle.decode(&mut payload_source)?;
-        scratch.cpu.read_state(&mut payload_source, cycle)?;
-        scratch.bus.current_cycle = cycle;
-        scratch.bus.read_state(&mut payload_source)?;
+        self.cpu.read_state(&mut payload_source, cycle)?;
+        self.bus.current_cycle = cycle;
+        self.bus.read_state(&mut payload_source)?;
         if !payload_source.input.is_empty()
             || blake3::hash(payload).as_bytes() != digest
-            || scratch.cpu.hle_bios != (self.boot_mode == BootMode::Hle)
+            || self.cpu.hle_bios != (self.boot_mode == BootMode::Hle)
         {
             return Err(evenfall_state::Error::InvalidSaveState.into());
         }
-        std::mem::swap(self, &mut scratch);
         Ok(())
     }
 }
