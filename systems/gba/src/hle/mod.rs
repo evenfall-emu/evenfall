@@ -1,18 +1,29 @@
 //! HLE BIOS services ported from ZiGBA's `cpu.zig`.
 
 mod bulk;
+mod callback;
+mod sound;
+mod sound_events;
+mod sound_player;
 mod utility;
 
 use crate::bus::AccessWidth;
-use crate::cpu::{Cpu, FaultReason, HleBulkWork, HleMemoryOperation};
+use crate::cpu::{Cpu, FaultReason, HleMemoryOperation};
 
 fn invalid_hle_mmio_word_access(
     service: u8,
     operation: HleMemoryOperation,
     address: u32,
 ) -> Option<FaultReason> {
-    if address >> 24 != 4 || address & 3 == 0 { return None; }
-    Some(FaultReason::InvalidHleMemoryAccess { service, operation, address, width: AccessWidth::Word })
+    if address >> 24 != 4 || address & 3 == 0 {
+        return None;
+    }
+    Some(FaultReason::InvalidHleMemoryAccess {
+        service,
+        operation,
+        address,
+        width: AccessWidth::Word,
+    })
 }
 
 fn first_unaligned_mmio_record(base: u32, stride: u32, count: u32) -> Option<u32> {
@@ -56,88 +67,53 @@ impl Cpu {
         let r = &self.registers;
         match service {
             0x0E => bg_affine_set_mmio_fault(r[0], r[1], r[2]).and_then(|(address, write)| {
-                invalid_hle_mmio_word_access(service,
-                    if write { HleMemoryOperation::Write } else { HleMemoryOperation::Read }, address)
+                invalid_hle_mmio_word_access(
+                    service,
+                    if write { HleMemoryOperation::Write } else { HleMemoryOperation::Read },
+                    address,
+                )
             }),
-            0x10 => invalid_hle_mmio_word_access(service, HleMemoryOperation::Read, r[2].wrapping_add(4)),
+            0x10 => invalid_hle_mmio_word_access(
+                service,
+                HleMemoryOperation::Read,
+                r[2].wrapping_add(4),
+            ),
             0x11 | 0x12 => invalid_hle_mmio_word_access(service, HleMemoryOperation::Read, r[0]),
             0x1A => invalid_hle_mmio_word_access(service, HleMemoryOperation::Write, r[13])
-                .or_else(|| invalid_hle_mmio_word_access(service, HleMemoryOperation::Write, r[0].wrapping_add(0x10))),
-            0x1F => invalid_hle_mmio_word_access(service, HleMemoryOperation::Read, r[0].wrapping_add(4)),
-            0x20 if (r[2] as i32) > 0 => invalid_hle_mmio_word_access(service, HleMemoryOperation::Write, r[0]),
-            0x21..=0x24 => invalid_hle_mmio_word_access(service, HleMemoryOperation::Read, r[0].wrapping_add(0x34)),
-            0x25 if r[1] <= 2 => invalid_hle_mmio_word_access(service, HleMemoryOperation::Read, r[0].wrapping_add(0x20))
-                .or_else(|| invalid_hle_mmio_word_access(service, HleMemoryOperation::Read, r[0].wrapping_add(0x24))),
+                .or_else(|| {
+                    invalid_hle_mmio_word_access(
+                        service,
+                        HleMemoryOperation::Write,
+                        r[0].wrapping_add(0x10),
+                    )
+                }),
+            0x1F => invalid_hle_mmio_word_access(
+                service,
+                HleMemoryOperation::Read,
+                r[0].wrapping_add(4),
+            ),
+            0x20 if (r[2] as i32) > 0 => {
+                invalid_hle_mmio_word_access(service, HleMemoryOperation::Write, r[0])
+            }
+            0x21..=0x24 => invalid_hle_mmio_word_access(
+                service,
+                HleMemoryOperation::Read,
+                r[0].wrapping_add(0x34),
+            ),
+            0x25 if r[1] <= 2 => invalid_hle_mmio_word_access(
+                service,
+                HleMemoryOperation::Read,
+                r[0].wrapping_add(0x20),
+            )
+            .or_else(|| {
+                invalid_hle_mmio_word_access(
+                    service,
+                    HleMemoryOperation::Read,
+                    r[0].wrapping_add(0x24),
+                )
+            }),
             0x2A => invalid_hle_mmio_word_access(service, HleMemoryOperation::Write, r[0]),
             _ => None,
-        }
-    }
-}
-
-impl HleBulkWork {
-    pub fn service(&self) -> u8 {
-        match self {
-            Self::CpuSet(_) => 0x0B,
-            Self::CpuFastSet(_) => 0x0C,
-            Self::BgAffineSet(_) => 0x0E,
-            Self::ObjAffineSet(_) => 0x0F,
-            Self::BitUnpack(_) => 0x10,
-            Self::Lz77(work) => {
-                if work.vram_output {
-                    0x12
-                } else {
-                    0x11
-                }
-            }
-            Self::Huffman(_) => 0x13,
-            Self::RunLength(work) => {
-                if work.vram_output {
-                    0x15
-                } else {
-                    0x14
-                }
-            }
-            Self::DifferentialFilter(work) => {
-                if work.input_halfword {
-                    0x18
-                } else if work.output_halfword {
-                    0x17
-                } else {
-                    0x16
-                }
-            }
-        }
-    }
-
-    pub fn valid(&self) -> bool {
-        match self {
-            Self::CpuSet(work) => {
-                work.remaining <= 0x001F_FFFF
-                    && (work.source | work.destination) & if work.word { 3 } else { 1 } == 0
-            }
-            Self::CpuFastSet(work) => {
-                work.remaining_blocks <= 0x0004_0000 && (work.source | work.destination) & 3 == 0
-            }
-            Self::BgAffineSet(work) => {
-                bg_affine_set_mmio_fault(work.source, work.destination, work.remaining).is_none()
-            }
-            Self::ObjAffineSet(_) => true,
-            Self::BitUnpack(work) => {
-                matches!(work.source_width, 1 | 2 | 4 | 8)
-                    && matches!(work.destination_width, 1 | 2 | 4 | 8 | 16 | 32)
-                    && work.input_bits_remaining <= 8
-                    && work.input_bits_remaining % work.source_width == 0
-                    && work.output_bits < 32
-                    && work.output_bits % work.destination_width == 0
-            }
-            Self::Lz77(work) => work.blocks_remaining <= 8,
-            Self::Huffman(work) => {
-                matches!(work.symbol_bits, 4 | 8)
-                    && work.output_bits < 32
-                    && work.output_bits % work.symbol_bits == 0
-            }
-            Self::RunLength(work) => work.padding <= 3,
-            Self::DifferentialFilter(work) => work.output_halfword || !work.input_halfword,
         }
     }
 }
