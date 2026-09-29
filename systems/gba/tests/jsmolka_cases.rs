@@ -101,7 +101,7 @@ pub(super) fn cases() -> Vec<Case> {
     ]
 }
 
-fn boot<'a>(ctx: &'a Context, hash: &str, save_type: Type) -> Result<Box<Machine>> {
+fn boot(ctx: &Context, hash: &str, save_type: Type) -> Result<Box<Machine>> {
     let actual = format!("{:x}", Sha256::digest(&ctx.roms[0]));
     if actual != hash {
         return Err(format!("ROM hash mismatch; expected sha256 {hash}, found {actual}"));
@@ -230,7 +230,7 @@ fn shades_pixel(x: usize, _: usize) -> u16 {
     ((x / 16) as u16) << 11
 }
 fn stripes_pixel(x: usize, _: usize) -> u16 {
-    if x / 8 & 1 == 0 { 0x560b } else { 0x6290 }
+    if (x / 8) & 1 == 0 { 0x560b } else { 0x6290 }
 }
 
 // Glyphs from jsmolka/gba-tests lib/glyphs.asm (MIT, Julian Smolka).
