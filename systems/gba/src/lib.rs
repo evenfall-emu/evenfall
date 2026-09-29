@@ -16,5 +16,6 @@
 // [cpu]
 
 // [hle]
+pub mod hle;
 
 // [machine]
