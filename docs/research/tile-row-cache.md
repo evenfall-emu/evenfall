@@ -13,8 +13,9 @@ describes the original optimization.
 
 ## Design
 
-The cache holds 1,024 entries and a 512-byte copy of the background palette.
-Rust's in-memory layout is not part of the save-state format. An entry holds:
+The cache holds 1,024 entries, a 512-byte copy of the background palette, and
+256 decoded RGB555 palette words. Rust's in-memory layout is not part of the
+save-state format. An entry holds:
 
 | Field              | Content                                                  |
 | ------------------ | -------------------------------------------------------- |
@@ -24,13 +25,12 @@ Rust's in-memory layout is not part of the save-state format. An entry holds:
 | `palette_bank_tag` | the bank those colors belong to, plus one; zero for none |
 | `fully_opaque`     | whether every index is nonzero                           |
 
-**Lookup is keyed on content.** `Cache.lookup` hashes the source word
-(multiplying by `0x9E3779B1` and keeping the top ten bits) to select an entry,
-and a full 32-bit comparison validates the hit. A miss decodes the row into
-that entry, replacing whatever was there. Collisions therefore cost only
-performance. A zero-filled entry already holds the correct decode of source
-zero, so no valid bit is needed, and the renderer skips all-zero rows before
-looking them up anyway.
+**Lookup is keyed on content.** `Cache::row` hashes both the source word and
+palette bank to select an entry, then compares the full source word and bank
+tag. A source mismatch decodes the row into that entry; a bank mismatch
+re-expands its colors. Collisions therefore cost only performance. A
+zero-filled entry already holds the correct decode of source zero, so no valid
+bit is needed, and the renderer skips all-zero rows before looking them up.
 
 Because the key is the row's bytes, not its address, the cache needs no write
 hooks and no invalidation counter. CPU writes, DMA, BIOS VRAM clearing,
@@ -43,13 +43,14 @@ looked up. A horizontal flip is applied to the canonical entry when the row is
 drawn: fixed-array lanes select colors and indices in display order. Stable
 Rust does not use ZiGBA's `@Vector` shuffle here.
 
-**Colors are validated against the palette.** `Cache::colors(source, bank)`
-expands the eight indices through the cached palette copy for one bank and
-tags the entry with that bank; a different bank rebuilds the row's colors. Once
+**Colors are validated against the palette.** `Cache::row(source, bank)`
+expands the eight indices through decoded palette words for one bank and tags
+the entry with that bank; a different bank rebuilds the row's colors. Once
 per eligible scanline (modes 0 and 1 without palette raster history),
 `Bus::compose_scanline` calls `Cache::prepare_palette`, which compares the live
-512-byte background palette with the copy; any difference replaces the copy
-and clears every entry's tag. Replacing an entry's source clears its tag too.
+512-byte background palette with the copy; any difference replaces the copy,
+decodes all 256 palette words once, and clears every entry's tag. Replacing an
+entry's source clears its tag too.
 Comparing bytes also observes direct edits and restored states, including
 restoring older bytes. Every caller that uses expanded colors must establish
 the matching palette copy first, including after direct edits or a state

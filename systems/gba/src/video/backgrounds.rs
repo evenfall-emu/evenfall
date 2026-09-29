@@ -23,14 +23,18 @@ struct TextLanes {
 }
 
 impl Bus {
-    fn decode_text_row(&mut self, entry: u16, row_base: usize, color_256: bool) -> Option<TextRow> {
-        if row_base + (if color_256 { 8 } else { 4 }) > 0x10000 {
+    fn decode_text_row<const COLOR_256: bool>(
+        &mut self,
+        entry: u16,
+        row_base: usize,
+    ) -> Option<TextRow> {
+        if row_base + (if COLOR_256 { 8 } else { 4 }) > 0x10000 {
             return None;
         }
         let flipped = entry & (1 << 10) != 0;
         let mut indices = [0; 8];
         let mut colors = [0; 8];
-        if color_256 {
+        if COLOR_256 {
             indices.copy_from_slice(&self.vram[row_base..row_base + 8]);
             if indices == [0; 8] {
                 return None;
@@ -57,18 +61,17 @@ impl Bus {
         Some(TextRow { colors, fully_opaque: indices.iter().all(|&index| index != 0), indices })
     }
 
-    fn text_open_lanes(
+    fn text_open_lanes<const SIMPLE: bool>(
         &self,
         layout: &TextLine,
         x: usize,
         length: usize,
-        simple: bool,
     ) -> TextLanes {
         let mut lanes = TextLanes { top: [false; 8], second: [false; 8] };
         for lane in 0..length {
             let i = layout.first + x + lane;
             let admitted =
-                simple || self.line_window_masks[x + lane] & (1 << layout.background) != 0;
+                SIMPLE || self.line_window_masks[x + lane] & (1 << layout.background) != 0;
             lanes.top[lane] = admitted && self.frame_layers[i] == 5;
             lanes.second[lane] = admitted
                 && !lanes.top[lane]
@@ -114,13 +117,11 @@ impl Bus {
 
     // Isolate the text loop from unrelated bitmap and Bus inlining decisions.
     #[inline(never)]
-    fn render_text_tile_rows(
+    fn render_text_tile_rows<const SIMPLE: bool, const COLOR_256: bool>(
         &mut self,
         line: usize,
         background: usize,
         priority: u8,
-        simple: bool,
-        color_256: bool,
     ) {
         let control = self.bg_controls[background];
         let char_base = usize::from((control >> 2) & 3) * 0x4000;
@@ -128,7 +129,7 @@ impl Bus {
         let width = if control & (1 << 14) != 0 { 512 } else { 256 };
         let height = if control & (1 << 15) != 0 { 512 } else { 256 };
         let world_y = (line + usize::from(self.bg_vertical_offsets[background])) & (height - 1);
-        let row_bytes = if color_256 { 8 } else { 4 };
+        let row_bytes = if COLOR_256 { 8 } else { 4 };
         let map_row =
             screen_base + (world_y / 256) * (width / 256) * 0x800 + (world_y / 8 % 32) * 64;
         let mut entries = [0u16; 64];
@@ -146,7 +147,7 @@ impl Bus {
             self.scanline_memo.reads.add_tile_rows(
                 &mut self.scanline_memo.tile_pages[background][block],
                 char_base,
-                color_256,
+                COLOR_256,
                 block_entries,
             );
             for (column, entry) in block_entries.into_iter().enumerate() {
@@ -154,7 +155,7 @@ impl Bus {
                 entries[index] = entry;
                 let source_y = if entry & (1 << 11) != 0 { 7 - world_y % 8 } else { world_y % 8 };
                 row_bases[index] = char_base
-                    + usize::from(entry & 0x3FF) * if color_256 { 64 } else { 32 }
+                    + usize::from(entry & 0x3FF) * if COLOR_256 { 64 } else { 32 }
                     + source_y * row_bytes;
             }
         }
@@ -166,10 +167,10 @@ impl Bus {
             let column = (world_x / 8) & (width / 8 - 1);
             let start = world_x % 8;
             let length = (8 - start).min(SCREEN_WIDTH - x);
-            let lanes = self.text_open_lanes(&layout, x, length, simple);
+            let lanes = self.text_open_lanes::<SIMPLE>(&layout, x, length);
             if (lanes.top.contains(&true) || lanes.second.contains(&true))
                 && let Some(row) =
-                    self.decode_text_row(entries[column], row_bases[column], color_256)
+                    self.decode_text_row::<COLOR_256>(entries[column], row_bases[column])
             {
                 self.write_text_row(&layout, x, &row, start, length, &lanes);
             }
@@ -197,7 +198,20 @@ impl Bus {
         {
             let simple = self.line_unmasked_layers & (1 << background) != 0
                 && !self.line_needs_second_surface;
-            self.render_text_tile_rows(line, background, priority, simple, control & (1 << 7) != 0);
+            match (simple, control & (1 << 7) != 0) {
+                (true, true) => {
+                    self.render_text_tile_rows::<true, true>(line, background, priority)
+                }
+                (true, false) => {
+                    self.render_text_tile_rows::<true, false>(line, background, priority)
+                }
+                (false, true) => {
+                    self.render_text_tile_rows::<false, true>(line, background, priority)
+                }
+                (false, false) => {
+                    self.render_text_tile_rows::<false, false>(line, background, priority)
+                }
+            }
             return;
         }
         self.scanline_memo.reads.vram_pages = ALL_VRAM_PAGES;

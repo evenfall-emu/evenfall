@@ -146,6 +146,17 @@ frames, retired instructions fall from 21.80 G to 20.86 G (20.80 G with the
 Bus hints), against ZiGBA's 11.92 G. Tiled composition remains the larger
 renderer instruction gap.
 
+The text-row loop specializes 4bpp/8bpp and uniformly admitted/windowed
+lanes, removing depth and mask checks from each row. The cache decodes palette
+words once when the byte-exact palette copy changes rather than assembling
+colors from bytes on each row expansion. On pinned CPU 3, release-LTO, HLE,
+five matched 600-frame rounds, the seven-workload ratio is 1.41× ZiGBA versus
+1.43× without these changes; tiles are 1.52× versus 1.54×, affine 1.20×
+versus 1.23×, and bitmap-DMA is unchanged at 1.26×. In 1,200 tiles frames the
+new renderer retires 20.27 G instructions versus 20.88 G before the changes.
+The tiles workload keeps only about 0.7% of scanlines in the memo; rendering
+work rather than memo lookup dominates this scrolling scene.
+
 Stable Rust uses fixed-size lane loops for text rows, objects and color
 effects where ZiGBA uses `@Vector` operations; the loops do not reliably
 auto-vectorize. The per-dot paths remain references. The portable-state
@@ -174,6 +185,12 @@ Force-inlining the cache-row lookup raised tile instructions from 21.43 G to
 21.85 G per 1,200 frames. Hoisting per-lane frame bounds checks with slices
 lowered instructions to 21.29 G but did not lower cycles (about 4.80 G for
 both); neither trial is retained.
+
+An eight-lane branch-free mask/select and full-surface copy raised tiles from
+20.88 G to 23.68 G instructions per 1,200 frames and from 4.71 G to 4.94 G
+cycles; it is not retained. Decoding palette words through `as_chunks` instead
+of indexed reads raised bitmap-DMA from 29.08 G to 29.54 G instructions and
+from 5.04 G to 5.71 G cycles per 1,200 frames; the indexed loop is retained.
 
 In a separate pinned-CPU-1 HLE comparison (matched rounds with equal final
 images), **retained** CPU work reduced the ARM-mixer ratio from 3.21× to
