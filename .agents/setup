@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# Prepares an Amp orb (Debian 12) to build, test and run the parity harness:
+# the pinned Rust toolchain, Zig 0.16 for the ZiGBA oracle, Node for the SDK,
+# and the Arm GNU toolchain for the probe ROMs. Idempotent and non-interactive.
+set -euo pipefail
+
+started=$SECONDS
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+local_bin="$HOME/.local/bin"
+toolchains="$HOME/.local/share/evenfall-toolchains"
+mkdir -p "$local_bin" "$toolchains"
+
+step() {
+    echo "[setup] $1 (+$((SECONDS - started))s)"
+}
+
+step "Installing missing system packages"
+packages=(build-essential curl ca-certificates git xz-utils)
+missing=()
+for package in "${packages[@]}"; do
+    if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -Fqx 'install ok installed'; then
+        missing+=("$package")
+    fi
+done
+if ((${#missing[@]})); then
+    sudo apt-get update
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
+else
+    echo "[setup] System packages are already installed"
+fi
+
+install_archive() {
+    local name=$1 version=$2 url=$3 checksum=$4 directory=$5 executable=$6
+    local destination="$toolchains/$name-$version"
+    if [[ ! -x "$destination/$executable" ]]; then
+        step "Installing $name $version"
+        local temporary archive
+        temporary="$(mktemp -d)"
+        archive="$temporary/archive.tar.xz"
+        curl --fail --location --silent --show-error "$url" --output "$archive"
+        echo "$checksum  $archive" | sha256sum --check --status
+        tar -xJf "$archive" -C "$temporary"
+        rm -rf "$destination"
+        mv "$temporary/$directory" "$destination"
+        rm -rf "$temporary"
+    else
+        echo "[setup] $name $version is already installed"
+    fi
+}
+
+install_archive \
+    zig 0.16.0 \
+    https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz \
+    70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00 \
+    zig-x86_64-linux-0.16.0 zig
+install_archive \
+    node 24.11.0 \
+    https://nodejs.org/dist/v24.11.0/node-v24.11.0-linux-x64.tar.xz \
+    46da9a098973ab7ba4fca76945581ecb2eaf468de347173897044382f10e0a0a \
+    node-v24.11.0-linux-x64 bin/node
+install_archive \
+    arm-gnu-toolchain 15.2.Rel1 \
+    https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/binrel/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz \
+    597893282ac8c6ab1a4073977f2362990184599643b4c5ee34870a8215783a16 \
+    arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi bin/arm-none-eabi-gcc
+
+ln -sfn "$toolchains/zig-0.16.0/zig" "$local_bin/zig"
+for command in node npm npx corepack; do
+    ln -sfn "$toolchains/node-24.11.0/bin/$command" "$local_bin/$command"
+done
+for command in gcc objcopy nm; do
+    ln -sfn "$toolchains/arm-gnu-toolchain-15.2.Rel1/bin/arm-none-eabi-$command" \
+        "$local_bin/arm-none-eabi-$command"
+done
+
+# rustup reads rust-toolchain.toml, so the pinned toolchain, its components
+# and the wasm32 target are installed by the first cargo command below.
+if [[ ! -x "$HOME/.cargo/bin/rustup" ]]; then
+    step "Installing rustup"
+    curl --proto '=https' --tlsv1.2 --fail --silent --show-error https://sh.rustup.rs |
+        sh -s -- -y --default-toolchain none --profile minimal --no-modify-path
+else
+    echo "[setup] rustup is already installed"
+fi
+
+profile_marker="# Evenfall orb toolchains"
+if ! grep -Fqx "$profile_marker" "$HOME/.bash_profile" 2>/dev/null; then
+    cat >> "$HOME/.bash_profile" <<'EOF'
+
+# Evenfall orb toolchains
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+EOF
+fi
+export PATH="$local_bin:$HOME/.cargo/bin:$PATH"
+
+cd "$repo_root"
+
+step "Installing the pinned Rust toolchain"
+rustup show active-toolchain >/dev/null 2>&1 || rustup toolchain install
+rustup show active-toolchain
+
+step "Fetching pinned references"
+tools/setup-refs.sh zigba gba-tests cult-gba-bios suite
+
+step "Fetching Cargo dependencies"
+cargo fetch --locked
+
+if [[ -f probe/Makefile ]]; then
+    step "Building probe ROMs"
+    make -C probe -j"$(nproc)"
+fi
+if [[ -f tools/bench/roms/Makefile ]]; then
+    step "Building benchmark ROMs"
+    make -C tools/bench/roms -j"$(nproc)"
+fi
+
+if [[ -f package-lock.json ]]; then
+    step "Installing npm workspaces"
+    npm ci --no-audit --no-fund
+fi
+
+step "Complete"

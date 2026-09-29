@@ -26,6 +26,7 @@ evenfall-gba = { path = "systems/gba" }
 
 blake3 = { version = "1.8", default-features = false }
 divan = "0.1.21"
+miniz_oxide = "0.8"
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "3", features = ["full"] }

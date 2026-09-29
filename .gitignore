@@ -21,3 +21,4 @@ node_modules/
 /web/gba/*.wasm
 
 /.amp/in/
+.amp/portals/*
