@@ -735,6 +735,28 @@ impl Bus {
         bus
     }
 
+    /// Initialize a Bus in caller-provided uninitialized storage.
+    ///
+    /// # Safety
+    /// `ptr` must be aligned, writable storage for one Bus, with no live Bus
+    /// value at that address. The caller owns and drops the initialized value.
+    pub unsafe fn init_in_place(
+        ptr: *mut Self,
+        rom: &[u8],
+        bios: &[u8],
+        save_type: save::Type,
+        save_data: Option<&[u8]>,
+    ) {
+        let bus = if let Some(data) = save_data {
+            Self::init_with_bios_and_save_data(rom, bios, save_type, data)
+        } else {
+            Self::init_with_bios_and_save(rom, bios, save_type)
+        };
+        // SAFETY: guaranteed by the caller; the constructor owns its ROM,
+        // BIOS and boxed large arrays, and does not borrow the input slices.
+        unsafe { ptr.write(bus) };
+    }
+
     pub fn write_state(&self, sink: &mut evenfall_state::Sink<'_>) -> evenfall_state::Result<()> {
         use evenfall_state::Error;
         if self.servicing_dma
@@ -1187,11 +1209,56 @@ impl Bus {
 
     pub fn fetch_instruction_in_region(
         &mut self,
-        _region: &mut InstructionFetchRegion,
+        region: &mut InstructionFetchRegion,
         address: u32,
         width: AccessWidth,
     ) -> u32 {
+        if address.wrapping_sub(region.address) >= region.valid_starts {
+            *region = self.instruction_fetch_region(address);
+        }
+        // read() remains the reference fetch path, including prefetch, DMA,
+        // and open-bus completion. The view also admits guarded fused refills.
         self.fetch_instruction(address, width)
+    }
+
+    fn instruction_fetch_region(&self, address: u32) -> InstructionFetchRegion {
+        if address >> 24 == 3 {
+            return InstructionFetchRegion {
+                address: address & 0xff00_0000,
+                valid_starts: 0x0100_0000,
+                region_class: InstructionFetchClass::Iwram,
+                ..InstructionFetchRegion::default()
+            };
+        }
+        if !(8..=13).contains(&(address >> 24)) {
+            return InstructionFetchRegion {
+                address: address & 0xff00_0000,
+                valid_starts: 0x0100_0000,
+                ..InstructionFetchRegion::default()
+            };
+        }
+        let offset = (address - GAME_PAK_BASE) & (GAME_PAK_WINDOW_SIZE - 1);
+        let window_base = address - offset;
+        let mut first = 0;
+        let mut end = self.rom.len().min(GAME_PAK_WINDOW_SIZE as usize) as u32;
+        if offset < 0xc4 {
+            end = end.min(0xc4);
+        } else {
+            first = 0xca;
+        }
+        if window_base == 0x0c00_0000 {
+            end =
+                end.min(if self.rom.len() <= 16 * 1024 * 1024 { 0x0100_0000 } else { 0x01ff_ff00 });
+        }
+        if offset < first || end < first + 4 || offset > end - 4 {
+            return InstructionFetchRegion::default();
+        }
+        InstructionFetchRegion {
+            bytes: Some(self.rom.as_ptr().wrapping_add(first as usize)),
+            address: window_base + first,
+            valid_starts: end - first - 3,
+            region_class: InstructionFetchClass::Rom,
+        }
     }
 
     pub fn fetch_thumb_in_region(
@@ -1220,13 +1287,54 @@ impl Bus {
         [first, second]
     }
 
-    /// No fused shortcut is admitted yet; the caller uses two ordinary fetches.
     pub fn fused_thumb_game_pak_refill(
         &mut self,
-        _region: &mut InstructionFetchRegion,
-        _address: u32,
+        region: &mut InstructionFetchRegion,
+        address: u32,
     ) -> Option<[u32; 2]> {
-        None
+        if address & 1 != 0 {
+            return None;
+        }
+        if address.wrapping_sub(region.address) >= region.valid_starts {
+            *region = self.instruction_fetch_region(address);
+        }
+        let offset = address.wrapping_sub(region.address);
+        if region.bytes.is_none() || offset + 2 >= region.valid_starts {
+            return None;
+        }
+        if self.waitcnt & (1 << 14) == 0 || self.game_pak_timing_key != self.waitcnt {
+            return None;
+        }
+        let prefetch = &self.game_pak_prefetch;
+        if prefetch.active
+            && prefetch.opcode_bytes == 2
+            && ((prefetch.count != 0 && address == prefetch.head_address)
+                || (prefetch.countdown != 0 && address == prefetch.last_address))
+        {
+            return None;
+        }
+        let next = address + 2;
+        let miss_cycles = self.game_pak_half_cycles(address, AccessKind::Nonsequential);
+        let duty = self.prefetch_duty(next, 2);
+        let end = self.current_cycle + miss_cycles + duty;
+        if !self.batch_active || end >= self.batch_deadline || self.pending_dma != 0 {
+            return None;
+        }
+        let index = ((address - GAME_PAK_BASE) & (GAME_PAK_WINDOW_SIZE - 1)) as usize;
+        let first = u32::from(u16::from_le_bytes(self.rom[index..index + 2].try_into().unwrap()));
+        let second =
+            u32::from(u16::from_le_bytes(self.rom[index + 2..index + 4].try_into().unwrap()));
+        self.fetch_kind = AccessKind::Sequential;
+        self.game_pak_code_active = true;
+        self.prefetch_disabled_bug_pending = false;
+        self.prefetch_buffer_was_disabled = false;
+        self.start_game_pak_prefetch(address, 2);
+        debug_assert_eq!(self.game_pak_prefetch.countdown, duty);
+        self.continue_game_pak_prefetch(2);
+        self.game_pak_prefetch.head_address = next + 2;
+        self.open_bus_value = second;
+        self.current_cycle = end;
+        Some([first, second])
     }
 
     pub fn begin_device_batch(&mut self) {
@@ -3364,6 +3472,177 @@ impl Bus {
     }
 }
 
+/// Couple ready serial endpoints in cable order. All peers share one cycle origin.
+pub fn synchronize_sio(
+    peers: &mut [&mut Bus],
+    connection: SioConnection,
+) -> Result<bool, SioLinkError> {
+    if !(2..=4).contains(&peers.len()) || (connection == SioConnection::Cable2p && peers.len() != 2)
+    {
+        return Err(SioLinkError::UnsupportedPeerCount);
+    }
+    let mode = (peers[0].sio_control >> 12) & 3;
+    if peers.iter().any(|peer| peer.rcnt & 0x8000 != 0 || (peer.sio_control >> 12) & 3 != mode) {
+        return Ok(false);
+    }
+    match mode {
+        0 | 1 => {
+            let mut outgoing = [0u32; 4];
+            let mut internal = [false; 4];
+            for (index, peer) in peers.iter().enumerate() {
+                if peer.sio_control & 0x80 == 0 {
+                    return Ok(false);
+                }
+                internal[index] = peer.sio_control & 1 != 0;
+                outgoing[index] = if mode == 0 {
+                    u32::from(peer.sio_send as u8)
+                } else {
+                    u32::from(peer.sio_data[0]) | (u32::from(peer.sio_data[1]) << 16)
+                };
+            }
+            let master = match connection {
+                SioConnection::Cable2p => {
+                    if internal[0] == internal[1] {
+                        return if internal[0] {
+                            Err(SioLinkError::ClockConflict)
+                        } else {
+                            Ok(false)
+                        };
+                    }
+                    usize::from(!internal[0])
+                }
+                SioConnection::CableMulti => {
+                    if !internal[0] {
+                        if internal[1..peers.len()].contains(&true) {
+                            return Err(SioLinkError::ClockConflict);
+                        }
+                        return Ok(false);
+                    }
+                    if internal[1..peers.len()].contains(&true) {
+                        return Err(SioLinkError::ClockConflict);
+                    }
+                    0
+                }
+            };
+            let deadline =
+                peers[master].sio_completion_cycle.expect("internal SIO clock has a deadline");
+            if peers.iter().any(|peer| peer.current_cycle > deadline) {
+                return Err(SioLinkError::MissedDeadline);
+            }
+            match connection {
+                SioConnection::Cable2p => {
+                    peers[0].sio_receive_value = outgoing[1];
+                    peers[1].sio_receive_value = outgoing[0];
+                    arm_sio_completion(peers[1 - master], deadline);
+                }
+                SioConnection::CableMulti => {
+                    peers[0].sio_receive_value = 0;
+                    for index in 1..peers.len() {
+                        peers[index].sio_receive_value = outgoing[index - 1];
+                        arm_sio_completion(peers[index], deadline);
+                    }
+                }
+            }
+            Ok(true)
+        }
+        2 => {
+            if connection != SioConnection::CableMulti {
+                return Err(SioLinkError::UnsupportedMode);
+            }
+            let parent_started = peers[0].sio_control & 0x80 != 0;
+            for (index, peer) in peers.iter_mut().enumerate() {
+                peer.sio_control =
+                    (peer.sio_control & !0x000c) | 0x0008 | if index == 0 { 0 } else { 0x0004 };
+                if index != 0 && !parent_started {
+                    peer.sio_control &= !0x80;
+                }
+            }
+            if !parent_started {
+                return Ok(false);
+            }
+            if peers[0].sio_completion_cycle.is_some() {
+                return Ok(true);
+            }
+            let mut received = [0xffff; 4];
+            for (index, peer) in peers.iter().enumerate() {
+                received[index] = peer.sio_send;
+            }
+            const DURATIONS: [[Cycle; 3]; 4] = [
+                [73_003, 107_680, 142_356],
+                [18_251, 26_920, 35_589],
+                [12_167, 17_947, 23_726],
+                [6_075, 8_973, 11_863],
+            ];
+            let Some(started_at) = peers[0].sio_start_cycle else { return Ok(false) };
+            let deadline =
+                started_at + DURATIONS[(peers[0].sio_control & 3) as usize][peers.len() - 2];
+            if peers.iter().any(|peer| peer.current_cycle > deadline) {
+                return Err(SioLinkError::MissedDeadline);
+            }
+            for (index, peer) in peers.iter_mut().enumerate() {
+                peer.sio_data = [0xffff; 4];
+                peer.sio_multiplayer_receive = received;
+                peer.sio_multiplayer_id = index as u8;
+                peer.sio_control |= 0x80;
+                arm_sio_completion(peer, deadline);
+            }
+            Ok(true)
+        }
+        3 => {
+            if connection != SioConnection::Cable2p {
+                return Err(SioLinkError::UnsupportedMode);
+            }
+            let mut progressed = false;
+            for index in 0..2 {
+                let (sender, receiver) = if index == 0 {
+                    let (left, right) = peers.split_at_mut(1);
+                    (&mut *left[0], &mut *right[0])
+                } else {
+                    let (left, right) = peers.split_at_mut(1);
+                    (&mut *right[0], &mut *left[0])
+                };
+                let receiver_ready = receiver.sio_control & 0x800 != 0
+                    && receiver.uart_rx_fifo.count
+                        < if receiver.sio_control & 0x100 != 0 { 4 } else { 1 }
+                    && receiver.uart_rx_arrival_cycle.is_none();
+                sender.uart_cts_ready = receiver_ready;
+                let was_active = sender.uart_tx_active.is_some();
+                sender.maybe_start_uart_transmit();
+                if !was_active && sender.uart_tx_active.is_some() {
+                    progressed = true;
+                }
+                let Some(value) = sender.uart_tx_active else { continue };
+                if sender.uart_tx_peer_scheduled {
+                    continue;
+                }
+                let deadline =
+                    sender.uart_tx_completion_cycle.expect("active UART transmit has a deadline");
+                if receiver.current_cycle > deadline {
+                    return Err(SioLinkError::MissedDeadline);
+                }
+                if receiver.sio_control & 0x800 != 0 {
+                    receiver.uart_rx_arrival_value = value;
+                    receiver.uart_rx_arrival_cycle = Some(deadline);
+                    if receiver.current_cycle == deadline {
+                        receiver.complete_uart_receive();
+                    }
+                }
+                sender.uart_tx_peer_scheduled = true;
+                progressed = true;
+            }
+            Ok(progressed)
+        }
+        _ => unreachable!(),
+    }
+}
+
+fn arm_sio_completion(peer: &mut Bus, deadline: Cycle) {
+    peer.sio_completion_cycle = Some(deadline);
+    if peer.current_cycle == deadline {
+        peer.complete_sio_transfer();
+    }
+}
+
 fn prefetch_duty_valid_until(address: u32, opcode_bytes: u8) -> u32 {
     if address & 0x1ffff == 0 {
         address.wrapping_add(u32::from(opcode_bytes))
@@ -3572,6 +3851,112 @@ mod tests {
         assert_eq!(bus.dma_channels[3].latched_source, 0);
     }
 
+    /// Zig: "SIO synchronization waits for both normal peers and rejects one past the deadline".
+    #[test]
+    fn sio_peer_arriving_after_master_deadline_is_rejected() {
+        let mut master = Bus::init(&[]);
+        let mut slave = Bus::init(&[]);
+        dma_half(&mut master, MMIO_BASE + 0x134, 0);
+        dma_half(&mut slave, MMIO_BASE + 0x134, 0);
+        dma_half(&mut master, MMIO_BASE + 0x128, 0x0083);
+        assert_eq!(
+            synchronize_sio(&mut [&mut master, &mut slave], SioConnection::Cable2p),
+            Ok(false)
+        );
+        dma_half(&mut slave, MMIO_BASE + 0x128, 0x0080);
+        slave.elapse(65);
+        assert_eq!(
+            synchronize_sio(&mut [&mut master, &mut slave], SioConnection::Cable2p),
+            Err(SioLinkError::MissedDeadline)
+        );
+    }
+
+    /// Zig: "four-player SIO exchanges every multiplayer word at the parent baud deadline".
+    #[test]
+    fn multiplayer_sio_delivers_all_four_words_at_parent_deadline() {
+        let mut buses = std::array::from_fn::<Bus, 4, _>(|_| Bus::init(&[]));
+        let sent = [0x0123, 0x4567, 0x89ab, 0xcdef];
+        for (index, bus) in buses.iter_mut().enumerate() {
+            dma_half(bus, MMIO_BASE + 0x134, 0);
+            dma_half(bus, MMIO_BASE + 0x128, 0x2003);
+            dma_half(bus, MMIO_BASE + 0x12a, sent[index]);
+            dma_half(bus, MMIO_BASE + 0x128, if index == 0 { 0x6083 } else { 0x6003 });
+        }
+        let [a, b, c, d] = &mut buses;
+        assert_eq!(synchronize_sio(&mut [a, b, c, d], SioConnection::CableMulti), Ok(true));
+        for bus in &mut buses {
+            assert_eq!(bus.sio_completion_cycle, Some(bus.now() + 11_863));
+            bus.elapse(11_862);
+            assert_ne!(bus.sio_control & 0x80, 0);
+            bus.elapse(1);
+        }
+        for (index, bus) in buses.iter().enumerate() {
+            assert_eq!(bus.sio_data, sent);
+            assert_eq!(bus.sio_control & 0x80, 0);
+            assert_eq!(bus.sio_control & 0x30, (index as u16) << 4);
+            assert_ne!(bus.interrupt_request_flags & (1 << 7), 0);
+        }
+    }
+
+    /// Zig: "UART CTS waits until the peer receiver has capacity".
+    #[test]
+    fn uart_cts_waits_for_receiver_capacity() {
+        let mut sender = Bus::init(&[]);
+        let mut receiver = Bus::init(&[]);
+        dma_half(&mut sender, MMIO_BASE + 0x134, 0);
+        dma_half(&mut receiver, MMIO_BASE + 0x134, 0);
+        dma_half(&mut sender, MMIO_BASE + 0x128, 0x3487);
+        dma_half(&mut receiver, MMIO_BASE + 0x128, 0x3083);
+        dma_half(&mut sender, MMIO_BASE + 0x12a, 0x3c);
+        assert_eq!(sender.uart_tx_completion_cycle, None);
+        assert_eq!(
+            synchronize_sio(&mut [&mut sender, &mut receiver], SioConnection::Cable2p),
+            Ok(false)
+        );
+        dma_half(&mut receiver, MMIO_BASE + 0x128, 0x3883);
+        assert_eq!(
+            synchronize_sio(&mut [&mut sender, &mut receiver], SioConnection::Cable2p),
+            Ok(true)
+        );
+        assert!(sender.uart_tx_completion_cycle.is_some());
+    }
+
+    /// Zig: "BIOS hard reset preserves host audio suppression".
+    #[test]
+    fn bios_hard_reset_preserves_host_audio_suppression() {
+        let mut bus = Bus::init(&[]);
+        let mut samples = [StereoSample::default(); 16];
+        bus.set_audio_output(false);
+        bus.hard_reset();
+        bus.elapse_cpu_internal(1024);
+        assert_eq!(bus.drain_audio_samples(&mut samples), 0);
+        bus.set_audio_output(true);
+        bus.elapse_cpu_internal(1024);
+        assert_eq!(bus.drain_audio_samples(&mut samples), 2);
+    }
+
+    /// Zig: "no-event materialization precedes register reset and hard reset clock changes".
+    #[test]
+    fn deferred_clock_materializes_before_register_and_hard_reset() {
+        let mut bus = Bus::init(&[]);
+        bus.timers[0].control = 0x80;
+        bus.begin_device_batch();
+        bus.elapse(7);
+        bus.register_ram_reset(0);
+        assert_eq!(bus.now(), 7);
+        assert_eq!(bus.ppu_timing.cycle_in_line, 7);
+        assert_eq!(bus.timers[0].counter, 7);
+        bus.elapse(5);
+        bus.hard_reset();
+        assert_eq!(bus.now(), 12);
+        assert_eq!(bus.ppu_timing.cycle_in_line, 0);
+        bus.elapse(1);
+        assert_eq!(bus.now(), 13);
+        assert_eq!(bus.ppu_timing.cycle_in_line, 1);
+        assert_eq!(bus.timers[0].counter, 0);
+        bus.end_device_batch();
+    }
+
     /// FIFO ring-buffer unit check; full UART integration belongs to the serial bus tests.
     #[test]
     fn uart_fifo_capacity_and_wraparound() {
@@ -3642,6 +4027,83 @@ mod tests {
         assert_eq!(scalar.game_pak_prefetch.count, batched.game_pak_prefetch.count);
         assert_eq!(batched.game_pak_prefetch.count, 8);
         assert_eq!(batched.game_pak_prefetch.countdown, 0);
+    }
+
+    /// Zig: "fused Thumb Game Pak refill matches two ordinary fetches".
+    #[test]
+    fn fused_thumb_refill_matches_two_scalar_fetches() {
+        let rom = std::array::from_fn::<u8, 256, _>(|i| (i as u8).wrapping_mul(53));
+        for wait in [0x4000, 0x4014, 0x43a8] {
+            for target in [0x0800_0020, 0x0a00_0042, 0x0c00_00d0] {
+                let mut fused = Bus::init(&rom);
+                let mut scalar = Bus::init(&rom);
+                for bus in [&mut fused, &mut scalar] {
+                    bus.write_waitcnt(wait);
+                    bus.refresh_game_pak_timing();
+                    bus.begin_device_batch();
+                }
+                let mut fused_region = InstructionFetchRegion::default();
+                let actual = fused
+                    .fused_thumb_game_pak_refill(&mut fused_region, target)
+                    .expect("ordinary ROM miss should admit a fused refill");
+                let mut scalar_region = InstructionFetchRegion::default();
+                scalar.fetch_kind = AccessKind::Nonsequential;
+                let first = scalar.fetch_instruction_in_region(
+                    &mut scalar_region,
+                    target,
+                    AccessWidth::Half,
+                );
+                scalar.fetch_kind = AccessKind::Sequential;
+                let second = scalar.fetch_instruction_in_region(
+                    &mut scalar_region,
+                    target + 2,
+                    AccessWidth::Half,
+                );
+                assert_eq!(actual, [first, second], "wait {wait:x}, target {target:x}");
+                assert_eq!(fused.now(), scalar.now(), "wait {wait:x}, target {target:x}");
+                assert_eq!(fused.open_bus_value, scalar.open_bus_value);
+                assert_eq!(fused.fetch_kind, scalar.fetch_kind);
+                assert_eq!(
+                    (
+                        fused.game_pak_prefetch.head_address,
+                        fused.game_pak_prefetch.last_address,
+                        fused.game_pak_prefetch.count,
+                        fused.game_pak_prefetch.countdown,
+                        fused.game_pak_prefetch.duty,
+                        fused.duty_valid_until
+                    ),
+                    (
+                        scalar.game_pak_prefetch.head_address,
+                        scalar.game_pak_prefetch.last_address,
+                        scalar.game_pak_prefetch.count,
+                        scalar.game_pak_prefetch.countdown,
+                        scalar.game_pak_prefetch.duty,
+                        scalar.duty_valid_until
+                    ),
+                    "wait {wait:x}, target {target:x}",
+                );
+                fused.end_device_batch();
+                scalar.end_device_batch();
+            }
+        }
+    }
+
+    /// A straddling GPIO fetch or a refill reaching an event must fall back.
+    #[test]
+    fn fused_thumb_refill_rejects_gpio_aperture_and_event_boundary() {
+        let mut bus = Bus::init(&[0; 256]);
+        bus.write_waitcnt(0x4000);
+        bus.refresh_game_pak_timing();
+        bus.begin_device_batch();
+        let mut region = InstructionFetchRegion::default();
+        assert_eq!(bus.fused_thumb_game_pak_refill(&mut region, 0x0800_00c2), None);
+        assert_eq!(region.region_class, InstructionFetchClass::Other);
+        bus.batch_deadline = bus.now() + 6;
+        let before = bus.now();
+        assert_eq!(bus.fused_thumb_game_pak_refill(&mut region, 0x0800_00d0), None);
+        assert_eq!(bus.now(), before);
+        assert_eq!(bus.game_pak_prefetch.count, 0);
+        bus.end_device_batch();
     }
 
     /// Zig: "cached IRQ line follows IE IF IME writes and keypad edges".
