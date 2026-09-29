@@ -1,7 +1,7 @@
 //! ARM7TDMI instruction state and bus-neutral execution primitives.
 //!
 //! The bus, not the interpreter, prices each N/S/I access. The type parameter
-//! permits both the hardware bus and the local RAM/ROM kernel views to inline.
+//! lets the system's bus inline into the executors.
 
 use evenfall_state::Codec;
 

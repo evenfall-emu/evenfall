@@ -13,9 +13,9 @@
 //!
 //! Caches are transient. A slot decodes itself on first execution. Every RAM
 //! write through the bus clears the slots it covers once its 256-byte page
-//! has held decoded code, and a run stops before any store into such a page,
-//! so the interpreter executes stores that could change code or the two
-//! prefetched instructions.
+//! has held decoded code, and a run stops before any store that reaches a
+//! decoded op or one of the two prefetched instructions, so the interpreter
+//! executes stores that change code. See `docs/research/execution-engine.md`.
 
 mod arm;
 mod mem;

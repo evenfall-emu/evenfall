@@ -7,9 +7,8 @@
 //! RAM fetches cost the same whether sequential or not. A ROM fetch without
 //! prefetch is sequential unless the instruction before it accessed data or
 //! spent internal cycles, so such a run carries the cost of its next fetch.
-//! With the prefetch buffer enabled, a run follows the Thumb ROM kernel's
-//! closed-form schedule of the buffer (see [`PrefetchClock`]), expressed in
-//! the run's budget.
+//! With the prefetch buffer enabled, a run follows the buffer's closed-form
+//! schedule (see [`PrefetchClock`]), expressed in the run's budget.
 
 use super::mem::{Mem, Running};
 use super::{CodeCache, Op, PAGE_SHIFT, ROM_PAGE_SLOTS, fresh_ops, split_memory};

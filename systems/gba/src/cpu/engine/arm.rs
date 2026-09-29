@@ -341,6 +341,21 @@ impl<const EW: bool> Ctx<'_, EW> {
         }
     }
 
+    /// The region, for the block loop.
+    #[inline(always)]
+    fn code(&self) -> Code<'_> {
+        Code {
+            slots: Self::SLOTS as u32,
+            fetch: Self::FETCH,
+            #[cfg(debug_assertions)]
+            memory: if EW { &self.mem.ewram[..] } else { &self.mem.iwram[..] },
+            #[cfg(debug_assertions)]
+            base: self.base,
+            #[cfg(not(debug_assertions))]
+            memory: std::marker::PhantomData,
+        }
+    }
+
     /// The running code, for store checks.
     #[inline(always)]
     fn running<'o>(&self, ops: &'o [Op], idx: u32) -> Running<'o> {
@@ -436,7 +451,7 @@ macro_rules! dp {
         } else if $op.inner == 0 {
             measure_block(&mut $ops[..], $c, $h.idx);
         } else if $h.budget >= i64::from($op.inner) * Ctx::<EW>::FETCH {
-            $h = alu_block::<EW, N>($h, $c, $ops, $regs);
+            $h = alu_block($h, &$ops[..], $regs, $c.code());
         } else {
             go!($h, $c, dp::<EW, $kind>(&mut $h, $regs, $op))
         }
@@ -985,65 +1000,76 @@ macro_rules! block_step {
 /// conditional B that ends the block continues here if it lands on a
 /// measured block that the budget covers.
 #[inline(never)]
-fn alu_block<const EW: bool, const N: usize>(
-    mut h: Hot,
-    c: &Ctx<'_, EW>,
-    ops: &[Op; N],
-    regs: &mut Registers,
-) -> Hot {
+fn alu_block(mut h: Hot, ops: &[Op], regs: &mut Registers, code: Code<'_>) -> Hot {
     loop {
-        if !run_block(&mut h, c, ops, regs) {
+        if !run_block(&mut h, ops, regs, code) {
             return h;
         }
-        let branch = &ops[h.idx as usize & (N - 1)];
-        #[cfg(debug_assertions)]
-        check_op(c, h.idx, branch);
+        let branch = &ops[h.idx as usize];
+        code.check(h.idx, branch);
         let taken = match branch.kind {
             k::B => true,
             k::BCOND..=206 => condition_passes(h.cpsr, u32::from(branch.kind - k::BCOND)),
             _ => false,
         };
         let target = h.idx.wrapping_add(branch.x);
-        if !taken || target as usize >= Ctx::<EW>::SLOTS {
+        if !taken || target >= code.slots {
             return h;
         }
         // Only measured block leaders, of kinds below BCOND, have an inner
         // of 2 or more there.
-        let lead = &ops[target as usize & (N - 1)];
-        let cost = 3 * Ctx::<EW>::FETCH + i64::from(lead.inner) * Ctx::<EW>::FETCH;
+        let lead = &ops[target as usize];
+        let cost = (3 + i64::from(lead.inner)) * code.fetch;
         if lead.kind >= k::BCOND || lead.inner < 2 || h.budget < cost {
             return h;
         }
-        h.budget -= 3 * Ctx::<EW>::FETCH;
+        h.budget -= 3 * code.fetch;
         h.idx = target;
+    }
+}
+
+/// What the block loop needs to know of the region it runs in: its
+/// instruction slots and their fetch cost, and in debug builds the code
+/// itself, to check each op against a fresh decode.
+#[derive(Clone, Copy)]
+struct Code<'a> {
+    slots: u32,
+    fetch: i64,
+    #[cfg(debug_assertions)]
+    memory: &'a [u8],
+    #[cfg(debug_assertions)]
+    base: u32,
+    #[cfg(not(debug_assertions))]
+    memory: std::marker::PhantomData<&'a [u8]>,
+}
+
+impl Code<'_> {
+    #[inline(always)]
+    fn check(&self, _idx: u32, _op: &Op) {
+        #[cfg(debug_assertions)]
+        {
+            let pc = self.base.wrapping_add(_idx << 2);
+            let at = pc as usize & (self.memory.len() - 4);
+            let word = u32::from_le_bytes(self.memory[at..at + 4].try_into().expect("a word"));
+            check_word(pc, word, _op);
+        }
     }
 }
 
 /// Runs one block (see [`alu_block`]); false if it stopped before an op
 /// that no longer belongs to it.
 #[inline(always)]
-fn run_block<const EW: bool, const N: usize>(
-    h: &mut Hot,
-    c: &Ctx<'_, EW>,
-    ops: &[Op; N],
-    regs: &mut Registers,
-) -> bool {
-    let start = h.idx as usize & (N - 1);
-    let block = &ops[start..(start + usize::from(ops[start].inner)).min(N)];
+fn run_block(h: &mut Hot, ops: &[Op], regs: &mut Registers, code: Code<'_>) -> bool {
+    let start = h.idx as usize;
+    let block = &ops[start..(start + usize::from(ops[start].inner)).min(ops.len())];
     let mut rest = block;
-    #[cfg(debug_assertions)]
     let first = h.idx;
-    #[cfg(debug_assertions)]
-    let check = |rest: &[Op]| check_op(c, first + (block.len() - rest.len()) as u32, &rest[0]);
-    #[cfg(not(debug_assertions))]
-    let _ = c;
+    let check = |rest: &[Op]| code.check(first + (block.len() - rest.len()) as u32, &rest[0]);
     // Two ops per turn, so that the loop's own work is shared.
     'run: {
         while let [a, b, tail @ ..] = rest {
-            #[cfg(debug_assertions)]
             check(rest);
             block_kinds!(block_step, h, regs, a, { break 'run });
-            #[cfg(debug_assertions)]
             check(&rest[1..]);
             block_kinds!(block_step, h, regs, b, {
                 rest = &rest[1..];
@@ -1052,7 +1078,6 @@ fn run_block<const EW: bool, const N: usize>(
             rest = tail;
         }
         if let [a, ..] = rest {
-            #[cfg(debug_assertions)]
             check(rest);
             block_kinds!(block_step, h, regs, a, { break 'run });
             rest = &rest[1..];
@@ -1060,7 +1085,7 @@ fn run_block<const EW: bool, const N: usize>(
     }
     let ran = block.len() - rest.len();
     h.idx += ran as u32;
-    h.budget -= ran as i64 * Ctx::<EW>::FETCH;
+    h.budget -= ran as i64 * code.fetch;
     rest.is_empty()
 }
 
@@ -1072,7 +1097,9 @@ fn cond_step<const C: u32>(h: &mut Hot, regs: &mut Registers, op: &Op) -> bool {
 }
 
 /// The effect of a block op of `kind`: false if no block holds that kind.
-#[inline(always)]
+/// Out of line: every conditional kind of every copy of the block loop
+/// calls this one instance.
+#[inline(never)]
 fn block_body(kind: u8, h: &mut Hot, regs: &mut Registers, op: &Op) -> bool {
     macro_rules! bodies {
         (; $($kind:literal)*) => {
@@ -1118,11 +1145,17 @@ fn measure_block<const EW: bool>(ops: &mut [Op], c: &mut Ctx<'_, EW>, idx: u32) 
 /// leader carries its block's length besides.
 #[cfg(debug_assertions)]
 fn check_op<const EW: bool>(c: &Ctx<'_, EW>, idx: u32, op: &Op) {
+    let pc = c.pc(idx);
+    check_word(pc, c.code_word(pc), op);
+}
+
+/// Asserts that a cached op at `pc` is what `word` decodes to.
+#[cfg(debug_assertions)]
+fn check_word(pc: u32, word: u32, op: &Op) {
     if matches!(op.kind, k::UNDECODED | k::END | k::STOP) {
         return;
     }
-    let pc = c.pc(idx);
-    let mut expected = decode(c.code_word(pc));
+    let mut expected = decode(word);
     if matches!(op.kind, k::DP_I..k::BCOND) {
         expected.inner = op.inner;
     }
