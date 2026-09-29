@@ -11,6 +11,7 @@ use crate::timer::Timer;
 use crate::types::Cycle;
 use crate::video::{AffineTransition, scanline_memo, tile_row_cache, timing::PpuTiming};
 use evenfall_state::Codec;
+use std::sync::Arc;
 
 mod kernel;
 pub use kernel::{
@@ -394,9 +395,9 @@ pub struct Bus {
     #[codec(skip)]
     pub video_frame_cycle: Cycle,
     #[codec(skip)]
-    pub rom: Box<[u8]>,
+    pub rom: Arc<Vec<u8>>,
     #[codec(skip)]
-    pub bios: Box<[u8]>,
+    pub bios: Arc<[u8]>,
     pub cartridge_gpio: Option<CartridgeGpio>,
     pub cartridge_tilt: Option<tilt::Tilt>,
     pub timers: [Timer; 4],
@@ -572,6 +573,10 @@ impl Bus {
     }
 
     pub fn init_with_bios_and_save(rom: &[u8], bios: &[u8], save_type: save::Type) -> Self {
+        Self::init_shared(Arc::new(rom.to_vec()), Arc::from(bios), save_type)
+    }
+
+    fn init_shared(rom: Arc<Vec<u8>>, bios: Arc<[u8]>, save_type: save::Type) -> Self {
         assert!(
             bios.is_empty() || bios.len() == BIOS_SIZE,
             "external GBA BIOS must be exactly 16 KiB"
@@ -608,8 +613,8 @@ impl Bus {
             video_published_pixels: boxed_array(0),
             video_frame_id: 0,
             video_frame_cycle: 0,
-            rom: rom.into(),
-            bios: bios.into(),
+            rom,
+            bios,
             cartridge_gpio: None,
             cartridge_tilt: None,
             timers: std::array::from_fn(|_| Timer::default()),
@@ -752,11 +757,36 @@ impl Bus {
         save_type: save::Type,
         save_data: Option<&[u8]>,
     ) {
-        let bus = if let Some(data) = save_data {
-            Self::init_with_bios_and_save_data(rom, bios, save_type, data)
-        } else {
-            Self::init_with_bios_and_save(rom, bios, save_type)
+        // SAFETY: the caller provides the storage contract passed through to
+        // init_in_place_shared; the input slices are copied into owned media.
+        unsafe {
+            Self::init_in_place_shared(
+                ptr,
+                Arc::new(rom.to_vec()),
+                Arc::from(bios),
+                save_type,
+                save_data,
+            )
         };
+    }
+
+    /// Initialize a Bus using already-owned media without copying bytes.
+    /// The ROM must not be mutated while the Bus holds instruction fetch views.
+    ///
+    /// # Safety
+    /// `ptr` must be aligned, writable storage for one Bus, with no live Bus
+    /// value at that address. The caller owns and drops the initialized value.
+    pub unsafe fn init_in_place_shared(
+        ptr: *mut Self,
+        rom: Arc<Vec<u8>>,
+        bios: Arc<[u8]>,
+        save_type: save::Type,
+        save_data: Option<&[u8]>,
+    ) {
+        let mut bus = Self::init_shared(rom, bios, save_type);
+        if let Some(data) = save_data {
+            bus.save = SaveDevice::init_with_data(save_type, data);
+        }
         // SAFETY: guaranteed by the caller; the constructor owns its ROM,
         // BIOS and boxed large arrays, and does not borrow the input slices.
         unsafe { ptr.write(bus) };
@@ -1348,11 +1378,17 @@ impl Bus {
         debug_assert_eq!(self.timer_cycle, self.current_cycle);
         self.batch_device_cycle = self.current_cycle;
         self.batch_active = true;
+        self.devices_deferred = true;
+        self.refresh_fifo_clock();
+        self.refresh_timer_deadline();
         self.batch_deadline = self.next_device_boundary();
     }
 
     pub fn end_device_batch(&mut self) {
         self.synchronize_devices();
+        self.devices_deferred = false;
+        self.fifo_clock = crate::apu::FifoClock::default();
+        self.timer_deadline = 0;
         self.batch_active = false;
         self.batch_device_cycle = 0;
         self.batch_deadline = 0;
@@ -1429,6 +1465,8 @@ impl Bus {
                 }
                 self.apu_cycle = stop_at;
                 self.timer_cycle = stop_at;
+                self.refresh_fifo_clock();
+                self.refresh_timer_deadline();
             }
             if self.sio_completion_cycle.is_some_and(|at| at <= stop_at) {
                 self.complete_sio_transfer();
@@ -1528,6 +1566,7 @@ impl Bus {
         }
         if flags & 0x40 != 0 {
             self.apu.reset_registers();
+            self.refresh_timer_deadline();
         }
         if flags & 0x80 != 0 {
             self.reset_general_registers();
@@ -1600,6 +1639,8 @@ impl Bus {
         self.affine_segment_counts = [0; 2];
         self.dma_channels = std::array::from_fn(|_| DmaChannel::default());
         self.timers = std::array::from_fn(|_| Timer::default());
+        self.refresh_fifo_clock();
+        self.refresh_timer_deadline();
         self.dma_start_cycles = [None; 4];
         self.pending_dma = 0;
         self.servicing_dma = false;
@@ -2237,7 +2278,7 @@ impl Bus {
 
     fn write_mmio(&mut self, address: u32, width: AccessWidth, value: u32) {
         if Apu::accepts_fifo_write(address, width.bytes() as u8) {
-            self.apu.write_fifo(address, value, width.bytes() as u8);
+            self.write_fifo(address, value, width.bytes() as u8);
             return;
         }
         match width {
@@ -2265,6 +2306,7 @@ impl Bus {
             self.sync_apu_to(self.current_cycle);
         }
         if self.apu.write_byte(address, value) {
+            self.refresh_after_apu_write(address);
             return;
         }
         let aligned = address & !1;
@@ -2377,6 +2419,8 @@ impl Bus {
             } else {
                 self.timers[index].write_reload(value);
             }
+            self.refresh_fifo_clock();
+            self.refresh_timer_deadline();
             return;
         }
         if let Some(index) = Self::background_control_index(address) {
@@ -2424,6 +2468,7 @@ impl Bus {
             self.sync_apu_to(self.current_cycle);
         }
         if self.apu.write_half(address, value) {
+            self.refresh_after_apu_write(address);
             return;
         }
         if (0x120..=0x126).contains(&offset) && offset & 1 == 0 {
@@ -2773,7 +2818,8 @@ impl Bus {
 
     fn synchronize_devices(&mut self) {
         self.flush_device_batch();
-        self.sync_apu_to(self.current_cycle);
+        let requests = self.sync_apu_to(self.current_cycle);
+        debug_assert_eq!(requests, 0);
         self.sync_timers_to(self.current_cycle);
     }
 
@@ -2784,36 +2830,67 @@ impl Bus {
         let cycles = self.current_cycle - self.batch_device_cycle;
         debug_assert!(self.current_cycle < self.batch_deadline);
         self.ppu_timing.elapse_before_boundary(cycles);
-        self.sync_apu_to(self.current_cycle);
-        self.sync_timers_to(self.current_cycle);
+        if !self.devices_deferred {
+            self.sync_apu_to(self.current_cycle);
+            self.sync_timers_to(self.current_cycle);
+        }
         self.batch_device_cycle = self.current_cycle;
     }
 
-    fn sync_apu_to(&mut self, target: Cycle) {
+    fn sync_apu_to(&mut self, target: Cycle) -> u8 {
         let cycles = target - self.apu_cycle;
+        if cycles == 0 {
+            return 0;
+        }
+        let from = self.apu_cycle;
         self.apu_cycle = target;
-        if cycles != 0 {
+        if self.fifo_clock.delegated() {
+            self.apu.elapse_clocked(from, target, &mut self.fifo_clock)
+        } else {
             self.apu.elapse(cycles);
+            0
         }
     }
 
     fn sync_timers_to(&mut self, target: Cycle) {
         let cycles = target - self.timer_cycle;
+        if cycles == 0 {
+            return;
+        }
         self.timer_cycle = target;
         for (index, timer) in self.timers.iter_mut().enumerate() {
-            if (index == 0 || !timer.count_up_enabled()) && cycles != 0 {
+            if index != 0 && timer.count_up_enabled() {
+                continue;
+            }
+            if index < 2 && self.fifo_clock.next[index] != crate::apu::FifoClock::inactive {
+                timer.elapse(cycles);
+            } else {
                 timer.elapse_before_overflow(cycles);
             }
         }
     }
 
     fn next_timer_overflow(&self) -> Cycle {
+        if self.devices_deferred {
+            return self.timer_deadline;
+        }
+        self.compute_timer_deadline()
+    }
+
+    fn compute_timer_deadline(&self) -> Cycle {
         self.timers
             .iter()
             .enumerate()
             .filter_map(|(index, timer)| {
                 if index != 0 && timer.count_up_enabled() {
                     None
+                } else if index < 2
+                    && self.fifo_clock.next[index] != crate::apu::FifoClock::inactive
+                {
+                    self.apu.overflows_until_refill(index).map(|overflows| {
+                        self.fifo_clock.next[index]
+                            + (overflows - 1) * self.fifo_clock.period[index]
+                    })
                 } else {
                     timer
                         .cycles_until_overflow()
@@ -2822,6 +2899,57 @@ impl Bus {
             })
             .min()
             .unwrap_or(Cycle::MAX)
+    }
+
+    fn refresh_timer_deadline(&mut self) {
+        if self.devices_deferred {
+            self.timer_deadline = self.compute_timer_deadline();
+        }
+    }
+
+    fn refresh_fifo_clock(&mut self) {
+        self.fifo_clock = crate::apu::FifoClock::default();
+        if !self.devices_deferred {
+            return;
+        }
+        debug_assert_eq!(self.apu_cycle, self.timer_cycle);
+        for index in 0..2 {
+            let timer = &self.timers[index];
+            if !timer.enabled() || timer.irq_enabled() || (index != 0 && timer.count_up_enabled()) {
+                continue;
+            }
+            let successor = &self.timers[index + 1];
+            if successor.enabled() && successor.count_up_enabled() {
+                continue;
+            }
+            self.fifo_clock.next[index] = self.timer_cycle + timer.cycles_until_overflow().unwrap();
+            self.fifo_clock.period[index] = timer.overflow_period();
+        }
+    }
+
+    fn refresh_after_apu_write(&mut self, address: u32) {
+        let aligned = address & !1;
+        if aligned == MMIO_BASE + 0x82 || aligned == MMIO_BASE + 0x84 {
+            self.refresh_timer_deadline();
+        }
+    }
+
+    fn write_fifo(&mut self, address: u32, value: u32, byte_count: u8) {
+        if !self.fifo_clock.delegated() {
+            self.apu.write_fifo(address, value, byte_count);
+            return;
+        }
+        if self.fifo_clock.next[0].min(self.fifo_clock.next[1]) <= self.current_cycle {
+            self.sync_apu_to(self.current_cycle);
+        }
+        self.apu.write_fifo(address, value, byte_count);
+        if !self.apu.fifo_needs_refill(address) {
+            return;
+        }
+        self.refresh_timer_deadline();
+        if self.batch_active && self.timer_deadline < self.batch_deadline {
+            self.batch_deadline = self.timer_deadline;
+        }
     }
 
     fn next_device_boundary(&self) -> Cycle {
@@ -2899,27 +3027,43 @@ impl Bus {
     fn advance_step(&mut self, cycles: Cycle) {
         self.advance_game_pak_prefetch(cycles);
         let events = self.ppu_timing.elapse(cycles);
-        self.sync_apu_to(self.current_cycle + cycles);
-        let elapsed = self.current_cycle + cycles - self.timer_cycle;
-        self.timer_cycle += elapsed;
-        let mut previous = 0;
+        let end = self.current_cycle + cycles;
         let mut audio_requests = 0;
-        for (index, timer) in self.timers.iter_mut().enumerate() {
-            let overflows = if index != 0 && timer.count_up_enabled() {
-                timer.cascade(previous)
-            } else {
-                timer.elapse(elapsed)
-            };
-            if overflows != 0 && timer.irq_enabled() {
-                self.interrupt_request_flags |= 1 << (index + 3);
-            }
-            if index < 2 && overflows != 0 {
-                audio_requests |= self.apu.timer_overflow(index, overflows);
-            }
-            previous = overflows;
+        if !self.devices_deferred {
+            audio_requests |= self.sync_apu_to(end);
         }
-        self.update_irq_line();
-        self.current_cycle += cycles;
+        if !self.devices_deferred || end >= self.timer_deadline {
+            debug_assert!(!self.devices_deferred || end == self.timer_deadline);
+            let elapsed = end - self.timer_cycle;
+            self.timer_cycle = end;
+            let mut previous = 0;
+            for index in 0..4 {
+                let timer = &mut self.timers[index];
+                let overflows = if index != 0 && timer.count_up_enabled() {
+                    timer.cascade(previous)
+                } else {
+                    timer.elapse(elapsed)
+                };
+                if overflows != 0 && timer.irq_enabled() {
+                    self.interrupt_request_flags |= 1 << (index + 3);
+                    self.update_irq_line();
+                }
+                if index < 2
+                    && overflows != 0
+                    && self.fifo_clock.next[index] == crate::apu::FifoClock::inactive
+                {
+                    audio_requests |= self.sync_apu_to(end);
+                    audio_requests |= self.apu.timer_overflow(index, overflows);
+                }
+                previous = overflows;
+            }
+            if self.devices_deferred {
+                audio_requests |= self.sync_apu_to(end);
+                self.refresh_fifo_clock();
+            }
+            self.refresh_timer_deadline();
+        }
+        self.current_cycle = end;
         self.apply_due_external_inputs();
         for (index, at) in self.dma_start_cycles.iter_mut().enumerate() {
             if *at == Some(self.current_cycle) {
@@ -3019,7 +3163,11 @@ impl Bus {
         self.dma_burst_start = self.current_cycle;
         let sub_batch = !self.batch_active;
         if sub_batch {
-            self.begin_device_batch();
+            // advance_slow temporarily clears batch_active while preserving
+            // devices_deferred. A DMA sub-batch must preserve that deferral.
+            self.batch_device_cycle = self.current_cycle;
+            self.batch_active = true;
+            self.batch_deadline = self.next_device_boundary();
         }
         while self.pending_dma != 0 {
             let index = self.pending_dma.trailing_zeros() as usize;
@@ -3032,7 +3180,10 @@ impl Bus {
             }
         }
         if sub_batch {
-            self.end_device_batch();
+            self.flush_device_batch();
+            self.batch_active = false;
+            self.batch_device_cycle = 0;
+            self.batch_deadline = 0;
         }
         self.servicing_dma = false;
     }
@@ -3133,6 +3284,9 @@ impl Bus {
         if !repeat {
             self.dma_channels[index].control &= !(1 << 15);
         }
+        if is_audio_fifo {
+            self.refresh_timer_deadline();
+        }
         if control & (1 << 14) != 0 {
             self.interrupt_request_flags |= 1 << (index + 8);
             self.update_irq_line();
@@ -3174,7 +3328,7 @@ impl Bus {
             }
             _ if Apu::accepts_fifo_write(address, width.bytes() as u8) => {
                 self.advance(1);
-                self.apu.write_fifo(address, value, width.bytes() as u8);
+                self.write_fifo(address, value, width.bytes() as u8);
             }
             _ => {
                 self.write(Access { address, width, kind, source: AccessSource::Dma }, value);
@@ -3798,6 +3952,40 @@ mod tests {
         .cycles
     }
 
+    #[test]
+    fn shared_media_constructor_keeps_rom_and_bios_allocations() {
+        let mut image = vec![0u8; 256];
+        image[0xd0..0xd2].copy_from_slice(&0x4321u16.to_le_bytes());
+        let upload_bytes = image.as_ptr();
+        let rom = Arc::new(image);
+        let bios: Arc<[u8]> = vec![0x5a; BIOS_SIZE].into();
+        let mut storage = Box::<Bus>::new_uninit();
+        // SAFETY: the box is aligned, uninitialized storage for exactly one Bus.
+        unsafe {
+            Bus::init_in_place_shared(
+                storage.as_mut_ptr(),
+                Arc::clone(&rom),
+                Arc::clone(&bios),
+                save::Type::None,
+                None,
+            );
+        }
+        // SAFETY: init_in_place_shared wrote a complete Bus into the box.
+        let bus = unsafe { storage.assume_init() };
+        assert!(Arc::ptr_eq(&bus.rom, &rom));
+        assert!(Arc::ptr_eq(&bus.bios, &bios));
+        assert_eq!(bus.rom.as_ptr(), upload_bytes);
+        assert_eq!(
+            bus.instruction_fetch_region(0x0800_00d0).bytes,
+            Some(upload_bytes.wrapping_add(0xca))
+        );
+        assert_eq!(bus.read_game_pak_rom(0x0800_00d0, AccessWidth::Half), 0x4321);
+        assert_eq!(bus.read_bios(0, AccessWidth::Byte), 0x5a);
+        drop(bus);
+        assert_eq!(Arc::strong_count(&rom), 1);
+        assert_eq!(Arc::strong_count(&bios), 1);
+    }
+
     /// Zig: "DMA3 immediate starts two cycles after its enabling write, copies halfwords, clears enable, and requests IRQ".
     #[test]
     fn dma3_immediate_starts_two_cycles_after_enabling_write() {
@@ -3852,6 +4040,34 @@ mod tests {
         bus.elapse(1);
         assert_eq!(&bus.vram[0xa0..0xa2], &[0x33, 0x33]);
         assert!(!bus.dma_channels[3].enabled());
+    }
+
+    /// DMA started at a batch deadline must not close the caller's deferred-device batch.
+    #[test]
+    fn dma_at_lcd_boundary_preserves_deferred_batch() {
+        let mut bus = Bus::init(&[]);
+        bus.ppu_timing.line = 159;
+        bus.ppu_timing.cycle_in_line = 1231;
+        bus.current_cycle = 159 * 1232 + 1231;
+        bus.apu_cycle = bus.current_cycle;
+        bus.timer_cycle = bus.current_cycle;
+        bus.ewram[..2].copy_from_slice(&0x3333_u16.to_le_bytes());
+        bus.dma_channels[3] = DmaChannel {
+            source: EWRAM_BASE,
+            destination: VRAM_BASE + 0xa0,
+            word_count: 1,
+            control: 0x9000,
+            latched_source: EWRAM_BASE,
+            latched_destination: VRAM_BASE + 0xa0,
+        };
+        bus.begin_device_batch();
+        bus.elapse(4);
+        assert_eq!(&bus.vram[0xa0..0xa2], &[0x33, 0x33]);
+        assert!(bus.batch_active);
+        assert!(bus.devices_deferred);
+        assert!(bus.apu_cycle < bus.current_cycle);
+        bus.end_device_batch();
+        assert_eq!(bus.apu_cycle, bus.current_cycle);
     }
 
     /// Zig: "DMA source zero reuses the shared transfer latch without advancing".
@@ -3990,6 +4206,90 @@ mod tests {
         assert_eq!(bus.ppu_timing.cycle_in_line, 1);
         assert_eq!(bus.timers[0].counter, 0);
         bus.end_device_batch();
+    }
+
+    /// ZiGBA's event horizon defers APU and timer clocks across LCD events;
+    /// HALT still delivers the visible HBlank edges at their exact cycles.
+    #[test]
+    fn halted_lcd_events_do_not_materialize_unobserved_devices() {
+        let mut batched = Bus::init(&[]);
+        let mut eager = Bus::init(&[]);
+        batched.begin_device_batch();
+        batched.enter_halt();
+        eager.enter_halt();
+        let deadline = 1232 * 2;
+        assert!(!batched.idle_halt_until(deadline));
+        assert!(!eager.idle_halt_until(deadline));
+        assert_eq!(batched.now(), deadline);
+        assert_eq!(batched.apu_cycle, 0, "APU has no observer before batch end");
+        assert_eq!(batched.timer_cycle, 0, "inactive timers have no event");
+        batched.end_device_batch();
+        assert_eq!(batched.apu_cycle, deadline);
+        assert_eq!(batched.timer_cycle, deadline);
+        assert_eq!(batched.ppu_timing, eager.ppu_timing);
+        assert_eq!(batched.apu, eager.apu);
+        for (actual, expected) in batched.timers.iter().zip(&eager.timers) {
+            assert_eq!(actual.read_counter(), expected.read_counter());
+            assert_eq!(actual.prescaler_phase, expected.prescaler_phase);
+        }
+    }
+
+    /// Zig: "delegated FIFO timer overflows match eager delivery through refill and schedule changes".
+    #[test]
+    fn fifo_only_timer_overflows_match_eager_refill_and_irq_schedule() {
+        let mut eager = Bus::init(&[]);
+        let mut batched = Bus::init(&[]);
+        for bus in [&mut eager, &mut batched] {
+            dma_half(bus, MMIO_BASE + 0x84, 1 << 7);
+            dma_half(bus, MMIO_BASE + 0x82, 1 << 8);
+            for word in 0..7 {
+                bus.write(
+                    Access {
+                        address: MMIO_BASE + 0xa0,
+                        width: AccessWidth::Word,
+                        kind: AccessKind::Nonsequential,
+                        source: AccessSource::CpuData,
+                    },
+                    word * 0x0101_0101,
+                );
+            }
+            dma_half(bus, MMIO_BASE + 0x100, 0xfff0);
+            dma_half(bus, MMIO_BASE + 0x102, 0x0080);
+        }
+        batched.begin_device_batch();
+        assert!(batched.fifo_clock.delegated());
+        eager.elapse(64); // Four overflows, but no refill request yet.
+        batched.elapse(64);
+        assert!(batched.timer_cycle < batched.now());
+        assert!(batched.apu_cycle < batched.now());
+        assert_ne!(batched.apu.fifo_a, eager.apu.fifo_a);
+        // The first refill request, a FIFO append and then an IRQ-enabled
+        // timer each change the schedule without changing the guest result.
+        eager.elapse(260);
+        batched.elapse(260);
+        for bus in [&mut eager, &mut batched] {
+            bus.write(
+                Access {
+                    address: MMIO_BASE + 0xa0,
+                    width: AccessWidth::Word,
+                    kind: AccessKind::Nonsequential,
+                    source: AccessSource::CpuData,
+                },
+                0x1122_3344,
+            );
+            dma_half(bus, MMIO_BASE + 0x102, 0x00c0);
+            bus.elapse(80);
+        }
+        batched.end_device_batch();
+        assert_eq!(batched.now(), eager.now());
+        assert_eq!(batched.interrupt_request_flags, eager.interrupt_request_flags);
+        for (actual, expected) in batched.timers.iter().zip(&eager.timers) {
+            assert_eq!(actual.reload, expected.reload);
+            assert_eq!(actual.counter, expected.counter);
+            assert_eq!(actual.control, expected.control);
+            assert_eq!(actual.prescaler_phase, expected.prescaler_phase);
+        }
+        assert_eq!(batched.apu, eager.apu);
     }
 
     /// FIFO ring-buffer unit check; full UART integration belongs to the serial bus tests.
