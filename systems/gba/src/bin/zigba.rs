@@ -144,7 +144,6 @@ fn run(args: &[String], stdout: &mut impl Write) -> Result<(), Box<dyn std::erro
     let mut machine = Machine::new(Config {
         rom: &rom,
         bios: &bios,
-        immutable_media: true,
         boot: if bios.is_empty() { BootMode::Hle } else { BootMode::ExternalBios },
         save_type: prepared.save_type,
         save_data: prepared.save_data.as_deref(),

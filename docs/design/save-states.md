@@ -101,8 +101,9 @@ optional diagnostics, not part of the serialized format.
 ## Media, integrity and loading
 
 The header stores boot mode and the lengths and BLAKE3 digests of the ROM and
-BIOS. Immutable media may be hashed at boot; borrowed mutable media is hashed
-on save and load. The reader checks magic, version, schema, payload bound,
+BIOS. Evenfall copies borrowed input or adopts an owned ROM into immutable shared
+media and computes its digests once; ZiGBA's live borrowed-mutable-media identity
+mode has no Rust equivalent. The reader checks magic, version, schema, payload bound,
 boot mode, ROM and BIOS in that order, then validates the payload length,
 checksum and absence of trailing data. It reports the specific version,
 schema or media mismatch. The checksum detects corruption, not forgery:
