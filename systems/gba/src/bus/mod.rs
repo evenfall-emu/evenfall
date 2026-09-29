@@ -3881,13 +3881,69 @@ impl AccessWidth {
     }
 }
 
+/// Reads little-endian bytes of a power-of-two memory, wrapping within it.
+///
+/// Bus accesses are aligned to their width, so the common case is one load:
+/// masking the index to a width-aligned position inside the array lets the
+/// compiler prove the bounds. A misaligned index keeps the byte-wise wrap.
+#[inline(always)]
 fn read_ram<const N: usize>(ram: &[u8; N], index: usize, width: AccessWidth) -> u32 {
+    const { assert!(N.is_power_of_two() && N >= 4) };
+    let index = index & (N - 1);
+    match width {
+        AccessWidth::Byte => u32::from(ram[index]),
+        AccessWidth::Half if index & 1 == 0 => {
+            let at = index & (N - 2);
+            u32::from(u16::from_le_bytes([ram[at], ram[at + 1]]))
+        }
+        AccessWidth::Word if index & 3 == 0 => {
+            let at = index & (N - 4);
+            u32::from_le_bytes([ram[at], ram[at + 1], ram[at + 2], ram[at + 3]])
+        }
+        _ => read_ram_wrapping(ram, index, width),
+    }
+}
+
+#[inline(always)]
+fn write_ram<const N: usize>(ram: &mut [u8; N], index: usize, width: AccessWidth, value: u32) {
+    const { assert!(N.is_power_of_two() && N >= 4) };
+    let index = index & (N - 1);
+    match width {
+        AccessWidth::Byte => ram[index] = value as u8,
+        AccessWidth::Half if index & 1 == 0 => {
+            let at = index & (N - 2);
+            let [low, high] = (value as u16).to_le_bytes();
+            ram[at] = low;
+            ram[at + 1] = high;
+        }
+        AccessWidth::Word if index & 3 == 0 => {
+            let at = index & (N - 4);
+            let [b0, b1, b2, b3] = value.to_le_bytes();
+            ram[at] = b0;
+            ram[at + 1] = b1;
+            ram[at + 2] = b2;
+            ram[at + 3] = b3;
+        }
+        _ => write_ram_wrapping(ram, index, width, value),
+    }
+}
+
+/// The byte-wise reference for [`read_ram`], also its misaligned path.
+#[cold]
+fn read_ram_wrapping<const N: usize>(ram: &[u8; N], index: usize, width: AccessWidth) -> u32 {
     (0..width.bytes())
         .map(|offset| u32::from(ram[(index + offset) & (N - 1)]) << (offset * 8))
         .fold(0, |a, b| a | b)
 }
 
-fn write_ram<const N: usize>(ram: &mut [u8; N], index: usize, width: AccessWidth, value: u32) {
+/// The byte-wise reference for [`write_ram`], also its misaligned path.
+#[cold]
+fn write_ram_wrapping<const N: usize>(
+    ram: &mut [u8; N],
+    index: usize,
+    width: AccessWidth,
+    value: u32,
+) {
     for offset in 0..width.bytes() {
         ram[(index + offset) & (N - 1)] = (value >> (offset * 8)) as u8;
     }
@@ -4368,6 +4424,38 @@ mod tests {
         assert_eq!(read_ram(&ram, 7, AccessWidth::Word), 0xddcc_bbaa);
         assert_eq!(read_ram(&ram, 1, AccessWidth::Half), 0xddcc);
         assert_eq!(read_ram(&ram, 0, AccessWidth::Byte), 0xbb);
+    }
+
+    /// The single-load RAM paths match the byte-wise reference at every index,
+    /// width and alignment, including indexes past the end of the memory.
+    #[test]
+    fn ram_fast_paths_match_the_byte_wise_reference() {
+        let mut seed = 0x9e37_79b9_u32;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let mut fast = [0u8; 64];
+        for byte in &mut fast {
+            *byte = next() as u8;
+        }
+        let mut reference = fast;
+        for _ in 0..20_000 {
+            let index = (next() % 200) as usize;
+            let width =
+                [AccessWidth::Byte, AccessWidth::Half, AccessWidth::Word][next() as usize % 3];
+            assert_eq!(
+                read_ram(&fast, index, width),
+                read_ram_wrapping(&reference, index & 63, width),
+                "read index {index} width {width:?}"
+            );
+            let value = next();
+            write_ram(&mut fast, index, width, value);
+            write_ram_wrapping(&mut reference, index & 63, width, value);
+            assert_eq!(fast, reference, "write index {index} width {width:?}");
+        }
     }
 
     /// Zig: bitmap modes leave the lower half of mirrored VRAM unmapped.
