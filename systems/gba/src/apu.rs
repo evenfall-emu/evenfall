@@ -31,7 +31,7 @@ fn replace_byte(value: u16, address: u32, byte: u8) -> u16 {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
-struct SquareChannel {
+pub struct SquareChannel {
     #[codec(bits = 2)]
     duty: u8, // u2
     #[codec(bits = 4)]
@@ -45,14 +45,14 @@ struct SquareChannel {
     envelope_increase: bool,
     dac_enabled: bool,
     #[codec(bits = 11)]
-    frequency: u16, // u11
+    pub frequency: u16, // u11
     #[codec(bits = 7)]
     length: u8, // u7
     length_enabled: bool,
     #[codec(bits = 3)]
     phase_index: u8, // u3
     phase_cycles: u64,
-    enabled: bool,
+    pub enabled: bool,
 }
 
 impl SquareChannel {
@@ -238,8 +238,8 @@ fn rotate_nibbles_left(span: &mut [u8], nibbles: u64) {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
-struct WaveChannel {
-    ram: [u8; 32],
+pub struct WaveChannel {
+    pub ram: [u8; 32],
     two_bank: bool,
     #[codec(bits = 1)]
     selected_bank: u8, // u1
@@ -646,8 +646,8 @@ pub struct Apu {
     square1: SquareChannel,
     sweep1: FrequencySweep,
     #[codec(encode_with = Apu::encode_square2)]
-    square2: SquareChannel,
-    wave: WaveChannel,
+    pub square2: SquareChannel,
+    pub wave: WaveChannel,
     #[codec(encode_with = Apu::encode_noise)]
     noise: NoiseChannel,
     #[codec(skip)]
