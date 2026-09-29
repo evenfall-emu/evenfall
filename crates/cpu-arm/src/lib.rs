@@ -5,6 +5,8 @@
 
 use evenfall_state::Codec;
 
+mod thumb;
+
 pub type Cycle = u64;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
@@ -1186,5 +1188,40 @@ mod tests {
         cpu.execute_arm(&mut bus, 0xe003_0392).unwrap();
         assert_eq!(cpu.registers[3], 0x0200_0000);
         assert_eq!(bus.internal, 4);
+    }
+
+    /// ZiGBA `executeThumb`: BX selects ARM only for an even target, without rounding a Thumb return to a word.
+    #[test]
+    fn thumb_bx_interworks_but_pop_pc_does_not() {
+        let mut cpu = Core::new(0x0800_0002, 0x3f);
+        cpu.registers[1] = 0x0800_0084;
+        let mut bus = TraceBus { read_value: 0x0800_00a3, ..TraceBus::default() };
+        assert!(cpu.execute_thumb(&mut bus, 0x4708).branched);
+        assert_eq!(cpu.next_instruction_address, 0x0800_0084);
+        assert!(!cpu.is_thumb());
+
+        cpu.cpsr |= 1 << 5;
+        cpu.registers[13] = 0x0300_0013;
+        assert!(cpu.execute_thumb(&mut bus, 0xbd00).branched);
+        assert_eq!(bus.reads, [(0x0300_0010, AccessWidth::Word, AccessKind::Nonsequential)]);
+        assert_eq!(cpu.next_instruction_address, 0x0800_00a2);
+        assert_eq!(cpu.registers[13], 0x0300_0017);
+        assert!(cpu.is_thumb());
+        assert_eq!(bus.internal, 1);
+    }
+
+    /// ZiGBA `executeThumb`: an empty PUSH sends one aligned PC+6 beat and moves SP by 64.
+    #[test]
+    fn thumb_empty_push_preserves_stack_low_bits() {
+        let mut cpu = Core::new(0x0800_0042, 0x3f);
+        cpu.registers[15] = 0x0800_0046;
+        cpu.registers[13] = 0x0300_0103;
+        let mut bus = TraceBus::default();
+        cpu.execute_thumb(&mut bus, 0xb400);
+        assert_eq!(
+            bus.writes,
+            [(0x0300_00c0, AccessWidth::Word, AccessKind::Nonsequential, 0x0800_0048)]
+        );
+        assert_eq!(cpu.registers[13], 0x0300_00c3);
     }
 }
