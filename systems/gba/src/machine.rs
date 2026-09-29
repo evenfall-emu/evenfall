@@ -6,6 +6,7 @@ use crate::cpu::{self, Cpu};
 use evenfall_host::Cycle;
 use evenfall_state::{Codec, Sink, Source};
 use std::io::Write;
+use std::ops::Range;
 
 pub use cpu::FaultReason;
 
@@ -521,7 +522,9 @@ impl Machine {
             });
         }
         self.validate_inputs(inputs)?;
-        self.bus.begin_external_inputs(inputs);
+        // SAFETY: The caller's slice stays allocated and immutable until
+        // end_external_inputs below; step is synchronous and retains nothing.
+        unsafe { self.bus.begin_external_inputs(inputs) };
         let outcome = self.step();
         let inputs_consumed = self.bus.external_inputs_consumed();
         self.bus.end_external_inputs();
@@ -544,7 +547,9 @@ impl Machine {
 
     fn begin_inputs_until(&mut self, inputs: &[TimedInput], deadline: Cycle) {
         let count = inputs.partition_point(|input| input.at <= deadline);
-        self.bus.begin_external_inputs(&inputs[..count]);
+        // SAFETY: Both bounded call sites synchronously finish the bus run
+        // and call end_external_inputs before returning to the input owner.
+        unsafe { self.bus.begin_external_inputs(&inputs[..count]) };
     }
 
     pub fn wait_until(&mut self, deadline: Cycle) -> Result<WaitResult, RunError> {
@@ -859,10 +864,21 @@ impl Machine {
     }
 
     fn write_state_payload(&self, sink: &mut Sink<'_>) -> Result<(), StateError> {
-        self.now().encode(sink)?;
-        self.cpu.write_state(sink, self.now())?;
-        self.bus.write_state(sink)?;
+        sink.field("cycle", |sink| self.now().encode(sink))?;
+        sink.field("cpu", |sink| self.cpu.write_state(sink, self.now()))?;
+        sink.field("bus", |sink| self.bus.write_state(sink))?;
         Ok(())
+    }
+
+    /// Durable payload fields with byte ranges relative to the first payload
+    /// byte (after the 133-byte envelope header), from the real codec writer.
+    pub fn state_field_ranges(&self) -> Result<Vec<(String, Range<u64>)>, StateError> {
+        self.validate_state_write()?;
+        let mut ranges = Vec::new();
+        let mut sink = Sink::new(None, None);
+        sink.trace = Some(&mut ranges);
+        self.write_state_payload(&mut sink)?;
+        Ok(ranges)
     }
 
     pub fn schema_description() -> Result<Vec<u8>, StateError> {
@@ -1108,5 +1124,19 @@ mod tests {
             include_str!("../../../tools/parity/fixtures/schema-v6.blake3").trim()
         );
         assert_eq!(Machine::schema_digest().unwrap(), *blake3::hash(expected).as_bytes());
+    }
+
+    #[test]
+    fn state_field_ranges_are_payload_relative_and_cover_encoded_bytes() {
+        let machine = Machine::new(Config { rom: &[0xfe, 0xff, 0xff, 0xea], ..Config::default() });
+        let ranges = machine.state_field_ranges().unwrap();
+        let range = |name: &str| ranges.iter().find(|(path, _)| path == name).unwrap().1.clone();
+        let payload = machine.write_state_alloc().unwrap();
+        assert_eq!(range("cycle"), 0..8);
+        assert_eq!(range("cpu").start, 8);
+        assert_eq!(range("cpu").end, range("bus").start);
+        assert_eq!(range("bus").end as usize, payload.len() - Machine::STATE_HEADER_SIZE - 32);
+        assert!(ranges.iter().any(|(path, _)| path.starts_with("cpu.")));
+        assert!(ranges.iter().any(|(path, _)| path.starts_with("bus.")));
     }
 }
