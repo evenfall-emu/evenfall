@@ -9,6 +9,10 @@ publish.workspace = true
 [dependencies]
 evenfall-gba.workspace = true
 
+[features]
+kernel-census = ["evenfall-gba/kernel-census"]
+kernel-stage-profile = ["evenfall-gba/kernel-stage-profile"]
+
 [[bin]]
 name = "evenfall-harness"
 path = "src/main.rs"
