@@ -1061,3 +1061,726 @@ fn timer_irq_enters_arm_irq_mode_with_the_architectural_return_address() {
     assert_eq!(vector.instruction_address, 0x0000_0018);
     assert_eq!(machine.read_register(5), 7);
 }
+
+/// Zig: `ARM sparse and dense STM lists store ascending endpoints without extra beats`.
+#[test]
+fn arm_sparse_and_dense_stm_lists_store_ascending_endpoints_without_extra_beats() {
+    let sparse = [0xA500_0000, 0xA500_0007, 0xA500_000E, 0x0300_100C];
+    let dense = [
+        0xA500_0000,
+        0xA500_0001,
+        0xA500_0002,
+        0xA500_0003,
+        0xA500_0004,
+        0xA500_0005,
+        0xA500_0006,
+        0xA500_0007,
+        0x0300_0100,
+        0xA500_0009,
+        0xA500_000A,
+        0xA500_000B,
+        0xA500_000C,
+        0xA500_000D,
+        0xA500_000E,
+        0x0300_100C,
+    ];
+    for (instruction, expected, final_base, cycles) in
+        [(0xE8A8_C081, &sparse[..], 0x0300_0110, 5), (0xE888_FFFF, &dense[..], 0x0300_0100, 17)]
+    {
+        let mut machine = Machine::new(Config::default());
+        machine.cpu = Cpu::init(0x0300_1000, 0xA000_009F, true);
+        machine.cpu.pipeline = Some(Pipeline {
+            instructions: [instruction, 0xE1A0_0000],
+            instruction_set: InstructionSet::Arm,
+        });
+        for r in 0..15 {
+            machine.cpu.registers[r] = 0xA500_0000 + r as u32;
+        }
+        machine.cpu.registers[8] = 0x0300_0100;
+        machine.cpu.registers[15] = 0x0300_1008;
+        machine.bus.iwram[0xFC..0x144].fill(0x5A);
+        let result = machine.run_until(1).unwrap();
+        assert_eq!(
+            (result.stopped_at, result.reason),
+            (cycles, StopReason::InstructionBoundaryAfterDeadline)
+        );
+        for (index, word) in expected.iter().enumerate() {
+            assert_eq!(
+                u32::from_le_bytes(machine.bus.iwram[0x100 + index * 4..][..4].try_into().unwrap()),
+                *word
+            );
+        }
+        assert_eq!(&machine.bus.iwram[0xFC..0x100], &0x5A5A_5A5A_u32.to_le_bytes());
+        assert!(
+            machine.bus.iwram[0x100 + expected.len() * 4..0x144].iter().all(|&byte| byte == 0x5A)
+        );
+        for r in 0..15 {
+            assert_eq!(
+                machine.read_register(r as u8),
+                if r == 8 { final_base } else { 0xA500_0000 + r as u32 }
+            );
+        }
+        assert_eq!(
+            (machine.next_instruction_address(), machine.read_register(15), machine.read_cpsr()),
+            (0x0300_1004, 0x0300_100C, 0xA000_009F)
+        );
+        assert_eq!(machine.bus.fetch_kind, AccessKind::Nonsequential);
+    }
+}
+
+/// Zig: `ARM sparse LDM reaches PC last and dense LDM reaches r14 without a branch`.
+#[test]
+fn arm_sparse_ldm_reaches_pc_last_and_dense_ldm_reaches_r14_without_a_branch() {
+    let dense = [
+        0xB600_0010,
+        0xB600_0011,
+        0xB600_0012,
+        0xB600_0013,
+        0xB600_0014,
+        0xB600_0015,
+        0xB600_0016,
+        0xB600_0017,
+        0xB600_0018,
+        0xB600_0019,
+        0xB600_001A,
+        0xB600_001B,
+        0xB600_001C,
+        0xB600_001D,
+        0xB600_001E,
+    ];
+    let sparse = [0x1122_3344, 0x5566_7788, 0x0300_2000];
+    for (instruction, base, is_sparse, cycles) in
+        [(0xE938_8081, 0x0300_010C, true, 7), (0xE898_7FFF, 0x0300_0100, false, 17)]
+    {
+        let mut machine = Machine::new(Config::default());
+        machine.cpu = Cpu::init(0x0300_1000, 0xA000_009F, true);
+        machine.cpu.pipeline = Some(Pipeline {
+            instructions: [instruction, 0xE1A0_0000],
+            instruction_set: InstructionSet::Arm,
+        });
+        for r in 0..15 {
+            machine.cpu.registers[r] = 0xA500_0000 + r as u32;
+        }
+        machine.cpu.registers[8] = base;
+        machine.cpu.registers[15] = 0x0300_1008;
+        let values: &[u32] = if is_sparse { &sparse } else { &dense };
+        write_words(&mut machine.bus.iwram[..], 0x100, values);
+        write_words(&mut machine.bus.iwram[..], 0x2000, &[0xE3A0_1033, 0xE1A0_0000]);
+        let result = machine.run_until(1).unwrap();
+        assert_eq!(
+            (result.stopped_at, result.reason),
+            (cycles, StopReason::InstructionBoundaryAfterDeadline)
+        );
+        for (r, &dense_value) in dense.iter().enumerate() {
+            let expected = if !is_sparse {
+                dense_value
+            } else {
+                match r {
+                    0 => 0x1122_3344,
+                    7 => 0x5566_7788,
+                    8 => 0x0300_0100,
+                    _ => 0xA500_0000 + r as u32,
+                }
+            };
+            assert_eq!(machine.read_register(r as u8), expected);
+        }
+        assert_eq!(
+            machine.next_instruction_address(),
+            if is_sparse { 0x0300_2000 } else { 0x0300_1004 }
+        );
+        assert_eq!(machine.read_register(15), if is_sparse { 0x0300_2008 } else { 0x0300_100C });
+        assert_eq!(machine.read_cpsr(), 0xA000_009F);
+        assert_eq!(machine.cpu.pipeline.unwrap().instruction_set, InstructionSet::Arm);
+        if is_sparse {
+            assert_eq!(machine.cpu.pipeline.unwrap().instructions, [0xE3A0_1033, 0xE1A0_0000]);
+        }
+        for (index, value) in values.iter().enumerate() {
+            assert_eq!(
+                u32::from_le_bytes(machine.bus.iwram[0x100 + index * 4..][..4].try_into().unwrap()),
+                *value
+            );
+        }
+    }
+}
+
+/// Zig: `ARM empty STM uses one PC beat and sixteen-word addressing in every mode`.
+#[test]
+fn arm_empty_stm_uses_one_pc_beat_and_sixteen_word_addressing_in_every_mode() {
+    for (instruction, offset, final_base) in [
+        (0xE8A4_0000, 0x200, 0x0300_0243),
+        (0xE9A4_0000, 0x204, 0x0300_0243),
+        (0xE824_0000, 0x1C4, 0x0300_01C3),
+        (0xE924_0000, 0x1C0, 0x0300_01C3),
+    ] {
+        let mut machine = Machine::new(Config::default());
+        machine.cpu = Cpu::init(0x0300_1000, 0xA000_009F, true);
+        machine.cpu.pipeline = Some(Pipeline {
+            instructions: [instruction, 0xE1A0_0000],
+            instruction_set: InstructionSet::Arm,
+        });
+        for r in 0..15 {
+            machine.cpu.registers[r] = 0xA500_0000 + r as u32;
+        }
+        machine.cpu.registers[4] = 0x0300_0203;
+        machine.cpu.registers[15] = 0x0300_1008;
+        machine.bus.iwram[0x1BC..0x248].fill(0x5A);
+        let result = machine.run_until(1).unwrap();
+        assert_eq!(
+            (result.stopped_at, result.reason),
+            (2, StopReason::InstructionBoundaryAfterDeadline)
+        );
+        for word in 0x1BC / 4..0x248 / 4 {
+            let expected = if word * 4 == offset { 0x0300_100C } else { 0x5A5A_5A5A };
+            assert_eq!(
+                u32::from_le_bytes(machine.bus.iwram[word * 4..][..4].try_into().unwrap()),
+                expected
+            );
+        }
+        for r in 0..15 {
+            assert_eq!(
+                machine.read_register(r as u8),
+                if r == 4 { final_base } else { 0xA500_0000 + r as u32 }
+            );
+        }
+        assert_eq!(
+            (machine.next_instruction_address(), machine.read_register(15), machine.read_cpsr()),
+            (0x0300_1004, 0x0300_100C, 0xA000_009F)
+        );
+        assert_eq!(machine.bus.fetch_kind, AccessKind::Nonsequential);
+    }
+}
+
+/// Zig: `Thumb PUSH empty extra-only sparse and dense lists preserve exact stack beats`.
+#[test]
+fn thumb_push_empty_extra_only_sparse_and_dense_lists_preserve_exact_stack_beats() {
+    let empty = [0x0300_1006];
+    let extra = [0xE700_000E];
+    let sparse = [0xA500_0000, 0xA500_0007];
+    let dense = [
+        0xA500_0000,
+        0xA500_0001,
+        0xA500_0002,
+        0xA500_0003,
+        0xA500_0004,
+        0xA500_0005,
+        0xA500_0006,
+        0xA500_0007,
+        0xE700_000E,
+    ];
+    for (instruction, words, offset, sp, cycles) in [
+        (0xB400, &empty[..], 0x1C0, 0x0300_01C3, 2),
+        (0xB500, &extra[..], 0x1FC, 0x0300_01FF, 2),
+        (0xB481, &sparse[..], 0x1F8, 0x0300_01FB, 3),
+        (0xB5FF, &dense[..], 0x1DC, 0x0300_01DF, 10),
+    ] {
+        let mut machine = Machine::new(Config::default());
+        machine.cpu = Cpu::init(0x0300_1000, 0xA000_00BF, true);
+        machine.cpu.pipeline = Some(Pipeline {
+            instructions: [instruction, 0x46C0],
+            instruction_set: InstructionSet::Thumb,
+        });
+        for r in 0..13 {
+            machine.cpu.registers[r] = 0xA500_0000 + r as u32;
+        }
+        machine.cpu.registers[13] = 0x0300_0203;
+        machine.cpu.registers[14] = 0xE700_000E;
+        machine.cpu.registers[15] = 0x0300_1004;
+        machine.bus.iwram[0x1BC..0x204].fill(0x5A);
+        let result = machine.run_until(1).unwrap();
+        assert_eq!(
+            (result.stopped_at, result.reason),
+            (cycles, StopReason::InstructionBoundaryAfterDeadline)
+        );
+        for word in 0x1BC / 4..0x204 / 4 {
+            let at = word * 4;
+            let expected = if at >= offset && at < offset + words.len() * 4 {
+                words[(at - offset) / 4]
+            } else {
+                0x5A5A_5A5A
+            };
+            assert_eq!(
+                u32::from_le_bytes(machine.bus.iwram[at..][..4].try_into().unwrap()),
+                expected
+            );
+        }
+        for r in 0..13 {
+            assert_eq!(machine.read_register(r as u8), 0xA500_0000 + r as u32);
+        }
+        assert_eq!((machine.read_register(13), machine.read_register(14)), (sp, 0xE700_000E));
+        assert_eq!(
+            (machine.next_instruction_address(), machine.read_register(15), machine.read_cpsr()),
+            (0x0300_1002, 0x0300_1006, 0xA000_00BF)
+        );
+        assert_eq!(machine.bus.fetch_kind, AccessKind::Nonsequential);
+    }
+}
+
+/// Zig: `Thumb POP empty extra-only sparse and dense lists stop before the refilled target`.
+#[test]
+fn thumb_pop_empty_extra_only_sparse_and_dense_lists_stop_before_the_refilled_target() {
+    let empty = [0x0300_2002];
+    let extra = [0x0300_2003];
+    let sparse = [0x1122_3344, 0x5566_7788];
+    let dense = [
+        0xB600_0010,
+        0xB600_0011,
+        0xB600_0012,
+        0xB600_0013,
+        0xB600_0014,
+        0xB600_0015,
+        0xB600_0016,
+        0xB600_0017,
+        0x0300_2002,
+    ];
+    for (case_index, (instruction, words, sp, cycles, pc)) in [
+        (0xBC00, &empty[..], 0x0300_0243, 5, true),
+        (0xBD00, &extra[..], 0x0300_0207, 5, true),
+        (0xBC81, &sparse[..], 0x0300_020B, 4, false),
+        (0xBDFF, &dense[..], 0x0300_0227, 13, true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut machine = Machine::new(Config::default());
+        machine.cpu = Cpu::init(0x0300_1000, 0xA000_00BF, true);
+        machine.cpu.pipeline = Some(Pipeline {
+            instructions: [instruction, 0x46C0],
+            instruction_set: InstructionSet::Thumb,
+        });
+        for r in 0..13 {
+            machine.cpu.registers[r] = 0xA500_0000 + r as u32;
+        }
+        machine.cpu.registers[13] = 0x0300_0203;
+        machine.cpu.registers[14] = 0xE700_000E;
+        machine.cpu.registers[15] = 0x0300_1004;
+        machine.bus.iwram[0x1FC..0x248].fill(0x5A);
+        write_words(&mut machine.bus.iwram[..], 0x200, words);
+        let stack_before = machine.bus.iwram[0x1FC..0x248].to_vec();
+        machine.bus.iwram[0x2002..0x2004].copy_from_slice(&0x21CC_u16.to_le_bytes());
+        machine.bus.iwram[0x2004..0x2006].copy_from_slice(&0x46C0_u16.to_le_bytes());
+        let result = machine.run_until(1).unwrap();
+        assert_eq!(
+            (result.stopped_at, result.reason),
+            (cycles, StopReason::InstructionBoundaryAfterDeadline)
+        );
+        for (r, &dense_value) in dense.iter().enumerate().take(13) {
+            let expected = if case_index == 3 && r < 8 {
+                dense_value
+            } else if case_index == 2 && r == 0 {
+                0x1122_3344
+            } else if case_index == 2 && r == 7 {
+                0x5566_7788
+            } else {
+                0xA500_0000 + r as u32
+            };
+            assert_eq!(machine.read_register(r as u8), expected);
+        }
+        assert_eq!((machine.read_register(13), machine.read_register(14)), (sp, 0xE700_000E));
+        assert_eq!(machine.next_instruction_address(), if pc { 0x0300_2002 } else { 0x0300_1002 });
+        assert_eq!(machine.read_register(15), if pc { 0x0300_2006 } else { 0x0300_1006 });
+        assert_eq!(machine.read_cpsr(), 0xA000_00BF);
+        assert_eq!(machine.cpu.pipeline.unwrap().instruction_set, InstructionSet::Thumb);
+        if pc {
+            assert_eq!(machine.cpu.pipeline.unwrap().instructions, [0x21CC, 0x46C0]);
+        }
+        assert_eq!(&machine.bus.iwram[0x1FC..0x248], &stack_before);
+    }
+}
+
+/// Zig: `HLE IntrWait completes only after the IRQ handler updates the BIOS mirror`.
+#[test]
+fn hle_intr_wait_completes_only_after_the_irq_handler_updates_the_bios_mirror() {
+    let mut rom = [0; 12];
+    write_words(&mut rom, 0, &[0xEF04_0000, 0xE3A0_4007, 0xE12F_FF1E]);
+    let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
+    machine.cpu.registers[0] = 1;
+    machine.cpu.registers[1] = 1 << 3;
+    write_words(&mut machine.bus.iwram[..], 0x7FFC, &[0x0800_0008]);
+    executed_step(&mut machine);
+    assert_eq!(machine.bus.power_state(), PowerState::Halted);
+    machine.bus.interrupt_enable_mask = 1 << 3;
+    machine.bus.update_irq_line();
+    machine.bus.timers[0].write_reload(0xFFFC);
+    machine.bus.timers[0].write_control((1 << 7) | (1 << 6), machine.bus.prescaler_counter());
+    machine.run_until(machine.now() + 4).unwrap();
+    let handler = executed_step(&mut machine);
+    assert_eq!(handler.instruction_address, 0x0800_0008);
+    machine.bus.timers[0].write_control(0, machine.bus.prescaler_counter());
+    machine.bus.interrupt_request_flags = 0;
+    machine.bus.update_irq_line();
+    machine.bus.iwram[0x7FF8..0x7FFA].copy_from_slice(&1_u16.to_le_bytes());
+    executed_step(&mut machine);
+    assert_eq!(machine.bus.power_state(), PowerState::Halted);
+    assert_eq!(&machine.bus.iwram[0x7FF8..0x7FFA], &1_u16.to_le_bytes());
+    machine.bus.timers[0].write_reload(0xFFFC);
+    machine.bus.timers[0].write_control((1 << 7) | (1 << 6), machine.bus.prescaler_counter());
+    machine.run_until(machine.now() + 4).unwrap();
+    let selected_handler = executed_step(&mut machine);
+    assert_eq!(selected_handler.instruction_address, 0x0800_0008);
+    machine.bus.timers[0].write_control(0, machine.bus.prescaler_counter());
+    machine.bus.interrupt_request_flags = 0;
+    machine.bus.update_irq_line();
+    machine.bus.iwram[0x7FF8..0x7FFA].copy_from_slice(&(1_u16 | (1 << 3)).to_le_bytes());
+    executed_step(&mut machine);
+    assert_eq!(machine.bus.power_state(), PowerState::Running);
+    assert_eq!(machine.next_instruction_address(), 0x0800_0004);
+    assert_eq!(&machine.bus.iwram[0x7FF8..0x7FFA], &1_u16.to_le_bytes());
+    executed_step(&mut machine);
+    assert_eq!(machine.read_register(4), 7);
+}
+
+/// Zig: `nested HLE IRQ return does not complete the outer IntrWait`.
+#[test]
+fn nested_hle_irq_return_does_not_complete_the_outer_intr_wait() {
+    let mut rom = [0; 36];
+    write_words(
+        &mut rom,
+        0,
+        &[
+            0xEF05_0000,
+            0xE3A0_4007,
+            0xE3A0_301F,
+            0xE129_F003,
+            0xE1A0_0000,
+            0xE3A0_3092,
+            0xE129_F003,
+            0xE12F_FF1E,
+            0xE12F_FF1E,
+        ],
+    );
+    let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
+    write_words(&mut machine.bus.iwram[..], 0x7FFC, &[0x0800_0008]);
+    executed_step(&mut machine);
+    assert_eq!(machine.bus.power_state(), PowerState::Halted);
+    machine.bus.interrupt_enable_mask = 1;
+    machine.bus.interrupt_request_flags = 1;
+    machine.bus.update_irq_line();
+    let outer_start = executed_step(&mut machine);
+    assert_eq!(outer_start.instruction_address, 0x0800_0008);
+    assert_eq!(machine.cpu.hle_irq_depth, 1);
+    machine.bus.interrupt_enable_mask = 1 << 1;
+    machine.bus.interrupt_request_flags = 0;
+    machine.bus.update_irq_line();
+    executed_step(&mut machine);
+    write_words(&mut machine.bus.iwram[..], 0x7FFC, &[0x0800_0020]);
+    machine.bus.interrupt_request_flags = 1 << 1;
+    machine.bus.update_irq_line();
+    let interrupted = executed_step(&mut machine);
+    assert_eq!(interrupted.instruction_address, 0x0800_0010);
+    assert_eq!(machine.cpu.hle_irq_depth, 2);
+    machine.bus.interrupt_request_flags = 0;
+    machine.bus.update_irq_line();
+    executed_step(&mut machine);
+    executed_step(&mut machine);
+    assert_eq!(machine.cpu.hle_irq_depth, 1);
+    assert_eq!(machine.cpu.hle_interrupt_wait_mask, Some(1));
+    assert_eq!(machine.bus.power_state(), PowerState::Running);
+    assert_eq!(machine.next_instruction_address(), 0x0800_0014);
+    assert_eq!(&machine.bus.iwram[0x7FF8..0x7FFA], &[0, 0]);
+    machine.bus.iwram[0x7FF8..0x7FFA].copy_from_slice(&1_u16.to_le_bytes());
+    executed_step(&mut machine);
+    machine.cpu.irq_r14 = 0x0000_0138;
+    for _ in 0..3 {
+        executed_step(&mut machine);
+    }
+    assert_eq!(machine.cpu.hle_irq_depth, 0);
+    assert_eq!(machine.cpu.hle_interrupt_wait_mask, None);
+    assert_eq!(machine.bus.power_state(), PowerState::Running);
+    assert_eq!(machine.next_instruction_address(), 0x0800_0004);
+    assert_eq!(&machine.bus.iwram[0x7FF8..0x7FFA], &[0, 0]);
+    executed_step(&mut machine);
+    assert_eq!(machine.read_register(4), 7);
+}
+
+const INTR_WAIT_LOG_WORDS: [u32; 20] = [
+    0xE1A0_9008,
+    0xE259_9001,
+    0x5AFF_FFFD,
+    0xE288_8025,
+    0xE208_803F,
+    0xE3A0_0001,
+    0xE1A0_100A,
+    0xEF04_0000,
+    0xE257_7001,
+    0x1AFF_FFF5,
+    0xEAFF_FFFE,
+    0xE1D5_00B0,
+    0xE0CB_00B2,
+    0xE1C6_A0B2,
+    0xE3A0_1403,
+    0xE281_1C7F,
+    0xE1D1_2FB8,
+    0xE182_200A,
+    0xE1C1_2FB8,
+    0xE12F_FF1E,
+];
+const INTR_WAIT_DONE: u32 = 0x0800_0028;
+const INTR_WAIT_COUNT: u32 = 40;
+
+#[derive(Clone, Copy)]
+enum IntrWaitSource {
+    Hblank,
+    Timer1,
+}
+
+fn write_machine_half(machine: &mut Machine, address: u32, value: u16) {
+    machine.bus.write(
+        Access {
+            address,
+            width: AccessWidth::Half,
+            kind: AccessKind::Nonsequential,
+            source: AccessSource::CpuData,
+        },
+        u32::from(value),
+    );
+}
+
+fn intr_wait_log_machine(rom: &[u8], source: IntrWaitSource) -> Box<Machine> {
+    let mut machine = Machine::new(Config { rom, ..Config::default() });
+    write_words(&mut machine.bus.iwram[..], 0x7FFC, &[0x0800_002C]);
+    let mask: u16 = match source {
+        IntrWaitSource::Hblank => 1 << 1,
+        IntrWaitSource::Timer1 => 1 << 4,
+    };
+    write_machine_half(&mut machine, 0x0400_0100, 0);
+    write_machine_half(&mut machine, 0x0400_0102, 0x0080);
+    match source {
+        IntrWaitSource::Hblank => write_machine_half(&mut machine, 0x0400_0004, 1 << 4),
+        IntrWaitSource::Timer1 => {
+            write_machine_half(&mut machine, 0x0400_0104, 0xFE3B);
+            write_machine_half(&mut machine, 0x0400_0106, 0x00C0);
+        }
+    }
+    write_machine_half(&mut machine, 0x0400_0202, 0xFFFF);
+    write_machine_half(&mut machine, 0x0400_0200, mask);
+    for (index, value) in [
+        (5, 0x0400_0100),
+        (6, 0x0400_0200),
+        (7, INTR_WAIT_COUNT),
+        (8, 0),
+        (10, u32::from(mask)),
+        (11, 0x0300_4000),
+    ] {
+        machine.cpu.registers[index] = value;
+    }
+    machine
+}
+
+fn intr_wait_log(machine: &Machine) -> &[u8] {
+    &machine.bus.iwram[0x4000..(machine.read_register(11) - 0x0300_0000) as usize]
+}
+
+fn expect_intr_wait_log_slice_invariant(source: IntrWaitSource) -> [u16; 4] {
+    let mut rom = [0; INTR_WAIT_LOG_WORDS.len() * 4];
+    write_words(&mut rom, 0, &INTR_WAIT_LOG_WORDS);
+    let mut eager = intr_wait_log_machine(&rom, source);
+    while eager.next_instruction_address() != INTR_WAIT_DONE || eager.read_register(7) != 0 {
+        match eager.step() {
+            StepOutcome::Executed(_) => {}
+            StepOutcome::Waiting(reason) => {
+                assert_eq!(reason, WaitReason::Halted);
+                assert!(eager.wait_until(eager.now() + 100_000).unwrap().woke);
+            }
+            StepOutcome::Faulted(fault) => panic!("unexpected machine fault {fault:?}"),
+        }
+    }
+    let expected = intr_wait_log(&eager);
+    assert!(expected.len() >= 2 * INTR_WAIT_COUNT as usize);
+    for slice in [280_896_u64, 1_232, 97, 13] {
+        let mut bounded = intr_wait_log_machine(&rom, source);
+        let mut next_slice = slice;
+        while bounded.now() < eager.now() {
+            bounded.run_until(eager.now().min(bounded.now() + next_slice)).unwrap();
+            next_slice = if next_slice == slice && slice < 100 { slice / 2 + 1 } else { slice };
+        }
+        assert_eq!(eager.now(), bounded.now());
+        assert_eq!(expected, intr_wait_log(&bounded));
+    }
+    std::array::from_fn(|index| {
+        u16::from_le_bytes(expected[2 * index..2 * index + 2].try_into().unwrap())
+    })
+}
+
+/// Zig: `intrwait_latency: an HBlank IntrWait wake is independent of host slicing`.
+#[test]
+fn intrwait_latency_an_hblank_intr_wait_wake_is_independent_of_host_slicing() {
+    assert_eq!(
+        expect_intr_wait_log_slice_invariant(IntrWaitSource::Hblank),
+        [0x03D3, 0x08A3, 0x0D73, 0x1246]
+    );
+}
+
+/// Zig: `intrwait_timer: a timer IntrWait wake is independent of host slicing`.
+#[test]
+fn intrwait_timer_a_timer_intr_wait_wake_is_independent_of_host_slicing() {
+    assert_eq!(
+        expect_intr_wait_log_slice_invariant(IntrWaitSource::Timer1),
+        [0x01DC, 0x03A3, 0x0574, 0x072B]
+    );
+}
+
+/// Zig: `bounded execution matches eager steps across timer video DMA and input boundaries`.
+#[test]
+fn bounded_execution_matches_eager_steps_across_timer_video_dma_and_input_boundaries() {
+    let words =
+        [0xE1D1_00B0, 0xE1C2_00B0, 0xE283_3001, 0xE584_3000, 0xE594_5000, 0xE1C7_60B0, 0xEAFF_FFF8];
+    let mut machines = [Machine::new(Config::default()), Machine::new(Config::default())];
+    for machine in &mut machines {
+        write_words(&mut machine.bus.iwram[..], 0, &words);
+        machine.cpu = Cpu::init(0x0300_0000, 0x1F, true);
+        machine.cpu.registers[1] = 0x0400_0100;
+        machine.cpu.registers[2] = 0x0600_0000;
+        machine.cpu.registers[4] = 0x0300_7000;
+        machine.cpu.registers[6] = 0x8000;
+        machine.cpu.registers[7] = 0x0400_00BA;
+        machine.bus.dispcnt = 3 | (1 << 10);
+        machine.bus.keypad_control = 0x4001;
+        machine.bus.timers[0].write_reload(0xFFF0);
+        machine.bus.timers[0].write_control(0xC1, machine.bus.prescaler_counter());
+        for (address, value) in
+            [(0x0400_00B0, 0x0200_0000), (0x0400_00B4, 0x0600_0004), (0x0400_00B8, 1)]
+        {
+            machine.bus.write(
+                Access {
+                    address,
+                    width: AccessWidth::Word,
+                    kind: AccessKind::Nonsequential,
+                    source: AccessSource::CpuData,
+                },
+                value,
+            );
+        }
+    }
+    let [eager, bounded] = &mut machines;
+    let start = eager.now();
+    let inputs = [
+        TimedInput {
+            at: start + 17,
+            change: TimedInputChange::Keys(KeyState { a: true, ..Default::default() }),
+        },
+        TimedInput { at: start + 17, change: TimedInputChange::Keys(KeyState::default()) },
+        TimedInput {
+            at: start + 511,
+            change: TimedInputChange::Keys(KeyState { a: true, ..Default::default() }),
+        },
+        TimedInput { at: start + 960, change: TimedInputChange::Keys(KeyState::default()) },
+    ];
+    let mut eager_input = 0;
+    let mut bounded_input = 0;
+    for offset in [1, 127, 512, 959, 1024, 1232, 32768, 280896] {
+        let target = start + offset;
+        while eager.now() < target {
+            let step = eager.step_with_input(&inputs[eager_input..]).unwrap();
+            eager_input += step.inputs_consumed;
+            assert!(matches!(step.outcome, StepOutcome::Executed(_)));
+        }
+        let result =
+            bounded.run_slice_with_input(target, start + 280896, &inputs[bounded_input..]).unwrap();
+        bounded_input += result.inputs_consumed;
+        assert_eq!(eager_input, bounded_input);
+        assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+    }
+}
+
+/// Zig: `ISA change at a device deadline stops before the Thumb instruction`.
+#[test]
+fn isa_change_at_a_device_deadline_stops_before_the_thumb_instruction() {
+    let mut machines = [
+        Machine::new(Config::default()),
+        Machine::new(Config::default()),
+        Machine::new(Config::default()),
+    ];
+    for machine in &mut machines {
+        write_words(&mut machine.bus.iwram[..], 0, &[0xE1A0_0000, 0xE12F_FF11]);
+        machine.bus.iwram[0x20..0x22].copy_from_slice(&0x2007_u16.to_le_bytes());
+        machine.cpu = Cpu::init(0x0300_0000, 0x1F, true);
+        machine.cpu.registers[1] = 0x0300_0021;
+        executed_step(machine);
+    }
+    let [eager, bounded, probe] = &mut machines;
+    executed_step(probe);
+    let deadline = probe.now();
+    for machine in [&mut **eager, &mut **bounded] {
+        machine.bus.rcnt = 0xC000;
+        machine.bus.schedule_joy_bus(evenfall_gba::bus::JoyBusCommand::Status, deadline).unwrap();
+    }
+    executed_step(eager);
+    let result = bounded.run_until(deadline).unwrap();
+    assert_eq!(result.reason, StopReason::Deadline);
+    assert_eq!(eager.now(), bounded.now());
+    assert_eq!(bounded.next_instruction_address(), 0x0300_0020);
+    assert_ne!(bounded.read_cpsr() & (1 << 5), 0);
+    assert_eq!(bounded.read_register(0), 0);
+    assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+    executed_step(eager);
+    bounded.run_until(eager.now()).unwrap();
+    assert_eq!(bounded.read_register(0), 7);
+    assert_eq!(eager.next_instruction_address(), bounded.next_instruction_address());
+}
+
+/// Zig: `Thumb to ARM change at a device deadline stops before the ARM instruction`.
+#[test]
+fn thumb_to_arm_change_at_a_device_deadline_stops_before_the_arm_instruction() {
+    let mut machines = [
+        Machine::new(Config::default()),
+        Machine::new(Config::default()),
+        Machine::new(Config::default()),
+    ];
+    for machine in &mut machines {
+        machine.bus.iwram[0x20..0x22].copy_from_slice(&0x2001_u16.to_le_bytes());
+        machine.bus.iwram[0x22..0x24].copy_from_slice(&0x4708_u16.to_le_bytes());
+        write_words(&mut machine.bus.iwram[..], 0x40, &[0xE3A0_0007]);
+        machine.cpu = Cpu::init(0x0300_0020, 0x3F, true);
+        machine.cpu.registers[1] = 0x0300_0040;
+        executed_step(machine);
+    }
+    let [eager, bounded, probe] = &mut machines;
+    executed_step(probe);
+    let deadline = probe.now();
+    for machine in [&mut **eager, &mut **bounded] {
+        machine.bus.rcnt = 0xC000;
+        machine.bus.schedule_joy_bus(evenfall_gba::bus::JoyBusCommand::Status, deadline).unwrap();
+    }
+    executed_step(eager);
+    let result = bounded.run_until(deadline).unwrap();
+    assert_eq!(result.reason, StopReason::Deadline);
+    assert_eq!(eager.now(), bounded.now());
+    assert_eq!(bounded.next_instruction_address(), 0x0300_0040);
+    assert_eq!(bounded.read_cpsr() & (1 << 5), 0);
+    assert_eq!(bounded.read_register(0), 1);
+    assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+    executed_step(eager);
+    bounded.run_until(eager.now()).unwrap();
+    assert_eq!(bounded.read_register(0), 7);
+    assert_eq!(eager.next_instruction_address(), bounded.next_instruction_address());
+}
+
+/// Zig: `PC wrap at a device deadline stops before sub-BIOS handoff`.
+#[test]
+fn pc_wrap_at_a_device_deadline_stops_before_sub_bios_handoff() {
+    let mut machines = [
+        Machine::new(Config::default()),
+        Machine::new(Config::default()),
+        Machine::new(Config::default()),
+    ];
+    for machine in &mut machines {
+        machine.cpu = Cpu::init(0xFFFF_FFFC, 0x1F, true);
+        machine.cpu.pipeline = Some(Pipeline {
+            instructions: [0xE1A0_0000, 0xE1A0_0000],
+            instruction_set: InstructionSet::Arm,
+        });
+    }
+    let [eager, bounded, probe] = &mut machines;
+    executed_step(probe);
+    let deadline = probe.now();
+    for machine in [&mut **eager, &mut **bounded] {
+        machine.bus.rcnt = 0xC000;
+        machine.bus.schedule_joy_bus(evenfall_gba::bus::JoyBusCommand::Status, deadline).unwrap();
+    }
+    executed_step(eager);
+    let result = bounded.run_until(deadline).unwrap();
+    assert_eq!(result.reason, StopReason::Deadline);
+    assert_eq!(eager.now(), bounded.now());
+    assert_eq!(bounded.next_instruction_address(), 0);
+    assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+}
