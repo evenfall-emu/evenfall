@@ -11,6 +11,7 @@ use crate::video_recovery::{self, VideoRecovery};
 use evenfall_audio::{Resampler, StereoSample};
 use evenfall_state::rewind::{self, RewindBuffer};
 use sha1::{Digest, Sha1};
+use std::sync::Arc;
 
 pub use rewind::{Compression as RewindCompression, Info as RewindInfo, RewindConfig};
 
@@ -22,8 +23,8 @@ pub struct RewindPosition {
 
 pub struct Session {
     pub machine: Box<Machine>,
-    pub rom: Vec<u8>,
-    pub bios: Vec<u8>,
+    pub rom: Arc<Vec<u8>>,
+    pub bios: Arc<[u8]>,
     /// Game identity, SHA-1 of the raw ROM.
     pub rom_sha1: [u8; 20],
     pub rtc_enabled: bool,
@@ -121,81 +122,97 @@ impl From<video_recovery::Error> for Error {
 
 impl Session {
     pub fn create(config: Config<'_>) -> Result<Self, Error> {
-        let mut session = Self::create_impl(config)?;
-        if !config.zipped {
-            session.rom = config.image.to_vec();
-        }
-        Ok(session)
+        Self::create_impl(config, None).map_err(|(error, _)| error)
     }
 
-    /// Uses the prefix of the uploaded buffer as the image, leaving room for
-    /// trailing upload data. Ownership transfers only on success; a failed
-    /// construction returns the original buffer. `config.image` is ignored.
+    /// Uses the prefix of the uploaded buffer as the image. Failed construction
+    /// returns the original allocation; success shares the Machine's immutable
+    /// media handle, preserving the uploaded bytes' address. `config.image` is
+    /// ignored. A ZIP's extracted ROM takes its own allocation instead.
     pub fn create_from_owned_buffer(
         config: Config<'_>,
         buffer: Vec<u8>,
         image_len: usize,
     ) -> Result<Self, (Error, Vec<u8>)> {
-        if image_len > buffer.len() {
-            return Err((Error::InvalidRomSize, buffer));
-        }
-        let mut session = match Self::create_impl(Config { image: &buffer[..image_len], ..config })
-        {
-            Ok(session) => session,
-            Err(error) => return Err((error, buffer)),
-        };
-        if !config.zipped {
-            session.rom = buffer;
-            session.rom.truncate(image_len);
-        }
-        Ok(session)
+        Self::create_impl(config, Some((buffer, image_len)))
+            .map_err(|(error, buffer)| (error, buffer.expect("owned upload returned on error")))
     }
 
-    fn create_impl(config: Config<'_>) -> Result<Self, Error> {
-        if config.image.is_empty() || config.image.len() > 40 * 1024 * 1024 {
-            return Err(Error::InvalidRomSize);
-        }
-        if !config.bios.is_empty() && config.bios.len() != 16_384 {
-            return Err(Error::InvalidBiosSize);
-        }
-        if !(8_000..=192_000).contains(&config.output_rate) {
-            return Err(Error::InvalidSampleRate);
-        }
-        if config.rtc_epoch > 253_402_300_799 {
-            return Err(Error::InvalidRtcEpoch);
-        }
-        let extracted =
-            config.zipped.then(|| rom_image::extract_single_gba(config.image)).transpose()?;
-        let rom = extracted.as_deref().unwrap_or(config.image);
-        if rom.is_empty() || rom.len() > rom_image::MAX_ROM_SIZE {
-            return Err(Error::InvalidRomSize);
-        }
-        let bios = config.bios.to_vec();
-        let save_type = rom_image::choose_save_type(rom, config.save_type, config.save)?;
-        let save_data =
-            config.save.map(|save| rom_image::save_prefix(save_type, save)).transpose()?;
-        let features = cartridge::detect_features(rom);
-        let rtc_enabled = config.rtc_enabled.unwrap_or(features.rtc);
-        let machine = Machine::new(MachineConfig {
-            rom,
-            bios: &bios,
-            immutable_media: true,
-            boot: if bios.is_empty() { BootMode::Hle } else { BootMode::ExternalBios },
-            save_type,
-            save_data,
-            rtc_epoch_seconds: rtc_enabled.then_some(config.rtc_epoch),
-            solar_level: features.solar_sensor.then_some(128),
-            gyro_sample: features.gyro.then_some(0x6c0),
-            rumble: features.rumble,
-            tilt_sample: features.tilt.then_some(Default::default()),
+    fn create_impl(
+        config: Config<'_>,
+        upload: Option<(Vec<u8>, usize)>,
+    ) -> Result<Self, (Error, Option<Vec<u8>>)> {
+        // All fallible setup precedes adoption, so an invalid configuration
+        // returns the original uploaded Vec, including late rewind errors.
+        let prepared = (|| -> Result<_, Error> {
+            let image = if let Some((buffer, image_len)) = upload.as_ref() {
+                buffer.get(..*image_len).ok_or(Error::InvalidRomSize)?
+            } else {
+                config.image
+            };
+            if image.is_empty() || image.len() > 40 * 1024 * 1024 {
+                return Err(Error::InvalidRomSize);
+            }
+            if !config.bios.is_empty() && config.bios.len() != 16_384 {
+                return Err(Error::InvalidBiosSize);
+            }
+            if !(8_000..=192_000).contains(&config.output_rate) {
+                return Err(Error::InvalidSampleRate);
+            }
+            if config.rtc_epoch > 253_402_300_799 {
+                return Err(Error::InvalidRtcEpoch);
+            }
+            let extracted =
+                config.zipped.then(|| rom_image::extract_single_gba(image)).transpose()?;
+            let rom = extracted.as_deref().unwrap_or(image);
+            if rom.is_empty() || rom.len() > rom_image::MAX_ROM_SIZE {
+                return Err(Error::InvalidRomSize);
+            }
+            let save_type = rom_image::choose_save_type(rom, config.save_type, config.save)?;
+            let save_data =
+                config.save.map(|save| rom_image::save_prefix(save_type, save)).transpose()?;
+            let features = cartridge::detect_features(rom);
+            let rtc_enabled = config.rtc_enabled.unwrap_or(features.rtc);
+            let rom_sha1 = Sha1::digest(rom).into();
+            let rewind_history = RewindBuffer::new(config.rewind)?;
+            Ok((extracted, save_type, save_data, features, rtc_enabled, rom_sha1, rewind_history))
+        })();
+        let (extracted, save_type, save_data, features, rtc_enabled, rom_sha1, rewind_history) =
+            match prepared {
+                Ok(prepared) => prepared,
+                Err(error) => return Err((error, upload.map(|(buffer, _)| buffer))),
+            };
+        let rom = Arc::new(if let Some(rom) = extracted {
+            rom
+        } else if let Some((mut buffer, image_len)) = upload {
+            buffer.truncate(image_len);
+            buffer
+        } else {
+            config.image.to_vec()
         });
-        let rom_sha1 = Sha1::digest(rom).into();
+        let bios: Arc<[u8]> = Arc::from(config.bios);
+        let machine = Machine::new_with_owned_media(
+            MachineConfig {
+                boot: if config.bios.is_empty() { BootMode::Hle } else { BootMode::ExternalBios },
+                save_type,
+                save_data,
+                rtc_epoch_seconds: rtc_enabled.then_some(config.rtc_epoch),
+                solar_level: features.solar_sensor.then_some(128),
+                gyro_sample: features.gyro.then_some(0x6c0),
+                rumble: features.rumble,
+                tilt_sample: features.tilt.then_some(Default::default()),
+                ..MachineConfig::default()
+            },
+            Arc::clone(&rom),
+            Arc::clone(&bios),
+        );
+        // The output rate is checked above and a freshly initialized APU
+        // always has a nonzero sample rate.
         let resampler = Resampler::new(machine.audio_sample_rate(), config.output_rate)
-            .map_err(|_| Error::InvalidSampleRate)?;
-        let rewind_history = RewindBuffer::new(config.rewind)?;
+            .expect("validated output rate and nonzero APU sample rate");
         Ok(Self {
             machine,
-            rom: extracted.unwrap_or_default(),
+            rom,
             bios,
             rom_sha1,
             rtc_enabled,
@@ -359,12 +376,13 @@ impl Session {
             return Err(Error::InvalidFramebufferSize);
         }
         let state = self.rewind_history.decode(index)?;
-        let mut scratch = Machine::new(MachineConfig {
-            rom: &self.rom,
-            bios: &self.bios,
-            boot: if self.bios.is_empty() { BootMode::Hle } else { BootMode::ExternalBios },
-            ..MachineConfig::default()
-        });
+        let mut scratch = Machine::new_with_shared_media(
+            &self.machine,
+            MachineConfig {
+                boot: if self.bios.is_empty() { BootMode::Hle } else { BootMode::ExternalBios },
+                ..MachineConfig::default()
+            },
+        );
         scratch.load_state(&state)?;
         output.copy_from_slice(scratch.framebuffer());
         self.rewind_history.info(index).ok_or(Error::InvalidRewindSteps)
@@ -451,15 +469,16 @@ impl Session {
     pub fn load_rewind_bundle_owned(&mut self, bytes: Vec<u8>) -> Result<(), Error> {
         // A decoded checkpoint is never trusted just because the outer digest
         // matches. Reuse one scratch machine to validate all anchors/entries.
-        let scratch = std::cell::RefCell::new(Machine::new(MachineConfig {
-            rom: &self.rom,
-            bios: &self.bios,
-            boot: if self.bios.is_empty() { BootMode::Hle } else { BootMode::ExternalBios },
-            ..MachineConfig::default()
-        }));
+        let scratch = std::cell::RefCell::new(Machine::new_with_shared_media(
+            &self.machine,
+            MachineConfig {
+                boot: if self.bios.is_empty() { BootMode::Hle } else { BootMode::ExternalBios },
+                ..MachineConfig::default()
+            },
+        ));
         let (live, history) = RewindBuffer::read_bundle_owned(bytes, |state| {
             let mut next = scratch.borrow_mut();
-            next.load_state(state).map_err(|error| match error {
+            next.load_state_in_place(state).map_err(|error| match error {
                 StateError::Codec(error) => error,
                 _ => evenfall_state::Error::InvalidSaveState,
             })?;
@@ -467,7 +486,7 @@ impl Session {
         })
         .map_err(|(error, _)| error)?;
         let mut next = scratch.into_inner();
-        next.load_state(&live)?;
+        next.load_state_in_place(&live)?;
         next.set_audio_output(self.audio_output_enabled);
         next.bus.set_video_interval(self.video_interval);
         if let Some(recovery) = &mut self.video_recovery {
@@ -499,19 +518,21 @@ impl Session {
         let save_type = rom_image::choose_save_type(&self.rom, self.save_type_override, data)?;
         let save_data = data.map(|bytes| rom_image::save_prefix(save_type, bytes)).transpose()?;
         let features = cartridge::detect_features(&self.rom);
-        let mut next = Machine::new(MachineConfig {
-            rom: &self.rom,
-            bios: &self.bios,
-            immutable_media: true,
-            boot: if self.bios.is_empty() { BootMode::Hle } else { BootMode::ExternalBios },
-            save_type,
-            save_data,
-            rtc_epoch_seconds: self.rtc_enabled.then_some(self.rtc_epoch),
-            solar_level: features.solar_sensor.then_some(128),
-            gyro_sample: features.gyro.then_some(0x6c0),
-            rumble: features.rumble,
-            tilt_sample: features.tilt.then_some(Default::default()),
-        });
+        let mut next = Machine::new_with_shared_media(
+            &self.machine,
+            MachineConfig {
+                rom: &self.rom,
+                bios: &self.bios,
+                boot: if self.bios.is_empty() { BootMode::Hle } else { BootMode::ExternalBios },
+                save_type,
+                save_data,
+                rtc_epoch_seconds: self.rtc_enabled.then_some(self.rtc_epoch),
+                solar_level: features.solar_sensor.then_some(128),
+                gyro_sample: features.gyro.then_some(0x6c0),
+                rumble: features.rumble,
+                tilt_sample: features.tilt.then_some(Default::default()),
+            },
+        );
         next.set_audio_output(self.audio_output_enabled);
         if let Some(recovery) = &mut self.video_recovery {
             recovery.rebase(&next)?;
@@ -580,8 +601,9 @@ mod tests {
         let address = buffer.as_ptr();
         let session =
             Session::create_from_owned_buffer(Config::default(), buffer, LOOP_ROM.len()).unwrap();
-        assert_eq!(session.rom.as_ptr(), address);
-        assert_eq!(session.rom, LOOP_ROM);
+        assert_eq!(session.rom.as_ref().as_ptr(), address);
+        assert_eq!(session.rom.as_slice(), LOOP_ROM);
+        assert!(Arc::ptr_eq(&session.rom, &session.machine.bus.rom));
 
         let buffer = LOOP_ROM.to_vec();
         let address = buffer.as_ptr();
@@ -613,9 +635,11 @@ mod tests {
         assert_eq!(returned, LOOP_ROM);
     }
 
-    /// Zig: "buffered snapshots match streamed state bytes for owned and borrowed media"
+    /// Zig: "buffered snapshots match streamed state bytes for owned and borrowed media".
+    /// The mutable borrowed-ROM mutation/rejection half is deliberately not
+    /// ported: Machine copies or adopts immutable shared media at construction.
     #[test]
-    fn buffered_snapshots_match_streamed_state_bytes_for_owned_media() {
+    fn buffered_snapshots_match_streamed_state_bytes_for_owned_and_shared_media() {
         for save_type in [
             SaveType::None,
             SaveType::Sram,
@@ -637,15 +661,48 @@ mod tests {
             let mut stream = Vec::new();
             session.machine.write_state(&mut stream).unwrap();
             assert_eq!(stream, snapshot);
-            let mut restored = Machine::new(MachineConfig {
-                rom: LOOP_ROM,
-                save_type,
-                rtc_epoch_seconds: Some(12345),
-                ..MachineConfig::default()
-            });
+            let rom = Arc::clone(&session.rom);
+            let mut restored = Machine::new_with_owned_media(
+                MachineConfig {
+                    save_type,
+                    rtc_epoch_seconds: Some(12345),
+                    ..MachineConfig::default()
+                },
+                rom,
+                Arc::clone(&session.bios),
+            );
+            assert!(Arc::ptr_eq(&session.rom, &restored.bus.rom));
             restored.load_state(&snapshot).unwrap();
             assert_eq!(restored.write_state_alloc().unwrap(), snapshot);
         }
+    }
+
+    /// Zig: "borrowed BIOS identity stays live while owned BIOS snapshots stay stable".
+    /// The live-mutation half is deliberately not ported: both Rust paths
+    /// snapshot caller bytes into immutable shared media at construction.
+    #[test]
+    fn bios_identity_is_fixed_at_construction_and_foreign_bios_is_rejected() {
+        let mut caller_bios = vec![0; 16_384];
+        let mut session =
+            Session::create(Config { image: LOOP_ROM, bios: &caller_bios, ..Config::default() })
+                .unwrap();
+        let state = session.write_state().unwrap();
+        caller_bios[100] = 1;
+        assert_eq!(session.write_state().unwrap(), state);
+        assert!(Arc::ptr_eq(&session.bios, &session.machine.bus.bios));
+
+        let mut foreign = Machine::new(MachineConfig {
+            rom: LOOP_ROM,
+            bios: &caller_bios,
+            boot: BootMode::ExternalBios,
+            ..MachineConfig::default()
+        });
+        let before = foreign.write_state_alloc().unwrap();
+        assert!(matches!(
+            foreign.load_state(&state),
+            Err(StateError::Codec(evenfall_state::Error::SaveStateBiosMismatch))
+        ));
+        assert_eq!(foreign.write_state_alloc().unwrap(), before);
     }
 
     /// Zig: "save restoration boots resident media and failure preserves the running session"
