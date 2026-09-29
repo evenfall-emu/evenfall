@@ -16,6 +16,7 @@ pub mod timer;
 pub mod types;
 
 // [apu]
+pub mod apu;
 
 // [video]
 pub mod video;
