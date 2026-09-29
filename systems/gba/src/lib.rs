@@ -28,6 +28,7 @@ pub mod bus;
 pub mod cpu;
 
 // [hle]
+pub mod hle;
 
 // [machine]
 pub mod machine;
