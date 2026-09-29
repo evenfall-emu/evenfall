@@ -12,6 +12,7 @@ publish.workspace = true
 evenfall-audio.workspace = true
 evenfall-host.workspace = true
 evenfall-state.workspace = true
+miniz_oxide.workspace = true
 
 [dev-dependencies]
 blake3.workspace = true
