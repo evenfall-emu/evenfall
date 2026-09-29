@@ -32,6 +32,63 @@ use mem::Mem;
 /// Code pages are 256 bytes: the granularity of the "holds code" flags.
 pub(crate) const PAGE_SHIFT: u32 = 8;
 
+/// A register number. Its sixteen values index a 16-entry register file
+/// with no bounds check, so a run's register file on its stack can be the
+/// registers themselves, with no padding to clear.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum Reg {
+    #[default]
+    R0,
+    R1,
+    R2,
+    R3,
+    R4,
+    R5,
+    R6,
+    R7,
+    R8,
+    R9,
+    R10,
+    R11,
+    R12,
+    R13,
+    R14,
+    R15,
+}
+
+impl Reg {
+    /// The register numbered by the low four bits of `n`.
+    pub(crate) const fn new(n: u32) -> Self {
+        const ALL: [Reg; 16] = [
+            Reg::R0,
+            Reg::R1,
+            Reg::R2,
+            Reg::R3,
+            Reg::R4,
+            Reg::R5,
+            Reg::R6,
+            Reg::R7,
+            Reg::R8,
+            Reg::R9,
+            Reg::R10,
+            Reg::R11,
+            Reg::R12,
+            Reg::R13,
+            Reg::R14,
+            Reg::R15,
+        ];
+        ALL[(n & 15) as usize]
+    }
+}
+
+impl From<Reg> for usize {
+    #[inline(always)]
+    fn from(reg: Reg) -> Self {
+        reg as usize
+    }
+}
+
 /// One decoded instruction.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(C, align(8))]
@@ -41,8 +98,8 @@ pub(crate) struct Op {
     /// The handler a conditional wrapper runs when its condition passes.
     pub(crate) inner: u8,
     /// Usually the destination and first operand registers.
-    pub(crate) rd: u8,
-    pub(crate) rn: u8,
+    pub(crate) rd: Reg,
+    pub(crate) rn: Reg,
     /// An immediate, packed operand fields or the raw instruction word.
     pub(crate) x: u32,
 }
@@ -94,9 +151,9 @@ pub(super) struct Mmio {
     pub(super) address: u32,
     /// The value a store writes, or the register a load writes and how.
     pub(super) store: Option<(u32, AccessWidth)>,
-    pub(super) load: Option<(u8, Load)>,
+    pub(super) load: Option<(Reg, Load)>,
     /// A base register write after the access (ARM).
-    pub(super) writeback: Option<(u8, u32)>,
+    pub(super) writeback: Option<(Reg, u32)>,
 }
 
 impl Mmio {
