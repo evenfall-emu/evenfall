@@ -22,7 +22,8 @@ pub(crate) struct EngineMemory<'a> {
 
 /// The MMIO registers an engine run reads and writes itself: IE, IF, IME,
 /// POSTFLG and HALTCNT, the DMA source, destination and word count
-/// latches, and for loads DISPSTAT and VCOUNT. Their accesses schedule no
+/// latches, for loads DISPSTAT and VCOUNT, and for halfword and word stores
+/// the affine parameters and reference points. Their accesses schedule no
 /// device event and read no device state but the PPU's position, which the
 /// run knows from its clock (no PPU event falls inside a run), so they need
 /// neither the device batch nor the bus's clock. The bus's own MMIO paths
@@ -32,6 +33,9 @@ pub(crate) struct RunRegisters<'a> {
     pub(crate) dma: &'a mut [DmaChannel; 4],
     /// The PPU's position when the run took this view.
     pub(crate) ppu: PpuTiming,
+    pub(crate) affine_parameters: &'a mut [[i16; 4]; 2],
+    pub(crate) reference_points: &'a mut [[i32; 2]; 2],
+    pub(crate) affine_current: &'a mut [[i32; 2]; 2],
 }
 
 impl RunRegisters<'_> {
@@ -51,7 +55,18 @@ impl RunRegisters<'_> {
         if !store && address.wrapping_sub(MMIO_BASE + 0x004) < 4 {
             return true;
         }
+        if store && width != AccessWidth::Byte && Self::affine(address) {
+            return true;
+        }
         IrqRegisters::holds(address, width, store)
+    }
+
+    /// Whether a bus-aligned address is among the affine parameters and
+    /// reference points, whose stores a run may make only where the PPU
+    /// shows no visible dot: there they record no raster history.
+    #[inline(always)]
+    pub(crate) fn affine(address: u32) -> bool {
+        address.wrapping_sub(MMIO_BASE + 0x020) < 0x20
     }
 
     /// A load [`Self::holds`] admits, as [`Bus::read_mmio`] makes it
@@ -84,11 +99,25 @@ impl RunRegisters<'_> {
         }
     }
 
-    /// A store [`Self::holds`] admits, as [`Bus::write_mmio`] makes it.
-    pub(crate) fn store(&mut self, address: u32, width: AccessWidth, value: u32) {
+    /// A store [`Self::holds`] admits, as [`Bus::write_mmio`] makes it
+    /// where the PPU shows no visible dot, except that the scanline memo's
+    /// registers are left to the caller to mark: returns whether they
+    /// changed.
+    #[must_use]
+    pub(crate) fn store(&mut self, address: u32, width: AccessWidth, value: u32) -> bool {
+        if Self::affine(address) {
+            if width == AccessWidth::Word {
+                self.store_affine(address, value as u16);
+                self.store_affine(address + 2, (value >> 16) as u16);
+            } else {
+                self.store_affine(address, value as u16);
+            }
+            return true;
+        }
         let offset = address.wrapping_sub(MMIO_BASE + 0xb0);
         if offset >= 0x30 {
-            return self.irq.store(address, width, value);
+            self.irq.store(address, width, value);
+            return false;
         }
         match width {
             AccessWidth::Word => {
@@ -110,6 +139,27 @@ impl RunRegisters<'_> {
                 let merged = (old & !(0xff << shift)) | ((value as u16 & 0xff) << shift);
                 self.store_latch(aligned, merged);
             }
+        }
+        false
+    }
+
+    /// A halfword store to an affine parameter or reference point, as
+    /// `Bus::write_mmio_half` makes it where no dot is visible (its raster
+    /// segments then record nothing).
+    fn store_affine(&mut self, address: u32, value: u16) {
+        if let Some((background, parameter)) = Bus::affine_parameter_register(address) {
+            self.affine_parameters[background][parameter] = value as i16;
+        } else if let Some((background, coordinate, high)) = Bus::affine_reference_register(address)
+        {
+            let old = self.reference_points[background][coordinate] as u32;
+            let raw = if high {
+                (old & 0xffff) | (u32::from(value & 0x0fff) << 16)
+            } else {
+                (old & 0x0fff_0000) | u32::from(value)
+            };
+            let point = ((raw << 4) as i32) >> 4;
+            self.reference_points[background][coordinate] = point;
+            self.affine_current[background][coordinate] = point;
         }
     }
 
@@ -230,6 +280,11 @@ pub(crate) struct VideoMemory<'a> {
 }
 
 impl VideoMemory<'_> {
+    /// Notes a change to the registers the scanline memo compares.
+    pub(crate) fn mark_registers(&mut self) {
+        self.memo.mark_registers();
+    }
+
     /// A read of palette RAM, VRAM or OAM (regions 5 to 7).
     #[inline(always)]
     pub(crate) fn read(&self, address: u32, width: AccessWidth) -> u32 {
@@ -529,7 +584,14 @@ impl Bus {
                 object_line_index: &mut self.object_line_index,
                 dispcnt: self.dispcnt,
             },
-            registers: RunRegisters { irq: &mut self.irq, dma: &mut self.dma_channels, ppu },
+            registers: RunRegisters {
+                irq: &mut self.irq,
+                dma: &mut self.dma_channels,
+                ppu,
+                affine_parameters: &mut self.bg_affine_parameters,
+                reference_points: &mut self.bg_reference_points,
+                affine_current: &mut self.bg_affine_current,
+            },
             quiet,
         }
     }
@@ -810,10 +872,12 @@ mod tests {
     use super::*;
 
     /// Loads and stores of every width at every byte of IE, IF, IME, POSTFLG,
-    /// HALTCNT and the DMA registers that [`RunRegisters`] admits leave the
-    /// registers, the IRQ line, the power state and the DMA channels, and
-    /// read the values, that `Bus::read` and `Bus::write` do, from all
-    /// kinds of starting values.
+    /// HALTCNT, the DMA registers and the affine registers that
+    /// [`RunRegisters`] admits leave the registers, the IRQ line, the power
+    /// state, the DMA channels, the affine parameters and points and the
+    /// scanline memo's register mark, and read the values, that `Bus::read`
+    /// and `Bus::write` do where no dot is visible, from all kinds of
+    /// starting values.
     #[test]
     fn run_registers_match_the_bus() {
         let mut seed = 0x1e1e_2020_u32;
@@ -834,10 +898,12 @@ mod tests {
                     channel.latched_destination,
                 )
             });
-            (bus.irq, channels, bus.dma_start_cycles, bus.pending_dma)
+            let affine = (bus.bg_affine_parameters, bus.bg_reference_points, bus.bg_affine_current);
+            let marked = bus.scanline_memo.changes_registers;
+            (bus.irq, channels, bus.dma_start_cycles, bus.pending_dma, affine, marked)
         };
-        let (mut loads, mut stores, mut dma) = (0, 0, 0);
-        for _ in 0..8000 {
+        let (mut loads, mut stores, mut dma, mut affine) = (0, 0, 0, 0);
+        for _ in 0..16_000 {
             let mut bus = Bus::init(&[]);
             bus.irq.interrupt_enable_mask = next() as u16 & 0x3fff;
             bus.irq.interrupt_request_flags = next() as u16 & 0x3fff;
@@ -852,13 +918,26 @@ mod tests {
                 channel.latched_source = next();
                 channel.latched_destination = next();
             }
+            for background in 0..2 {
+                bus.bg_affine_parameters[background] = std::array::from_fn(|_| next() as i16);
+                bus.bg_reference_points[background] =
+                    std::array::from_fn(|_| ((next() << 4) as i32) >> 4);
+                bus.bg_affine_current[background] = std::array::from_fn(|_| next() as i32);
+            }
+            // In HBlank or VBlank: no dot is visible.
+            let line = (next() % 228) as u16;
+            bus.ppu_timing.line = line;
+            bus.ppu_timing.cycle_in_line =
+                if line < 160 { 960 + (next() % 200) as u16 } else { (next() % 1200) as u16 };
+            bus.scanline_memo.changes_registers = false;
             let width =
                 [AccessWidth::Byte, AccessWidth::Half, AccessWidth::Word][next() as usize % 3];
             let store = next() & 1 != 0;
-            let offset = match next() % 4 {
+            let offset = match next() % 5 {
                 0 => 0x200 + next() % 4,
                 1 => 0x208 + next() % 4,
                 2 => 0x300 + next() % 4,
+                3 => 0x20 + next() % 0x20,
                 _ => 0xb0 + next() % 0x30,
             };
             let address = MMIO_BASE + (offset & !(width.bytes() as u32 - 1));
@@ -868,6 +947,11 @@ mod tests {
             let value = next();
             let mut engine = Bus::init(&[]);
             engine.irq = bus.irq;
+            engine.bg_affine_parameters = bus.bg_affine_parameters;
+            engine.bg_reference_points = bus.bg_reference_points;
+            engine.bg_affine_current = bus.bg_affine_current;
+            engine.ppu_timing = bus.ppu_timing;
+            engine.scanline_memo.changes_registers = false;
             for (to, from) in engine.dma_channels.iter_mut().zip(&bus.dma_channels) {
                 (to.source, to.destination, to.word_count, to.control) =
                     (from.source, from.destination, from.word_count, from.control);
@@ -881,22 +965,25 @@ mod tests {
                 source: AccessSource::CpuData,
             };
             let context = format!("{address:08x} {width:?} store {store} value {value:08x}");
-            let mut registers = engine.engine_memory(false).registers;
+            let mut memory = engine.engine_memory(false);
             if store {
-                registers.store(address, width, value);
+                if memory.registers.store(address, width, value) {
+                    memory.video.mark_registers();
+                }
                 bus.write(access, value);
                 stores += 1;
             } else {
-                let loaded = registers.load(address, width, 0);
+                let loaded = memory.registers.load(address, width, 0);
                 assert_eq!(loaded, bus.read(access).value, "{context}");
                 loads += 1;
             }
-            dma += usize::from(offset < 0x200);
+            dma += usize::from((0xb0..0xe0).contains(&offset));
+            affine += usize::from(offset < 0x40);
             assert_eq!(state(&engine), state(&bus), "{context}");
         }
         assert!(
-            loads > 1000 && stores > 1000 && dma > 1000,
-            "{loads} loads, {stores} stores, {dma} DMA"
+            loads > 1000 && stores > 1000 && dma > 1000 && affine > 1000,
+            "{loads} loads, {stores} stores, {dma} DMA, {affine} affine"
         );
     }
 
@@ -954,7 +1041,8 @@ mod tests {
     /// [`RunRegisters::holds`] admits exactly the accesses whose every byte
     /// is IE, IF or IME, or for stores POSTFLG or HALTCNT, or is a DMA
     /// register other than, for stores, a control register, or for loads
-    /// DISPSTAT or VCOUNT.
+    /// DISPSTAT or VCOUNT, or for halfword and word stores an affine
+    /// parameter or reference point.
     #[test]
     fn run_registers_hold_exactly_their_bytes() {
         for store in [false, true] {
@@ -967,13 +1055,16 @@ mod tests {
                             || (store && matches!(byte, 0x300 | 0x301))
                     });
                     let lcd = !store && bytes.clone().all(|byte| (0x004..=0x007).contains(&byte));
+                    let affine = store
+                        && width != AccessWidth::Byte
+                        && bytes.clone().all(|byte| (0x020..=0x03f).contains(&byte));
                     let dma = bytes.clone().all(|byte| {
                         (0xb0..0xe0).contains(&byte) && !(store && (byte - 0xb0) % 12 >= 10)
                     });
                     let address = MMIO_BASE + offset;
                     assert_eq!(
                         RunRegisters::holds(address, width, store),
-                        interrupt || dma || lcd,
+                        interrupt || dma || lcd || affine,
                         "{address:08x} {width:?} store {store}"
                     );
                 }

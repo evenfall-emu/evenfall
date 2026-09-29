@@ -717,20 +717,24 @@ fn serve<const EW: bool>(
 /// store that halts, stops or raises an IRQ the CPU takes.
 #[inline(always)]
 fn serve_local<const EW: bool>(c: &mut Ctx<'_, EW>, h: Hot, access: &Mmio) -> Option<Resume> {
-    access.local().then(|| complete_local::<EW>(c, h, access))
+    if access.local() { complete_local::<EW>(c, h, access) } else { None }
 }
 
 /// The part of [`serve_local`] past the test of the registers.
 #[inline(never)]
-fn complete_local<const EW: bool>(c: &mut Ctx<'_, EW>, h: Hot, access: &Mmio) -> Resume {
+fn complete_local<const EW: bool>(c: &mut Ctx<'_, EW>, h: Hot, access: &Mmio) -> Option<Resume> {
     let store = access.store.is_some();
+    // A store's data cycle ends one cycle after the fetch, as in [`serve`].
+    if !access.local_at(&c.mem, h.budget - Ctx::<EW>::FETCH - 1) {
+        return None;
+    }
     let mut next = h;
     if !next.charge(Ctx::<EW>::FETCH + if store { 1 } else { 2 }) {
-        return Resume::Out(h);
+        return Some(Resume::Out(h));
     }
     // The data cycle follows the fetch, as in [`serve`].
     let elapsed = (c.mem.start - (h.budget - Ctx::<EW>::FETCH)) as u64;
-    let value = access.perform_local(&mut c.mem.registers, &mut c.core.registers, elapsed);
+    let value = access.perform_local(&mut c.mem, &mut c.core.registers, elapsed);
     next.next();
     c.mmio_mark = next.budget;
     if !store {
@@ -739,11 +743,11 @@ fn complete_local<const EW: bool>(c: &mut Ctx<'_, EW>, h: Hot, access: &Mmio) ->
     }
     let irq = &c.mem.registers.irq;
     let taken = irq.irq_line && h.cpsr & (1 << 7) == 0;
-    if irq.power_state == PowerState::Running && !taken {
+    Some(if irq.power_state == PowerState::Running && !taken {
         Resume::On(next)
     } else {
         Resume::Out(next)
-    }
+    })
 }
 
 /// Publishes a run's CPU state; returns the cycles it took, the open-bus

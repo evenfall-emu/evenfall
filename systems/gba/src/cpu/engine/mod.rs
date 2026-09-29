@@ -190,25 +190,29 @@ impl Mmio {
         RunRegisters::holds(address, width, self.store.is_some())
     }
 
-    /// Makes an access [`Self::local`] admits on the run's own view of the
-    /// registers, its data cycle `elapsed` cycles after the view was taken,
-    /// and writes the CPU registers. Returns the bus value.
-    pub(super) fn perform_local(
-        &self,
-        local: &mut RunRegisters<'_>,
-        registers: &mut [u32; 16],
-        elapsed: u64,
-    ) -> u32 {
+    /// Whether a run may make an access [`Self::local`] admits whose data
+    /// cycle leaves `budget`: a store to the affine registers only before
+    /// the next visible dot.
+    fn local_at(&self, mem: &Mem<'_>, budget: i64) -> bool {
+        self.store.is_none() || !RunRegisters::affine(self.address) || budget > mem.video_floor
+    }
+
+    /// Makes an access [`Self::local_at`] admits on the run's own view of
+    /// the registers, its data cycle `elapsed` cycles after the view was
+    /// taken, and writes the CPU registers. Returns the bus value.
+    fn perform_local(&self, mem: &mut Mem<'_>, registers: &mut [u32; 16], elapsed: u64) -> u32 {
         #[cfg(test)]
         LOCAL_ACCESSES.with(|count| count.set(count.get() + 1));
         let (width, address) = self.access();
         let value = match (self.store, self.load) {
             (Some((value, _)), _) => {
-                local.store(address, width, value);
+                if mem.registers.store(address, width, value) {
+                    mem.video.mark_registers();
+                }
                 value
             }
             (_, Some((rd, load))) => {
-                let value = local.load(address, width, elapsed);
+                let value = mem.registers.load(address, width, elapsed);
                 registers[usize::from(rd)] = load.extend(value, self.address);
                 value
             }

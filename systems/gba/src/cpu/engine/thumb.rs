@@ -691,7 +691,7 @@ fn serve_local<T: Timing>(
     h: Hot,
     access: &Mmio,
 ) -> Option<Resume> {
-    access.local().then(|| complete_local(c, core, t, h, access))
+    if access.local() { complete_local(c, core, t, h, access) } else { None }
 }
 
 /// The part of [`serve_local`] past the test of the registers.
@@ -702,17 +702,21 @@ fn complete_local<T: Timing>(
     t: T,
     h: Hot,
     access: &Mmio,
-) -> Resume {
+) -> Option<Resume> {
     let store = access.store.is_some();
     let before = h.budget;
     let fetch = t.fetch(&h);
+    // A store's data cycle ends one cycle after the fetch, as in [`serve`].
+    if !access.local_at(&c.mem, before - fetch - 1) {
+        return None;
+    }
     let mut next = h;
     if !next.charge(fetch + if store { 1 } else { 2 }) {
-        return Resume::Out(h);
+        return Some(Resume::Out(h));
     }
     // The data cycle follows the fetch, as in [`serve`].
     let elapsed = (c.mem.start - (before - fetch)) as u64;
-    let value = access.perform_local(&mut c.mem.registers, &mut core.registers, elapsed);
+    let value = access.perform_local(&mut c.mem, &mut core.registers, elapsed);
     next.idx += 1;
     t.after(&mut next, before, !store);
     c.mmio_mark = next.budget;
@@ -723,11 +727,11 @@ fn complete_local<T: Timing>(
     }
     let irq = &c.mem.registers.irq;
     let taken = irq.irq_line && core.cpsr & (1 << 7) == 0;
-    if irq.power_state == PowerState::Running && !taken {
+    Some(if irq.power_state == PowerState::Running && !taken {
         Resume::On(next)
     } else {
         Resume::Out(next)
-    }
+    })
 }
 
 fn run_ram<const EW: bool>(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
