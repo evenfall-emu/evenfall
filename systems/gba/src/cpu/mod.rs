@@ -1093,11 +1093,16 @@ impl Cpu {
     /// A whole-instruction preflight: fetch first, then all data and internal
     /// cycles, and finally any refill. A failed condition still consumes its
     /// fetch, even if the encoding would otherwise leave the kernel.
-    fn arm_kernel_cycles(&self, state: &mut ArmKernelState<'_>, instruction: u32) -> Option<u64> {
+    fn arm_kernel_cycles(
+        &self,
+        state: &mut ArmKernelState<'_>,
+        instruction: u32,
+        condition_passed: bool,
+    ) -> Option<u64> {
         if instruction & 0x0f00_0000 == 0x0f00_0000 {
             return None; // SWIs always leave through step_impl.
         }
-        if !self.core.condition_passed(instruction >> 28) {
+        if !condition_passed {
             return Some(1);
         }
         let rn = ((instruction >> 16) & 15) as usize;
@@ -1108,7 +1113,9 @@ impl Cpu {
                 let rm = (instruction & 15) as usize;
                 let rs = ((instruction >> 8) & 15) as usize;
                 let accumulate = instruction & (1 << 21) != 0;
-                if rd == 15 || rs == 15 || rm == 15 || (accumulate && rn == 15) {
+                // MUL's Rd is bits 19..16 and its accumulator Rn is 15..12;
+                // the transfer decoder's `rd`/`rn` names are reversed here.
+                if rn == 15 || rs == 15 || rm == 15 || (accumulate && rd == 15) {
                     return None;
                 }
                 Some(
@@ -1147,7 +1154,9 @@ impl Cpu {
             }
             0 | 1
                 if rd != 15
+                    && (instruction & 0x90 != 0x90 || instruction & (1 << 25) != 0)
                     && (instruction & (1 << 25) != 0 || instruction & 0x0e00_0010 == 0)
+                    && (!((8..=11).contains(&((instruction >> 21) & 15))) || load)
                     && instruction & 0x0fbf_0000 != 0x010f_0000 =>
             {
                 Some(1)
@@ -1238,20 +1247,28 @@ impl Cpu {
             state.bound();
             loop {
                 let instruction = state.current;
-                let Some(required) = self.arm_kernel_cycles(&mut state, instruction) else {
+                let condition_passed = self.core.condition_passed(instruction >> 28);
+                let Some(required) =
+                    self.arm_kernel_cycles(&mut state, instruction, condition_passed)
+                else {
                     break;
                 };
                 if !state.fits(required) {
                     break;
                 }
                 let fetched = state.region.fetch(state.pc8);
-                if !self.core.condition_passed(instruction >> 28) {
+                if !condition_passed {
                     state.advance(self, fetched);
                     continue;
                 }
+                // The ordinary step exposes the waiting instruction address
+                // throughout execution. In particular BL derives LR from it;
+                // after a fall-through the kernel's Core otherwise still held
+                // the address from the prior instruction.
+                self.core.next_instruction_address = state.pc8.wrapping_sub(8);
                 let execution = self
                     .core
-                    .execute_arm(&mut state.region, instruction)
+                    .execute_arm_condition_passed(&mut state.region, instruction)
                     .expect("an admitted ARM instruction cannot fault");
                 if execution.branched {
                     let target = self.core.next_instruction_address;
@@ -2429,7 +2446,7 @@ mod tests {
         for base in [0x0200_0103_u32, 0x03ff_8103] {
             for (class, prefix) in [(0, 0xe401_2003_u32), (1, 0xe801_000b), (2, 0xe001_20b3)] {
                 // L, W, B/user, U, P and (single only) register offset.
-                for mode in [0_u32, 1, 2, 3, 4, 5, 7, 8, 16, 17, 24, 31, 32, 33, 40, 63] {
+                for mode in 0_u32..64 {
                     if class != 0 && mode >= 32 {
                         continue;
                     }
@@ -2509,7 +2526,7 @@ mod tests {
             seed
         };
         let mut executed = 0;
-        for trial in 0..320 {
+        for trial in 0..3000 {
             let mut instruction = random();
             if instruction & (1 << 29) == 0 {
                 instruction = instruction & 0x0fff_ffff | 0xe000_0000;
@@ -2586,6 +2603,6 @@ mod tests {
             runner_bus.end_device_batch();
             reference_bus.end_device_batch();
         }
-        assert!(executed > 320 / 3, "kernel did not exercise enough random instructions");
+        assert!(executed > 3000 / 3, "kernel did not exercise enough random instructions");
     }
 }
