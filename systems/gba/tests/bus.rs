@@ -1511,3 +1511,500 @@ fn psg_noise_channel_clocks_its_lfsr_and_routes_the_envelope_volume() {
     assert_eq!(240, bus.current_audio_sample().left);
     assert_eq!(240, bus.current_audio_sample().right);
 }
+
+/// ZiGBA: "timer zero unused count-up bit preserves the exact batched IRQ deadline"
+#[test]
+fn timer_zero_unused_count_up_bit_preserves_the_exact_batched_irq_deadline() {
+    for direct_state in [false, true] {
+        let mut bus = Bus::init(&[]);
+        write_half(&mut bus, 0x0400_0200, 1 << 3);
+        write_half(&mut bus, 0x0400_0208, 1);
+        if direct_state {
+            bus.timers[0].reload = 0xfffe;
+            bus.timers[0].counter = 0xfffe;
+            bus.timers[0].control = 0x00c4;
+        } else {
+            write_word(&mut bus, 0x0400_0100, 0x00c4_fffe);
+        }
+        let started_at = bus.now();
+        bus.begin_device_batch();
+        bus.elapse(1);
+        assert_eq!(0, bus.interrupt_request_flags);
+        assert!(!bus.irq_line);
+        bus.elapse(1);
+        assert_eq!(started_at + 2, bus.now());
+        assert_eq!(1 << 3, bus.interrupt_request_flags);
+        assert!(bus.irq_line);
+        bus.end_device_batch();
+    }
+}
+
+fn expect_timer_irqs_at(bus: &mut Bus, at: u64, flags: u16) {
+    let timer_flags = 0xf << 3;
+    bus.elapse(at - 1 - bus.now());
+    assert_eq!(0, bus.interrupt_request_flags & timer_flags);
+    bus.elapse(1);
+    assert_eq!(flags, bus.interrupt_request_flags & timer_flags);
+    bus.interrupt_request_flags &= !timer_flags;
+    bus.update_irq_line();
+}
+
+fn expect_timer_overflows_at(bus: &mut Bus, index: u8, expected: u64, divisor: u64) {
+    let flag = 1u16 << (index + 3);
+    for distance in [expected, 2 * divisor] {
+        assert!(distance >= 1);
+        bus.elapse(distance - 1);
+        assert_eq!(0, bus.interrupt_request_flags & flag);
+        bus.elapse(1);
+        assert_eq!(flag, bus.interrupt_request_flags & flag);
+        bus.interrupt_request_flags = 0;
+        bus.update_irq_line();
+    }
+}
+
+/// ZiGBA: "prescaled timers tick on one free-running prescaler grid"
+#[test]
+fn prescaled_timers_tick_on_one_free_running_prescaler_grid() {
+    for batch in [false, true] {
+        let mut bus = Bus::init(&[]);
+        write_half(&mut bus, 0x0400_0200, 0xf << 3);
+        if batch {
+            bus.begin_device_batch();
+        }
+        write_word(&mut bus, 0x0400_0100, 0x00c1_ffff);
+        bus.elapse(38);
+        write_word(&mut bus, 0x0400_0104, 0x00c1_ffff);
+        write_word(&mut bus, 0x0400_0108, 0x00c2_ffff);
+        write_word(&mut bus, 0x0400_010c, 0x00c3_ffff);
+        assert_eq!(43, bus.now());
+        for tick in 1..17 {
+            let at = 64 * tick;
+            let mut flags = 0b0011 << 3;
+            if at % 256 == 0 {
+                flags |= 1 << 5;
+            }
+            if at % 1024 == 0 {
+                flags |= 1 << 6;
+            }
+            expect_timer_irqs_at(&mut bus, at, flags);
+        }
+        if batch {
+            bus.end_device_batch();
+        }
+    }
+}
+
+/// ZiGBA: "a /64 enable after a /1024 overflow follows the free-running prescaler"
+#[test]
+fn a_64_enable_after_a_1024_overflow_follows_the_free_running_prescaler() {
+    for (delay, overflow) in [(0, 2176), (5, 2176), (15, 2240)] {
+        for batch in [false, true] {
+            let mut bus = Bus::init(&[]);
+            write_half(&mut bus, 0x0400_0200, 1 << 3);
+            if batch {
+                bus.begin_device_batch();
+            }
+            write_word(&mut bus, 0x0400_0100, 0x00c3_ffff);
+            expect_timer_irqs_at(&mut bus, 1024, 1 << 3);
+            write_half(&mut bus, 0x0400_0102, 0);
+            write_half(&mut bus, 0x0400_0100, 0xfff0);
+            let enable_at = 1024 + 182 + delay;
+            bus.elapse(enable_at - 1 - bus.now());
+            write_half(&mut bus, 0x0400_0102, 0x00c1);
+            assert_eq!(enable_at, bus.now());
+            expect_timer_irqs_at(&mut bus, overflow, 1 << 3);
+            if batch {
+                bus.end_device_batch();
+            }
+        }
+    }
+}
+
+/// ZiGBA: "a count-up stage returns to the master clock on the shared prescaler grid"
+#[test]
+fn a_count_up_stage_returns_to_the_master_clock_on_the_shared_prescaler_grid() {
+    for (return_select, expected) in [(1, 108), (0, 2)] {
+        let mut eager = Bus::init(&[]);
+        let mut batched = Bus::init(&[]);
+        for (bus, batch) in [(&mut eager, false), (&mut batched, true)] {
+            write_half(bus, 0x0400_0200, 1 << 4);
+            if batch {
+                bus.begin_device_batch();
+            }
+            write_half(bus, 0x0400_0104, 0xfffe);
+            write_half(bus, 0x0400_0106, 0x00c1);
+            bus.elapse(39);
+            write_half(bus, 0x0400_0106, 0x00c4);
+            bus.elapse(1000);
+            write_half(bus, 0x0400_0106, 0x00c0 | return_select);
+            assert_eq!(1044, bus.now());
+            expect_timer_overflows_at(bus, 1, expected, if return_select == 1 { 64 } else { 1 });
+            if batch {
+                bus.end_device_batch();
+            }
+        }
+        assert_eq!(eager.now(), batched.now());
+    }
+}
+
+fn change_running_prescaler(
+    bus: &mut Bus,
+    old_select: usize,
+    new_select: usize,
+    delay: u64,
+) -> u64 {
+    let old_divisor = 1u64 << [0, 6, 8, 10][old_select];
+    let new_divisor = 1u64 << [0, 6, 8, 10][new_select];
+    assert!((1..=old_divisor).contains(&delay));
+    write_half(bus, 0x0400_0102, 0);
+    write_half(bus, 0x0400_0100, 0xfffe);
+    write_half(bus, 0x0400_0102, 0x00c0 | old_select as u16);
+    let enabled_at = bus.now();
+    bus.elapse(delay - 1);
+    write_half(bus, 0x0400_0102, 0x00c0 | new_select as u16);
+    let written_at = bus.now();
+    let ticks_left = 2 - (written_at / old_divisor - enabled_at / old_divisor);
+    (written_at / new_divisor + ticks_left) * new_divisor - written_at
+}
+
+/// ZiGBA: "a running timer's prescaler change ticks on the shared grid when batched and eager"
+#[test]
+fn a_running_timers_prescaler_change_ticks_on_the_shared_grid_when_batched_and_eager() {
+    let mut eager = Bus::init(&[]);
+    let mut batched = Bus::init(&[]);
+    write_half(&mut eager, 0x0400_0200, 1 << 3);
+    write_half(&mut batched, 0x0400_0200, 1 << 3);
+    batched.begin_device_batch();
+    for old_select in 0..4 {
+        let old_divisor = 1u64 << [0, 6, 8, 10][old_select];
+        for new_select in 0..4 {
+            let new_divisor = 1u64 << [0, 6, 8, 10][new_select];
+            for delay in 1..=old_divisor {
+                let expected = change_running_prescaler(&mut eager, old_select, new_select, delay);
+                assert_eq!(
+                    expected,
+                    change_running_prescaler(&mut batched, old_select, new_select, delay)
+                );
+                assert_eq!(eager.now(), batched.now());
+                expect_timer_overflows_at(&mut eager, 0, expected, new_divisor);
+                expect_timer_overflows_at(&mut batched, 0, expected, new_divisor);
+            }
+        }
+    }
+    batched.end_device_batch();
+    for (old_select, new_select, delay, expected) in [(1, 3, 60, 960), (3, 1, 699, 65)] {
+        let mut bus = Bus::init(&[]);
+        write_half(&mut bus, 0x0400_0200, 1 << 3);
+        assert_eq!(expected, change_running_prescaler(&mut bus, old_select, new_select, delay));
+        expect_timer_overflows_at(&mut bus, 0, expected, if new_select == 1 { 64 } else { 1024 });
+    }
+}
+
+/// ZiGBA: "timer zero's unused count-up bit does not exempt a prescaler change"
+#[test]
+fn timer_zeros_unused_count_up_bit_does_not_exempt_a_prescaler_change() {
+    let mut eager = Bus::init(&[]);
+    let mut batched = Bus::init(&[]);
+    for (bus, batch) in [(&mut eager, false), (&mut batched, true)] {
+        write_half(bus, 0x0400_0200, 1 << 3);
+        if batch {
+            bus.begin_device_batch();
+        }
+        write_half(bus, 0x0400_0100, 0xfffe);
+        write_half(bus, 0x0400_0102, 0x00c7);
+        bus.elapse(699);
+        write_half(bus, 0x0400_0102, 0x00c5);
+        assert_eq!(63, bus.timers[0].prescaler_phase);
+        expect_timer_overflows_at(bus, 0, 2 * 64 - 63, 64);
+        if batch {
+            bus.end_device_batch();
+        }
+    }
+    assert_eq!(eager.now(), batched.now());
+}
+
+/// ZiGBA: "STOP freezes the prescaler counter with the timers"
+#[test]
+fn stop_freezes_the_prescaler_counter_with_the_timers() {
+    for batch in [false, true] {
+        let mut bus = Bus::init(&[]);
+        write_half(&mut bus, 0x0400_0134, 0xc000);
+        write_half(&mut bus, 0x0400_0140, 0x0040);
+        write_half(&mut bus, 0x0400_0200, (1 << 7) | (0b11 << 3));
+        if batch {
+            bus.begin_device_batch();
+        }
+        write_word(&mut bus, 0x0400_0100, 0x00c1_ffff);
+        bus.elapse(46);
+        bus.enter_stop();
+        let woken_at = bus.now() + 4133;
+        bus.schedule_joy_bus(JoyBusCommand::Reset, woken_at).unwrap();
+        assert!(bus.idle_stop_until(woken_at));
+        bus.resume_power();
+        assert_eq!(4183, bus.now());
+        assert_eq!(50, bus.prescaler_counter());
+        write_word(&mut bus, 0x0400_0104, 0x00c1_ffff);
+        expect_timer_irqs_at(&mut bus, woken_at + 14, 0b11 << 3);
+        expect_timer_irqs_at(&mut bus, woken_at + 78, 0b11 << 3);
+        if batch {
+            bus.end_device_batch();
+        }
+    }
+}
+
+/// ZiGBA: "DMA source zero reuses the shared transfer latch without advancing"
+#[test]
+fn dma_source_zero_reuses_the_shared_transfer_latch_without_advancing() {
+    let mut bus = Bus::init(&[]);
+    write_half(&mut bus, 0x0300_0100, 0xbeef);
+    for (address, value) in [
+        (0x0400_00bc, 0x0100),
+        (0x0400_00be, 0x0300),
+        (0x0400_00c0, 0x0200),
+        (0x0400_00c2, 0x0300),
+        (0x0400_00c4, 1),
+        (0x0400_00c6, 1 << 15),
+    ] {
+        write_half(&mut bus, address, value);
+    }
+    bus.elapse(3);
+    for (address, value) in [
+        (0x0400_00d4, 0),
+        (0x0400_00d6, 0),
+        (0x0400_00d8, 0x0300),
+        (0x0400_00da, 0x0300),
+        (0x0400_00dc, 2),
+        (0x0400_00de, (1 << 10) | (1 << 15)),
+    ] {
+        write_half(&mut bus, address, value);
+    }
+    bus.elapse(3);
+    assert_eq!(0xbeef_beef, read_word(&mut bus, 0x0300_0300));
+    assert_eq!(0xbeef_beef, read_word(&mut bus, 0x0300_0304));
+    assert_eq!(0, bus.dma_channels[3].latched_source);
+}
+
+/// ZiGBA: "DMA normalizes every source below EWRAM to the transfer-latch source"
+#[test]
+fn dma_normalizes_every_source_below_ewram_to_the_transfer_latch_source() {
+    let mut bus = Bus::init(&[]);
+    write_word(&mut bus, 0x0300_0100, 0xa1b2_c3d4);
+    for (address, value) in [
+        (0x0400_00d4, 0x0100),
+        (0x0400_00d6, 0x0300),
+        (0x0400_00d8, 0x0200),
+        (0x0400_00da, 0x0300),
+        (0x0400_00dc, 1),
+        (0x0400_00de, (1 << 10) | (1 << 15)),
+    ] {
+        write_half(&mut bus, address, value);
+    }
+    bus.elapse(3);
+    for (address, value) in [
+        (0x0400_00c8, 0x1234),
+        (0x0400_00ca, 0),
+        (0x0400_00cc, 0x0300),
+        (0x0400_00ce, 0x0300),
+        (0x0400_00d0, 1),
+        (0x0400_00d2, (1 << 10) | (1 << 15)),
+    ] {
+        write_half(&mut bus, address, value);
+    }
+    assert_eq!(0, bus.dma_channels[2].latched_source);
+    bus.elapse(3);
+    assert_eq!(0xa1b2_c3d4, read_word(&mut bus, 0x0300_0300));
+}
+
+/// ZiGBA: "HBlank DMA0 preempts an active lower-priority DMA3 between beats"
+#[test]
+fn hblank_dma0_preempts_an_active_lower_priority_dma3_between_beats() {
+    let mut bus = Bus::init(&[]);
+    for (addr, value) in [
+        (0x0300_0100, 0xaaaa),
+        (0x0300_0120, 0x1111),
+        (0x0300_0122, 0x2222),
+        (0x0300_0124, 0x3333),
+        (0x0300_0126, 0x4444),
+    ] {
+        write_half(&mut bus, addr, value);
+    }
+    for (addr, value) in [
+        (0x0400_00b0, 0x0100),
+        (0x0400_00b2, 0x0300),
+        (0x0400_00b4, 0x0200),
+        (0x0400_00b6, 0x0300),
+        (0x0400_00b8, 1),
+        (0x0400_00ba, (2 << 5) | (2 << 12) | (1 << 15)),
+        (0x0400_00d4, 0x0120),
+        (0x0400_00d6, 0x0300),
+        (0x0400_00d8, 0x0200),
+        (0x0400_00da, 0x0300),
+        (0x0400_00dc, 4),
+    ] {
+        write_half(&mut bus, addr, value);
+    }
+    bus.elapse(955 - bus.now());
+    write_half(&mut bus, 0x0400_00de, (2 << 5) | (1 << 15));
+    bus.elapse(3);
+    assert_eq!(0x4444, read_half(&mut bus, 0x0300_0200));
+    assert_eq!(0, read_half(&mut bus, 0x0400_00ba) & (1 << 15));
+    assert_eq!(0, read_half(&mut bus, 0x0400_00de) & (1 << 15));
+}
+
+/// ZiGBA: "VBlank DMA starts after the access that crosses into line 160"
+#[test]
+fn vblank_dma_starts_after_the_access_that_crosses_into_line_160() {
+    let mut bus = Bus::init(&[]);
+    write_half(&mut bus, 0x0300_0100, 0xcafe);
+    for (addr, value) in [
+        (0x0400_00b0, 0x0100),
+        (0x0400_00b2, 0x0300),
+        (0x0400_00b4, 0x0200),
+        (0x0400_00b6, 0x0300),
+        (0x0400_00b8, 1),
+        (0x0400_00ba, (1 << 12) | (1 << 15)),
+    ] {
+        write_half(&mut bus, addr, value);
+    }
+    let vblank_start = 1232 * 160;
+    bus.elapse(vblank_start - bus.now() - 1);
+    let boundary_read = bus.read(access(
+        0x0300_0200,
+        AccessWidth::Half,
+        AccessKind::Nonsequential,
+        AccessSource::CpuData,
+    ));
+    assert_eq!(0, boundary_read.value);
+    assert_eq!(1, boundary_read.cycles);
+    let scheduled_at = bus.now();
+    bus.elapse(3);
+    assert_eq!(7, bus.now() - scheduled_at);
+    assert_eq!(0xcafe, read_half(&mut bus, 0x0300_0200));
+    assert_eq!(0, read_half(&mut bus, 0x0400_00ba) & (1 << 15));
+}
+
+/// ZiGBA: "prefetch fill timing refreshes WAITCNT across every window and 128 KiB boundary"
+#[test]
+fn prefetch_fill_timing_refreshes_waitcnt_across_every_window_and_128_kib_boundary() {
+    for window in 0..3u32 {
+        for first in 0..4u16 {
+            for fast in [false, true] {
+                let waitcnt =
+                    (first << (2 + window * 3)) | (u16::from(fast) << (4 + window * 3)) | (1 << 14);
+                let n = [5, 4, 3, 9][first as usize];
+                let s = if fast { 2 } else { [3, 5, 9][window as usize] };
+                for offset in [0, 0x0100_0000] {
+                    for width in [AccessWidth::Half, AccessWidth::Word] {
+                        let mut bus = Bus::init(&[]);
+                        let stride = if width == AccessWidth::Word { 4 } else { 2 };
+                        let boundary = 0x0800_0000 + window * 0x0200_0000 + offset + 0x20000;
+                        write_half(&mut bus, 0x0400_0204, waitcnt ^ 0x07fc);
+                        bus.fetch_kind = AccessKind::Nonsequential;
+                        bus.fetch_instruction(boundary - 2 * stride, width);
+                        let in_flight = bus.game_pak_prefetch.countdown;
+                        bus.waitcnt = waitcnt;
+                        bus.elapse(in_flight);
+                        let boundary_duty = n + if width == AccessWidth::Word { s } else { 0 };
+                        let sequential_duty = s + if width == AccessWidth::Word { s } else { 0 };
+                        assert_eq!(boundary, bus.game_pak_prefetch.last_address);
+                        assert_eq!(boundary_duty, bus.game_pak_prefetch.duty);
+                        assert_eq!(boundary_duty, bus.game_pak_prefetch.countdown);
+                        assert_eq!(1, bus.game_pak_prefetch.count);
+                        bus.elapse(boundary_duty - 1);
+                        assert_eq!(1, bus.game_pak_prefetch.countdown);
+                        assert_eq!(1, bus.game_pak_prefetch.count);
+                        bus.elapse(1);
+                        assert_eq!(boundary + stride, bus.game_pak_prefetch.last_address);
+                        assert_eq!(sequential_duty, bus.game_pak_prefetch.duty);
+                        assert_eq!(sequential_duty, bus.game_pak_prefetch.countdown);
+                        assert_eq!(2, bus.game_pak_prefetch.count);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// ZiGBA: "Game Pak prefetch batching matches single-cycle advancement through capacity"
+#[test]
+fn game_pak_prefetch_batching_matches_single_cycle_advancement_through_capacity() {
+    let mut batched = Bus::init(&[0; 64]);
+    let mut scalar = Bus::init(&[0; 64]);
+    for bus in [&mut batched, &mut scalar] {
+        bus.waitcnt = 1 << 14;
+        bus.fetch_kind = AccessKind::Nonsequential;
+        bus.fetch_instruction(0x0800_0000, AccessWidth::Half);
+    }
+    batched.elapse(24);
+    for _ in 0..24 {
+        scalar.elapse(1);
+    }
+    assert_eq!(scalar.now(), batched.now());
+    let a = &scalar.game_pak_prefetch;
+    let b = &batched.game_pak_prefetch;
+    assert_eq!(
+        (
+            a.active,
+            a.head_address,
+            a.last_address,
+            a.count,
+            a.capacity,
+            a.opcode_bytes,
+            a.countdown,
+            a.duty
+        ),
+        (
+            b.active,
+            b.head_address,
+            b.last_address,
+            b.count,
+            b.capacity,
+            b.opcode_bytes,
+            b.countdown,
+            b.duty
+        )
+    );
+    assert_eq!(8, batched.game_pak_prefetch.count);
+    assert_eq!(0, batched.game_pak_prefetch.countdown);
+}
+
+/// ZiGBA: "WAITCNT changes preserve the in flight fetch and reprice the next unit"
+#[test]
+fn waitcnt_changes_preserve_the_in_flight_fetch_and_reprice_the_next_unit() {
+    let rom = [0xa5; 0x140];
+    for batched in [false, true] {
+        for width in [AccessWidth::Half, AccessWidth::Word] {
+            let stride = if width == AccessWidth::Word { 4 } else { 2 };
+            let old_remaining = if width == AccessWidth::Word { 5 } else { 2 };
+            let new_duty = if width == AccessWidth::Word { 4 } else { 2 };
+            let value = if width == AccessWidth::Word { 0xa5a5_a5a5 } else { 0xa5a5 };
+            let mut bus = Bus::init(&rom);
+            write_half(&mut bus, 0x0400_0204, 0x4000);
+            let mut region = Default::default();
+            bus.fetch_instruction_in_region(&mut region, 0x0800_0100, width);
+            if batched {
+                bus.begin_device_batch();
+            }
+            write_half(&mut bus, 0x0400_0204, 0x4014);
+            assert_eq!(old_remaining, bus.game_pak_prefetch.countdown);
+            let first = bus.now();
+            assert_eq!(
+                value,
+                bus.fetch_instruction_in_region(&mut region, 0x0800_0100 + stride, width)
+            );
+            assert_eq!(first + old_remaining, bus.now());
+            assert_eq!(new_duty, bus.game_pak_prefetch.countdown);
+            assert_eq!(0, bus.game_pak_prefetch.count);
+            let second = bus.now();
+            assert_eq!(
+                value,
+                bus.fetch_instruction_in_region(&mut region, 0x0800_0100 + 2 * stride, width)
+            );
+            assert_eq!(second + new_duty, bus.now());
+            assert_eq!(new_duty, bus.game_pak_prefetch.countdown);
+            if batched {
+                bus.end_device_batch();
+            }
+        }
+    }
+}

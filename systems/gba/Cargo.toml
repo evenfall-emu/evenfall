@@ -23,6 +23,10 @@ sha1 = "0.10"
 sha2 = "0.10"
 
 [[test]]
+name = "bus"
+path = "tests/bus.rs"
+
+[[test]]
 name = "validator"
 path = "tests/validator.rs"
 harness = false
