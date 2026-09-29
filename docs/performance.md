@@ -67,22 +67,22 @@ records their source revisions and hashes.
 
 | Workload                                               | Frames | mGBA, HLE | Evenfall, HLE | mGBA, skip-BIOS | Evenfall, skip-BIOS |
 | ------------------------------------------------------ | -----: | --------: | ------------: | --------------: | ------------------: |
-| Idle / HALT and empty mode-0 frame                     |  3,600 |     1.12× |         0.48× |           1.05× |               0.49× |
-| ARM mixer / IWRAM code                                 |    600 |     1.00× |         0.42× |           0.99× |               0.42× |
-| Thumb logic / Game Pak ROM                             |    600 |     0.89× |         0.57× |           0.89× |               0.58× |
-| Tiles / text backgrounds, sprites, effects and windows |    600 |     0.85× |         0.33× |           0.86× |               0.34× |
-| Affine / backgrounds, sprites and HBlank DMA           |    600 |     0.78× |         0.74× |           0.66× |               0.73× |
-| Bitmap DMA / page flips and small transfers            |    600 |     0.54× |         0.57× |           0.55× |               0.57× |
-| Audio / Direct Sound FIFO DMA and PSG                  |    600 |     0.86× |         0.43× |           0.84× |               0.44× |
-| **Geometric mean of workload ratios**                  |      — | **0.85×** |     **0.49×** |       **0.82×** |           **0.50×** |
+| Idle / HALT and empty mode-0 frame                     |  3,600 |     1.10× |         0.40× |           1.05× |               0.43× |
+| ARM mixer / IWRAM code                                 |    600 |     1.00× |         0.41× |           0.99× |               0.41× |
+| Thumb logic / Game Pak ROM                             |    600 |     0.86× |         0.48× |           0.89× |               0.47× |
+| Tiles / text backgrounds, sprites, effects and windows |    600 |     0.86× |         0.31× |           0.87× |               0.30× |
+| Affine / backgrounds, sprites and HBlank DMA           |    600 |     0.77× |         0.60× |           0.64× |               0.55× |
+| Bitmap DMA / page flips and small transfers            |    600 |     0.55× |         0.36× |           0.56× |               0.36× |
+| Audio / Direct Sound FIFO DMA and PSG                  |    600 |     0.88× |         0.36× |           0.85× |               0.37× |
+| **Geometric mean of workload ratios**                  |      — | **0.84×** |     **0.41×** |       **0.82×** |           **0.41×** |
 
 Skip-BIOS boot maps the open Cult-of-GBA replacement BIOS and runs its
 interrupt dispatcher; HLE boot services interrupts without BIOS code.
-Relative to mGBA directly (same method, matched rounds), Evenfall takes 0.58×
-its loop time under HLE boot and 0.61× under skip-BIOS boot. It is faster on
-every workload except bitmap DMA (1.04× and 1.05×) and affine under skip-BIOS
-boot (1.10×; 0.95× under HLE). The replacement BIOS's ARM code, its
-interrupt dispatcher included, runs in the execution engine.
+Relative to mGBA directly (same method, matched rounds), Evenfall takes 0.48×
+its loop time under HLE boot and 0.50× under skip-BIOS boot, and is faster on
+every workload. The closest are affine (0.78× under HLE, 0.86× under
+skip-BIOS) and bitmap DMA (0.65× and 0.64×). The replacement BIOS's ARM code,
+its interrupt dispatcher included, runs in the execution engine.
 
 In WebAssembly, measured with [`wasm.mjs`](../tools/bench/wasm.mjs) in
 Node 24 on the same CPU (five rounds, one warmup, HLE boot), loop time
@@ -90,14 +90,14 @@ relative to ZiGBA's shipped module (`ReleaseSafe`) is:
 
 | Workload    | ZiGBA `ReleaseFast` | Evenfall scalar | Evenfall SIMD (shipped) |
 | ----------- | ------------------: | --------------: | ----------------------: |
-| idle        |               0.98× |           0.51× |                   0.44× |
-| arm-mixer   |               0.87× |           0.27× |                   0.28× |
-| thumb-logic |               0.87× |           0.35× |                   0.34× |
-| tiles       |               0.94× |           0.43× |                   0.24× |
-| affine      |               0.81× |           0.52× |                   0.47× |
-| bitmap-DMA  |               0.87× |           0.50× |                   0.45× |
-| audio       |               0.88× |           0.28× |                   0.28× |
-| geomean     |               0.89× |           0.40× |                   0.35× |
+| idle        |               0.94× |           0.45× |                   0.44× |
+| arm-mixer   |               0.86× |           0.27× |                   0.27× |
+| thumb-logic |               0.86× |           0.30× |                   0.30× |
+| tiles       |               0.93× |           0.41× |                   0.23× |
+| affine      |               0.81× |           0.46× |                   0.41× |
+| bitmap-DMA  |               0.86× |           0.35× |                   0.30× |
+| audio       |               0.87× |           0.25× |                   0.26× |
+| geomean     |               0.88× |           0.35× |                   0.31× |
 
 Every image agrees across all modules and with the native harnesses. The
 benchmark ROMs weight each path equally, so neither table predicts a game's
