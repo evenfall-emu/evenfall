@@ -1,8 +1,10 @@
 # Native GBA parity oracle
 
 Build source ROMs first (`make -C probe && make -C tools/bench/roms`); the
-jsmolka ROMs live in the pinned, gitignored `refs/gba-tests` checkout. Supply
-external BIOS images and initial save files locally, never in the repository.
+jsmolka ROMs live in the pinned, gitignored `refs/gba-tests` checkout. The BIOS
+variants use the pinned Cult-of-GBA replacement image under `refs/`; no media
+or initial save is vendored. See [GBA differential parity](../../docs/parity.md)
+for the evidence boundary and trace interpretation.
 
 ```sh
 cargo run -p evenfall-parity -- oracle build

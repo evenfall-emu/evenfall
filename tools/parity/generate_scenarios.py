@@ -2,8 +2,10 @@
 """Regenerate manifests from ZiGBA validator cases and a successful HLE run.
 
 Usage: python3 tools/parity/generate_scenarios.py target/parity/baseline-hle-direct.log
+       python3 tools/parity/generate_scenarios.py --bios
 Validator cycle counts choose *duration*, not expected state bytes. The
-committed manifests are consumed directly; regeneration is not required to run.
+second form derives external/skip-BIOS variants from the existing HLE manifests.
+The committed manifests are consumed directly; regeneration is not required to run.
 """
 
 import json
@@ -15,6 +17,13 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "refs/zigba/test"
 OUT = ROOT / "tools/parity/scenarios"
 FRAME = 280896
+BIOS = "../../../refs/cult-gba-bios/bios.bin"
+ODD_SLICES = {
+    "probe-halt_stop": "97",
+    "probe-keypad_irq": "1232",
+    "probe-psg_square": "1232",
+    "bench-audio": "1232",
+}
 EXCLUDED = {
     # These require two or more linked machines on one SIO timeline.
     "link_child", "link_parent", "multi4_child1", "multi4_child2",
@@ -37,7 +46,7 @@ def manifest(name, rom, observed, *, config=None, inputs=None, host_actions=None
         "config": {"boot": "hle", "saveType": "auto", **(config or {})},
         "inputs": inputs or [], "endCycle": str(end),
         "checkpoints": [str(n) for n in checkpoints],
-        "sliceCycles": ["70224", "280896"],
+        "sliceCycles": ["70224", "280896"] + ([ODD_SLICES[name]] if name in ODD_SLICES else []),
     }
     if host_actions:
         result["hostActions"] = host_actions
@@ -46,6 +55,36 @@ def manifest(name, rom, observed, *, config=None, inputs=None, host_actions=None
     if report is not None:
         result["terminalR12"] = report
     (OUT / (name + ".json")).write_text(json.dumps(result, indent=2) + "\n")
+
+
+def bios_variants():
+    # The pinned replacement BIOS runs its startup screen before handing off
+    # to the cartridge. The external validator reaches ordinary ROM endpoints
+    # about 64 frames later than HLE; retain checkpoints during that boot.
+    lead = 64 * FRAME
+    for path in sorted(OUT.glob("jsmolka-*.json")):
+        if path.stem.endswith("-external_bios"):
+            continue
+        result = json.loads(path.read_text())
+        result["name"] += "-external_bios"
+        result["assets"]["bios"] = BIOS
+        result["config"]["boot"] = "external_bios"
+        result["endCycle"] = str(int(result["endCycle"]) + lead)
+        result["checkpoints"] = [str(n * FRAME) for n in (4, 16, 32, 48, 64)] + [
+            str(int(n) + lead) for n in result["checkpoints"]
+        ]
+        (OUT / (result["name"] + ".json")).write_text(json.dumps(result, indent=2) + "\n")
+
+    for path in sorted(OUT.glob("bench-*.json")):
+        if path.stem.endswith("-skip_bios"):
+            continue
+        result = json.loads(path.read_text())
+        result["name"] += "-skip_bios"
+        result["assets"]["bios"] = BIOS
+        result["config"]["boot"] = "skip_bios"
+        if path.stem == "bench-idle":
+            result["sliceCycles"].append("1232")
+        (OUT / (result["name"] + ".json")).write_text(json.dumps(result, indent=2) + "\n")
 
 
 def main(log):
@@ -127,7 +166,11 @@ def main(log):
     for rom in sorted((ROOT / "tools/bench/roms/build").glob("*.gba")):
         # These are deliberately continuous workloads, not terminal tests.
         manifest("bench-" + rom.stem, rom.relative_to(ROOT).as_posix(), 10 * FRAME)
+    bios_variants()
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    if sys.argv[1:] == ["--bios"]:
+        bios_variants()
+    else:
+        main(sys.argv[1])
