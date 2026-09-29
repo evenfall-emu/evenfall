@@ -859,6 +859,32 @@ impl Machine {
         Ok(output)
     }
 
+    /// Count first so a caller-sized WASM export can fail without aborting the instance.
+    pub fn write_state_alloc_fallible(&self) -> Result<Vec<u8>, StateError> {
+        self.validate_state_write()?;
+        let mut count = Sink::new(None, None);
+        self.write_state_payload(&mut count)?;
+        let payload_len = usize::try_from(count.count)
+            .ok()
+            .filter(|&len| len <= Self::MAX_STATE_PAYLOAD)
+            .ok_or(evenfall_state::Error::InvalidSaveState)?;
+        let size = Self::STATE_HEADER_SIZE + payload_len + 32;
+        let mut output = Vec::new();
+        output.try_reserve_exact(size).map_err(|_| evenfall_state::Error::OutOfMemory)?;
+        output.resize(Self::STATE_HEADER_SIZE, 0);
+        let mut hasher = blake3::Hasher::new();
+        let mut sink = Sink::new(Some(&mut output), Some(&mut hasher));
+        self.write_state_payload(&mut sink)?;
+        if sink.count != count.count {
+            return Err(evenfall_state::Error::InvalidSaveState.into());
+        }
+        output.extend_from_slice(hasher.finalize().as_bytes());
+        let mut header = Vec::with_capacity(Self::STATE_HEADER_SIZE);
+        self.write_state_header(&mut header, count.count)?;
+        output[..Self::STATE_HEADER_SIZE].copy_from_slice(&header);
+        Ok(output)
+    }
+
     fn validate_state_write(&self) -> Result<(), StateError> {
         if self.latched_fault.is_some() {
             return Err(StateError::MachineFaulted);

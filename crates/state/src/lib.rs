@@ -15,6 +15,7 @@ pub type Digest = [u8; 32];
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     InvalidSaveState,
+    OutOfMemory,
     UnsupportedSaveStateVersion,
     SaveStateSchemaMismatch,
     SaveStateBootModeMismatch,
