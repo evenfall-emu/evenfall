@@ -1031,7 +1031,7 @@ mod tests {
             ]
         };
         let mut rom = [0; 32];
-        for (bytes, word) in rom.chunks_exact_mut(4).zip(words) {
+        for (bytes, word) in rom.as_chunks_mut::<4>().0.iter_mut().zip(words) {
             bytes.copy_from_slice(&word.to_le_bytes());
         }
         rom
