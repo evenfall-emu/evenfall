@@ -12,13 +12,14 @@ publish.workspace = true
 scanline-memo-check = []
 
 [dependencies]
+blake3.workspace = true
 evenfall-audio.workspace = true
+evenfall-cpu-arm.workspace = true
 evenfall-host.workspace = true
 evenfall-state.workspace = true
 miniz_oxide.workspace = true
-
-[dev-dependencies]
-blake3.workspace = true
+sha1 = "0.10"
+sha2 = "0.10"
 
 [lints]
 workspace = true

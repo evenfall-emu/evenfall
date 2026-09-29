@@ -307,12 +307,17 @@ fn read_u64(input: &mut impl Read) -> io::Result<u64> {
 /// inspector. `input_deadline` remains the checkpoint across *all* slices,
 /// including an instruction crossing a yield point. Drain on every slice to
 /// avoid ZiGBA's bounded host audio queue truncating earlier samples.
-pub fn run<S: System<Pixel = u16>>(
+pub fn run<S, I>(
     system: &mut S,
-    scenario: &Scenario<S::Input>,
+    scenario: &Scenario<I>,
     slice: u64,
     inspect_cpu: impl Fn(&S) -> Cpu,
-) -> Result<Trace, String> {
+) -> Result<Trace, String>
+where
+    S: System<Pixel = u16>,
+    I: Copy,
+    S::Input: From<Timed<I>>,
+{
     run_with_host_actions(system, scenario, slice, inspect_cpu, |_, _| {
         Err("scenario requires a host action handler".into())
     })
@@ -321,13 +326,18 @@ pub fn run<S: System<Pixel = u16>>(
 /// As [`run`], with a system-specific handler for external host commands
 /// such as a JoyBus master. The handler schedules the completion relative to
 /// the system's *actual* cycle at the crossed instruction boundary.
-pub fn run_with_host_actions<S: System<Pixel = u16>>(
+pub fn run_with_host_actions<S, I>(
     system: &mut S,
-    scenario: &Scenario<S::Input>,
+    scenario: &Scenario<I>,
     slice: u64,
     inspect_cpu: impl Fn(&S) -> Cpu,
     mut host_action: impl FnMut(&mut S, &HostCommand) -> Result<(), String>,
-) -> Result<Trace, String> {
+) -> Result<Trace, String>
+where
+    S: System<Pixel = u16>,
+    I: Copy,
+    S::Input: From<Timed<I>>,
+{
     scenario.validate().map_err(str::to_owned)?;
     if slice == 0
         || S::VIDEO.width != WIDTH as u32
@@ -341,7 +351,8 @@ pub fn run_with_host_actions<S: System<Pixel = u16>>(
     let mut action_cursor = 0;
     let mut audio = Vec::new();
     let mut buffer = [StereoSample::default(); 4096];
-    let inputs: Vec<_> = scenario.inputs.iter().map(|i| Timed::new(i.at, i.change)).collect();
+    let inputs: Vec<S::Input> =
+        scenario.inputs.iter().map(|i| Timed::new(i.at, i.change).into()).collect();
     for &checkpoint in &scenario.checkpoints {
         while action_cursor < scenario.host_actions.len()
             && scenario.host_actions[action_cursor].at <= system.now()

@@ -5,10 +5,11 @@ use evenfall_state::Codec;
 pub const MINIMUM_PAYLOAD_SIZE: u32 = 0x100;
 pub const MAXIMUM_PAYLOAD_SIZE: u32 = 0x3ff40;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Codec)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
 #[codec(tag_bits = 2)]
 #[repr(u8)]
 pub enum Mode {
+    #[default]
     #[codec(rename = "normal_256_khz")]
     Normal256Khz = 0,
     #[codec(rename = "multiplayer_115_khz")]
@@ -40,7 +41,7 @@ impl Mode {
     }
 }
 
-#[derive(Clone, Copy, Codec)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
 pub struct Parameters {
     pub handshake_data: u8,
     pub client_data: [u8; 3],
@@ -75,7 +76,7 @@ impl Parameters {
     }
 }
 
-#[derive(Clone, Copy, Codec)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
 pub struct Encoder {
     pub checksum: u32,
     pub key_state: u32,
