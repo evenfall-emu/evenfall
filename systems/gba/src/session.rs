@@ -762,6 +762,75 @@ mod tests {
         assert_eq!(session.rewind_depth(), 0);
     }
 
+    /// Zig: "rewind history compresses by default and honors explicit off"
+    #[test]
+    fn rewind_history_compresses_by_default_and_honors_explicit_off() {
+        let mut session = Session::create(Config {
+            image: LOOP_ROM,
+            rewind: RewindConfig { interval_frames: 1, ..RewindConfig::default() },
+            ..Config::default()
+        })
+        .unwrap();
+        for _ in 0..2 {
+            session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        }
+        let info = session.rewind_info(1).unwrap();
+        assert_eq!(info.encoding, rewind::Encoding::Delta);
+        let previous_frame = session.rewind_info(0).unwrap().frame;
+        session.rewind(1).unwrap();
+        assert_eq!(session.machine.completed_frames(), previous_frame);
+        assert!(info.bytes < session.write_state().unwrap().len() / 2);
+
+        session
+            .set_rewind_config(RewindConfig {
+                interval_frames: 1,
+                compression: RewindCompression::Off,
+                ..RewindConfig::default()
+            })
+            .unwrap();
+        assert_eq!(session.rewind_depth(), 0);
+        session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        assert_eq!(session.rewind_info(0).unwrap().encoding, rewind::Encoding::Raw);
+        let at_frame = session.machine.completed_frames();
+        session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        session.rewind(1).unwrap();
+        assert_eq!(session.machine.completed_frames(), at_frame);
+    }
+
+    /// Zig: "rewind framebuffer observation is exact and does not consume history"
+    #[test]
+    fn rewind_framebuffer_observation_is_exact_and_does_not_consume_history() {
+        let rom = video_recovery_rom(false);
+        let mut session = Session::create(Config {
+            image: &rom,
+            rewind: RewindConfig { interval_frames: 1, ..RewindConfig::default() },
+            ..Config::default()
+        })
+        .unwrap();
+        session.machine.bus.dispcnt = 0;
+        session.set_keys(KeyState { a: true, ..KeyState::default() }).unwrap();
+        session.advance(Machine::CYCLES_PER_FRAME).unwrap();
+        let oldest_pixels = session.machine.framebuffer().to_vec();
+        session.set_keys(KeyState { b: true, ..KeyState::default() }).unwrap();
+        session.advance(2 * Machine::CYCLES_PER_FRAME).unwrap();
+        session.set_keys(KeyState { select: true, ..KeyState::default() }).unwrap();
+        session.advance(3 * Machine::CYCLES_PER_FRAME).unwrap();
+
+        let before = session.write_state().unwrap();
+        let depth = session.rewind_depth();
+        let mut pixels = vec![0; 240 * 160];
+        let info = session.rewind_framebuffer(0, &mut pixels).unwrap();
+        assert_eq!(info.frame, session.rewind_info(0).unwrap().frame);
+        assert_eq!(session.rewind_depth(), depth);
+        assert_eq!(pixels, oldest_pixels);
+        assert_ne!(pixels, session.machine.framebuffer());
+        assert_eq!(session.write_state().unwrap(), before);
+        assert!(matches!(
+            session.rewind_framebuffer(depth, &mut pixels),
+            Err(Error::Rewind(evenfall_state::Error::InvalidRewindSteps))
+        ));
+    }
+
     /// Zig: "rewind bundles preserve live position, history and capture continuation"
     #[test]
     fn rewind_bundles_preserve_live_position_history_and_capture_continuation() {
