@@ -75,6 +75,9 @@ pub(crate) struct LineLayers {
     objects: ObjectRows,
     /// Layer and blend-target bits of the OBJ layer on this line.
     object_meta: u16,
+    /// Per line (0–255), the compacted objects that cover it, one bit per
+    /// `Bus::oam_compact` index; rebuilt with the compacted OAM.
+    pub(super) object_lines: [u128; 256],
 }
 
 impl Default for LineLayers {
@@ -92,6 +95,7 @@ impl Default for LineLayers {
                 min_meta: [NO_OBJECT; SCREEN_WIDTH],
             },
             object_meta: 0,
+            object_lines: [0; 256],
         }
     }
 }
@@ -280,13 +284,13 @@ impl Bus {
                     }
                 }
                 (1, 2) | (2, 2 | 3) => {
-                    affine_row(
+                    offset = affine_row(
                         &self.vram,
                         &self.tile_row_cache.bg256,
                         control,
                         affine,
                         horizontal,
-                        screen,
+                        row,
                     );
                     pages = ALL_VRAM_PAGES;
                 }

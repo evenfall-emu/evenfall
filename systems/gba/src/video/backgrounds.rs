@@ -102,16 +102,17 @@ pub(super) fn apply_horizontal_mosaic(row: &mut [u16; SCREEN_WIDTH], size: usize
     }
 }
 
-/// Render one affine background line. `mosaic` is the horizontal mosaic
-/// block size (1 when mosaic is off).
+/// Render one affine background line into `out` and return where its
+/// screen line starts. `mosaic` is the horizontal mosaic block size (1 when
+/// mosaic is off).
 pub(super) fn affine_row(
     vram: &[u8; VRAM_SIZE],
     colors: &[u16; 256],
     control: u16,
     affine: AffineState,
     mosaic: usize,
-    out: &mut [u16; SCREEN_WIDTH],
-) {
+    out: &mut [u16; ROW],
+) -> usize {
     let char_base = usize::from((control >> 2) & 3) * 0x4000;
     let screen_base = usize::from((control >> 8) & 31) * 0x800;
     let size = usize::from(control >> 14);
@@ -123,6 +124,19 @@ pub(super) fn affine_row(
             characters: vram[char_base..char_base + 0x4000].try_into().unwrap(),
             colors,
         };
+        if affine.pa == 0x100 && affine.pc == 0 {
+            return match (wrap, size) {
+                (true, 0) => map.translated_row::<true, 4>(affine, out),
+                (true, 1) => map.translated_row::<true, 5>(affine, out),
+                (true, 2) => map.translated_row::<true, 6>(affine, out),
+                (true, _) => map.translated_row::<true, 7>(affine, out),
+                (false, 0) => map.translated_row::<false, 4>(affine, out),
+                (false, 1) => map.translated_row::<false, 5>(affine, out),
+                (false, 2) => map.translated_row::<false, 6>(affine, out),
+                (false, _) => map.translated_row::<false, 7>(affine, out),
+            };
+        }
+        let out = out.first_chunk_mut().unwrap();
         match (wrap, size) {
             (true, 0) => map.row::<true, 4>(affine, out),
             (true, 1) => map.row::<true, 5>(affine, out),
@@ -133,7 +147,7 @@ pub(super) fn affine_row(
             (false, 2) => map.row::<false, 6>(affine, out),
             (false, _) => map.row::<false, 7>(affine, out),
         }
-        return;
+        return 0;
     }
     // Maps that run past BG VRAM read tile zero there, like the per-dot
     // renderer; mosaic samples block starts.
@@ -157,6 +171,7 @@ pub(super) fn affine_row(
         let color = texel(affine.ref_x + affine.pa * x, affine.ref_y + affine.pc * x);
         out[start..(start + mosaic).min(SCREEN_WIDTH)].fill(color);
     }
+    0
 }
 
 /// An affine map that lies wholly in BG VRAM.
@@ -169,6 +184,43 @@ struct AffineMap<'a> {
 }
 
 impl AffineMap<'_> {
+    /// A row with PA 1.0 and PC 0 reads one map row: render it a tile at a
+    /// time like a text row and return the offset of its screen line.
+    /// Screen `x` samples source column `(ref_x >> 8) + x` exactly, and the
+    /// clip boundaries are tile boundaries.
+    #[inline(never)]
+    fn translated_row<const WRAP: bool, const TILE_SHIFT: u32>(
+        &self,
+        affine: AffineState,
+        out: &mut [u16; ROW],
+    ) -> usize {
+        let mask = (8i32 << TILE_SHIFT) - 1;
+        let (source_x, source_y) = (affine.ref_x >> 8, affine.ref_y >> 8);
+        let chunks = out.as_chunks_mut::<8>().0;
+        if !WRAP && source_y & !mask != 0 {
+            chunks.fill([TRANSPARENT; 8]);
+            return 0;
+        }
+        let sy = (source_y & mask) as usize;
+        let columns = 1 << TILE_SHIFT;
+        let map_row = &self.tiles[(sy >> 3) << TILE_SHIFT..][..columns];
+        let first = source_x >> 3;
+        for (tile, pixels) in chunks.iter_mut().enumerate().take(31) {
+            let column = first + tile as i32;
+            if !WRAP && column as u32 >= columns as u32 {
+                *pixels = [TRANSPARENT; 8];
+                continue;
+            }
+            let number = usize::from(map_row[column as usize & (columns - 1)]);
+            let row: &[u8; 8] =
+                self.characters[number * 64 + (sy & 7) * 8..][..8].try_into().unwrap();
+            for (pixel, &index) in pixels.iter_mut().zip(row) {
+                *pixel = self.colors[usize::from(index)];
+            }
+        }
+        (source_x & 7) as usize
+    }
+
     /// `TILE_SHIFT` is log2 of the map width in tiles.
     #[inline(never)]
     fn row<const WRAP: bool, const TILE_SHIFT: u32>(

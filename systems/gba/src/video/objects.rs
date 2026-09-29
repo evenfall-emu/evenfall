@@ -59,6 +59,8 @@ impl Bus {
     }
 
     fn build_oam_compact(&mut self) {
+        let lines = &mut self.line_layers.object_lines;
+        lines.fill(0);
         let mut count = 0;
         for object in 0..128 {
             let offset = object * 8;
@@ -83,6 +85,9 @@ impl Bus {
                 object_y: shape.object_y as u8,
                 first_processed_x: shape.first_processed_x as u8,
             };
+            for row in 0..shape.display_height {
+                lines[(shape.object_y + row) & 0xFF] |= 1 << count;
+            }
             count += 1;
         }
         self.oam_compact_count = count as u8;
@@ -95,11 +100,13 @@ impl Bus {
         }
         let mut remaining = if self.dispcnt & (1 << 5) != 0 { 954 } else { 1210 };
         let mut count = 0;
-        for entry in &self.oam_compact[..usize::from(self.oam_compact_count)] {
+        // Compacted objects covering the line, in OAM order.
+        let mut objects = self.line_layers.object_lines[line & 0xFF];
+        while objects != 0 {
+            let entry = &self.oam_compact[objects.trailing_zeros() as usize];
+            objects &= objects - 1;
             let display_y = (line + 256 - usize::from(entry.object_y)) & 0xFF;
-            if display_y >= usize::from(entry.display_height) {
-                continue;
-            }
+            debug_assert!(display_y < usize::from(entry.display_height));
             let pixels = usize::from(entry.display_width - entry.first_processed_x);
             let setup = if entry.affine { 10 } else { 0 };
             let cycles_per_pixel = if entry.affine { 2 } else { 1 };
@@ -182,6 +189,10 @@ impl Bus {
             }
             self.scanline_memo.reads.vram_pages = scanline_memo::ALL_VRAM_PAGES;
             self.scanline_memo.reads.oam_matrices = true;
+            if ROWS && !window_pass && record.affine && attr0 & (1 << 12) == 0 {
+                self.render_affine_object_row(&record, mapping_1d);
+                continue;
+            }
             let color_256 = attr0 & (1 << 13) != 0;
             let width = usize::from(record.object_width);
             let height = usize::from(record.object_height);
@@ -292,6 +303,75 @@ impl Bus {
                 }
                 let color = self.palette_color_for(history, x, palette);
                 self.compose_object_pixel(i, color, priority, object_mode == 1);
+            }
+        }
+    }
+
+    /// A non-mosaic affine object into the layer-major object rows. The
+    /// per-pixel loop in `render_objects` is its reference: the source point
+    /// steps by PA and PC per pixel instead of being multiplied out.
+    fn render_affine_object_row(&mut self, record: &ObjectLineData, mapping_1d: bool) {
+        let (attr0, attr1, attr2) = (record.attr0, record.attr1, record.attr2);
+        let color_256 = attr0 & (1 << 13) != 0;
+        let width = i32::from(record.object_width);
+        let height = i32::from(record.object_height);
+        let display_width = usize::from(record.display_width);
+        let object_x = usize::from(attr1 & 0x1FF);
+        let drawn = usize::from(record.processed_end);
+        let first = if object_x < SCREEN_WIDTH { object_x } else { 0 };
+        let end = SCREEN_WIDTH.min(if object_x < SCREEN_WIDTH {
+            object_x + drawn
+        } else {
+            (object_x + drawn).saturating_sub(512)
+        });
+        if end <= first {
+            return;
+        }
+        let matrix = usize::from((attr1 >> 9) & 31) * 32;
+        let parameter = |offset: usize| {
+            i32::from(i16::from_le_bytes([
+                self.oam[matrix + offset],
+                self.oam[matrix + offset + 1],
+            ]))
+        };
+        let (pa, pb, pc, pd) = (parameter(6), parameter(14), parameter(22), parameter(30));
+        let cx = ((first + 512 - object_x) & 0x1FF) as i32 - (display_width / 2) as i32;
+        let cy = i32::from(record.display_y) - i32::from(record.display_height / 2);
+        let (mut u, mut v) = (pa * cx + pb * cy, pc * cx + pd * cy);
+        let base_tile = usize::from(attr2 & if color_256 { 0x3FE } else { 0x3FF });
+        let palette_start = if color_256 { 256 } else { 256 + usize::from(attr2 >> 12) * 16 };
+        let priority = ((attr2 >> 10) & 3) as u8;
+        let semi = attr0 & 0xC00 == 0x400;
+        let bitmap_mode = (3..=5).contains(&(self.dispcnt & 7));
+        for x in first..end {
+            let sx = (u >> 8) + width / 2;
+            let sy = (v >> 8) + height / 2;
+            u += pa;
+            v += pc;
+            if sx < 0 || sy < 0 || sx >= width || sy >= height {
+                continue;
+            }
+            let (sx, sy) = (sx as usize, sy as usize);
+            let tile = Self::object_tile_number(
+                base_tile,
+                sx / 8,
+                sy / 8,
+                width as usize,
+                color_256,
+                mapping_1d,
+            );
+            if bitmap_mode && tile < 512 {
+                continue;
+            }
+            let index = if color_256 {
+                self.vram[0x10000 + tile * 32 + sy % 8 * 8 + sx % 8]
+            } else {
+                let packed = self.vram[0x10000 + tile * 32 + sy % 8 * 4 + sx % 8 / 2];
+                if sx & 1 == 0 { packed & 15 } else { packed >> 4 }
+            };
+            if index != 0 {
+                let color = self.tile_row_cache.words[(palette_start + usize::from(index)) & 511];
+                self.put_object_pixel(x, color, priority, semi);
             }
         }
     }
