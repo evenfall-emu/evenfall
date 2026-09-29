@@ -107,6 +107,9 @@ test("Redux trainer search uses real ROM teams and portraits with an inactive-ba
     };
     emulator.dispatchEvent(new Event("frame"));
   });
+  // This page is narrower than 17:10, so the panels share the player's dock;
+  // outside a battle it opens the team, and trainer search is under Info.
+  await page.getByRole("tab", { name: "Info", exact: true }).click();
   const input = page.getByRole("combobox", { name: "Search trainers" });
   await expect(input).toBeVisible();
   await input.fill("May");
@@ -1061,13 +1064,15 @@ test("Redux battle totals include stages and reset with the loaded state", async
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
-  // Large totals at the narrowest three-column desktop size. Observation only.
+  // Large totals at the narrowest three-column desktop size: just above the
+  // tablet breakpoint and wider than 17:10, where the side columns are at
+  // their 300 px minimum. Observation only.
   await importState(page, baseline!);
   await expect(total("Attack")).toHaveText("41");
   await expect(total("Defense")).toHaveText("31");
   await importState(page, buffed!);
   await expect(total("Attack")).toHaveText("61↑");
-  await page.setViewportSize({ width: 1001, height: 900 });
+  await page.setViewportSize({ width: 1001, height: 580 });
   await page.evaluate(() => {
     const emulator = (window as unknown as { emulator: Emulator }).emulator;
     const capture = emulator.captureMemory.bind(emulator);

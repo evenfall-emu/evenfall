@@ -196,6 +196,18 @@ running.
   a ZiGBA save state; it stays paused for inspection. Importing a battery
   `.sav` reboots the ROM with that save and starts play.
 
+### Narrower screens
+
+A game layout's side columns take about a quarter of the page each, between
+300 and 460 px, and the screen the rest. On a landscape page narrower than
+17:10 that is not a phone, such as a 3:2 laptop, two side columns would leave
+the screen limited by the page's width with height to spare, so the game
+layout's panels move into one column of tabs beside the screen, 340 to 480 px
+wide ([`src/docked.tsx`](src/docked.tsx)). The game chooses which tab opens,
+such as the battle while one runs; a tab picked by hand stays open until the
+game's choice changes. Portrait tablets keep the game layout's own stacked
+panels.
+
 ### Phones
 
 A portrait page up to 650 px wide, or a landscape page up to 500 px tall, gets
@@ -572,8 +584,11 @@ player as `children` plus `playing` and `build`, and reads live data with
 `useBridge` inside the player's `BridgeProvider`. On phones it also receives
 `handheld` and returns `handheld(hud)` instead of placing `children`: `hud`
 is a one-line `summary` for under the screen and titled `panels` for the
-sheet, and the player places the screen and controls itself. `main.tsx` never
-imports a game package.
+sheet, and the player places the screen and controls itself. On
+[narrower screens](#narrower-screens) it receives `docked` instead and
+returns `docked(dock)`: `dock` is a `heading` for above the screen, the
+`panels` for the tabs beside it and the `focus`, the panel the game's state
+calls for. `main.tsx` never imports a game package.
 
 A ROM that matches no reviewed build is recognized with
 `gameRegistry.recognize`: from the `builds` cache, else by running the

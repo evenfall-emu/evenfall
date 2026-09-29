@@ -5,8 +5,10 @@ import { heartNSoul } from "../src/heart-n-soul";
 
 export type {
   BuildInfo,
+  GameDock,
   GameLayoutProps,
   GameLayouts,
+  GamePanel,
   HandheldHud,
 } from "./layout";
 

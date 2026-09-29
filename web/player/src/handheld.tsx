@@ -7,6 +7,7 @@ import {
 } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import type { HandheldHud } from "./games";
+import { PanelTabs } from "./panel-tabs";
 import { TouchControls } from "./touch-controls";
 import { Icon } from "./ui/icons";
 import { button, cx, focusRing } from "./ui/styles";
@@ -209,11 +210,12 @@ export function HandheldPlayer({
         </div>
       ) : (
         inline && (
-          <HudPanels
-            hud={inline}
+          <PanelTabs
+            panels={inline.panels}
             panel={panel}
             onPanel={setPanel}
             className="min-h-0"
+            panelClassName="handheld-panel p-2"
           />
         )
       )}
@@ -226,12 +228,13 @@ export function HandheldPlayer({
           container={container}
         >
           {(initialFocus) => (
-            <HudPanels
-              hud={hud}
+            <PanelTabs
+              panels={hud.panels}
               panel={panel}
               onPanel={setPanel}
               tabRef={initialFocus}
               className="min-h-0 flex-1"
+              panelClassName="handheld-panel p-2"
               trailing={
                 <Dialog.Close
                   aria-label="Close game info"
@@ -273,69 +276,6 @@ export function HandheldPlayer({
         )}
       </Sheet>
     </main>
-  );
-}
-
-/** The game's panels as tabs; every panel stays mounted to keep its state. */
-function HudPanels({
-  hud,
-  panel,
-  onPanel,
-  tabRef,
-  className,
-  trailing,
-}: {
-  hud: HandheldHud;
-  panel?: string;
-  onPanel: (id: string) => void;
-  tabRef?: RefObject<HTMLButtonElement | null>;
-  className?: string;
-  /** After the tabs, such as a close button. */
-  trailing?: ReactNode;
-}) {
-  const current =
-    hud.panels.find((candidate) => candidate.id === panel) ?? hud.panels[0];
-  return (
-    <div className={cx("flex flex-col", className)}>
-      <div
-        data-ui
-        role="tablist"
-        className="flex h-11 shrink-0 border-b border-line font-sans text-2x"
-      >
-        {hud.panels.map((candidate) => {
-          const selected = candidate.id === current?.id;
-          return (
-            <button
-              key={candidate.id}
-              ref={selected ? tabRef : undefined}
-              role="tab"
-              aria-selected={selected}
-              className={cx(
-                "flex-1 cursor-pointer border-b-3 outline-none focus-visible:bg-hover",
-                selected
-                  ? "border-peach text-heading"
-                  : "border-transparent text-muted",
-              )}
-              onClick={() => onPanel(candidate.id)}
-            >
-              {candidate.label}
-            </button>
-          );
-        })}
-        {trailing}
-      </div>
-      {hud.panels.map((candidate) => (
-        <div
-          key={candidate.id}
-          role="tabpanel"
-          aria-label={candidate.label}
-          hidden={candidate.id !== current?.id}
-          className="handheld-panel min-h-0 flex-1 overflow-y-auto overscroll-contain p-2"
-        >
-          {candidate.content}
-        </div>
-      ))}
-    </div>
   );
 }
 

@@ -32,6 +32,7 @@ import {
   quickState,
   useRewindTimeline,
 } from "./console-player";
+import { DockedPlayer, useDocked } from "./docked";
 import { HandheldPlayer, useHandheld, useTouchByDefault } from "./handheld";
 import {
   DeletePlaythroughDialog,
@@ -272,6 +273,9 @@ function App() {
   const accountResume = useRef(false);
   // Phones get their own layout; on-screen controls default on for touch.
   const handheld = useHandheld();
+  // Narrower desktop and tablet pages put a game layout's panels in one
+  // column beside the screen.
+  const docked = useDocked() && !handheld;
   const touchByDefault = useTouchByDefault();
   const [controlsChoice, setControls] = useState<boolean>();
   const controls = controlsChoice ?? (handheld !== undefined && touchByDefault);
@@ -1746,6 +1750,11 @@ function App() {
             playing={state.playing}
             build={build}
             handheld={handheld ? handheldPlayer : undefined}
+            docked={
+              docked
+                ? (dock) => <DockedPlayer dock={dock}>{display}</DockedPlayer>
+                : undefined
+            }
           >
             {display}
           </Layout>

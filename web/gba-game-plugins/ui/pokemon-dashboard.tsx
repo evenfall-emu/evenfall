@@ -983,6 +983,8 @@ export interface PokemonDashboardProps {
   readonly children: ReactNode;
   /** On phones: hand the HUD to the player instead of laying out the page. */
   readonly handheld?: GameLayoutProps["handheld"];
+  /** On narrower pages: hand the panels to the player's dock instead. */
+  readonly docked?: GameLayoutProps["docked"];
 }
 
 export function PokemonDashboard({
@@ -996,6 +998,7 @@ export function PokemonDashboard({
   build,
   children,
   handheld,
+  docked,
 }: PokemonDashboardProps) {
   const [mobilePanel, setMobilePanel] = useState<"team" | "info">("team");
   const panelId = useId();
@@ -1136,6 +1139,17 @@ export function PokemonDashboard({
         },
       ],
     });
+  // Beside the screen, the battle opens when one starts and the team when it
+  // ends; the arena line stays above the screen.
+  if (docked)
+    return docked({
+      heading: <ArenaStatus build={build} arena={arena} />,
+      panels: [
+        { id: "team", label: "Team", content: team },
+        { id: "info", label: combat ? "Battle" : "Info", content: info },
+      ],
+      focus: combat ? "info" : "team",
+    });
   return (
     <main
       className="adventure-grid"
@@ -1184,12 +1198,14 @@ export function Gen3Overlay({
   build,
   children,
   handheld,
+  docked,
 }: {
   game: Gen3Game;
   gameName: string;
   build?: BuildInfo;
   children: ReactNode;
   handheld?: GameLayoutProps["handheld"];
+  docked?: GameLayoutProps["docked"];
 }) {
   const views = useViews(game);
   const media = views?.media.status === "ready" ? views.media.data : undefined;
@@ -1224,6 +1240,7 @@ export function Gen3Overlay({
       trainerSearch={trainerSearch}
       build={build}
       handheld={handheld}
+      docked={docked}
     >
       {children}
     </PokemonDashboard>
@@ -1234,6 +1251,7 @@ export function HeartNSoulDashboard({
   build,
   children,
   handheld,
+  docked,
 }: GameLayoutProps) {
   return (
     <Gen3Overlay
@@ -1241,6 +1259,7 @@ export function HeartNSoulDashboard({
       gameName="Heart & Soul"
       build={build}
       handheld={handheld}
+      docked={docked}
     >
       {children}
     </Gen3Overlay>
@@ -1251,6 +1270,7 @@ export function EliteReduxDashboard({
   build,
   children,
   handheld,
+  docked,
 }: GameLayoutProps) {
   return (
     <Gen3Overlay
@@ -1258,6 +1278,7 @@ export function EliteReduxDashboard({
       gameName="Elite Redux"
       build={build}
       handheld={handheld}
+      docked={docked}
     >
       {children}
     </Gen3Overlay>

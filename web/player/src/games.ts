@@ -35,6 +35,21 @@ export interface GameLayoutProps {
    * the screen and controls, and shows the layout's HUD around them.
    */
   readonly handheld?: (hud: HandheldHud) => ReactNode;
+  /**
+   * Set on landscape pages narrower than 17:10 that are not phones, where
+   * columns on both sides of the screen would narrow it. A layout then
+   * returns `docked(dock)` instead of placing `children`: the player places
+   * the heading and the screen in one column and the panels as tabs in one
+   * column beside it.
+   */
+  readonly docked?: (dock: GameDock) => ReactNode;
+}
+
+/** One of a game layout's panels, shown as a tab. */
+export interface GamePanel {
+  readonly id: string;
+  readonly label: string;
+  readonly content: ReactNode;
 }
 
 /** A game layout's contribution to the phone player. */
@@ -42,11 +57,21 @@ export interface HandheldHud {
   /** One non-interactive line under the screen; tapping it opens `panels`. */
   readonly summary: ReactNode;
   /** Tabs of the sheet (portrait) or drawer (landscape), in order. */
-  readonly panels: readonly {
-    readonly id: string;
-    readonly label: string;
-    readonly content: ReactNode;
-  }[];
+  readonly panels: readonly GamePanel[];
+}
+
+/** A game layout's contribution to the two-column player. */
+export interface GameDock {
+  /** Above the screen, such as where the game takes place. */
+  readonly heading?: ReactNode;
+  /** Tabs of the column beside the screen, in order. */
+  readonly panels: readonly GamePanel[];
+  /**
+   * The panel the game's state calls for, such as the battle while one
+   * runs. The dock opens it whenever it changes; in between, the player's
+   * own choice of tab stands.
+   */
+  readonly focus?: string;
 }
 
 /** Where recognized builds are kept between sessions (the library's `builds`). */

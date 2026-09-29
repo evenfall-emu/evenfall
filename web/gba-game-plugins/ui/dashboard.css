@@ -1,16 +1,18 @@
 /* Pokémon dashboards in the main player, loaded with ./dashboards.ts. Base
    variables, fonts and generic controls come from the player's console.css. */
+/* The side columns take about a quarter of the page each, between 300 and
+   460 px, and the screen the rest. Pages narrower than 17:10 get the
+   player's dock instead (frontend/src/docked.tsx). */
 .adventure-grid {
   display: grid;
   flex: 1;
   min-height: 0;
-  grid-template-columns: minmax(0, min(28%, 460px)) minmax(0, 1fr) minmax(
-      0,
-      min(28%, 460px)
-    );
+  grid-template-columns:
+    clamp(300px, 23vw, 460px) minmax(0, 1fr)
+    clamp(300px, 23vw, 460px);
   grid-template-rows: minmax(0, 1fr);
-  gap: 16px;
-  padding: 14px 12px 12px;
+  gap: 10px;
+  padding: 12px 8px;
   align-items: stretch;
 }
 .adventure-grid > *,
@@ -47,7 +49,8 @@
 }
 .roster-heading {
   height: 35px;
-  gap: 22px;
+  gap: 12px;
+  padding: 0 8px;
 }
 .roster-heading h2 {
   font-size: 1.12rem;
@@ -292,10 +295,10 @@
 .roster-card {
   width: 100%;
   height: 100%;
-  padding: 3px 7px;
+  padding: 3px;
   display: grid;
-  grid-template-columns: 66px minmax(0, 1fr);
-  gap: 7px;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 3px;
   text-align: left;
   border: 1px solid transparent;
   position: relative;
@@ -306,8 +309,8 @@
   box-shadow: inset 0 0 6px #b3edff6b;
 }
 .roster-card img {
-  width: 66px;
-  height: 66px;
+  width: 48px;
+  height: 58px;
   object-fit: contain;
   image-rendering: pixelated;
   align-self: center;
@@ -409,7 +412,7 @@
   margin-bottom: 10px;
 }
 .opponent-roster .roster-card {
-  grid-template-columns: 68px minmax(0, 1fr);
+  grid-template-columns: 48px minmax(0, 1fr);
 }
 .inspector {
   border: 1px solid var(--line);
@@ -419,14 +422,14 @@
 }
 .selected-summary {
   display: grid;
-  grid-template-columns: 104px minmax(0, 1fr);
-  gap: 11px;
+  grid-template-columns: 68px minmax(0, 1fr);
+  gap: 5px;
   height: 96px;
-  padding: 4px 12px 4px 9px;
+  padding: 5px;
 }
 .selected-summary > img,
 .selected-summary > .sprite-missing {
-  width: 96px;
+  width: 68px;
   height: 88px;
   object-fit: contain;
   image-rendering: pixelated;
@@ -473,7 +476,7 @@
 }
 .selected-tags {
   display: flex;
-  gap: 10px;
+  gap: 5px;
   align-items: center;
   height: 33px;
 }
@@ -484,7 +487,7 @@
   background: #9c9991;
   color: #122127;
   border-radius: 3px;
-  padding: 0 10px;
+  padding: 0 6px;
   font-size: 0.9rem;
   height: 26px;
   text-transform: uppercase;
@@ -962,42 +965,6 @@ table {
 }
 .arena-status dd {
   margin: 0;
-}
-@media (max-width: 1350px) {
-  .adventure-grid {
-    gap: 10px;
-    padding: 12px 8px;
-  }
-  .roster-card {
-    grid-template-columns: 48px minmax(0, 1fr);
-    gap: 3px;
-    padding: 3px;
-  }
-  .roster-card img {
-    width: 48px;
-    height: 58px;
-  }
-  .opponent-roster .roster-card {
-    grid-template-columns: 48px minmax(0, 1fr);
-  }
-  .selected-summary {
-    grid-template-columns: 68px minmax(0, 1fr);
-    gap: 5px;
-    padding: 5px;
-  }
-  .selected-summary > img {
-    width: 68px;
-  }
-  .selected-tags {
-    gap: 5px;
-  }
-  .type-badge {
-    padding: 0 6px;
-  }
-  .roster-heading {
-    gap: 12px;
-    padding: 0 8px;
-  }
 }
 @media (max-width: 1000px) {
   .roster-card {
