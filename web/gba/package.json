@@ -67,9 +67,10 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:wasm": "bash scripts/build-wasm.sh",
     "check": "tsc -p tsconfig.json --noEmit",
     "prepack": "npm run build && node scripts/check-package.mjs",
-    "test": "node --test core.test.mjs presentation.test.mjs worker.test.mjs devtools/*.test.mjs"
+    "test": "node --test allocator.test.mjs core.test.mjs presentation.test.mjs worker.test.mjs devtools/*.test.mjs"
   },
   "peerDependencies": {
     "react": ">=18"

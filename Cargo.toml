@@ -6,6 +6,7 @@ members = [
     "crates/*",
     "systems/gba",
     "tools/parity",
+    "web/gba",
 ]
 
 [workspace.package]

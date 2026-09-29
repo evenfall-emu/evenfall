@@ -3,8 +3,8 @@
 The JavaScript/TypeScript SDK for Evenfall's cycle-aware Game Boy Advance core.
 `Emulator` runs in a browser Worker; `WasmCore` is the synchronous adapter for
 Node and other hosts. The SDK handles no canvas, audio device or persistence.
-The Rust WebAssembly core is not built yet; until phase 2 supplies
-`evenfall-gba.wasm`, calls that instantiate it cannot run.
+Build the Rust core with `npm run build:wasm -w @evenfall/gba` before calling
+`Emulator.create()` or `WasmCore.create()` without an explicit WASM source.
 
 ```js
 import { Emulator, CYCLES_PER_FRAME, KEYS } from "@evenfall/gba";
@@ -26,7 +26,7 @@ Other entry points: `@evenfall/gba/core`, `@evenfall/gba/devtools/scenario`,
 ## Differences from ZiGBA's `@evenfall/gba`
 
 - The default WASM asset and exported asset path are `evenfall-gba.wasm` rather
-  than `zigba.wasm`, because this binary will be built by the Rust core. Explicit
+  than `zigba.wasm`, because this binary is built by the Rust core. Explicit
   `wasmUrl` and `WasmCore.create(source)` overrides still work as before.
 - The package is private and is not published. For now it is consumed from the
   `web/*` npm workspace. The JS API, entry points, events, options, errors and
@@ -35,26 +35,36 @@ Other entry points: `@evenfall/gba/core`, `@evenfall/gba/devtools/scenario`,
 - The scenario and capture CLIs are under `web/gba/scripts/` instead of ZiGBA's
   root `tools/`; their optional WASM argument and manifest formats are unchanged.
 
-No other public API differences are intended. The exact core behavior and
-binary parity will be verified when the Rust WASM adapter exists.
+No other public API differences are intended. The SDK exercises the Rust
+WASM adapter and compares its replay output with native Rust execution.
 
 ## Development
 
-From the repository root, `npm ci`, `npm run check` and `npm test` check the
-SDK. Tests requiring a missing `web/gba/evenfall-gba.wasm` skip with an explicit
-reason. `npm run build -w @evenfall/gba` compiles bridge sources into the
+From the repository root, run `npm ci`, `npm run check`,
+`npm run build:wasm -w @evenfall/gba`, then `npm test` to exercise the actual
+WASM ABI. Tests requiring a missing `web/gba/evenfall-gba.wasm` skip with an
+explicit reason; a full test run must build the binary first. The native/WASM
+parity test builds the native `session_probe` and compares canonical state,
+memory, frame, audio and save hashes after the same bounded schedule.
+`npm run build -w @evenfall/gba` compiles bridge sources into the
 gitignored `web/gba/bridge/` directory; the `zigba-source` condition exposes
 their TypeScript sources to in-repository consumers without compiling first.
-The eventual Rust WASM build will write the gitignored binary to
+The Rust WASM build writes the gitignored binary to
 `web/gba/evenfall-gba.wasm`. `prepack` still refuses a missing, debug or
 ABI-incompatible binary, and the package remains private.
+
+The Rust wasm32 default allocator is used rather than a custom page allocator:
+an isolated wasm32 probe showed near-exact growth for a large allocation and
+address reuse across repeated free/allocate cycles. `allocator.test.mjs`
+checks these properties on the shipped module with a request just across a
+page boundary. The module has a 16 MiB initial memory, a 512 MiB maximum,
+an 8 MiB stack and no imports.
 
 Scenario and capture CLIs live at `web/gba/scripts/run-scenario.mjs` and
 `web/gba/scripts/replay-capture.mjs`. They use the same default binary path and
 accept an explicit WASM path as their final argument.
-The Zig-only allocator probe and native `zigba-session-probe` comparison are
-not part of this JS port; Rust allocator and native/WASM parity tests belong to
-the phase-2 ABI crate.
+The Zig-only allocator probe and native `zigba-session-probe` are replaced by
+the allocator test and Rust `session_probe` parity run.
 
 ## License and disclaimer
 

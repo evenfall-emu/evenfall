@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { crc32 } from "node:zlib";
 import { WasmCore, CYCLES_PER_FRAME as F } from "./core.js";
 import { wasm, wasmTest as test } from "./scripts/wasm-test.mjs";
 
 const loop = new Uint8Array([0xfe, 0xff, 0xff, 0xea]);
 const romSha = (bytes) => createHash("sha1").update(bytes).digest("hex");
+const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const asBytes = (array) =>
+  new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
 function zip(image) {
   const name = Buffer.from("fixture.gba");
   const local = Buffer.alloc(30);
@@ -450,6 +457,74 @@ test("STOP and unsupported guest code remain explicit terminal results", async (
     assert.throws(() => core.saveState(), /MachineFaulted/);
   } finally {
     core.dispose();
+  }
+});
+
+const extra = process.env.ZIGBA_TEST_ROMS
+  ? JSON.parse(process.env.ZIGBA_TEST_ROMS)
+  : [];
+test("native/WASM canonical state, pixels, audio, memory, and save parity", async (t) => {
+  const root = new URL("../..", import.meta.url);
+  execFileSync(
+    "cargo",
+    [
+      "build",
+      "--locked",
+      "--release",
+      "-p",
+      "evenfall-gba",
+      "--bin",
+      "session_probe",
+    ],
+    {
+      cwd: root,
+      timeout: 120000,
+    },
+  );
+  const directory = await mkdtemp(join(tmpdir(), "evenfall-web-test-"));
+  try {
+    const file = join(directory, "loop.gba");
+    await writeFile(file, loop);
+    for (const path of [file, ...extra])
+      await t.test(path, async () => {
+        const core = await WasmCore.create(wasm);
+        try {
+          core.load(await readFile(path), {
+            zipped: path.toLowerCase().endsWith(".zip"),
+          });
+          const audio = createHash("sha256");
+          for (let target = F / 4n; target <= 120n * F; target += F / 4n) {
+            const result = core.runUntil(target);
+            assert.notEqual(result.reason, "faulted");
+            assert.notEqual(result.reason, "power_stopped");
+            audio.update(asBytes(core.drainAudio()));
+          }
+          const state = core.inspect();
+          const actual = {
+            cycle: String(state.cycle),
+            frames: String(state.frames),
+            pc: state.nextInstructionAddress,
+            cpsr: state.cpsr,
+            state: sha(core.saveState()),
+            ewram: sha(core.readMemory(0x02000000, 256 * 1024)),
+            frame: sha(asBytes(core.frame())),
+            audio: audio.digest("hex"),
+            save: sha(core.exportSave()),
+          };
+          const native = JSON.parse(
+            execFileSync("../../target/release/session_probe", [path, "120"], {
+              cwd: new URL(".", import.meta.url),
+              timeout: 120000,
+              encoding: "utf8",
+            }),
+          );
+          assert.deepEqual(actual, native);
+        } finally {
+          core.dispose();
+        }
+      });
+  } finally {
+    await rm(directory, { recursive: true });
   }
 });
 
