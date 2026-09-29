@@ -638,6 +638,31 @@ mod tests {
         assert_eq!(session.write_state().unwrap(), loaded.write_state().unwrap());
     }
 
+    /// Zig: "session imports save memory with arbitrary trailing bytes but rejects a short save"
+    #[test]
+    fn session_imports_save_prefix_and_rejects_short_or_conflicting_saves() {
+        let rom = b"....FLASH1M_V103";
+        let mut save = vec![0xff; 128 * 1024 + 19];
+        save[0x1234] = 0x35;
+        save[0x10042] = 0x7a;
+        save[128 * 1024..].fill(0x55);
+        let mut session =
+            Session::create(Config { image: rom, save: Some(&save), ..Config::default() }).unwrap();
+        assert_eq!(session.machine.save_type(), SaveType::Flash128k);
+        assert_eq!(session.machine.save_data(), &save[..128 * 1024]);
+        session.reset_with_save(&save).unwrap();
+        assert_eq!(session.machine.save_data(), &save[..128 * 1024]);
+        assert!(matches!(
+            session.reset_with_save(&save[..128 * 1024 - 1]),
+            Err(Error::Image(rom_image::Error::InvalidSaveFileSize))
+        ));
+        assert_eq!(session.machine.save_data(), &save[..128 * 1024]);
+        assert!(matches!(
+            session.reset_with_save(&save[..64 * 1024]),
+            Err(Error::Image(rom_image::Error::SaveTypeConflict))
+        ));
+    }
+
     /// Zig: "rewind captures per-frame history and restores earlier frames"
     #[test]
     fn rewind_captures_per_frame_history_and_restores_earlier_frames() {
@@ -666,6 +691,75 @@ mod tests {
         assert_eq!(session.rewind(1).unwrap().frame, 2);
         assert_eq!(session.rewind(1).unwrap().frame, 1);
         assert!(matches!(session.rewind(1), Err(Error::RewindEmpty)));
+    }
+
+    /// Zig: "explicit loads and resets start a new rewind timeline"
+    #[test]
+    fn explicit_loads_and_resets_start_a_new_rewind_timeline() {
+        let mut session = Session::create(Config {
+            image: LOOP_ROM,
+            rewind: RewindConfig { interval_frames: 1, ..RewindConfig::default() },
+            ..Config::default()
+        })
+        .unwrap();
+        for _ in 0..2 {
+            session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        }
+        assert_eq!(session.rewind_depth(), 2);
+        let state = session.write_state().unwrap();
+        session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        assert_eq!(session.rewind_depth(), 3);
+        session.load_state(&state).unwrap();
+        assert_eq!(session.rewind_depth(), 0);
+        assert!(matches!(session.rewind(1), Err(Error::RewindEmpty)));
+        session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        assert_eq!(session.rewind_depth(), 1);
+        session.reset_with_save(&[]).unwrap();
+        assert_eq!(session.rewind_depth(), 0);
+    }
+
+    /// Zig: "session validates rewind configs and preserves history on reconfig failure"
+    #[test]
+    fn invalid_rewind_reconfiguration_preserves_history() {
+        assert!(matches!(
+            Session::create(Config {
+                image: LOOP_ROM,
+                rewind: RewindConfig { interval_frames: 0, ..RewindConfig::default() },
+                ..Config::default()
+            }),
+            Err(Error::Rewind(evenfall_state::Error::InvalidRewindConfig))
+        ));
+        let mut session = Session::create(Config {
+            image: LOOP_ROM,
+            rewind: RewindConfig { interval_frames: 1, ..RewindConfig::default() },
+            ..Config::default()
+        })
+        .unwrap();
+        session.advance(Machine::CYCLES_PER_FRAME).unwrap();
+        assert_eq!(session.rewind_depth(), 1);
+        assert!(
+            session
+                .set_rewind_config(RewindConfig {
+                    budget_bytes: rewind::MAX_BUDGET_BYTES + 1,
+                    ..RewindConfig::default()
+                })
+                .is_err()
+        );
+        assert!(
+            session
+                .set_rewind_config(RewindConfig {
+                    age_exponent: f64::NAN,
+                    ..RewindConfig::default()
+                })
+                .is_err()
+        );
+        assert_eq!(session.rewind_depth(), 1);
+        session
+            .set_rewind_config(RewindConfig { budget_bytes: 0, ..RewindConfig::default() })
+            .unwrap();
+        assert_eq!(session.rewind_depth(), 0);
+        session.advance(2 * Machine::CYCLES_PER_FRAME).unwrap();
+        assert_eq!(session.rewind_depth(), 0);
     }
 
     /// Zig: "rewind bundles preserve live position, history and capture continuation"
