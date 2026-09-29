@@ -159,9 +159,9 @@ Thumb-logic's ratio varies between runs (1.23× in another) with unchanged
 instruction counts.
 Bitmap-DMA gains most from its VRAM history: writes to the hidden page during
 HDraw give 45% of its lines history, and the compositor keeps them because
-none of the written pages is read. The kernel and row variants cost about 0.6 s on a release-LTO one-line
-rebuild of the harness (6.5 s → 7.1 s) and 0.1 s on a `release` one
-(1.9 s → 2.0 s).
+none of the written pages is read. The kernel and row variants cost about
+0.6 s on a release-LTO one-line rebuild of the harness (6.5 s → 7.1 s) and
+0.1 s on a `release` one (1.9 s → 2.0 s).
 
 The WebAssembly module, measured in Node with
 [`tools/bench/wasm.mjs`](../tools/bench/README.md#webassembly) on the same
