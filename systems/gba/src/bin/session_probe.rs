@@ -37,7 +37,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let snapshot = session.write_state()?;
     let mut memory = vec![0; 256 * 1024];
-    session.machine.inspect_memory(0x0200_0000, &mut memory)?;
+    session
+        .machine
+        .inspect_memory(0x0200_0000, &mut memory)
+        .map_err(|_| "EWRAM inspection address overflow")?;
     let mut frame = Vec::with_capacity(240 * 160 * 2);
     for pixel in session.machine.framebuffer() {
         frame.extend_from_slice(&pixel.to_le_bytes());
