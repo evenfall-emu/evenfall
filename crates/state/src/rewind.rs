@@ -597,7 +597,15 @@ impl RewindBuffer {
         if live.len() > MAX_DECODED_BYTES {
             return Err(INVALID);
         }
-        let mut out = Vec::new();
+        let mut count = Sink::new(None, None);
+        self.write_history(&mut count)?;
+        let history_len = usize::try_from(count.count).map_err(|_| INVALID)?;
+        let len = 16usize
+            .checked_add(live.len())
+            .and_then(|n| n.checked_add(history_len))
+            .and_then(|n| n.checked_add(32))
+            .ok_or(INVALID)?;
+        let mut out = Vec::with_capacity(len);
         {
             let mut sink = Sink::new(Some(&mut out), None);
             sink.write_all(b"ZGBRWD\0\0")?;
@@ -608,6 +616,7 @@ impl RewindBuffer {
         }
         let hash = blake3::hash(&out);
         out.extend_from_slice(hash.as_bytes());
+        debug_assert_eq!(out.len(), len);
         Ok(out)
     }
     fn write_history(&self, sink: &mut Sink<'_>) -> Result<()> {
