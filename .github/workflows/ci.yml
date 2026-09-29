@@ -52,9 +52,13 @@ jobs:
         with:
           node-version: 24.11.0
           cache: npm
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm32
       - run: npm ci --no-audit --no-fund
       - run: npm run fmt:check
       - run: npm run check
+      - run: npm run build:wasm -w @evenfall/gba
       - run: npm run test
 
   validators:
