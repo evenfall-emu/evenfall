@@ -1070,6 +1070,7 @@ impl Bus {
         }
     }
 
+    #[inline(always)]
     pub fn write(&mut self, access: Access, value: u32) -> WriteResult {
         let started_at = self.current_cycle;
         let address = access.address;
@@ -1122,24 +1123,7 @@ impl Bus {
                     self.end_palette_segments(address, width);
                 }
             }
-            6 => {
-                if width == AccessWidth::Word {
-                    for beat in 0..2 {
-                        let at = address.wrapping_add(beat * 2);
-                        self.advance(1);
-                        self.flush_device_batch();
-                        let snapshot = self.snapshot_vram_write(at, AccessWidth::Half);
-                        self.write_vram(at, AccessWidth::Half, value >> (beat * 16));
-                        self.record_vram_write(snapshot);
-                    }
-                } else {
-                    self.advance(video_cycles(width));
-                    self.flush_device_batch();
-                    let snapshot = self.snapshot_vram_write(address, width);
-                    self.write_vram(address, width, value);
-                    self.record_vram_write(snapshot);
-                }
-            }
+            6 => self.write_vram_timed(address, width, value),
             7 => {
                 self.advance(1);
                 self.write_oam(address, width, value);
@@ -3019,6 +3003,7 @@ impl Bus {
         boundary
     }
 
+    #[inline(always)]
     fn advance(&mut self, cycles: Cycle) {
         let end = self.current_cycle + cycles;
         if self.batch_active && end < self.batch_deadline {
@@ -3369,6 +3354,7 @@ impl Bus {
                 self.advance(1);
                 self.write_iwram(address, width, value);
             }
+            6 => self.write_vram_timed(address, width, value),
             _ if Apu::accepts_fifo_write(address, width.bytes() as u8) => {
                 self.advance(1);
                 self.write_fifo(address, value, width.bytes() as u8);
@@ -3470,6 +3456,36 @@ impl Bus {
         })
     }
 
+    #[inline(always)]
+    fn write_vram_timed(&mut self, address: u32, width: AccessWidth, value: u32) {
+        if width == AccessWidth::Word {
+            for beat in 0..2 {
+                let at = address.wrapping_add(beat * 2);
+                self.advance(1);
+                self.flush_device_batch();
+                self.write_vram_at_current_dot(at, AccessWidth::Half, value >> (beat * 16));
+            }
+        } else {
+            self.advance(video_cycles(width));
+            self.flush_device_batch();
+            self.write_vram_at_current_dot(address, width, value);
+        }
+    }
+
+    fn write_vram_at_current_dot(&mut self, address: u32, width: AccessWidth, value: u32) {
+        // Raster history is observed only by visible dots. The write still
+        // marks VRAM dirty and each beat still advances to its own endpoint.
+        if usize::from(self.ppu_timing.line) >= SCREEN_HEIGHT
+            || self.ppu_timing.cycle_in_line >= 960
+        {
+            self.write_vram(address, width, value);
+            return;
+        }
+        let snapshot = self.snapshot_vram_write(address, width);
+        self.write_vram(address, width, value);
+        self.record_vram_write(snapshot);
+    }
+
     pub(crate) fn write_vram(&mut self, address: u32, width: AccessWidth, value: u32) {
         if width == AccessWidth::Byte {
             let Some(index) = vram_index(address & !1, self.dispcnt) else {
@@ -3511,6 +3527,7 @@ impl Bus {
         self.object_line_index = 0xffff;
     }
 
+    #[inline(always)]
     fn complete_read(&mut self, value: u32, cycles: Cycle) -> ReadResult {
         let started_at = self.current_cycle;
         self.open_bus_value = value;
