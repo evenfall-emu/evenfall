@@ -287,17 +287,53 @@ impl Bus {
 
     /// Fixed 16-lane chunks instead of Zig's `@Vector(16, u16)`: the control
     /// decisions remain independent and the arrays are amenable to LLVM SIMD.
-    fn apply_color_effects_vector(&mut self, line: usize) {
-        let blend = BlendState { cnt: self.bldcnt, alpha: self.bldalpha, y: self.bldy };
+    pub(super) fn apply_color_effects_vector(&mut self, line: usize) {
+        let effect = (self.bldcnt >> 6) & 3;
+        let first_targets = self.bldcnt & 0x3F;
+        let second_targets = (self.bldcnt >> 8) & 0x3F;
+        let eva = (self.bldalpha & 31).min(16);
+        let evb = ((self.bldalpha >> 8) & 31).min(16);
+        let factor = (self.bldy & 31).min(16);
+        let first = line * SCREEN_WIDTH;
         for base in (0..SCREEN_WIDTH).step_by(16) {
+            let i = first + base;
+            let mut colors: [u16; 16] = self.frame_pixels[i..i + 16].try_into().unwrap();
             for lane in 0..16 {
                 let x = base + lane;
-                self.apply_color_effect_at(line, x, blend);
+                if self.line_window_masks[x] & 0x20 == 0 {
+                    continue;
+                }
+                let index = i + lane;
+                let semi = self.frame_semitransparent[index];
+                let first_target = first_targets & (1 << self.frame_layers[index]) != 0;
+                let alpha = (semi || effect == 1 && first_target)
+                    && self.line_needs_second_surface
+                    && second_targets & (1 << self.frame_second_layers[index]) != 0;
+                let brightness = !semi && first_target && effect >= 2;
+                if !alpha && !brightness {
+                    continue;
+                }
+                let original = colors[lane];
+                let mut adjusted = 0;
+                for shift in [0, 5, 10] {
+                    let top = (original >> shift) & 31;
+                    let component = if alpha {
+                        let bottom = (self.frame_second_pixels[index] >> shift) & 31;
+                        ((top * eva + bottom * evb) >> 4).min(31)
+                    } else if effect == 2 {
+                        top + ((31 - top) * factor >> 4)
+                    } else {
+                        top - (top * factor >> 4)
+                    };
+                    adjusted |= component << shift;
+                }
+                colors[lane] = adjusted;
             }
+            self.frame_pixels[i..i + 16].copy_from_slice(&colors);
         }
     }
 
-    fn apply_color_effects_resolved(&mut self, line: usize, segmented: bool) {
+    pub(super) fn apply_color_effects_resolved(&mut self, line: usize, segmented: bool) {
         for x in 0..SCREEN_WIDTH {
             let blend = if segmented {
                 self.blend_for(line, x)
@@ -349,7 +385,7 @@ impl Bus {
         self.frame_pixels[i] = result;
     }
 
-    fn resolve_window_masks(&mut self, line: usize) {
+    pub(super) fn resolve_window_masks(&mut self, line: usize) {
         if self.win_segment_line == line as u16 && self.win_segment_count > 0 {
             self.line_window_key = WINDOW_KEY_INVALID;
             self.line_unmasked_layers = 0x3F;
@@ -433,7 +469,7 @@ impl Bus {
         }
     }
 
-    fn window_mask(&self, line: usize, x: usize) -> u8 {
+    pub(super) fn window_mask(&self, line: usize, x: usize) -> u8 {
         if self.win_segment_line == line as u16 && self.win_segment_count > 0 {
             let segments = &self.win_segments[..usize::from(self.win_segment_count)];
             let mut index = segments.len() - 1;

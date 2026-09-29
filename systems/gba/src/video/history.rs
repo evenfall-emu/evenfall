@@ -85,7 +85,7 @@ impl Bus {
         self.scroll_segment_counts[background] += 1;
     }
 
-    fn scroll_segment_start(x: u16, control: u16) -> u16 {
+    pub(super) fn scroll_segment_start(x: u16, control: u16) -> u16 {
         0x8000 | ((control & 3) << 8) | x
     }
     pub(super) fn scroll_segment_x(segment: ScrollSegment) -> u16 {
@@ -146,7 +146,7 @@ impl Bus {
         (entries, count)
     }
 
-    fn palette_segment(entry: u16, x: u16, color: u16) -> BackdropSegment {
+    pub(super) fn palette_segment(entry: u16, x: u16, color: u16) -> BackdropSegment {
         BackdropSegment {
             start_x: ((entry & 0xFF) << 8) | x,
             color: (color & 0x7FFF) | ((entry & 0x100) << 7),
