@@ -735,6 +735,28 @@ impl Bus {
         bus
     }
 
+    /// Initialize a Bus in caller-provided uninitialized storage.
+    ///
+    /// # Safety
+    /// `ptr` must be aligned, writable storage for one Bus, with no live Bus
+    /// value at that address. The caller owns and drops the initialized value.
+    pub unsafe fn init_in_place(
+        ptr: *mut Self,
+        rom: &[u8],
+        bios: &[u8],
+        save_type: save::Type,
+        save_data: Option<&[u8]>,
+    ) {
+        let bus = if let Some(data) = save_data {
+            Self::init_with_bios_and_save_data(rom, bios, save_type, data)
+        } else {
+            Self::init_with_bios_and_save(rom, bios, save_type)
+        };
+        // SAFETY: guaranteed by the caller; the constructor owns its ROM,
+        // BIOS and boxed large arrays, and does not borrow the input slices.
+        unsafe { ptr.write(bus) };
+    }
+
     pub fn write_state(&self, sink: &mut evenfall_state::Sink<'_>) -> evenfall_state::Result<()> {
         use evenfall_state::Error;
         if self.servicing_dma
@@ -1187,11 +1209,56 @@ impl Bus {
 
     pub fn fetch_instruction_in_region(
         &mut self,
-        _region: &mut InstructionFetchRegion,
+        region: &mut InstructionFetchRegion,
         address: u32,
         width: AccessWidth,
     ) -> u32 {
+        if address.wrapping_sub(region.address) >= region.valid_starts {
+            *region = self.instruction_fetch_region(address);
+        }
+        // read() remains the reference fetch path, including prefetch, DMA,
+        // and open-bus completion. The view also admits guarded fused refills.
         self.fetch_instruction(address, width)
+    }
+
+    fn instruction_fetch_region(&self, address: u32) -> InstructionFetchRegion {
+        if address >> 24 == 3 {
+            return InstructionFetchRegion {
+                address: address & 0xff00_0000,
+                valid_starts: 0x0100_0000,
+                region_class: InstructionFetchClass::Iwram,
+                ..InstructionFetchRegion::default()
+            };
+        }
+        if !(8..=13).contains(&(address >> 24)) {
+            return InstructionFetchRegion {
+                address: address & 0xff00_0000,
+                valid_starts: 0x0100_0000,
+                ..InstructionFetchRegion::default()
+            };
+        }
+        let offset = (address - GAME_PAK_BASE) & (GAME_PAK_WINDOW_SIZE - 1);
+        let window_base = address - offset;
+        let mut first = 0;
+        let mut end = self.rom.len().min(GAME_PAK_WINDOW_SIZE as usize) as u32;
+        if offset < 0xc4 {
+            end = end.min(0xc4);
+        } else {
+            first = 0xca;
+        }
+        if window_base == 0x0c00_0000 {
+            end =
+                end.min(if self.rom.len() <= 16 * 1024 * 1024 { 0x0100_0000 } else { 0x01ff_ff00 });
+        }
+        if offset < first || end < first + 4 || offset > end - 4 {
+            return InstructionFetchRegion::default();
+        }
+        InstructionFetchRegion {
+            bytes: Some(self.rom.as_ptr().wrapping_add(first as usize)),
+            address: window_base + first,
+            valid_starts: end - first - 3,
+            region_class: InstructionFetchClass::Rom,
+        }
     }
 
     pub fn fetch_thumb_in_region(
@@ -1220,13 +1287,54 @@ impl Bus {
         [first, second]
     }
 
-    /// No fused shortcut is admitted yet; the caller uses two ordinary fetches.
     pub fn fused_thumb_game_pak_refill(
         &mut self,
-        _region: &mut InstructionFetchRegion,
-        _address: u32,
+        region: &mut InstructionFetchRegion,
+        address: u32,
     ) -> Option<[u32; 2]> {
-        None
+        if address & 1 != 0 {
+            return None;
+        }
+        if address.wrapping_sub(region.address) >= region.valid_starts {
+            *region = self.instruction_fetch_region(address);
+        }
+        let offset = address.wrapping_sub(region.address);
+        if region.bytes.is_none() || offset + 2 >= region.valid_starts {
+            return None;
+        }
+        if self.waitcnt & (1 << 14) == 0 || self.game_pak_timing_key != self.waitcnt {
+            return None;
+        }
+        let prefetch = &self.game_pak_prefetch;
+        if prefetch.active
+            && prefetch.opcode_bytes == 2
+            && ((prefetch.count != 0 && address == prefetch.head_address)
+                || (prefetch.countdown != 0 && address == prefetch.last_address))
+        {
+            return None;
+        }
+        let next = address + 2;
+        let miss_cycles = self.game_pak_half_cycles(address, AccessKind::Nonsequential);
+        let duty = self.prefetch_duty(next, 2);
+        let end = self.current_cycle + miss_cycles + duty;
+        if !self.batch_active || end >= self.batch_deadline || self.pending_dma != 0 {
+            return None;
+        }
+        let index = ((address - GAME_PAK_BASE) & (GAME_PAK_WINDOW_SIZE - 1)) as usize;
+        let first = u32::from(u16::from_le_bytes(self.rom[index..index + 2].try_into().unwrap()));
+        let second =
+            u32::from(u16::from_le_bytes(self.rom[index + 2..index + 4].try_into().unwrap()));
+        self.fetch_kind = AccessKind::Sequential;
+        self.game_pak_code_active = true;
+        self.prefetch_disabled_bug_pending = false;
+        self.prefetch_buffer_was_disabled = false;
+        self.start_game_pak_prefetch(address, 2);
+        debug_assert_eq!(self.game_pak_prefetch.countdown, duty);
+        self.continue_game_pak_prefetch(2);
+        self.game_pak_prefetch.head_address = next + 2;
+        self.open_bus_value = second;
+        self.current_cycle = end;
+        Some([first, second])
     }
 
     pub fn begin_device_batch(&mut self) {
@@ -3919,6 +4027,83 @@ mod tests {
         assert_eq!(scalar.game_pak_prefetch.count, batched.game_pak_prefetch.count);
         assert_eq!(batched.game_pak_prefetch.count, 8);
         assert_eq!(batched.game_pak_prefetch.countdown, 0);
+    }
+
+    /// Zig: "fused Thumb Game Pak refill matches two ordinary fetches".
+    #[test]
+    fn fused_thumb_refill_matches_two_scalar_fetches() {
+        let rom = std::array::from_fn::<u8, 256, _>(|i| (i as u8).wrapping_mul(53));
+        for wait in [0x4000, 0x4014, 0x43a8] {
+            for target in [0x0800_0020, 0x0a00_0042, 0x0c00_00d0] {
+                let mut fused = Bus::init(&rom);
+                let mut scalar = Bus::init(&rom);
+                for bus in [&mut fused, &mut scalar] {
+                    bus.write_waitcnt(wait);
+                    bus.refresh_game_pak_timing();
+                    bus.begin_device_batch();
+                }
+                let mut fused_region = InstructionFetchRegion::default();
+                let actual = fused
+                    .fused_thumb_game_pak_refill(&mut fused_region, target)
+                    .expect("ordinary ROM miss should admit a fused refill");
+                let mut scalar_region = InstructionFetchRegion::default();
+                scalar.fetch_kind = AccessKind::Nonsequential;
+                let first = scalar.fetch_instruction_in_region(
+                    &mut scalar_region,
+                    target,
+                    AccessWidth::Half,
+                );
+                scalar.fetch_kind = AccessKind::Sequential;
+                let second = scalar.fetch_instruction_in_region(
+                    &mut scalar_region,
+                    target + 2,
+                    AccessWidth::Half,
+                );
+                assert_eq!(actual, [first, second], "wait {wait:x}, target {target:x}");
+                assert_eq!(fused.now(), scalar.now(), "wait {wait:x}, target {target:x}");
+                assert_eq!(fused.open_bus_value, scalar.open_bus_value);
+                assert_eq!(fused.fetch_kind, scalar.fetch_kind);
+                assert_eq!(
+                    (
+                        fused.game_pak_prefetch.head_address,
+                        fused.game_pak_prefetch.last_address,
+                        fused.game_pak_prefetch.count,
+                        fused.game_pak_prefetch.countdown,
+                        fused.game_pak_prefetch.duty,
+                        fused.duty_valid_until
+                    ),
+                    (
+                        scalar.game_pak_prefetch.head_address,
+                        scalar.game_pak_prefetch.last_address,
+                        scalar.game_pak_prefetch.count,
+                        scalar.game_pak_prefetch.countdown,
+                        scalar.game_pak_prefetch.duty,
+                        scalar.duty_valid_until
+                    ),
+                    "wait {wait:x}, target {target:x}",
+                );
+                fused.end_device_batch();
+                scalar.end_device_batch();
+            }
+        }
+    }
+
+    /// A straddling GPIO fetch or a refill reaching an event must fall back.
+    #[test]
+    fn fused_thumb_refill_rejects_gpio_aperture_and_event_boundary() {
+        let mut bus = Bus::init(&[0; 256]);
+        bus.write_waitcnt(0x4000);
+        bus.refresh_game_pak_timing();
+        bus.begin_device_batch();
+        let mut region = InstructionFetchRegion::default();
+        assert_eq!(bus.fused_thumb_game_pak_refill(&mut region, 0x0800_00c2), None);
+        assert_eq!(region.region_class, InstructionFetchClass::Other);
+        bus.batch_deadline = bus.now() + 6;
+        let before = bus.now();
+        assert_eq!(bus.fused_thumb_game_pak_refill(&mut region, 0x0800_00d0), None);
+        assert_eq!(bus.now(), before);
+        assert_eq!(bus.game_pak_prefetch.count, 0);
+        bus.end_device_batch();
     }
 
     /// Zig: "cached IRQ line follows IE IF IME writes and keypad edges".
