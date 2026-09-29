@@ -41,7 +41,7 @@ test.beforeAll(async () => {
       const sample = { timeline, sequence: 1, cycle: 1n, romHash: "fixture" };
       return <div className="console-app"><PokemonDashboard gameName="Selection fixture"
           party={{ status: "ready", sample, data: { party } }}
-          storage={{ status: "ready", data: { boxes: [{ pokemon: [member("PC Pikachu", 0)] }] } }}
+          storage={{ status: "ready", data: { boxes: [{ pokemon: [member("PC Pikachu", 0), { ...member("Pikachu", 0, "poke-pal"), nickname: "Poké Pal" }] }] } }}
           battle={{ status: "ready", data: { active: true, kind: "wild", playerParty: party,
             opponentParty: [member("Enemy", 0)], battlers: [{ side: "player", partySlot: 1 }] } }}
           context={{ status: "idle" }} resources={undefined}
@@ -123,6 +123,10 @@ test("roster keeps spatial wrapping, identity, filtering and responsive panels",
   await search.fill("missing");
   await expect(cards).toHaveCount(0);
   await expect(page.getByText("No matching Pokémon")).toBeVisible();
+  // A nickname matches without its accents.
+  await search.fill("poke pal");
+  await expect(cards).toHaveCount(1);
+  await expect(cards.first()).toContainText("Poké Pal");
   await search.fill("");
   await expect(
     page.locator('.player-roster .roster-card[aria-pressed="true"]'),

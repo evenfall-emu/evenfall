@@ -1,5 +1,6 @@
 import type { DecodeResult, MemoryReader } from "@evenfall/gba/bridge";
 import type { ReduxCatalog } from "./redux-catalog";
+import { searchKey } from "./search";
 import { decodePokemonText } from "./text";
 import {
   statKeys,
@@ -272,17 +273,14 @@ export function createReduxTrainerSearch(
           status: "unavailable",
           reason: "Trainer preview context is not initialized",
         };
-      const tokens = query
-        .trim()
-        .toLocaleLowerCase()
-        .split(/\s+/)
-        .filter(Boolean);
+      const tokens = searchKey(query).split(" ").filter(Boolean);
       if (!tokens.length) return { status: "ready", data: [] };
       const partyIndex = Math.max(0, context.difficulty - 1);
       const data = trainers()
         .filter((trainer) => {
-          const searchable =
-            `${trainer.name} ${trainer.className} ${trainer.variant ?? ""}`.toLocaleLowerCase();
+          const searchable = searchKey(
+            `${trainer.name} ${trainer.className} ${trainer.variant ?? ""}`,
+          );
           return (
             trainer.parties[partyIndex].count &&
             tokens.every((token) => searchable.includes(token))

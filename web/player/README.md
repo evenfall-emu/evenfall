@@ -233,7 +233,9 @@ game changes the URL to `/library/<game ID>`; filtering the list keeps that
 game's details. On narrow screens the details replace the list, and Back or
 Escape returns to it with its scroll position and focus. Search, **Show**,
 **Franchise**, **Sort** and a tag picker combine; a game must carry every
-selected tag. **Show** offers All, Installed and Ready, where the base ROM is
+selected tag. Search matches titles without case, accents or punctuation, so
+"poke" finds "Pokémon" and "emblem vision" finds "Fire Emblem: Vision Quest".
+**Show** offers All, Installed and Ready, where the base ROM is
 on this device and the release's patch is hosted, so the game plays at once.
 **Sort** orders by Played (the default, with unplayed titles following by
 name), Recently updated (latest release date, undated releases last) or
@@ -523,6 +525,12 @@ Starting replaces the link in the browser history with `/player`, so Back
 does not start it again. An expired or unknown link says so and offers Home.
 
 ## Offline play
+
+The player exposes a web-app manifest with a stable identity, launcher icons
+and standalone display mode. In Android Chrome, use **Add to home screen →
+Install**, rather than **Create shortcut**, to install it as an app. The app
+opens the library without Chrome's address bar. The manifest and launch URLs
+also follow the configured Vite base path for subdirectory hosting.
 
 Production builds install a service worker that caches one complete version of
 the player: every file of the Vite build, including the hashed SDK worker,

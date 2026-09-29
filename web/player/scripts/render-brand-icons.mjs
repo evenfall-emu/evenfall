@@ -1,8 +1,9 @@
 // Rasterizes evenfall-icon.svg into the bitmaps the site needs beside it: a
 // 32x32 tab icon for browsers that do not render SVG favicons, and the 180x180
-// iOS home-screen icon. Run `npm run icons -w frontend` after editing the SVG.
+// iOS home-screen icon, plus install icons in public/.
+// Run `npm run icons -w frontend` after editing the SVG.
 import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { chromium } from "@playwright/test";
 
@@ -18,6 +19,18 @@ const targets = [
   // iOS composites transparency onto black and rounds the corners of the
   // square itself; the theme color keeps the icon in the centre 80%.
   { file: "evenfall-icon-180.png", size: 180, scale: 5, background: "#073659" },
+  {
+    file: "../../../public/icons/evenfall-192.png",
+    size: 192,
+    scale: 5,
+    background: "#073659",
+  },
+  {
+    file: "../../../public/icons/evenfall-512.png",
+    size: 512,
+    scale: 13,
+    background: "#073659",
+  },
 ];
 
 const executablePath =
@@ -68,6 +81,7 @@ try {
       },
       { ...target, icon },
     );
+    await mkdir(resolve(brand, target.file, ".."), { recursive: true });
     await writeFile(
       resolve(brand, target.file),
       Buffer.from(png.slice("data:image/png;base64,".length), "base64"),

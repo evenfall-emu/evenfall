@@ -18,7 +18,7 @@ export function offlinePlayer(): Plugin {
       const files = (await readdir(directory, { recursive: true }))
         .filter(
           (file) =>
-            /\.(html|js|css|wasm|woff2?|ttf|otf|png|webp|svg|jpg)$/.test(
+            /\.(html|js|css|wasm|webmanifest|woff2?|ttf|otf|png|webp|svg|jpg)$/.test(
               file,
             ) && file !== "service-worker.js",
         )
