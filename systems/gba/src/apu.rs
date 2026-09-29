@@ -238,8 +238,8 @@ fn rotate_nibbles_left(span: &mut [u8], nibbles: u64) {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
-struct WaveChannel {
-    ram: [u8; 32],
+pub struct WaveChannel {
+    pub ram: [u8; 32],
     two_bank: bool,
     #[codec(bits = 1)]
     selected_bank: u8, // u1
@@ -647,7 +647,7 @@ pub struct Apu {
     sweep1: FrequencySweep,
     #[codec(encode_with = Apu::encode_square2)]
     pub square2: SquareChannel,
-    wave: WaveChannel,
+    pub wave: WaveChannel,
     #[codec(encode_with = Apu::encode_noise)]
     noise: NoiseChannel,
     #[codec(skip)]
