@@ -27,10 +27,10 @@ install their inputs first, or select non-ROM targets while working locally.
 
 ## ROM validators
 
-The [`validator`](../systems/gba/tests/validator.rs) runs the pinned
+The [`validator`](../systems/gba/tests/validator/main.rs) runs the pinned
 jsmolka/gba-tests ROMs and the project's bare-metal probes against the
-oracles in [`jsmolka_cases.rs`](../systems/gba/tests/jsmolka_cases.rs) and
-[`probe_cases.rs`](../systems/gba/tests/probe_cases.rs). The jsmolka checkout
+oracles in [`jsmolka_cases.rs`](../systems/gba/tests/validator/jsmolka_cases.rs) and
+[`probe_cases.rs`](../systems/gba/tests/validator/probe_cases.rs). The jsmolka checkout
 contains prebuilt ROMs; probes require an `arm-none-eabi-gcc` toolchain with
 `objcopy` and `nm`, Make and Python 3. Inputs and build products are ignored,
 not checked into Git.
