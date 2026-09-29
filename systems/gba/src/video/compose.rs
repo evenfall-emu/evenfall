@@ -128,7 +128,8 @@ struct Effects {
 
 impl Bus {
     /// Compose a line from the live registers and memory. Returns the BG
-    /// VRAM pages it read, which decide whether VRAM raster history matters.
+    /// VRAM pages it read, which decide whether VRAM raster history matters
+    /// and which the scanline memo records for the line.
     pub(super) fn compose_scanline_fast(&mut self, line: usize) -> u128 {
         let first = line * SCREEN_WIDTH;
         if self.dispcnt & 0x80 != 0 {
@@ -176,7 +177,6 @@ impl Bus {
         };
 
         let (pages, keys, count) = self.render_background_rows(line);
-        self.scanline_memo.reads.vram_pages |= pages;
 
         let mut objects = false;
         if self.dispcnt & 0x1000 != 0 {
