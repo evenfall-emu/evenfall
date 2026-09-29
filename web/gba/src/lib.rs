@@ -503,7 +503,7 @@ pub extern "C" fn zb_load_rewind_bundle() -> i32 {
     call(|state| {
         state.clear_output();
         let upload = std::mem::take(&mut state.input);
-        let result = active(state)?.load_rewind_bundle(&upload).map_err(session_error);
+        let result = active(state)?.load_rewind_bundle_owned(upload).map_err(session_error);
         result?;
         Ok(0)
     })
