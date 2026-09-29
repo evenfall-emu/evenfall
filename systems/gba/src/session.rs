@@ -124,18 +124,25 @@ impl Session {
         Self::create_impl(config)
     }
 
-    /// Uses the complete uploaded buffer as the image. Ownership transfers
-    /// only on success; a failed construction returns the original buffer.
+    /// Uses the prefix of the uploaded buffer as the image, leaving room for
+    /// trailing upload data. Ownership transfers only on success; a failed
+    /// construction returns the original buffer. `config.image` is ignored.
     pub fn create_from_owned_buffer(
         config: Config<'_>,
         buffer: Vec<u8>,
+        image_len: usize,
     ) -> Result<Self, (Error, Vec<u8>)> {
-        let mut session = match Self::create_impl(Config { image: &buffer, ..config }) {
+        if image_len > buffer.len() {
+            return Err((Error::InvalidRomSize, buffer));
+        }
+        let mut session = match Self::create_impl(Config { image: &buffer[..image_len], ..config })
+        {
             Ok(session) => session,
             Err(error) => return Err((error, buffer)),
         };
         if !config.zipped {
             session.rom = buffer;
+            session.rom.truncate(image_len);
         }
         Ok(session)
     }
@@ -557,9 +564,10 @@ mod tests {
     /// and "upload ownership transfers only on successful construction".
     #[test]
     fn owned_buffer_transfers_only_after_successful_construction() {
-        let buffer = LOOP_ROM.to_vec();
+        let buffer = [LOOP_ROM, &[0xa5, 0x36]].concat();
         let address = buffer.as_ptr();
-        let session = Session::create_from_owned_buffer(Config::default(), buffer).unwrap();
+        let session =
+            Session::create_from_owned_buffer(Config::default(), buffer, LOOP_ROM.len()).unwrap();
         assert_eq!(session.rom.as_ptr(), address);
         assert_eq!(session.rom, LOOP_ROM);
 
@@ -568,6 +576,7 @@ mod tests {
         let (error, returned) = Session::create_from_owned_buffer(
             Config { output_rate: 0, ..Config::default() },
             buffer,
+            LOOP_ROM.len(),
         )
         .err()
         .unwrap();
