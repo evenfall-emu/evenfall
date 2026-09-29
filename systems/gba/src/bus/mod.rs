@@ -23,7 +23,7 @@ use kernel::{oam_read, palette_read, vram_read};
 
 pub const SCREEN_WIDTH: usize = 240;
 pub const SCREEN_HEIGHT: usize = 160;
-const BIOS_SIZE: usize = 16 * 1024;
+pub(crate) const BIOS_SIZE: usize = 16 * 1024;
 pub(crate) const EWRAM_SIZE: usize = 256 * 1024;
 pub(crate) const IWRAM_SIZE: usize = 32 * 1024;
 const VRAM_SIZE: usize = 96 * 1024;
@@ -3389,7 +3389,15 @@ impl Bus {
         timing.elapse_before_boundary(start - self.batch_device_cycle);
         let mut at = BeatClock { cycle: start, line: timing.line, dot: timing.cycle_in_line };
         let mut open_bus = self.open_bus_value;
-        for _ in 0..beats {
+        let quiet = if target == 6 && destination_control == 0 {
+            self.dma_vram_run(width, source_control, source, destination, beats, &mut at)
+        } else {
+            None
+        };
+        if let Some((_, value)) = quiet {
+            open_bus = value;
+        }
+        for _ in quiet.map_or(0, |(beats, _)| beats)..beats {
             let value = if *source == 0 {
                 at.elapse(1);
                 open_bus = self.dma_transfer_latch;
@@ -3448,6 +3456,123 @@ impl Bus {
         #[cfg(test)]
         tests::BULK_BEATS.set(tests::BULK_BEATS.get() + u64::from(beats));
         beats
+    }
+
+    /// The first beats of a bulk DMA (see [`Self::dma_bulk`]) to VRAM with an
+    /// incrementing destination, that write only where no visible dot sees
+    /// them and below the mirrored upper 32 KiB, from the latch, a fixed
+    /// source or an incrementing one in a RAM mirror: one comparison and copy
+    /// per memo page, which is marked only if it changed, as the beat loop
+    /// marks it. Returns how many beats ran and the last value read (the
+    /// open-bus latch), or None for none.
+    #[inline(never)]
+    fn dma_vram_run(
+        &mut self,
+        width: AccessWidth,
+        source_control: u8,
+        source: &mut u32,
+        destination: &mut u32,
+        beats: u32,
+        at: &mut BeatClock,
+    ) -> Option<(u32, u32)> {
+        let unit = width.bytes() as u32;
+        let fixed = *source == 0 || source_control == 2;
+        let offset = destination.wrapping_sub(VRAM_BASE) & 0x1_ffff;
+        if (!fixed && source_control != 0) || offset & (unit - 1) != 0 || offset >= 0x1_8000 {
+            return None;
+        }
+        let read_cost = match *source >> 24 {
+            _ if *source == 0 => 1,
+            2 => ewram_cycles(width),
+            _ => 1,
+        };
+        let beat_cost = read_cost + video_cycles(width);
+        // Positions after this one the PPU shows no dot a write could
+        // change: to the end of an HBlank, of VBlank, or of a line whose
+        // raster history is full.
+        let (line, dot) = (Cycle::from(at.line), Cycle::from(at.dot));
+        let quiet = if line >= SCREEN_HEIGHT as Cycle {
+            (227 - line) * 1232 + 1231 - dot
+        } else if dot >= 959 || self.vram_history_full_on(at.line) {
+            1231 - dot
+        } else {
+            0
+        };
+        let mut count = u64::from(beats).min(quiet / beat_cost) as u32;
+        count = count.min((0x1_8000 - offset) / unit);
+        let mask = if *source >> 24 == 2 { EWRAM_SIZE } else { IWRAM_SIZE } as u32 - 1;
+        if !fixed {
+            count = count.min((mask + 1 - (*source & mask)) / unit);
+        }
+        if count == 0 {
+            return None;
+        }
+        let bytes = (count * unit) as usize;
+        let first = offset as usize;
+        let (value, pattern) = if *source == 0 {
+            (self.dma_transfer_latch, Some(self.dma_transfer_latch))
+        } else if fixed {
+            let value = if *source >> 24 == 2 {
+                self.read_ewram(*source, width)
+            } else {
+                self.read_iwram(*source, width)
+            };
+            let pattern =
+                if width == AccessWidth::Half { (value & 0xffff) * 0x0001_0001 } else { value };
+            self.dma_transfer_latch = pattern;
+            (value, Some(pattern))
+        } else {
+            let last = source.wrapping_add((count - 1) * unit);
+            let value = if *source >> 24 == 2 {
+                self.read_ewram(last, width)
+            } else {
+                self.read_iwram(last, width)
+            };
+            self.dma_transfer_latch =
+                if width == AccessWidth::Half { (value & 0xffff) * 0x0001_0001 } else { value };
+            (value, None)
+        };
+        let from = (*source & mask) as usize;
+        let ram: &[u8] = if *source >> 24 == 2 { &self.ewram[..] } else { &self.iwram[..] };
+        let mut page = first;
+        while page < first + bytes {
+            let end = ((page / scanline_memo::PAGE_SIZE + 1) * scanline_memo::PAGE_SIZE)
+                .min(first + bytes);
+            let target = &mut self.vram[page..end];
+            let changed = match pattern {
+                Some(pattern) => {
+                    // The pattern's bytes as they fall from this page offset.
+                    let word = pattern.rotate_right(((page & 3) * 8) as u32).to_le_bytes();
+                    let (chunks, rest) = target.as_chunks::<4>();
+                    let changed =
+                        chunks.iter().any(|chunk| *chunk != word) || rest != &word[..rest.len()];
+                    if changed {
+                        for (i, byte) in target.iter_mut().enumerate() {
+                            *byte = word[i & 3];
+                        }
+                    }
+                    changed
+                }
+                None => {
+                    let data = &ram[from + (page - first)..from + (end - first)];
+                    let changed = target != data;
+                    target.copy_from_slice(data);
+                    changed
+                }
+            };
+            if changed {
+                self.scanline_memo.mark_vram(page);
+            }
+            page = end;
+        }
+        at.elapse_many(Cycle::from(count) * beat_cost);
+        #[cfg(test)]
+        tests::VRAM_RUN_BEATS.set(tests::VRAM_RUN_BEATS.get() + u64::from(count));
+        if !fixed {
+            *source = source.wrapping_add(count * unit);
+        }
+        *destination = destination.wrapping_add(count * unit);
+        Some((count, value))
     }
 
     fn read_dma_source(&mut self, address: u32, width: AccessWidth, kind: AccessKind) -> u32 {
@@ -3996,6 +4121,14 @@ struct BeatClock {
 }
 
 impl BeatClock {
+    /// [`Self::elapse`] by any number of cycles.
+    fn elapse_many(&mut self, cycles: Cycle) {
+        let dot = Cycle::from(self.dot) + cycles;
+        self.cycle += cycles;
+        self.line += (dot / 1232) as u16;
+        self.dot = (dot % 1232) as u16;
+    }
+
     #[inline(always)]
     fn elapse(&mut self, cycles: Cycle) {
         self.cycle += cycles;
@@ -4203,8 +4336,10 @@ mod tests {
         /// Whether DMA may run beats in bulk; the per-beat loop is its
         /// reference.
         pub(super) static BULK_DMA: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
-        /// Beats DMA ran in bulk on this thread.
+        /// Beats DMA ran in bulk on this thread, and of them to VRAM a page
+        /// at a time.
         pub(super) static BULK_BEATS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        pub(super) static VRAM_RUN_BEATS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     }
 
     fn dma_half(bus: &mut Bus, address: u32, value: u16) -> Cycle {
@@ -4942,6 +5077,92 @@ mod tests {
         assert!(skipped > 2_000, "only {skipped} writes found the history full");
     }
 
+    /// One DMA through channel 3 with and without bulk beats, from `lead`
+    /// cycles into the frame, over RAM filled from `fill` and VRAM filled
+    /// by `vram`: the scanline memo's marks when it ends, and after the
+    /// following lines every durable state byte, the raster history and the
+    /// pixels, agree. Returns the VRAM it left.
+    #[allow(clippy::too_many_arguments)]
+    fn check_bulk_dma(
+        context: &str,
+        rom: &[u8],
+        source: u32,
+        destination: u32,
+        count: u32,
+        control: u16,
+        dispcnt: u16,
+        lead: Cycle,
+        fill: u32,
+        vram: impl Fn(usize) -> u8,
+    ) -> Vec<u8> {
+        use evenfall_state::Codec as _;
+        let run = |bulk: bool| {
+            BULK_DMA.set(bulk);
+            let mut bus = Bus::init(rom);
+            for (i, byte) in bus.iwram.iter_mut().enumerate() {
+                *byte = (i as u32 ^ fill) as u8;
+            }
+            for (i, byte) in bus.ewram.iter_mut().enumerate() {
+                *byte = (i as u32).wrapping_mul(fill) as u8;
+            }
+            for (i, byte) in bus.vram.iter_mut().enumerate() {
+                *byte = vram(i);
+            }
+            dma_half(&mut bus, 0x0400_0000, dispcnt);
+            bus.begin_device_batch();
+            bus.elapse(lead);
+            for (offset, value) in [
+                (0xd4, source as u16),
+                (0xd6, (source >> 16) as u16),
+                (0xd8, destination as u16),
+                (0xda, (destination >> 16) as u16),
+                (0xdc, count as u16),
+                (0xde, control | 1 << 15),
+            ] {
+                dma_half(&mut bus, 0x0400_0000 + offset, value);
+            }
+            while bus.dma_channels[3].enabled() && bus.now() < lead + 100_000 {
+                bus.elapse(1);
+            }
+            BULK_DMA.set(true);
+            bus
+        };
+        let (mut bulk, mut reference) = (run(true), run(false));
+        let history = |bus: &Bus| {
+            let count = usize::from(bus.backdrop_segment_count);
+            let segments: Vec<_> =
+                bus.backdrop_segments[..count].iter().map(|s| (s.start_x, s.color)).collect();
+            (bus.backdrop_segment_line, segments)
+        };
+        assert_eq!(bulk.now(), reference.now(), "{context}: end");
+        assert!(bulk.scanline_memo.same_changes(&reference.scanline_memo), "{context}: marks");
+        assert_eq!(history(&bulk), history(&reference), "{context}: history at the end");
+        for bus in [&mut bulk, &mut reference] {
+            bus.elapse(5000);
+            bus.end_device_batch();
+        }
+        let bytes = |bus: &Bus| {
+            let mut bytes = Vec::new();
+            bus.encode(&mut evenfall_state::Sink::new(Some(&mut bytes), None)).unwrap();
+            bytes
+        };
+        assert!(bytes(&bulk) == bytes(&reference), "{context}: state");
+        assert!(bulk.scanline_memo.same_changes(&reference.scanline_memo), "{context}: marks");
+        assert_eq!(history(&bulk), history(&reference), "{context}: history");
+        assert!(bulk.frame_pixels[..] == reference.frame_pixels[..], "{context}: pixels");
+        bulk.vram.to_vec()
+    }
+
+    fn xorshift(seed: u32) -> impl FnMut() -> u32 {
+        let mut seed = seed;
+        move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        }
+    }
+
     /// A DMA whose beats run in bulk leaves the machine as the per-beat loop
     /// does: every durable state byte, the scanline memo's marks and the
     /// raster history, for both widths, every address control, sources in
@@ -4950,14 +5171,7 @@ mod tests {
     /// and VBlank.
     #[test]
     fn bulk_dma_beats_match_the_per_beat_loop() {
-        use evenfall_state::Codec as _;
-        let mut seed = 0x0d3a_b01c_u32;
-        let mut next = move || {
-            seed ^= seed << 13;
-            seed ^= seed >> 17;
-            seed ^= seed << 5;
-            seed
-        };
+        let mut next = xorshift(0x0d3a_b01c);
         let rom: Vec<u8> = (0..0x1000).map(|i| (i * 7) as u8).collect();
         BULK_BEATS.set(0);
         for trial in 0..400 {
@@ -4982,58 +5196,98 @@ mod tests {
             let dispcnt = [0x0100, 0x0403, 0x0404, 0x0101][(next() % 4) as usize];
             let lead = 1 + u64::from(next() % 280_000);
             let fill = next();
-            let run = |bulk: bool| {
-                BULK_DMA.set(bulk);
-                let mut bus = Bus::init(&rom);
-                for (i, byte) in bus.iwram.iter_mut().enumerate() {
-                    *byte = (i as u32 ^ fill) as u8;
-                }
-                for (i, byte) in bus.ewram.iter_mut().enumerate() {
-                    *byte = (i as u32).wrapping_mul(fill) as u8;
-                }
-                for (i, byte) in bus.vram.iter_mut().enumerate() {
-                    *byte = (i as u32 >> 3 ^ fill >> 8) as u8;
-                }
-                dma_half(&mut bus, 0x0400_0000, dispcnt);
-                bus.begin_device_batch();
-                bus.elapse(lead);
-                for (offset, value) in [
-                    (0xd4, source as u16),
-                    (0xd6, (source >> 16) as u16),
-                    (0xd8, destination as u16),
-                    (0xda, (destination >> 16) as u16),
-                    (0xdc, count as u16),
-                    (0xde, control | 1 << 15),
-                ] {
-                    dma_half(&mut bus, 0x0400_0000 + offset, value);
-                }
-                bus.elapse(5000);
-                bus.end_device_batch();
-                BULK_DMA.set(true);
-                bus
-            };
-            let (bulk, reference) = (run(true), run(false));
             let context = format!(
                 "trial {trial}: {source:08x} -> {destination:08x} x{count} control {control:04x} \
                  mode {dispcnt} at {lead}"
             );
-            let bytes = |bus: &Bus| {
-                let mut bytes = Vec::new();
-                bus.encode(&mut evenfall_state::Sink::new(Some(&mut bytes), None)).unwrap();
-                bytes
-            };
-            assert!(bytes(&bulk) == bytes(&reference), "{context}: state");
-            assert!(bulk.scanline_memo.same_changes(&reference.scanline_memo), "{context}: marks");
-            let history = |bus: &Bus| {
-                let count = usize::from(bus.backdrop_segment_count);
-                let segments: Vec<_> =
-                    bus.backdrop_segments[..count].iter().map(|s| (s.start_x, s.color)).collect();
-                (bus.backdrop_segment_line, segments)
-            };
-            assert_eq!(history(&bulk), history(&reference), "{context}: history");
-            assert!(bulk.frame_pixels[..] == reference.frame_pixels[..], "{context}: pixels");
+            let vram = |i: usize| (i as u32 >> 3 ^ fill >> 8) as u8;
+            let _ = check_bulk_dma(
+                &context,
+                &rom,
+                source,
+                destination,
+                count,
+                control,
+                dispcnt,
+                lead,
+                fill,
+                vram,
+            );
         }
         let beats = BULK_BEATS.get();
         assert!(beats > 20_000, "only {beats} beats ran in bulk");
+    }
+
+    /// Bulk DMA to VRAM that starts in HBlank or VBlank, or on a line whose
+    /// raster history is full, runs a page at a time as the per-beat loop
+    /// does, including its memo marks for pages it leaves unchanged: fills
+    /// from the latch and fixed sources, copies from IWRAM and EWRAM, both
+    /// widths, halfword destinations off word alignment, into the upper
+    /// mirrored 32 KiB and across page ends.
+    #[test]
+    fn vram_dma_runs_match_the_per_beat_loop() {
+        let mut next = xorshift(0x51de_a11e);
+        let rom = vec![0u8; 0x1000];
+        VRAM_RUN_BEATS.set(0);
+        for trial in 0..300 {
+            let word = next() & 1 != 0;
+            let source = match next() % 4 {
+                0 => 0,
+                1 => 0x0300_0000 + (next() & 0x7ffc),
+                _ => 0x0200_0000 + (next() & 0x3_fffc),
+            };
+            let destination =
+                0x0600_0000 + (next() & if next().is_multiple_of(4) { 0x1_fffe } else { 0x1_7ffe });
+            let destination = if word { destination & !3 } else { destination };
+            // Short ones end on the line they start on.
+            let count = 1 + next() % if next().is_multiple_of(2) { 40 } else { 2000 };
+            let source_control = [0, 0, 2, 1][(next() % 4) as usize];
+            let control = source_control << 7 | if word { 1 << 10 } else { 0 };
+            let dispcnt = [0x0100, 0x0403, 0x0404][(next() % 3) as usize];
+            // VBlank, HBlank of a line, HDraw or its end.
+            let line = u64::from(next() % 228);
+            let dot = match next() % 3 {
+                0 => 960 + u64::from(next() % 272),
+                1 => u64::from(next() % 960),
+                _ => 880 + u64::from(next() % 80),
+            };
+            let lead = line * 1232 + dot + 280_896;
+            let fill = next();
+            let context = format!(
+                "trial {trial}: {source:08x} -> {destination:08x} x{count} control {control:04x} \
+                 mode {dispcnt} at line {line} dot {dot}"
+            );
+            let vram = |i: usize| (i as u32 >> 3 ^ fill >> 8) as u8;
+            let after = check_bulk_dma(
+                &context,
+                &rom,
+                source,
+                destination,
+                count,
+                control,
+                dispcnt,
+                lead,
+                fill,
+                vram,
+            );
+            // Again over VRAM that already holds what the DMA writes in two
+            // pages of three, which it leaves unmarked.
+            let vram = |i: usize| if (i / 1024).is_multiple_of(3) { vram(i) } else { after[i] };
+            let context = format!("{context} again");
+            let _ = check_bulk_dma(
+                &context,
+                &rom,
+                source,
+                destination,
+                count,
+                control,
+                dispcnt,
+                lead,
+                fill,
+                vram,
+            );
+        }
+        let beats = VRAM_RUN_BEATS.get();
+        assert!(beats > 50_000, "only {beats} beats ran to VRAM a page at a time");
     }
 }

@@ -11,7 +11,7 @@
 //! schedule (see [`PrefetchClock`]), expressed in the run's budget.
 
 use super::mem::{Mem, Running};
-use super::{CodeCache, Op, PAGE_SHIFT, ROM_PAGE_SLOTS, fresh_ops, split_memory};
+use super::{CodeCache, Load, Mmio, Op, PAGE_SHIFT, ROM_PAGE_SLOTS, fresh_ops, split_memory};
 use crate::bus::{
     AccessKind, AccessWidth, Bus, EWRAM_SIZE, IWRAM_SIZE, PrefetchClock, RomData, read_ram,
 };
@@ -321,17 +321,20 @@ struct Ctx<'a> {
     place: Place,
     /// The address of the page's first slot.
     base: u32,
-    /// The budget left after the last load, store, internal cycle and
-    /// buffer discard.
+    /// The budget left after the last load, store, internal cycle, buffer
+    /// discard and MMIO access.
     load_mark: i64,
     store_mark: i64,
     internal_mark: i64,
     discard_mark: i64,
+    mmio_mark: i64,
     /// The last load's bus value, the open-bus latch if it ends the run.
     data: u32,
     /// Whether every slot of the page and the halfwords after them are
     /// plain code, so that a branch within it needs no target check.
     clean: bool,
+    /// The MMIO transfer the run stopped at, for the driver.
+    mmio: Mmio,
 }
 
 impl Ctx<'_> {
@@ -481,6 +484,8 @@ enum Stop {
     Refused,
     /// After a branch to another page.
     Far(u32),
+    /// Before a transfer to MMIO, which the driver completes ([`Mmio`]).
+    Mmio,
 }
 
 /// Runs Thumb code at `core.next_instruction_address`; see
@@ -515,19 +520,124 @@ fn cached_op(code: &CodeCache, pc: u32) -> Option<Op> {
 
 /// Whether a run would refuse `op` as its first instruction with these
 /// registers, in the frequent cases that cost less to see than a run's
-/// setup: an instruction the engine never runs, BX to ARM, and a transfer
-/// to MMIO.
+/// setup: an instruction the engine never runs and BX to ARM.
 #[inline(always)]
 fn refused_at_once(op: &Op, registers: &[u32; 16]) -> bool {
-    let r = |index: u32| registers[index as usize & 15];
-    let address = match op.kind {
-        k::EXIT => return true,
-        k::BX => return r(u32::from(op.rn)) & 1 == 0,
-        k::REG..k::IMM => r(u32::from(op.rn)).wrapping_add(r(op.x)),
-        k::IMM..k::BCOND => r(u32::from(op.rn)).wrapping_add(op.x),
-        _ => return false,
-    };
-    address >> 24 == 4
+    match op.kind {
+        k::EXIT => true,
+        k::BX => registers[usize::from(op.rn & 15)] & 1 == 0,
+        _ => false,
+    }
+}
+
+/// What a run keeps of its [`Ctx`] while the driver has the bus back.
+#[derive(Clone, Copy)]
+struct Saved {
+    base: u32,
+    load_mark: i64,
+    store_mark: i64,
+    internal_mark: i64,
+    discard_mark: i64,
+    mmio_mark: i64,
+    data: u32,
+    clean: bool,
+    mmio: Mmio,
+}
+
+impl Saved {
+    fn new(base: u32) -> Self {
+        Self {
+            base,
+            load_mark: -1,
+            store_mark: -1,
+            internal_mark: -1,
+            discard_mark: -1,
+            mmio_mark: -1,
+            data: 0,
+            clean: false,
+            mmio: Mmio::default(),
+        }
+    }
+
+    fn ctx(self, mem: Mem<'_>, place: Place) -> Ctx<'_> {
+        Ctx {
+            mem,
+            place,
+            base: self.base,
+            load_mark: self.load_mark,
+            store_mark: self.store_mark,
+            internal_mark: self.internal_mark,
+            discard_mark: self.discard_mark,
+            mmio_mark: self.mmio_mark,
+            data: self.data,
+            clean: self.clean,
+            mmio: self.mmio,
+        }
+    }
+}
+
+impl Ctx<'_> {
+    fn save(&self) -> Saved {
+        Saved {
+            base: self.base,
+            load_mark: self.load_mark,
+            store_mark: self.store_mark,
+            internal_mark: self.internal_mark,
+            discard_mark: self.discard_mark,
+            mmio_mark: self.mmio_mark,
+            data: self.data,
+            clean: self.clean,
+            mmio: self.mmio,
+        }
+    }
+}
+
+/// Where a run goes after its driver had the bus: on from a state, or
+/// out after it.
+#[derive(Clone, Copy)]
+enum Resume {
+    Start,
+    On(Hot),
+    Out(Hot),
+}
+
+/// Completes the transfer to MMIO that stopped a run at `h` (see [`Mmio`]):
+/// charges it as the interpreter does, makes the access on the bus and
+/// writes the registers. Returns how the run goes on; the interpreter
+/// takes the transfer if the bus does not let the run make it or its
+/// cycles pass the limit.
+fn serve<T: Timing>(
+    core: &mut Core,
+    bus: &mut Bus,
+    limit: u64,
+    t: T,
+    h: Hot,
+    saved: &mut Saved,
+) -> Resume {
+    let access = saved.mmio;
+    let store = access.store.is_some();
+    let before = h.budget;
+    let fetch = t.fetch(&h);
+    let mut next = h;
+    if !access.allowed(bus) || !next.charge(fetch + if store { 1 } else { 2 }) {
+        return Resume::Out(h);
+    }
+    let value = access.perform(bus, &mut core.registers, limit - (before - fetch) as u64);
+    next.idx += 1;
+    // A store leaves the next fetch sequential; a load's internal cycle
+    // breaks the burst.
+    t.after(&mut next, before, !store);
+    saved.mmio_mark = next.budget;
+    if !store {
+        saved.data = value;
+        saved.load_mark = next.budget;
+        saved.internal_mark = next.budget;
+    }
+    if bus.engine_may_go_on(limit, core.cpsr & (1 << 7) != 0) {
+        Resume::On(next)
+    } else {
+        Resume::Out(next)
+    }
 }
 
 fn run_ram<const EW: bool>(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
@@ -538,44 +648,45 @@ fn run_ram<const EW: bool>(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
     if pc & 1 != 0 || pc & !mask == last_mirror || !bus.game_pak_code_idle() {
         return false;
     }
+    let place = if EW { Place::Ewram } else { Place::Iwram };
     let start = bus.now();
     let budget = (limit - start) as i64;
-    let memory = bus.engine_memory();
-    let mut ops = memory.code.take(region, true, || fresh_ops(size / 2, &[]));
-    let (mem, _) = split_memory(memory, budget);
-    let mut c = Ctx {
-        mem,
-        place: if EW { Place::Ewram } else { Place::Iwram },
-        base: pc & !mask,
-        load_mark: -1,
-        store_mark: -1,
-        internal_mark: -1,
-        discard_mark: -1,
-        data: 0,
-        clean: true,
-    };
-    let mut exit = None;
-    if let Some(mut hot) = enter(core, &c, pc, budget) {
-        loop {
-            let (next, stop) = if EW {
-                let ops = (&mut *ops).try_into().expect("EWRAM Thumb ops");
-                run_loop::<{ EWRAM_SIZE / 2 }, _>(ops, &mut c, core, Ram::<EW>, hot)
-            } else {
-                let ops = (&mut *ops).try_into().expect("IWRAM Thumb ops");
-                run_loop::<{ IWRAM_SIZE / 2 }, _>(ops, &mut c, core, Ram::<EW>, hot)
-            };
-            hot = next;
-            match stop {
-                Stop::Refused => break,
-                // A branch into another mirror: same ops, new base.
-                Stop::Far(target) => {
-                    c.base = target & !mask;
-                    hot.idx = (target & mask) >> 1;
-                }
+    let mut ops = bus.code.take(region, true, || fresh_ops(size / 2, &[]));
+    let mut saved = Saved::new(pc & !mask);
+    let mut resume = Resume::Start;
+    let exit = loop {
+        let left = limit as i64 - bus.now() as i64;
+        let (mem, _) = split_memory(bus.engine_memory(false), left);
+        let mut c = saved.ctx(mem, place);
+        let hot = match resume {
+            Resume::Start => match enter(core, &c, pc, budget) {
+                Some(hot) => hot,
+                None => break None,
+            },
+            Resume::On(hot) => hot,
+            Resume::Out(hot) => break leave(core, &c, hot, start, budget),
+        };
+        let (hot, stop) = if EW {
+            let ops = (&mut *ops).try_into().expect("EWRAM Thumb ops");
+            run_loop::<{ EWRAM_SIZE / 2 }, _>(ops, &mut c, core, Ram::<EW>, hot)
+        } else {
+            let ops = (&mut *ops).try_into().expect("IWRAM Thumb ops");
+            run_loop::<{ IWRAM_SIZE / 2 }, _>(ops, &mut c, core, Ram::<EW>, hot)
+        };
+        match stop {
+            Stop::Refused => break leave(core, &c, hot, start, budget),
+            // A branch into another mirror: same ops, new base.
+            Stop::Far(target) => {
+                c.base = target & !mask;
+                resume = Resume::On(Hot { idx: (target & mask) >> 1, ..hot });
+                saved = c.save();
+            }
+            Stop::Mmio => {
+                saved = c.save();
+                resume = serve(core, bus, limit, Ram::<EW>, hot, &mut saved);
             }
         }
-        exit = leave(core, &c, hot, start, budget);
-    }
+    };
     bus.code.put(region, true, ops);
     let Some(exit) = exit else {
         return false;
@@ -603,44 +714,30 @@ fn run_rom(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
     } else {
         None
     };
-    let memory = bus.engine_memory();
-    let (n, s) = memory.rom.window_cycles(pc);
-    let (mem, pages) = split_memory(memory, budget);
-    if pages.is_empty() {
-        pages.resize_with(mem.rom.len().div_ceil(PAGE_BYTES as usize).max(1), || None);
-    }
-    let Some(slot) = pages.get_mut(page_of(pc)) else {
-        return false;
-    };
-    let ops = slot.take().unwrap_or_else(rom_page);
-    let mut c = Ctx {
-        mem,
-        place: Place::Rom,
-        base: pc & !(PAGE_BYTES - 1),
-        load_mark: -1,
-        store_mark: -1,
-        internal_mark: -1,
-        discard_mark: -1,
-        data: 0,
-        clean: false,
-    };
-    c.clean = clean_page(&c);
-    let (exit, ready) = match (enter(core, &c, pc, budget), prefetch) {
-        (None, _) => {
-            pages[page_of(pc)] = Some(ops);
+    let (n, s) = {
+        let memory = bus.engine_memory(false);
+        let (n, s) = memory.rom.window_cycles(pc);
+        let (mem, pages) = split_memory(memory, budget);
+        if pages.is_empty() {
+            pages.resize_with(mem.rom.len().div_ceil(PAGE_BYTES as usize).max(1), || None);
+        }
+        if page_of(pc) >= pages.len() {
             return false;
         }
-        (Some(mut hot), None) => {
-            hot.fetch = (if first_fetch_n { n } else { s }) as i64;
+        (n, s)
+    };
+    let (exit, ready) = match prefetch {
+        None => {
             let timing = Rom { n: n as i64, s: s as i64 };
-            rom_runs(core, &mut c, pages, ops, hot, timing, start, budget)
+            let fetch = (if first_fetch_n { n } else { s }) as i64;
+            rom_runs(core, bus, limit, start, timing, |hot| hot.fetch = fetch)
         }
-        (Some(mut hot), Some(clock)) => {
-            hot.ready = limit as i64 - clock.head_ready as i64;
+        Some(clock) => {
             // A buffer restart after a data load is a nonsequential access.
             let timing =
                 Prefetch { duty: clock.duty as i64, miss: n as i64, fill: clock.fill as i64 };
-            rom_runs(core, &mut c, pages, ops, hot, timing, start, budget)
+            let ready = limit as i64 - clock.head_ready as i64;
+            rom_runs(core, bus, limit, start, timing, |hot| hot.ready = ready)
         }
     };
     let Some(exit) = exit else {
@@ -671,36 +768,67 @@ fn run_rom(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
     true
 }
 
-/// Runs ROM pages from `hot` until a run stops, switching pages on far
-/// branches; returns what the run leaves and the final buffer readiness.
-#[allow(clippy::too_many_arguments)]
+/// Runs ROM pages from `core`'s next instruction until a run stops,
+/// switching pages on far branches and serving MMIO transfers; returns what
+/// the run leaves and the final buffer readiness. `prime` sets the
+/// timing's state in the first instruction's.
 fn rom_runs<T: Timing>(
     core: &mut Core,
-    c: &mut Ctx<'_>,
-    pages: &mut [Option<Box<[Op]>>],
-    mut ops: Box<[Op]>,
-    mut hot: Hot,
-    timing: T,
+    bus: &mut Bus,
+    limit: u64,
     start: u64,
-    budget: i64,
+    timing: T,
+    prime: impl FnOnce(&mut Hot),
 ) -> (Option<Exit>, i64) {
-    let mut page = page_of(c.base);
-    loop {
-        let slots = (&mut *ops).try_into().expect("ROM Thumb page");
-        let (next, stop) = run_loop::<ROM_PAGE_SLOTS, _>(slots, c, core, timing, hot);
-        hot = next;
-        let Stop::Far(target) = stop else {
-            break;
+    let pc = core.next_instruction_address;
+    let budget = (limit - start) as i64;
+    let mut page = page_of(pc);
+    let mut ops = bus.code.rom_thumb[page].take().unwrap_or_else(rom_page);
+    let mut saved = Saved::new(pc & !(PAGE_BYTES - 1));
+    let mut resume = Resume::Start;
+    let mut prime = Some(prime);
+    let mut ready = 0;
+    let exit = loop {
+        let left = limit as i64 - bus.now() as i64;
+        let (mem, pages) = split_memory(bus.engine_memory(false), left);
+        let mut c = saved.ctx(mem, Place::Rom);
+        let hot = match resume {
+            Resume::Start => {
+                c.clean = clean_page(&c);
+                let Some(mut hot) = enter(core, &c, pc, budget) else {
+                    break None;
+                };
+                prime.take().expect("primed once")(&mut hot);
+                hot
+            }
+            Resume::On(hot) => hot,
+            Resume::Out(hot) => {
+                ready = hot.ready;
+                break leave(core, &c, hot, start, budget);
+            }
         };
-        let next_page = pages[page_of(target)].take().unwrap_or_else(rom_page);
-        pages[page] = Some(std::mem::replace(&mut ops, next_page));
-        page = page_of(target);
-        c.base = target & !(PAGE_BYTES - 1);
-        c.clean = clean_page(c);
-        hot.idx = (target & (PAGE_BYTES - 1)) >> 1;
-    }
-    pages[page] = Some(ops);
-    (leave(core, c, hot, start, budget), hot.ready)
+        let slots = (&mut *ops).try_into().expect("ROM Thumb page");
+        let (hot, stop) = run_loop::<ROM_PAGE_SLOTS, _>(slots, &mut c, core, timing, hot);
+        ready = hot.ready;
+        match stop {
+            Stop::Refused => break leave(core, &c, hot, start, budget),
+            Stop::Far(target) => {
+                let next_page = pages[page_of(target)].take().unwrap_or_else(rom_page);
+                pages[page] = Some(std::mem::replace(&mut ops, next_page));
+                page = page_of(target);
+                c.base = target & !(PAGE_BYTES - 1);
+                c.clean = clean_page(&c);
+                resume = Resume::On(Hot { idx: (target & (PAGE_BYTES - 1)) >> 1, ..hot });
+                saved = c.save();
+            }
+            Stop::Mmio => {
+                saved = c.save();
+                resume = serve(core, bus, limit, timing, hot, &mut saved);
+            }
+        }
+    };
+    bus.code.rom_thumb[page] = Some(ops);
+    (exit, ready)
 }
 
 /// Bytes of Game Pak ROM per page of Thumb ops.
@@ -750,6 +878,8 @@ fn leave(core: &mut Core, c: &Ctx<'_>, hot: Hot, start: u64, budget: i64) -> Opt
     let pc = c.pc(hot.idx);
     let pipeline = [c.half(pc), c.half(pc.wrapping_add(2))];
     let loaded = c.load_mark == hot.budget;
+    // An MMIO access leaves the next fetch sequential.
+    let mmio = c.mmio_mark == hot.budget;
     core.cpsr = hot.cpsr(core.cpsr);
     core.next_instruction_address = pc;
     core.registers[15] = pc.wrapping_add(4);
@@ -758,7 +888,7 @@ fn leave(core: &mut Core, c: &Ctx<'_>, hot: Hot, start: u64, budget: i64) -> Opt
     Some(Exit {
         cycle: start + spent as u64,
         open_bus: if loaded { c.data } else { pipeline[1] },
-        data_last: loaded || c.store_mark == hot.budget,
+        data_last: (loaded && !mmio) || c.store_mark == hot.budget,
         load_last: loaded,
         internal_last: c.internal_mark == hot.budget,
         discarded: c.discard_mark == hot.budget,
@@ -789,6 +919,7 @@ macro_rules! go {
             Flow::Next => {}
             Flow::Refused => return ($h, Stop::Refused),
             Flow::Far(target) => return ($h, Stop::Far(target)),
+            Flow::Mmio => return ($h, Stop::Mmio),
         }
     };
 }
@@ -798,6 +929,8 @@ enum Flow {
     Next,
     Refused,
     Far(u32),
+    /// A transfer to MMIO, for the driver ([`Stop::Mmio`]).
+    Mmio,
 }
 
 impl From<bool> for Flow {
@@ -1313,7 +1446,8 @@ fn transfer<const N: usize, T: Timing, const MODE: u8>(
         let before = h.budget;
         let run = running(c, ops, h.idx);
         let Some(cost) = c.mem.store_cost(run, bus_address, width, t.fetch(h), before) else {
-            return Flow::Refused;
+            let store = Some((r[usize::from(op.rd)], width));
+            return to_bus(c, Mmio { address, store, ..Mmio::default() });
         };
         if !h.charge(cost) {
             return Flow::Refused;
@@ -1325,7 +1459,14 @@ fn transfer<const N: usize, T: Timing, const MODE: u8>(
         return Flow::Next;
     }
     let Some((value, cycles)) = c.mem.load(bus_address, width) else {
-        return Flow::Refused;
+        let load = match MODE {
+            LDR => Load::Word,
+            LDRH => Load::Half,
+            LDRB => Load::Byte,
+            LDRSB => Load::SignedByte,
+            _ => Load::SignedHalf,
+        };
+        return to_bus(c, Mmio { address, load: Some((op.rd, load)), ..Mmio::default() });
     };
     let before = h.budget;
     let rom = bus_address >> 24 >= 8;
@@ -1357,6 +1498,18 @@ fn transfer<const N: usize, T: Timing, const MODE: u8>(
     c.load_mark = h.budget;
     c.internal_mark = h.budget;
     Flow::Next
+}
+
+/// A transfer the run cannot make: to MMIO, for the driver to complete,
+/// otherwise for the interpreter.
+#[cold]
+#[inline(never)]
+fn to_bus(c: &mut Ctx<'_>, access: Mmio) -> Flow {
+    if access.address >> 24 != 4 {
+        return Flow::Refused;
+    }
+    c.mmio = access;
+    Flow::Mmio
 }
 
 /// The data cycles per word of a RAM block from `first` over `count` words.

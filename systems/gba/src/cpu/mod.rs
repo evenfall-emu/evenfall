@@ -782,6 +782,17 @@ impl Cpu {
         matches!(self.hle_service, Some(HleService::Bulk(_)))
     }
 
+    /// Whether code below 0x4000 may run as ordinary instructions: with an
+    /// external BIOS and no HLE continuation, none of the HLE stubs that
+    /// `step_impl` intercepts there can be reached.
+    pub(crate) fn low_code_is_ordinary(&self) -> bool {
+        !self.hle_bios
+            && self.hle_irq_depth == 0
+            && self.hle_service.is_none()
+            && self.hle_sound_channel_clear.is_none()
+            && self.hle_sound_driver_main.is_none()
+    }
+
     pub fn step(&mut self, bus: &mut Bus) -> StepOutcome {
         self.step_impl(bus, true).expect("the reporting step always yields an outcome")
     }
@@ -981,7 +992,7 @@ impl Cpu {
         let mut arm_slice = false;
         while bus.now() < yield_at {
             if bus.power_state() != PowerState::Running
-                || self.core.next_instruction_address < 0x4000
+                || (self.core.next_instruction_address < 0x4000 && !self.low_code_is_ordinary())
             {
                 return ChunkOutcome::Generic;
             }
@@ -1000,6 +1011,33 @@ impl Cpu {
             }
             if self.run_engine(bus, yield_at) {
                 stream.armed = false;
+                if bus.irq_line && self.cpsr & (1 << 7) == 0 {
+                    // The run's last instruction, an MMIO store, raised an
+                    // IRQ, which the interpreter takes right after it.
+                    bus.resume_power();
+                    if let Err(reason) = self.enter_irq(bus) {
+                        let address = self.core.next_instruction_address.wrapping_sub(width);
+                        let instruction = (0..width).fold(0, |value, offset| {
+                            value
+                                | u32::from(bus.inspect_byte(address.wrapping_add(offset)))
+                                    << (offset * 8)
+                        });
+                        *execution_fault = Some(reason);
+                        *fault_out = Some(FaultStep {
+                            instruction_address: address,
+                            instruction,
+                            instruction_set: set,
+                            reason,
+                        });
+                        return ChunkOutcome::Faulted;
+                    }
+                    self.refill_pipeline_in_region(bus, &mut region);
+                    return if bus.now() >= yield_at {
+                        ChunkOutcome::Deadline
+                    } else {
+                        ChunkOutcome::Generic
+                    };
+                }
                 if bus.now() >= yield_at {
                     return ChunkOutcome::Deadline;
                 }

@@ -5,8 +5,8 @@
 //! branch within the region adds two refill fetches.
 
 use super::mem::{Mem, Running};
-use super::{Op, PAGE_SHIFT, fresh_ops, split_memory};
-use crate::bus::{AccessWidth, Bus, EWRAM_SIZE, IWRAM_SIZE, read_ram};
+use super::{CodeCache, Load, Mmio, Op, PAGE_SHIFT, fresh_ops, split_memory};
+use crate::bus::{AccessWidth, BIOS_SIZE, Bus, EWRAM_SIZE, IWRAM_SIZE, read_ram};
 use evenfall_cpu_arm::{Core, InstructionSet, Pipeline, condition_passes};
 
 /// Op kinds. Data processing kinds are a form's base plus the opcode;
@@ -65,6 +65,13 @@ mod k {
     /// post-indexed, in LDR, LDRB, STR, STRB order; never with rd = rn.
     pub const LDR_W: u8 = 208;
     pub const LDR_P: u8 = 212;
+    /// Branches to a computed address in ARM code: BX (`rn` = rm), data
+    /// processing that writes r15 without S, LDR of r15 and LDM of r15
+    /// without S; `x` is the instruction.
+    pub const BX: u8 = 216;
+    pub const DP_JUMP: u8 = 217;
+    pub const LDR_JUMP: u8 = 218;
+    pub const LDM_JUMP: u8 = 219;
     /// A condition, then `inner`, plus the condition.
     pub const COND: u8 = 240;
 }
@@ -106,14 +113,48 @@ pub(super) fn decode(word: u32) -> Op {
     }
 }
 
+/// BIOS instruction slots.
+const BIOS_SLOTS: u32 = (BIOS_SIZE / 4) as u32;
+
+/// A load from `image`, the BIOS; see [`Ctx::load_any`].
+#[inline(never)]
+fn load_bios(image: &[u8], address: u32, width: AccessWidth) -> Option<(u32, i64)> {
+    let index = address as usize;
+    let bytes = image.get(index..index + width.bytes())?;
+    let value = bytes.iter().rev().fold(0, |value, &byte| value << 8 | u32::from(byte));
+    Some((value, 1))
+}
+
+/// Decodes the BIOS instruction in slot `idx`: as from RAM, except that the
+/// interpreter runs the last two slots, whose prefetch leaves the BIOS, and
+/// branches whose refill would.
+fn decode_bios(word: u32, idx: u32) -> Op {
+    if idx >= BIOS_SLOTS - 2 {
+        return EXIT_OP;
+    }
+    let op = decode(word);
+    let branch = match op.kind {
+        k::B | k::BL | k::BCOND..=206 => true,
+        k::COND..=254 => matches!(op.inner, k::B | k::BL),
+        _ => false,
+    };
+    if branch && idx.wrapping_add(op.x) >= BIOS_SLOTS - 1 {
+        return EXIT_OP;
+    }
+    op
+}
+
 fn decode_unconditional(word: u32) -> Op {
     let rn = (word >> 16) & 15;
     let rd = (word >> 12) & 15;
     let raw = |kind| Op { kind, inner: 0, rd: rd as u8, rn: rn as u8, x: word };
     match (word >> 25) & 7 {
         0 => {
-            if word & 0x0fff_fff0 == 0x012f_ff10 || word & 0x0fb0_fff0 == 0x0120_f000 {
-                return EXIT_OP; // BX, MSR
+            if word & 0x0fff_fff0 == 0x012f_ff10 {
+                return Op { rn: (word & 15) as u8, ..raw(k::BX) };
+            }
+            if word & 0x0fb0_fff0 == 0x0120_f000 {
+                return EXIT_OP; // MSR
             }
             if word & 0x0fbf_0fff == 0x010f_0000 {
                 return if rd == 15 || word & (1 << 22) != 0 { EXIT_OP } else { raw(k::MRS) };
@@ -173,8 +214,11 @@ fn decode_unconditional(word: u32) -> Op {
             let byte = word & (1 << 22) != 0;
             let writeback = word & (1 << 21) != 0;
             let load = word & (1 << 20) != 0;
-            if (rn == 15 && (!pre || writeback)) || (rd == 15 && (byte || load)) {
+            if (rn == 15 && (!pre || writeback)) || (rd == 15 && byte) {
                 return EXIT_OP;
+            }
+            if rd == 15 && load {
+                return raw(k::LDR_JUMP);
             }
             let mode = u8::from(!load) << 1 | u8::from(byte);
             let down = word & (1 << 23) == 0;
@@ -197,8 +241,11 @@ fn decode_unconditional(word: u32) -> Op {
         4 => {
             let list = word & 0xffff;
             let load = word & (1 << 20) != 0;
-            if list == 0 || rn == 15 || (load && list & 0x8000 != 0) {
+            let user_bank = word & (1 << 22) != 0;
+            if list == 0 || rn == 15 || (load && list & 0x8000 != 0 && user_bank) {
                 EXIT_OP
+            } else if load && list & 0x8000 != 0 {
+                raw(k::LDM_JUMP)
             } else {
                 raw(k::BLOCK)
             }
@@ -219,8 +266,16 @@ fn decode_data_processing(word: u32) -> Op {
     let flags = word & (1 << 20) != 0;
     let rn = (word >> 16) & 15;
     let rd = (word >> 12) & 15;
-    if rd == 15 || (!flags && (8..=11).contains(&opcode)) {
+    if !flags && (8..=11).contains(&opcode) {
         return EXIT_OP;
+    }
+    if rd == 15 {
+        // With S, an exception return: the interpreter's.
+        return if flags {
+            EXIT_OP
+        } else {
+            Op { kind: k::DP_JUMP, inner: 0, rd: 15, rn: 0, x: word }
+        };
     }
     let pc_operand = Op { kind: k::DP_PC, inner: 0, rd: rd as u8, rn: rn as u8, x: word };
     let reads_pc = rn == 15 && uses_rn(opcode);
@@ -300,11 +355,23 @@ struct Ctx<'a, const EW: bool> {
     core: &'a mut Core,
     /// The address of `ops[0]` in the current mirror.
     base: u32,
-    /// The budget left after the last load and after the last store.
+    /// The budget left after the last load, store and MMIO access.
     load_mark: i64,
     store_mark: i64,
+    mmio_mark: i64,
     /// The last load's bus value, the open-bus latch if it ends the run.
     data: u32,
+    /// The MMIO transfer the run stopped at, for the driver ([`Mmio`]).
+    mmio: Option<Mmio>,
+    /// Whether the run executes BIOS code, in the IWRAM loop (`EW` false),
+    /// and whether it may branch there from IWRAM.
+    bios: bool,
+    bios_ok: bool,
+    /// The BIOS image in a run of BIOS code, otherwise empty.
+    image: &'a [u8],
+    /// A branch between the BIOS and IWRAM the run stopped after, with the
+    /// state after it, for the driver to switch op arrays.
+    switch: Option<(u32, Hot)>,
 }
 
 /// The state every instruction changes, kept small so that it stays in host
@@ -336,9 +403,29 @@ impl<const EW: bool> Ctx<'_, EW> {
         let index = (address & Self::MASK) as usize;
         if EW {
             read_ram(self.mem.ewram, index, AccessWidth::Word)
+        } else if self.bios {
+            let index = address as usize & (BIOS_SIZE - 4);
+            u32::from_le_bytes(self.image[index..index + 4].try_into().expect("a BIOS word"))
         } else {
             read_ram(self.mem.iwram, index, AccessWidth::Word)
         }
+    }
+
+    /// [`Mem::load`], and in a run of BIOS code BIOS loads, as
+    /// [`Bus::read`] makes them with an image: the image's bytes, with no
+    /// read protection, in a cycle. For out-of-line transfers.
+    #[inline(always)]
+    fn load_any(&self, address: u32, width: AccessWidth) -> Option<(u32, i64)> {
+        if address >> 24 == 0 {
+            return load_bios(self.image, address, width);
+        }
+        self.mem.load(address, width)
+    }
+
+    /// The region the run executes from.
+    #[inline(always)]
+    fn region(&self) -> u32 {
+        if !EW && self.bios { 0 } else { Self::REGION }
     }
 
     /// The region, for the block loop.
@@ -348,9 +435,17 @@ impl<const EW: bool> Ctx<'_, EW> {
             slots: Self::SLOTS as u32,
             fetch: Self::FETCH,
             #[cfg(debug_assertions)]
-            memory: if EW { &self.mem.ewram[..] } else { &self.mem.iwram[..] },
+            memory: if EW {
+                &self.mem.ewram[..]
+            } else if self.bios {
+                self.image
+            } else {
+                &self.mem.iwram[..]
+            },
             #[cfg(debug_assertions)]
             base: self.base,
+            #[cfg(debug_assertions)]
+            bios: self.bios,
             #[cfg(not(debug_assertions))]
             memory: std::marker::PhantomData,
         }
@@ -359,7 +454,7 @@ impl<const EW: bool> Ctx<'_, EW> {
     /// The running code, for store checks.
     #[inline(always)]
     fn running<'o>(&self, ops: &'o [Op], idx: u32) -> Running<'o> {
-        Running { ops, region: Self::REGION, thumb: false, pc: self.pc(idx) }
+        Running { ops, region: self.region(), thumb: false, pc: self.pc(idx) }
     }
 
     #[inline(always)]
@@ -369,8 +464,15 @@ impl<const EW: bool> Ctx<'_, EW> {
 }
 
 /// Runs ARM code from RAM at `core.next_instruction_address`; see
-/// [`crate::cpu::Cpu::run_engine`].
-pub(super) fn run<const EW: bool>(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
+/// [`crate::cpu::Cpu::run_engine`]. With `bios_ok`, a run may branch into
+/// the BIOS and back.
+#[inline(never)]
+pub(super) fn run<const EW: bool>(
+    core: &mut Core,
+    bus: &mut Bus,
+    limit: u64,
+    bios_ok: bool,
+) -> bool {
     let pc = core.next_instruction_address;
     let mask = Ctx::<EW>::MASK;
     if pc & 3 != 0 || pc & !mask == Ctx::<EW>::LAST || !bus.game_pak_code_idle() {
@@ -382,63 +484,250 @@ pub(super) fn run<const EW: bool>(core: &mut Core, bus: &mut Bus, limit: u64) ->
     if cached.is_some_and(|op| refused_at_once(&op, &core.registers)) {
         return false;
     }
-    let start = bus.now();
-    let budget = (limit - start) as i64;
-    let memory = bus.engine_memory();
-    let slots = (mask as usize + 1) / 4;
-    let mut ops = memory.code.take(Ctx::<EW>::REGION, false, || {
+    drive::<EW>(core, bus, limit, pc & !mask, false, bios_ok && bus.bios.len() == BIOS_SIZE)
+}
+
+/// Runs BIOS code at `core.next_instruction_address` in the IWRAM loop,
+/// from ops that stay decoded: the image never changes. Out of line, so
+/// that the RAM entries keep their code.
+#[cold]
+#[inline(never)]
+pub(super) fn run_bios(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
+    let pc = core.next_instruction_address;
+    if pc & 3 != 0
+        || pc >= (BIOS_SLOTS - 2) * 4
+        || bus.bios.len() != BIOS_SIZE
+        || !bus.game_pak_code_idle()
+    {
+        return false;
+    }
+    let cached = bus.code.bios_arm.as_ref().map(|ops| ops[(pc >> 2) as usize]);
+    if cached.is_some_and(|op| refused_at_once(&op, &core.registers)) {
+        return false;
+    }
+    drive::<false>(core, bus, limit, 0, true, true)
+}
+
+/// The op array of a region, allocated the first time: RAM arrays end with
+/// sentinels for the next mirror, and the BIOS array with refusals.
+fn take_ops<const EW: bool>(code: &mut CodeCache, bios: bool) -> Box<[Op]> {
+    if bios {
+        return code.bios_arm.take().unwrap_or_else(|| {
+            let decoded = BIOS_SLOTS as usize - 2;
+            fresh_ops(decoded, &vec![EXIT_OP; 2 * IWRAM_SIZE / 4 - decoded])
+        });
+    }
+    let slots = Ctx::<EW>::SLOTS;
+    code.take(Ctx::<EW>::REGION, false, || {
         let mut tail = vec![END_OP; slots];
         tail[slots - 1] = STOP_OP;
         fresh_ops(slots, &tail)
-    });
-    let (mem, _) = split_memory(memory, budget);
-    let pipeline = core.pipeline;
-    let cpsr = core.cpsr;
-    let mut c = Ctx::<EW> { mem, core, base: pc & !mask, load_mark: -1, store_mark: -1, data: 0 };
-    let latched = [c.code_word(pc), c.code_word(pc.wrapping_add(4))];
-    if pipeline != Some(Pipeline { instructions: latched, instruction_set: InstructionSet::Arm }) {
-        bus.code.put(Ctx::<EW>::REGION, false, ops);
-        return false;
-    }
-    let hot = Hot { idx: (pc & mask) >> 2, budget, cpsr };
-    let hot = if EW {
-        let ops = (&mut *ops).try_into().expect("EWRAM op array");
-        run_loop::<EW, { 2 * EWRAM_SIZE / 4 }>(ops, &mut c, hot)
+    })
+}
+
+fn put_ops<const EW: bool>(code: &mut CodeCache, bios: bool, ops: Box<[Op]>) {
+    if bios {
+        code.bios_arm = Some(ops);
     } else {
-        let ops = (&mut *ops).try_into().expect("IWRAM op array");
-        run_loop::<EW, { 2 * IWRAM_SIZE / 4 }>(ops, &mut c, hot)
+        code.put(Ctx::<EW>::REGION, false, ops);
+    }
+}
+
+/// Runs ops from `core.next_instruction_address`, in the mirror at `base`
+/// of RAM or in the BIOS, serving the MMIO transfers runs stop at and
+/// switching op arrays between the BIOS and IWRAM; returns whether any
+/// instruction ran.
+#[inline(always)]
+fn drive<const EW: bool>(
+    core: &mut Core,
+    bus: &mut Bus,
+    limit: u64,
+    base: u32,
+    bios: bool,
+    bios_ok: bool,
+) -> bool {
+    let pc = core.next_instruction_address;
+    let start = bus.now();
+    let budget = (limit - start) as i64;
+    let mut ops = take_ops::<EW>(&mut bus.code, bios);
+    let mut saved =
+        Saved { base, load_mark: -1, store_mark: -1, mmio_mark: -1, data: 0, bios, bios_ok };
+    let mut resume = Resume::Start;
+    let exit = loop {
+        let left = limit as i64 - bus.now() as i64;
+        let memory = bus.engine_memory(saved.bios);
+        let image = memory.bios;
+        let (mem, _) = split_memory(memory, left);
+        let mut c = saved.ctx::<EW>(mem, image, core);
+        let hot = match resume {
+            Resume::Start => {
+                let latched = [c.code_word(pc), c.code_word(pc.wrapping_add(4))];
+                let arm = Pipeline { instructions: latched, instruction_set: InstructionSet::Arm };
+                if c.core.pipeline != Some(arm) {
+                    break None;
+                }
+                Hot { idx: pc.wrapping_sub(base) >> 2, budget, cpsr: c.core.cpsr }
+            }
+            Resume::On(hot) => hot,
+            Resume::Out(hot) => break finish(c, hot, budget),
+        };
+        let hot = if EW {
+            let ops = (&mut *ops).try_into().expect("EWRAM op array");
+            run_loop::<EW, { 2 * EWRAM_SIZE / 4 }>(ops, &mut c, hot)
+        } else {
+            let ops = (&mut *ops).try_into().expect("IWRAM op array");
+            run_loop::<EW, { 2 * IWRAM_SIZE / 4 }>(ops, &mut c, hot)
+        };
+        if let Some((target, hot)) = c.switch.take() {
+            #[cfg(test)]
+            super::SWITCHES.with(|count| count.set(count.get() + 1));
+            saved = c.save();
+            put_ops::<EW>(&mut bus.code, saved.bios, ops);
+            saved.bios = target >> 24 == 0;
+            saved.base = if saved.bios { 0 } else { target & !Ctx::<EW>::MASK };
+            ops = take_ops::<EW>(&mut bus.code, saved.bios);
+            resume = Resume::On(Hot { idx: target.wrapping_sub(saved.base) >> 2, ..hot });
+            continue;
+        }
+        let Some(access) = c.mmio.take() else {
+            break finish(c, hot, budget);
+        };
+        saved = c.save();
+        resume = serve::<EW>(core, bus, limit, hot, access, &mut saved);
     };
-    if hot.budget == budget {
-        bus.code.put(Ctx::<EW>::REGION, false, ops);
+    put_ops::<EW>(&mut bus.code, saved.bios, ops);
+    let Some((cycle, open_bus, data_last)) = exit else {
         return false;
+    };
+    bus.engine_finish(start + cycle, open_bus, data_last);
+    true
+}
+
+/// What a run keeps of its [`Ctx`] while the driver has the bus back.
+#[derive(Clone, Copy)]
+struct Saved {
+    base: u32,
+    load_mark: i64,
+    store_mark: i64,
+    mmio_mark: i64,
+    data: u32,
+    bios: bool,
+    bios_ok: bool,
+}
+
+impl Saved {
+    fn ctx<'a, const EW: bool>(
+        self,
+        mem: Mem<'a>,
+        image: &'a [u8],
+        core: &'a mut Core,
+    ) -> Ctx<'a, EW> {
+        let Self { base, load_mark, store_mark, mmio_mark, data, bios, bios_ok } = self;
+        Ctx {
+            mem,
+            image,
+            core,
+            base,
+            load_mark,
+            store_mark,
+            mmio_mark,
+            data,
+            mmio: None,
+            bios,
+            bios_ok,
+            switch: None,
+        }
+    }
+}
+
+impl<const EW: bool> Ctx<'_, EW> {
+    fn save(&self) -> Saved {
+        Saved {
+            base: self.base,
+            load_mark: self.load_mark,
+            store_mark: self.store_mark,
+            mmio_mark: self.mmio_mark,
+            data: self.data,
+            bios: self.bios,
+            bios_ok: self.bios_ok,
+        }
+    }
+}
+
+/// Where a run goes after its driver had the bus: on from a state, or
+/// out after it.
+#[derive(Clone, Copy)]
+enum Resume {
+    Start,
+    On(Hot),
+    Out(Hot),
+}
+
+/// Completes the transfer to MMIO that stopped a run at `h` (see [`Mmio`]):
+/// charges it as the interpreter does, makes the access on the bus and
+/// writes the registers. Returns how the run goes on; the interpreter
+/// takes the transfer if the bus does not let the run make it or its
+/// cycles pass the limit.
+fn serve<const EW: bool>(
+    core: &mut Core,
+    bus: &mut Bus,
+    limit: u64,
+    h: Hot,
+    access: Mmio,
+    saved: &mut Saved,
+) -> Resume {
+    let store = access.store.is_some();
+    let fetch = Ctx::<EW>::FETCH;
+    let mut next = h;
+    if !access.allowed(bus) || !next.charge(fetch + if store { 1 } else { 2 }) {
+        return Resume::Out(h);
+    }
+    let value = access.perform(bus, &mut core.registers, limit - (h.budget - fetch) as u64);
+    next.next();
+    saved.mmio_mark = next.budget;
+    if !store {
+        saved.data = value;
+        saved.load_mark = next.budget;
+    }
+    if bus.engine_may_go_on(limit, core.cpsr & (1 << 7) != 0) {
+        Resume::On(next)
+    } else {
+        Resume::Out(next)
+    }
+}
+
+/// Publishes a run's CPU state; returns the cycles it took, the open-bus
+/// latch and whether its last instruction ended with a data access that
+/// makes the next fetch nonsequential, or None if no instruction ran.
+fn finish<const EW: bool>(c: Ctx<'_, EW>, hot: Hot, budget: i64) -> Option<(u64, u32, bool)> {
+    if hot.budget == budget {
+        return None;
     }
     let pc = c.pc(hot.idx);
     let pipeline = [c.code_word(pc), c.code_word(pc.wrapping_add(4))];
     let loaded = c.load_mark == hot.budget;
-    let data_last = loaded || c.store_mark == hot.budget;
+    // An MMIO access leaves the next fetch sequential.
+    let mmio = c.mmio_mark == hot.budget;
+    let data_last = (loaded && !mmio) || c.store_mark == hot.budget;
     let open_bus = if loaded { c.data } else { pipeline[1] };
     let core = c.core;
     core.registers[15] = pc.wrapping_add(8);
     core.cpsr = hot.cpsr;
     core.next_instruction_address = pc;
     core.pipeline = Some(Pipeline { instructions: pipeline, instruction_set: InstructionSet::Arm });
-    bus.code.put(Ctx::<EW>::REGION, false, ops);
-    bus.engine_finish(limit - hot.budget as u64, open_bus, data_last);
-    true
+    Some(((budget - hot.budget) as u64, open_bus, data_last))
 }
 
 /// Whether a run would refuse `op` as its first instruction with these
 /// registers, in the frequent cases that cost less to see than a run's
-/// setup: an instruction the engine never runs, and a transfer whose base
-/// points at MMIO (as in an interrupt handler). Refusing is always safe;
-/// this only has to be cheap and usually right.
+/// setup: an instruction the engine never runs, and a block transfer whose
+/// base points at MMIO. Refusing is always safe; this only has to be cheap
+/// and usually right.
 #[inline(always)]
 fn refused_at_once(op: &Op, registers: &[u32; 16]) -> bool {
     match op.kind {
         k::EXIT => true,
-        k::LDR..=k::BLOCK | k::LDR_R..=29 | k::LDR_W..=215 => {
-            registers[usize::from(op.rn & 15)] >> 24 == 4
-        }
+        k::BLOCK => registers[usize::from(op.rn & 15)] >> 24 == 4,
         _ => false,
     }
 }
@@ -571,6 +860,10 @@ fn run_ops<const EW: bool, const N: usize>(
             k::HALF => call!(h, c, half(h, c, ops, regs, op.x)),
             k::BLOCK => call!(h, c, block(h, c, ops, regs, op.x)),
             k::DP_PC => call!(h, c, dp_pc(h, c, regs, op.x)),
+            k::BX => call!(h, c, bx(h, c, regs, op.x)),
+            k::DP_JUMP => call!(h, c, dp_jump(h, c, regs, op.x)),
+            k::LDR_JUMP => call!(h, c, ldr_jump(h, c, regs, op.x)),
+            k::LDM_JUMP => call!(h, c, ldm_jump(h, c, regs, op.x)),
             18 => {
                 let address = shifted(h.cpsr, regs, op);
                 go!(h, c, transfer::<EW, LDR>(&mut h, c, ops, regs, op, address))
@@ -785,7 +1078,7 @@ fn run_ops<const EW: bool, const N: usize>(
             | 138
             | 139
             | 207
-            | 216..=239
+            | 220..=239
             | 255 => return stopped(h),
         }
     }
@@ -795,6 +1088,10 @@ fn run_ops<const EW: bool, const N: usize>(
 #[inline(never)]
 fn decode_slot<const EW: bool>(ops: &mut [Op], c: &mut Ctx<'_, EW>, idx: u32) {
     let offset = idx << 2;
+    if c.bios {
+        ops[idx as usize] = decode_bios(c.code_word(offset), idx);
+        return;
+    }
     let op = decode(c.code_word(offset));
     debug_assert_ne!(op.kind, k::UNDECODED);
     ops[idx as usize] = op;
@@ -1061,6 +1358,8 @@ struct Code<'a> {
     memory: &'a [u8],
     #[cfg(debug_assertions)]
     base: u32,
+    #[cfg(debug_assertions)]
+    bios: bool,
     #[cfg(not(debug_assertions))]
     memory: std::marker::PhantomData<&'a [u8]>,
 }
@@ -1073,7 +1372,7 @@ impl Code<'_> {
             let pc = self.base.wrapping_add(_idx << 2);
             let at = pc as usize & (self.memory.len() - 4);
             let word = u32::from_le_bytes(self.memory[at..at + 4].try_into().expect("a word"));
-            check_word(pc, word, _op);
+            check_word(pc, word, _op, self.bios);
         }
     }
 }
@@ -1168,16 +1467,16 @@ fn measure_block<const EW: bool>(ops: &mut [Op], c: &mut Ctx<'_, EW>, idx: u32) 
 #[cfg(debug_assertions)]
 fn check_op<const EW: bool>(c: &Ctx<'_, EW>, idx: u32, op: &Op) {
     let pc = c.pc(idx);
-    check_word(pc, c.code_word(pc), op);
+    check_word(pc, c.code_word(pc), op, c.bios);
 }
 
 /// Asserts that a cached op at `pc` is what `word` decodes to.
 #[cfg(debug_assertions)]
-fn check_word(pc: u32, word: u32, op: &Op) {
+fn check_word(pc: u32, word: u32, op: &Op, bios: bool) {
     if matches!(op.kind, k::UNDECODED | k::END | k::STOP) {
         return;
     }
-    let mut expected = decode(word);
+    let mut expected = if bios { decode_bios(word, pc >> 2) } else { decode(word) };
     if matches!(op.kind, k::DP_I..k::BCOND) {
         expected.inner = op.inner;
     }
@@ -1431,7 +1730,8 @@ fn transfer_elsewhere<const EW: bool, const MODE: u8>(
         let run = c.running(ops, h.idx);
         let fetch = Ctx::<EW>::FETCH;
         let Some(cost) = c.mem.store_cost(run, bus_address, width, fetch, h.budget) else {
-            return Hot::REFUSED;
+            let store = Some((regs[usize::from(op.rd)], width));
+            return to_bus(c, Mmio { address, store, ..Mmio::default() });
         };
         if !h.charge(cost) {
             return Hot::REFUSED;
@@ -1441,8 +1741,15 @@ fn transfer_elsewhere<const EW: bool, const MODE: u8>(
         h.next();
         return h;
     }
-    let Some((value, cycles)) = c.mem.load(bus_address, width) else {
-        return Hot::REFUSED;
+    let Some((value, cycles)) = c.load_any(bus_address, width) else {
+        let load = match MODE {
+            LDR => Load::Word,
+            LDRB => Load::Byte,
+            LDRH => Load::Half,
+            LDRSB => Load::SignedByte,
+            _ => Load::SignedHalf,
+        };
+        return to_bus(c, Mmio { address, load: Some((op.rd, load)), ..Mmio::default() });
     };
     if !h.charge(Ctx::<EW>::FETCH + cycles + 1) {
         return Hot::REFUSED;
@@ -1464,10 +1771,11 @@ fn pre_indexed<const EW: bool, const MODE: u8>(
     op: &Op,
 ) -> bool {
     let address = immediate(regs, op);
-    transfer::<EW, MODE>(h, c, ops, regs, op, address) && {
-        regs[usize::from(op.rn)] = address;
-        true
+    if !transfer::<EW, MODE>(h, c, ops, regs, op, address) {
+        return with_writeback(c, op.rn, address);
     }
+    regs[usize::from(op.rn)] = address;
+    true
 }
 
 /// A transfer at the base address, which then moves by the offset.
@@ -1480,10 +1788,33 @@ fn post_indexed<const EW: bool, const MODE: u8>(
     op: &Op,
 ) -> bool {
     let base = regs[usize::from(op.rn)];
-    transfer::<EW, MODE>(h, c, ops, regs, op, base) && {
-        regs[usize::from(op.rn)] = base.wrapping_add(op.x);
-        true
+    if !transfer::<EW, MODE>(h, c, ops, regs, op, base) {
+        return with_writeback(c, op.rn, base.wrapping_add(op.x));
     }
+    regs[usize::from(op.rn)] = base.wrapping_add(op.x);
+    true
+}
+
+/// A transfer the run cannot make: to MMIO, for the driver to complete,
+/// otherwise for the interpreter.
+#[cold]
+#[inline(never)]
+fn to_bus<const EW: bool>(c: &mut Ctx<'_, EW>, access: Mmio) -> Hot {
+    if access.address >> 24 == 4 {
+        c.mmio = Some(access);
+    }
+    Hot::REFUSED
+}
+
+/// Adds the base register write of a writeback transfer to the MMIO access
+/// it left to the driver, if any; the run stops either way.
+#[cold]
+#[inline(never)]
+fn with_writeback<const EW: bool>(c: &mut Ctx<'_, EW>, rn: u8, base: u32) -> bool {
+    if let Some(access) = &mut c.mmio {
+        access.writeback = Some((rn, base));
+    }
+    false
 }
 
 /// LDR/STR/LDRB/STRB with any addressing mode.
@@ -1513,7 +1844,12 @@ fn single_op<const EW: bool>(
     let (width, bus_address) =
         if byte { (AccessWidth::Byte, address) } else { (AccessWidth::Word, address & !3) };
     if word & (1 << 20) != 0 {
-        let (value, cycles) = c.mem.load(bus_address, width)?;
+        let Some((value, cycles)) = c.load_any(bus_address, width) else {
+            let load = Some((rd as u8, if byte { Load::Byte } else { Load::Word }));
+            let writeback = (writeback && rn != rd).then_some((rn as u8, adjusted));
+            to_bus(c, Mmio { address, load, writeback, ..Mmio::default() });
+            return None;
+        };
         if !h.charge(Ctx::<EW>::FETCH + cycles + 1) {
             return None;
         }
@@ -1525,11 +1861,17 @@ fn single_op<const EW: bool>(
         c.load_mark = h.budget;
     } else {
         let run = c.running(ops, h.idx);
-        let cost = c.mem.store_cost(run, bus_address, width, Ctx::<EW>::FETCH, h.budget)?;
+        let value = regs[rd].wrapping_add(if rd == 15 { 4 } else { 0 });
+        let Some(cost) = c.mem.store_cost(run, bus_address, width, Ctx::<EW>::FETCH, h.budget)
+        else {
+            let writeback = writeback.then_some((rn as u8, adjusted));
+            to_bus(c, Mmio { address, store: Some((value, width)), writeback, load: None });
+            return None;
+        };
         if !h.charge(cost) {
             return None;
         }
-        c.mem.store(bus_address, width, regs[rd].wrapping_add(if rd == 15 { 4 } else { 0 }));
+        c.mem.store(bus_address, width, value);
         if writeback {
             regs[rn] = adjusted;
         }
@@ -1568,7 +1910,13 @@ fn half_op<const EW: bool>(
         (AccessWidth::Half, address & !1)
     };
     if word & (1 << 20) != 0 {
-        let (value, cycles) = c.mem.load(bus_address, width)?;
+        let Some((value, cycles)) = c.load_any(bus_address, width) else {
+            let load = [Load::Half, Load::Half, Load::SignedByte, Load::SignedHalf];
+            let load = Some((rd as u8, load[operation as usize]));
+            let writeback = (writeback && rn != rd).then_some((rn as u8, adjusted));
+            to_bus(c, Mmio { address, load, writeback, ..Mmio::default() });
+            return None;
+        };
         if !h.charge(Ctx::<EW>::FETCH + cycles + 1) {
             return None;
         }
@@ -1585,7 +1933,12 @@ fn half_op<const EW: bool>(
         c.load_mark = h.budget;
     } else {
         let run = c.running(ops, h.idx);
-        let cost = c.mem.store_cost(run, bus_address, width, Ctx::<EW>::FETCH, h.budget)?;
+        let Some(cost) = c.mem.store_cost(run, bus_address, width, Ctx::<EW>::FETCH, h.budget)
+        else {
+            let writeback = writeback.then_some((rn as u8, adjusted));
+            to_bus(c, Mmio { address, store: Some((regs[rd], width)), writeback, load: None });
+            return None;
+        };
         if !h.charge(cost) {
             return None;
         }
@@ -1710,8 +2063,188 @@ fn conditional_op<const EW: bool>(
         k::HALF | k::HALF_I..=29 => half_op(h, c, ops, regs, word),
         k::BLOCK => block_op(h, c, ops, regs, word),
         k::DP_PC | k::DP_I..k::BCOND => dp_pc_op(h, c, regs, word),
+        k::BX => bx_op(h, c, regs, word),
+        k::DP_JUMP => dp_jump_op(h, c, regs, word),
+        k::LDR_JUMP => ldr_jump_op(h, c, regs, word),
+        k::LDM_JUMP => ldm_jump_op(h, c, regs, word),
         _ => None,
     }
+}
+
+/// Where an indirect branch to ARM code lands.
+enum Landing {
+    /// A slot of the running mirror.
+    Here(u32),
+    /// Another mirror of the same RAM region, at this base and slot.
+    Mirror(u32, u32),
+    /// The BIOS from IWRAM or IWRAM from the BIOS, which share the IWRAM
+    /// loop: the driver switches op arrays ([`Ctx::switch`]).
+    Switch,
+}
+
+/// Where a branch to word-aligned ARM `target` lands, if the run may follow
+/// it: into its own region, or between the BIOS and IWRAM; not where the
+/// refill's two fetches would leave the region.
+#[inline(always)]
+fn landing<const EW: bool>(c: &Ctx<'_, EW>, target: u32) -> Option<Landing> {
+    let bios_code = target >> 24 == 0 && target < (BIOS_SLOTS - 2) * 4;
+    if !EW && c.bios {
+        return if bios_code {
+            Some(Landing::Here(target >> 2))
+        } else if target >> 24 == 3 && target & !Ctx::<EW>::MASK != Ctx::<EW>::LAST {
+            Some(Landing::Switch)
+        } else {
+            None
+        };
+    }
+    if target >> 24 == Ctx::<EW>::REGION && target & !Ctx::<EW>::MASK != Ctx::<EW>::LAST {
+        let idx = (target & Ctx::<EW>::MASK) >> 2;
+        let base = target & !Ctx::<EW>::MASK;
+        return Some(if base == c.base { Landing::Here(idx) } else { Landing::Mirror(base, idx) });
+    }
+    (!EW && bios_code && c.bios_ok).then_some(Landing::Switch)
+}
+
+/// Completes an indirect branch whose instruction cost `cost` before the
+/// refill, after `landing` admitted `target` and `h` was charged: the next
+/// slot, or for a switch the state the driver resumes from.
+#[inline(always)]
+fn land<const EW: bool>(mut h: Hot, c: &mut Ctx<'_, EW>, target: u32, landing: Landing) -> Hot {
+    match landing {
+        Landing::Here(idx) => h.idx = idx,
+        Landing::Mirror(base, idx) => {
+            c.base = base;
+            h.idx = idx;
+        }
+        Landing::Switch => {
+            c.switch = Some((target, h));
+            return Hot::REFUSED;
+        }
+    }
+    h
+}
+
+/// BX to ARM code; BX to Thumb is the interpreter's.
+#[inline(always)]
+fn bx_op<const EW: bool>(
+    mut h: Hot,
+    c: &mut Ctx<'_, EW>,
+    regs: &mut Registers,
+    word: u32,
+) -> Option<Hot> {
+    regs[15] = c.pc(h.idx).wrapping_add(8);
+    let target = regs[(word & 15) as usize];
+    if target & 1 != 0 {
+        return None;
+    }
+    let target = target & !3;
+    let landing = landing(c, target)?;
+    if !h.charge(3 * Ctx::<EW>::FETCH) {
+        return None;
+    }
+    Some(land(h, c, target, landing))
+}
+
+/// Data processing that writes r15 without S (MOV pc, lr and jump tables).
+#[inline(always)]
+fn dp_jump_op<const EW: bool>(
+    mut h: Hot,
+    c: &mut Ctx<'_, EW>,
+    regs: &mut Registers,
+    word: u32,
+) -> Option<Hot> {
+    let register_shift = word & (1 << 25) == 0 && word & 0x10 != 0;
+    // Evaluate into r15 from a scratch state (without S, no flag changes),
+    // then leave r15 as the instruction reads it.
+    dp_pc_op(Hot { budget: i64::MAX, ..h }, c, regs, word)?;
+    let target = regs[15] & !3;
+    regs[15] = c.pc(h.idx).wrapping_add(8);
+    let landing = landing(c, target)?;
+    if !h.charge(3 * Ctx::<EW>::FETCH + i64::from(register_shift)) {
+        return None;
+    }
+    Some(land(h, c, target, landing))
+}
+
+/// LDR of r15 from memory the run reads (not MMIO).
+#[inline(always)]
+fn ldr_jump_op<const EW: bool>(
+    mut h: Hot,
+    c: &mut Ctx<'_, EW>,
+    regs: &mut Registers,
+    word: u32,
+) -> Option<Hot> {
+    regs[15] = c.pc(h.idx).wrapping_add(8);
+    let pre = word & (1 << 24) != 0;
+    let writeback = !pre || word & (1 << 21) != 0;
+    let rn = ((word >> 16) & 15) as usize;
+    let base = regs[rn];
+    let offset = if word & (1 << 25) != 0 {
+        let carry_in = (h.cpsr >> 29) & 1;
+        shift_immediate(regs[(word & 15) as usize], word >> 5, word >> 7, carry_in).0
+    } else {
+        word & 0xfff
+    };
+    let adjusted =
+        if word & (1 << 23) != 0 { base.wrapping_add(offset) } else { base.wrapping_sub(offset) };
+    let address = if pre { adjusted } else { base };
+    let (value, cycles) = c.load_any(address & !3, AccessWidth::Word)?;
+    let target = value.rotate_right((address & 3) * 8) & !3;
+    let landing = landing(c, target)?;
+    if !h.charge(Ctx::<EW>::FETCH + cycles + 1 + 2 * Ctx::<EW>::FETCH) {
+        return None;
+    }
+    if writeback {
+        regs[rn] = adjusted;
+    }
+    Some(land(h, c, target, landing))
+}
+
+/// LDM of r15 without S, within one RAM region.
+#[inline(always)]
+fn ldm_jump_op<const EW: bool>(
+    mut h: Hot,
+    c: &mut Ctx<'_, EW>,
+    regs: &mut Registers,
+    word: u32,
+) -> Option<Hot> {
+    let list = word & 0xffff;
+    let count = list.count_ones();
+    let rn = ((word >> 16) & 15) as usize;
+    let writeback = word & (1 << 21) != 0;
+    let pre = word & (1 << 24) != 0;
+    let base = regs[rn];
+    let (first, final_base) = if word & (1 << 23) != 0 {
+        (base.wrapping_add(if pre { 4 } else { 0 }), base.wrapping_add(count * 4))
+    } else {
+        let final_base = base.wrapping_sub(count * 4);
+        (final_base.wrapping_add(if pre { 0 } else { 4 }), final_base)
+    };
+    let first = first & !3;
+    let last = first.wrapping_add((count - 1) * 4);
+    let per_word = match (first >> 24, last >> 24) {
+        (3, 3) => 1,
+        (2, 2) => 6,
+        _ => return None,
+    };
+    let (value, _) = c.mem.load(last, AccessWidth::Word)?;
+    let target = value & !3;
+    let landing = landing(c, target)?;
+    if !h.charge(Ctx::<EW>::FETCH + i64::from(count) * per_word + 1 + 2 * Ctx::<EW>::FETCH) {
+        return None;
+    }
+    let mut address = first;
+    let mut remaining = list & 0x7fff;
+    while remaining != 0 {
+        let register = remaining.trailing_zeros() as usize;
+        remaining &= remaining - 1;
+        regs[register] = c.mem.load(address, AccessWidth::Word).expect("RAM block").0;
+        address = address.wrapping_add(4);
+    }
+    if writeback && list & (1 << rn) == 0 {
+        regs[rn] = final_base;
+    }
+    Some(land(h, c, target, landing))
 }
 
 /// Out-of-line entry points for handlers too large or too rare to inline
@@ -1719,6 +2252,26 @@ fn conditional_op<const EW: bool>(
 #[inline(never)]
 fn dp_pc<const EW: bool>(h: Hot, c: &mut Ctx<'_, EW>, regs: &mut Registers, word: u32) -> Hot {
     dp_pc_op(h, c, regs, word).unwrap_or(Hot::REFUSED)
+}
+
+#[inline(never)]
+fn bx<const EW: bool>(h: Hot, c: &mut Ctx<'_, EW>, regs: &mut Registers, word: u32) -> Hot {
+    bx_op(h, c, regs, word).unwrap_or(Hot::REFUSED)
+}
+
+#[inline(never)]
+fn dp_jump<const EW: bool>(h: Hot, c: &mut Ctx<'_, EW>, regs: &mut Registers, word: u32) -> Hot {
+    dp_jump_op(h, c, regs, word).unwrap_or(Hot::REFUSED)
+}
+
+#[inline(never)]
+fn ldr_jump<const EW: bool>(h: Hot, c: &mut Ctx<'_, EW>, regs: &mut Registers, word: u32) -> Hot {
+    ldr_jump_op(h, c, regs, word).unwrap_or(Hot::REFUSED)
+}
+
+#[inline(never)]
+fn ldm_jump<const EW: bool>(h: Hot, c: &mut Ctx<'_, EW>, regs: &mut Registers, word: u32) -> Hot {
+    ldm_jump_op(h, c, regs, word).unwrap_or(Hot::REFUSED)
 }
 
 #[inline(never)]

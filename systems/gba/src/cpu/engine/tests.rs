@@ -3,6 +3,7 @@
 
 use crate::bus::{Access, AccessKind, AccessSource, AccessWidth, Bus};
 use crate::cpu::{Cpu, StepOutcome};
+use evenfall_state::Codec;
 
 struct Random(u32);
 
@@ -35,11 +36,17 @@ struct Pair {
     engine_bus: Bus,
     reference: Cpu,
     reference_bus: Bus,
+    /// IRQs an MMIO store in an engine run raised.
+    irq_entries: u64,
 }
 
 impl Pair {
     fn new(rom: &[u8], setup: impl Fn(&mut Bus), cpu: Cpu, lead: u64) -> Self {
-        let mut buses = [Bus::init(rom), Bus::init(rom)];
+        Self::with_bios(rom, &[], setup, cpu, lead)
+    }
+
+    fn with_bios(rom: &[u8], bios: &[u8], setup: impl Fn(&mut Bus), cpu: Cpu, lead: u64) -> Self {
+        let mut buses = [Bus::init_with_bios(rom, bios), Bus::init_with_bios(rom, bios)];
         let mut cpus = [cpu.clone(), cpu];
         for (bus, cpu) in buses.iter_mut().zip(&mut cpus) {
             setup(bus);
@@ -49,7 +56,7 @@ impl Pair {
         }
         let [engine_bus, reference_bus] = buses;
         let [engine, reference] = cpus;
-        Self { engine, engine_bus, reference, reference_bus }
+        Self { engine, engine_bus, reference, reference_bus, irq_entries: 0 }
     }
 
     /// Runs the engine once and steps the reference through the same
@@ -63,7 +70,24 @@ impl Pair {
             assert_eq!(self.engine_bus.now(), started, "{context}: a refused run took time");
             return false;
         }
-        let end = self.engine_bus.now();
+        let mut end = self.engine_bus.now();
+        if self.engine_bus.irq_line && self.engine.cpsr & (1 << 7) == 0 {
+            // As the ordinary loop does after a run that raised an IRQ.
+            self.engine_bus.resume_power();
+            self.engine.enter_irq(&mut self.engine_bus).expect("IRQ entry");
+            self.engine.refill_pipeline(&mut self.engine_bus);
+            self.irq_entries += 1;
+            assert!(end <= yield_at, "{context}: a run that raised an IRQ passed its yield");
+            end = self.engine_bus.now();
+            let mut steps = 0;
+            while self.reference_bus.now() < end {
+                let outcome = self.reference.step(&mut self.reference_bus);
+                assert!(matches!(outcome, StepOutcome::Executed(_)), "{context}: {outcome:?}");
+                steps += 1;
+            }
+            self.assert_equal(&format!("{context} after {steps} steps and an IRQ"));
+            return true;
+        }
         assert!(
             end <= yield_at && end > started,
             "{context}: clock {started}..{end} vs {yield_at}; before {before:x?}, after {:x?}",
@@ -83,6 +107,10 @@ impl Pair {
         assert_eq!(self.engine, self.reference, "{context}: CPU");
         let (a, b) = (&self.engine_bus, &self.reference_bus);
         assert_eq!(a.now(), b.now(), "{context}: clock");
+        assert_eq!(a.irq_line, b.irq_line, "{context}: IRQ line");
+        assert_eq!(a.power_state(), b.power_state(), "{context}: power");
+        assert_eq!(a.pending_dma, b.pending_dma, "{context}: pending DMA");
+        assert_eq!(a.batch_deadline, b.batch_deadline, "{context}: device horizon");
         assert_eq!(a.open_bus_value, b.open_bus_value, "{context}: open bus");
         assert_eq!(a.fetch_kind, b.fetch_kind, "{context}: fetch kind");
         assert_eq!(a.game_pak_prefetch, b.game_pak_prefetch, "{context}: prefetch");
@@ -111,6 +139,12 @@ impl Pair {
         self.engine_bus.end_device_batch();
         self.reference_bus.end_device_batch();
         assert_eq!(self.engine_bus.ppu_timing, self.reference_bus.ppu_timing, "{context}: PPU");
+        let bytes = |bus: &Bus| {
+            let mut bytes = Vec::new();
+            bus.encode(&mut evenfall_state::Sink::new(Some(&mut bytes), None)).unwrap();
+            bytes
+        };
+        assert!(bytes(&self.engine_bus) == bytes(&self.reference_bus), "{context}: bus state");
     }
 }
 
@@ -155,8 +189,26 @@ fn operand(random: &mut Random) -> u32 {
         5 => 0x0800_0000 + (random.next() & 0x3ffe),
         6 => 0x0300_4000 + random.below(64),
         7 => 1 << random.below(32),
+        8 if random.below(2) == 0 => mmio_pointer(random),
         8 => video_pointer(random),
         _ => random.next(),
+    }
+}
+
+/// A pointer at or just below an I/O register the engine runs transfers
+/// to: display and affine registers, DMA and timers, interrupt control,
+/// sound and its FIFO, WAITCNT (which it leaves to the interpreter),
+/// HALTCNT, and unmapped ones that read as open bus.
+fn mmio_pointer(random: &mut Random) -> u32 {
+    const OFFSETS: [u32; 24] = [
+        0x000, 0x004, 0x006, 0x010, 0x020, 0x028, 0x030, 0x03c, 0x050, 0x060, 0x080, 0x084, 0x0a0,
+        0x0b0, 0x0d4, 0x0dc, 0x100, 0x104, 0x130, 0x200, 0x202, 0x204, 0x208, 0x0e0,
+    ];
+    let offset = OFFSETS[random.below(OFFSETS.len() as u32) as usize];
+    match random.below(8) {
+        0 => 0x0400_0300 + random.below(4),
+        1 => 0x0400_0400 + random.below(64),
+        _ => (0x0400_0000 + offset + random.below(4)).wrapping_sub(random.below(2) * 16),
     }
 }
 
@@ -268,13 +320,33 @@ fn arm_cpu(random: &mut Random, pc: u32) -> Cpu {
     }
     cpu.registers[8] = 0x0300_4000 + (random.next() & 0x3fc);
     cpu.registers[9] = 0x0200_8000 + (random.next() & 0x3ff);
-    cpu.registers[10] = if random.below(2) == 0 {
-        0x0800_0000 + (random.next() & 0xffe)
-    } else {
-        video_pointer(random)
+    cpu.registers[10] = match random.below(3) {
+        0 => 0x0800_0000 + (random.next() & 0xffe),
+        1 => video_pointer(random),
+        _ => mmio_pointer(random),
     };
     cpu.registers[11] = 0x0300_4000 + (random.next() & 0xfff);
     cpu
+}
+
+/// Pending interrupt requests that a store to IME (or to IE) raises, in
+/// some trials, as `(IF, IE, IME)`.
+fn interrupts(random: &mut Random) -> Option<(u16, u16, bool)> {
+    let pending = random.next() as u16 & 0x3fff | 1;
+    match random.below(3) {
+        0 => Some((pending, random.next() as u16 & 0x3fff | pending & 1, false)),
+        1 => Some((pending, 0, true)),
+        _ => None,
+    }
+}
+
+fn set_interrupts(bus: &mut Bus, interrupts: Option<(u16, u16, bool)>) {
+    if let Some((flags, enabled, master)) = interrupts {
+        bus.interrupt_request_flags = flags;
+        bus.interrupt_enable_mask = enabled;
+        bus.interrupt_master_enabled = master;
+        bus.update_irq_line();
+    }
 }
 
 fn data_setup(random: &mut Random) -> (Vec<u8>, Vec<u8>) {
@@ -292,7 +364,7 @@ fn arm_ram_engine_matches_interpreter_for_random_code() {
     for byte in &mut rom {
         *byte = random.next() as u8;
     }
-    let (mut runs, mut refusals, mut instructions) = (0, 0, 0);
+    let (mut runs, mut refusals, mut instructions, mut irq_entries) = (0, 0, 0, 0);
     for trial in 0..3000 {
         let ewram_code = trial % 3 == 2;
         let pc = if ewram_code { 0x0203_0000 } else { 0x0300_1000 } + (random.below(64) * 4);
@@ -306,11 +378,13 @@ fn arm_ram_engine_matches_interpreter_for_random_code() {
         };
         let waitcnt = random.next() as u16 & 0x5fff;
         let dispcnt = random.below(6) as u16;
+        let irqs = interrupts(&mut Random(0x1e1e_0001 ^ (trial as u32).wrapping_mul(0x9e37_79b9)));
         let mut pair = Pair::new(
             &rom,
             |bus| {
                 set_waitcnt(bus, waitcnt);
                 set_dispcnt(bus, dispcnt);
+                set_interrupts(bus, irqs);
                 bus.iwram[0x4000..0x6000].copy_from_slice(&iwram);
                 bus.ewram[0x8000..0xa000].copy_from_slice(&ewram);
                 for &(address, word) in &block {
@@ -339,12 +413,16 @@ fn arm_ram_engine_matches_interpreter_for_random_code() {
                 }
             }
         }
+        irq_entries += pair.irq_entries;
         pair.settle(&format!("trial {trial}"));
     }
     assert!(runs > 4000, "only {runs} runs ({refusals} refusals)");
     assert!(instructions > 40_000, "only {instructions} cycles in engine runs");
     let video = super::mem::VIDEO_STORES.get();
     assert!(video > 100, "only {video} video memory stores in engine runs");
+    let mmio = super::MMIO_ACCESSES.get();
+    assert!(mmio > 150, "only {mmio} MMIO accesses in engine runs");
+    assert!(irq_entries <= runs, "{irq_entries} IRQs");
 }
 
 /// A long loop in IWRAM: decode once, then many passes through a backward
@@ -535,7 +613,8 @@ fn thumb_cpu(random: &mut Random, pc: u32) -> Cpu {
     cpu.registers[1] = 0x0300_4000 + (random.next() & 0x3fc);
     cpu.registers[2] = 0x0200_8000 + (random.next() & 0x3ff);
     cpu.registers[3] = random.below(64);
-    cpu.registers[4] = video_pointer(random);
+    cpu.registers[4] =
+        if random.below(3) == 0 { mmio_pointer(random) } else { video_pointer(random) };
     cpu.registers[13] = 0x0300_5000 + (random.next() & 0x3fc);
     cpu.registers[14] = pc.wrapping_add(random.below(64) * 2) | 1;
     cpu
@@ -637,7 +716,7 @@ fn thumb_engine_matches_interpreter_for_random_code() {
     for byte in &mut rom {
         *byte = random.next() as u8;
     }
-    let (mut runs, mut refusals, mut cycles, mut prefetch_runs) = (0, 0, 0, 0);
+    let (mut runs, mut refusals, mut cycles, mut prefetch_runs, mut irq_entries) = (0, 0, 0, 0, 0);
     for trial in 0..4000 {
         let place = trial % 4;
         let base = match place {
@@ -663,11 +742,13 @@ fn thumb_engine_matches_interpreter_for_random_code() {
         // Mostly with the prefetch buffer, as games run.
         let waitcnt = random.next() as u16 & 0x3fff | if trial % 3 == 0 { 0 } else { 0x4000 };
         let dispcnt = random.below(6) as u16;
+        let irqs = interrupts(&mut Random(0x1e1e_0001 ^ (trial as u32).wrapping_mul(0x9e37_79b9)));
         let mut pair = Pair::new(
             &image,
             |bus| {
                 set_waitcnt(bus, waitcnt);
                 set_dispcnt(bus, dispcnt);
+                set_interrupts(bus, irqs);
                 bus.iwram[0x4000..0x6000].copy_from_slice(&iwram);
                 bus.ewram[0x8000..0xa000].copy_from_slice(&ewram);
                 if pc >> 24 < 8 {
@@ -733,6 +814,7 @@ fn thumb_engine_matches_interpreter_for_random_code() {
                 }
             }
         }
+        irq_entries += pair.irq_entries;
         pair.settle(&format!("trial {trial}"));
     }
     assert!(runs > 5000, "only {runs} runs ({refusals} refusals)");
@@ -740,4 +822,270 @@ fn thumb_engine_matches_interpreter_for_random_code() {
     assert!(prefetch_runs > 1000, "only {prefetch_runs} runs with the prefetch buffer");
     let video = super::mem::VIDEO_STORES.get();
     assert!(video > 100, "only {video} video memory stores in engine runs");
+    let mmio = super::MMIO_ACCESSES.get();
+    assert!(mmio > 150, "only {mmio} MMIO accesses in engine runs");
+    assert!(irq_entries <= runs, "{irq_entries} IRQs");
+}
+
+/// Interrupt-handler-shaped code: loads of IF, VCOUNT and DISPSTAT, an
+/// affine reference point store, an IF acknowledge, IE and IME stores that
+/// raise an IRQ (which the run stops at, and the IRQ entry follows at once)
+/// or are masked by the CPSR's I bit, and HALTCNT, in ARM code from IWRAM
+/// and Thumb code from IWRAM and Game Pak ROM with and without the prefetch
+/// buffer, from leads across lines, HBlank and VBlank, match stepping.
+#[test]
+fn mmio_transfers_in_runs_match_stepping() {
+    // r4 = 0x04000000, r5 = 0x04000200, r6 = IME value, r7 = IE value.
+    let arm = [
+        0xe283_3001_u32, // ADD r3, r3, #1
+        0xe1d5_00b2,     // LDRH r0, [r5, #2]   IF
+        0xe594_1004,     // LDR r1, [r4, #4]    DISPSTAT and VCOUNT
+        0xe584_203c,     // STR r2, [r4, #0x3c] BG3X
+        0xe1c5_20b2,     // STRH r2, [r5, #2]   acknowledge some of IF
+        0xe1c5_60b8,     // STRH r6, [r5, #8]   IME
+        0xe283_3001,     // ADD r3, r3, #1
+        0xe1c5_70b0,     // STRH r7, [r5]       IE
+        0xe1d5_10b0,     // LDRH r1, [r5]       IE
+        0xe5c4_8301,     // STRB r8, [r4, #0x301] HALTCNT (r8 = 0x80: no-op below)
+        0xeaff_fff4,     // B back to the first
+    ];
+    let thumb = [
+        0x3301_u16, // ADDS r3, #1
+        0x8868,     // LDRH r0, [r5, #2]   IF
+        0x6861,     // LDR r1, [r4, #4]    DISPSTAT and VCOUNT
+        0x63e2,     // STR r2, [r4, #0x3c] BG3X
+        0x806a,     // STRH r2, [r5, #2]   acknowledge some of IF
+        0x812e,     // STRH r6, [r5, #8]   IME
+        0x3301,     // ADDS r3, #1
+        0x802f,     // STRH r7, [r5]       IE
+        0x8829,     // LDRH r1, [r5]       IE
+        0x88e1,     // LDRH r1, [r4, #6]   VCOUNT
+        0xe7f4,     // B back to the first
+    ];
+    let mut random = Random(0x3a3a_1717);
+    let mut rom = vec![0u8; 0x1000];
+    for (i, half) in thumb.iter().enumerate() {
+        rom[0x100 + 2 * i..0x102 + 2 * i].copy_from_slice(&half.to_le_bytes());
+    }
+    let (mut runs, mut irq_entries, mut halts) = (0, 0, 0);
+    let mmio_before = super::MMIO_ACCESSES.get();
+    for trial in 0..600 {
+        let place = trial % 4;
+        let (pc, is_thumb) = match place {
+            0 => (0x0300_1000, false),
+            1 => (0x0300_1000, true),
+            _ => (0x0800_0100, true),
+        };
+        let waitcnt = if place == 3 { 0x0317 } else { 0x4317 };
+        let masked = random.below(4) == 0;
+        let mut cpu = Cpu::init(
+            pc,
+            0x1f | if is_thumb { 0x20 } else { 0 } | if masked { 0x80 } else { 0 },
+            true,
+        );
+        cpu.registers[2] = random.next();
+        cpu.registers[4] = 0x0400_0000;
+        cpu.registers[5] = 0x0400_0200;
+        cpu.registers[6] = random.below(2);
+        cpu.registers[7] = random.next() & 0x3fff;
+        cpu.registers[8] = if random.below(3) == 0 { 0 } else { 0x80 };
+        let irqs = interrupts(&mut random);
+        let lead = lead(&mut random);
+        let mut pair = Pair::new(
+            &rom,
+            |bus| {
+                set_waitcnt(bus, waitcnt);
+                set_interrupts(bus, irqs);
+                // HBlank, VBlank and VCOUNT interrupts on line 100.
+                set_io(bus, 0x0400_0004, 0x6438);
+                if is_thumb {
+                    for (i, half) in thumb.iter().enumerate() {
+                        let at = 0x1000 + 2 * i;
+                        bus.iwram[at..at + 2].copy_from_slice(&half.to_le_bytes());
+                    }
+                } else {
+                    for (i, &word) in arm.iter().enumerate() {
+                        write_word(bus, 0x0300_1000 + 4 * i as u32, word);
+                    }
+                }
+            },
+            cpu,
+            lead,
+        );
+        let context = format!("trial {trial} place {place} lead {lead} masked {masked}");
+        for attempt in 0..8 {
+            let yield_at = pair.engine_bus.now() + 1 + u64::from(random.below(600));
+            let entries = pair.irq_entries;
+            if pair.compare(yield_at, &format!("{context} attempt {attempt}")) {
+                runs += 1;
+                irq_entries += pair.irq_entries - entries;
+            } else {
+                let outcome = pair.engine.step(&mut pair.engine_bus);
+                let reference = pair.reference.step(&mut pair.reference_bus);
+                assert_eq!(outcome, reference, "{context}");
+                pair.assert_equal(&format!("{context} step after refusal"));
+                if !matches!(outcome, StepOutcome::Executed(_)) {
+                    halts += 1;
+                    break;
+                }
+            }
+        }
+        pair.settle(&context);
+    }
+    let mmio = super::MMIO_ACCESSES.get() - mmio_before;
+    assert!(runs > 1500, "only {runs} runs");
+    assert!(mmio > 50_000, "only {mmio} MMIO accesses in engine runs");
+    assert!(irq_entries > 80, "only {irq_entries} IRQs raised in engine runs");
+    assert!(halts > 40, "only {halts} halts");
+}
+
+/// Calls and returns through BX, MOV pc, LDM with pc and a jump table in
+/// IWRAM, and interrupts through a BIOS whose vector branches to a
+/// dispatcher that loads the handler's address (in IWRAM) into pc and
+/// returns to it, plus an IntrWait-style loop in the BIOS that halts,
+/// masks IME and acknowledges its flag: engine runs that branch between
+/// the BIOS and IWRAM match stepping, across halts and HBlank and VBlank
+/// interrupts, from leads all over the frame.
+#[test]
+fn bios_and_indirect_branches_run_like_stepping() {
+    use crate::bus::PowerState;
+    const HANDLER: u32 = 0x0300_1000;
+    const MAIN: u32 = 0x0300_2000;
+    let mut bios = vec![0u8; 0x4000];
+    let put = |image: &mut Vec<u8>, at: usize, words: &[u32]| {
+        for (i, word) in words.iter().enumerate() {
+            image[at + 4 * i..at + 4 * i + 4].copy_from_slice(&word.to_le_bytes());
+        }
+    };
+    put(&mut bios, 0x18, &[0xea00_003c]); // B 0x110
+    put(
+        &mut bios,
+        0x110,
+        &[
+            0xe92d_500f, // STMFD sp!, {r0-r3, r12, lr}
+            0xe3a0_0301, // MOV r0, #0x04000000
+            0xe28f_e000, // ADD lr, pc, #0
+            0xe510_f004, // LDR pc, [r0, #-4]
+            0xe8bd_500f, // LDMFD sp!, {r0-r3, r12, lr}
+            0xe25e_f004, // SUBS pc, lr, #4
+        ],
+    );
+    put(
+        &mut bios,
+        0x200,
+        &[
+            0xe3a0_c301, // MOV r12, #0x04000000
+            0xe3a0_2000, // MOV r2, #0
+            0xe3a0_3001, // MOV r3, #1
+            0xe5cc_2301, // STRB r2, [r12, #0x301]  halt
+            0xe5cc_2208, // STRB r2, [r12, #0x208]  IME = 0
+            0xe15c_40b8, // LDRH r4, [r12, #-8]
+            0xe011_0004, // ANDS r0, r1, r4
+            0x1024_4000, // EORNE r4, r4, r0
+            0x114c_40b8, // STRHNE r4, [r12, #-8]
+            0xe5cc_3208, // STRB r3, [r12, #0x208]  IME = 1
+            0x0aff_fff7, // BEQ 0x20c
+            0xe12f_ff1e, // BX lr
+        ],
+    );
+    let handler = [
+        0xe3a0_3301_u32, // MOV r3, #0x04000000
+        0xe283_3c02,     // ADD r3, r3, #0x200
+        0xe1d3_20b2,     // LDRH r2, [r3, #2]   IF
+        0xe1d3_10b0,     // LDRH r1, [r3]       IE
+        0xe002_2001,     // AND r2, r2, r1
+        0xe92d_4030,     // STMFD sp!, {r4, r5, lr}
+        0xe28f_5024,     // ADD r5, pc, #0x24   the subroutine
+        0xe1a0_e00f,     // MOV lr, pc
+        0xe12f_ff15,     // BX r5
+        0xe1c3_20b2,     // STRH r2, [r3, #2]   acknowledge
+        0xe59f_c010,     // LDR r12, [pc, #16]  0x03007ff8
+        0xe1dc_00b0,     // LDRH r0, [r12]
+        0xe180_0002,     // ORR r0, r0, r2
+        0xe1cc_00b0,     // STRH r0, [r12]      the BIOS flags
+        0xe8bd_4030,     // LDMFD sp!, {r4, r5, lr}
+        0xe12f_ff1e,     // BX lr
+        0x0300_7ff8,     // the literal (after the return, never run)
+        0xe92d_4000,     // STMFD sp!, {lr}     the subroutine
+        0xe3a0_0301,     // MOV r0, #0x04000000
+        0xe1d0_10b6,     // LDRH r1, [r0, #6]   VCOUNT
+        0xe580_103c,     // STR r1, [r0, #0x3c] BG3X
+        0xe8bd_8000,     // LDMFD sp!, {pc}
+    ];
+    let main = [
+        0xe286_6001_u32, // ADD r6, r6, #1
+        0xe3a0_7301,     // MOV r7, #0x04000000
+        0xe287_9c02,     // ADD r9, r7, #0x200
+        0xe1c9_80b8,     // STRH r8, [r9, #8]   IME
+        0xe28f_a004,     // ADD r10, pc, #4
+        0xe1a0_e00f,     // MOV lr, pc
+        0xe1a0_f00a,     // MOV pc, r10
+        0xe59f_f000,     // LDR pc, [pc, #0]    through the table
+        0xe1a0_0000,     // MOV r0, r0
+        MAIN + 0x2c,     // the table
+        0xe1a0_0000,     // MOV r0, r0
+        0x0a00_0000,     // BEQ +0 (the next)
+        0xe357_0000,     // CMP r7, #0
+        0x13a0_1002,     // MOVNE r1, #2         wait for HBlank
+        0x128f_e004,     // ADDNE lr, pc, #4     back to the loop
+        0x13a0_ff80,     // MOVNE pc, #0x200     IntrWait in the BIOS
+        0xe1a0_0000,     // MOV r0, r0
+        0xeaff_ffed,     // B the loop
+    ];
+    let mut random = Random(0xb105_b105);
+    let (mut runs, mut halts) = (0, 0);
+    let switches = super::SWITCHES.get();
+    for trial in 0..200 {
+        let start_in_bios = trial % 3 == 0;
+        let mut cpu = Cpu::init(if start_in_bios { 0x200 } else { MAIN }, 0x1f, false);
+        cpu.registers[1] = 1 + random.below(3);
+        cpu.registers[8] = random.below(2);
+        cpu.registers[14] = MAIN;
+        let lead = lead(&mut random);
+        let mut pair = Pair::with_bios(
+            &[],
+            &bios,
+            |bus| {
+                for (i, &word) in handler.iter().enumerate() {
+                    write_word(bus, HANDLER + 4 * i as u32, word);
+                }
+                for (i, &word) in main.iter().enumerate() {
+                    write_word(bus, MAIN + 4 * i as u32, word);
+                }
+                write_word(bus, 0x0300_7ffc, HANDLER);
+                // HBlank and VBlank interrupts, enabled.
+                set_io(bus, 0x0400_0004, 0x0018);
+                set_io(bus, 0x0400_0200, 0x0003);
+                set_io(bus, 0x0400_0208, 1);
+            },
+            cpu,
+            lead,
+        );
+        let context = format!("trial {trial} lead {lead}");
+        let end = pair.engine_bus.now() + 20_000;
+        while pair.engine_bus.now() < end {
+            let yield_at = end.min(pair.engine_bus.now() + 1 + u64::from(random.below(3000)));
+            let halted = pair.engine_bus.power_state() == PowerState::Halted
+                && !pair.engine_bus.halt_wake_pending();
+            if halted {
+                halts += 1;
+                pair.engine_bus.idle_halt_until(yield_at);
+                pair.reference_bus.idle_halt_until(yield_at);
+                pair.assert_equal(&format!("{context} halted"));
+                continue;
+            }
+            if pair.compare(yield_at, &context) {
+                runs += 1;
+            } else {
+                let outcome = pair.engine.step(&mut pair.engine_bus);
+                assert_eq!(outcome, pair.reference.step(&mut pair.reference_bus), "{context}");
+                pair.assert_equal(&format!("{context} after refusal"));
+            }
+        }
+        pair.settle(&context);
+    }
+    let switches = super::SWITCHES.get() - switches;
+    assert!(runs > 5000, "only {runs} runs");
+    assert!(halts > 2000, "only {halts} halts");
+    assert!(switches > 5000, "only {switches} switches between the BIOS and IWRAM");
 }

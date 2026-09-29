@@ -9,6 +9,8 @@ pub(crate) struct EngineMemory<'a> {
     pub(crate) iwram: &'a mut [u8; IWRAM_SIZE],
     pub(crate) ewram: &'a mut [u8; EWRAM_SIZE],
     pub(crate) code: &'a mut CodeCache,
+    /// The BIOS image for a run of BIOS code, otherwise nothing.
+    pub(crate) bios: &'a [u8],
     pub(crate) rom: RomData<'a>,
     pub(crate) video: VideoMemory<'a>,
     /// Cycles from now during which the PPU shows no visible dot, so that a
@@ -292,7 +294,8 @@ impl Bus {
         !self.game_pak_code_active && !self.game_pak_prefetch.active
     }
 
-    pub(crate) fn engine_memory(&mut self) -> EngineMemory<'_> {
+    /// Memory for an engine run; the BIOS image only for a run of BIOS code.
+    pub(crate) fn engine_memory(&mut self, bios: bool) -> EngineMemory<'_> {
         // A stale cache is not refreshed here: that would change what the
         // ordinary bus later sees.
         let (n, s) = if self.game_pak_timing_key == self.waitcnt {
@@ -306,6 +309,7 @@ impl Bus {
             iwram: &mut self.iwram,
             ewram: &mut self.ewram,
             code: &mut self.code,
+            bios: if bios && self.bios.len() == BIOS_SIZE { &self.bios[..] } else { &[] },
             rom: RomData {
                 bytes: &self.rom[..size],
                 gpio: self.cartridge_gpio.is_some(),
@@ -349,11 +353,93 @@ impl Bus {
     /// instruction: its clock, the open-bus latch and whether the last
     /// instruction ended with a data access.
     pub(crate) fn engine_finish(&mut self, cycle: Cycle, open_bus: u32, data_last: bool) {
-        debug_assert!(cycle > self.current_cycle && cycle < self.batch_deadline);
+        debug_assert!(cycle >= self.current_cycle);
+        debug_assert!(cycle < self.batch_deadline || cycle == self.current_cycle);
         self.current_cycle = cycle;
         self.open_bus_value = open_bus;
         self.fetch_kind =
             if data_last { AccessKind::Nonsequential } else { AccessKind::Sequential };
+    }
+
+    /// Whether an engine run may make a CPU load of `width` at MMIO
+    /// `address` itself: one whose value never includes the open-bus latch,
+    /// which the bus does not hold during a run. As [`Bus::read_mmio`]
+    /// reads; a register that reads only through a side path counts as
+    /// unmapped, which only leaves more to the interpreter.
+    pub(crate) fn engine_mmio_loadable(&self, address: u32, width: AccessWidth) -> bool {
+        if address >> 24 != 4 {
+            return false;
+        }
+        let half = address & !1;
+        let other = if width == AccessWidth::Word { half + 2 } else { half ^ 2 };
+        self.peek_mmio_half(half).is_some() || self.peek_mmio_half(other).is_some()
+    }
+
+    /// Whether an engine run may make a CPU store at MMIO `address` itself:
+    /// any register but WAITCNT, which changes the Game Pak timing and
+    /// prefetch state a run keeps to itself.
+    pub(crate) fn engine_mmio_storable(&self, address: u32, width: AccessWidth) -> bool {
+        let last = address + width.bytes() as u32 - 1;
+        address >> 24 == 4 && (last < MMIO_BASE + 0x204 || address > MMIO_BASE + 0x207)
+    }
+
+    /// A CPU load an engine run makes from MMIO, starting at `cycle`: what
+    /// [`Bus::read`] does for it, except the Game Pak prefetch buffer, whose
+    /// state the run keeps. Leaves the clock after the access's cycle.
+    pub(crate) fn engine_mmio_load(
+        &mut self,
+        cycle: Cycle,
+        address: u32,
+        width: AccessWidth,
+    ) -> u32 {
+        debug_assert!(self.engine_mmio_loadable(address, width));
+        debug_assert!(self.batch_active && cycle >= self.current_cycle);
+        debug_assert!(cycle + 1 < self.batch_deadline);
+        self.current_cycle = cycle;
+        self.flush_device_batch();
+        self.fetch_kind = AccessKind::Sequential;
+        let value = self.read_mmio(address, width);
+        self.open_bus_value = value;
+        self.current_cycle = cycle + 1;
+        value
+    }
+
+    /// A CPU store an engine run makes to MMIO, whose cycle ends at
+    /// `cycle`: what [`Bus::write`] does for it, except the Game Pak
+    /// prefetch buffer, whose state the run keeps, and pending DMA, which
+    /// [`Self::engine_may_go_on`] leaves to the caller.
+    pub(crate) fn engine_mmio_store(
+        &mut self,
+        cycle: Cycle,
+        address: u32,
+        width: AccessWidth,
+        value: u32,
+    ) {
+        debug_assert!(self.engine_mmio_storable(address, width));
+        debug_assert!(self.batch_active && cycle > self.current_cycle);
+        debug_assert!(cycle < self.batch_deadline);
+        // The clock moves inside the batch, which then brings the PPU to it:
+        // the store's cycle meets no device event.
+        self.current_cycle = cycle;
+        self.fetch_kind = AccessKind::Sequential;
+        self.flush_device_batch();
+        self.batch_active = false;
+        self.batch_deadline = 0;
+        self.write_mmio(address, width, value);
+        self.batch_active = true;
+        self.batch_device_cycle = self.current_cycle;
+        self.batch_deadline = self.next_device_boundary();
+    }
+
+    /// Whether a run may go on to `limit` after an MMIO access: no DMA is
+    /// pending, the CPU still runs, no IRQ it would take is raised
+    /// (`irq_masked` is the CPSR's I bit) and no device event came before
+    /// the limit.
+    pub(crate) fn engine_may_go_on(&self, limit: Cycle, irq_masked: bool) -> bool {
+        self.pending_dma == 0
+            && self.power_state == PowerState::Running
+            && (irq_masked || !self.irq_line)
+            && limit < self.batch_deadline
     }
 }
 
@@ -443,7 +529,8 @@ impl Bus {
         load_last: bool,
         last_fetch: u32,
     ) {
-        debug_assert!(now > self.current_cycle && now < self.batch_deadline);
+        debug_assert!(now >= self.current_cycle);
+        debug_assert!(now < self.batch_deadline || now == self.current_cycle);
         self.current_cycle = now;
         self.fetch_kind =
             if data_last { AccessKind::Nonsequential } else { AccessKind::Sequential };
