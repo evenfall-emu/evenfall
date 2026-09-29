@@ -163,7 +163,6 @@ fn make_machine(
     Ok(Machine::new(machine::Config {
         rom: &rom,
         bios: &bios,
-        immutable_media: true,
         boot,
         save_type,
         save_data: save.as_deref(),
