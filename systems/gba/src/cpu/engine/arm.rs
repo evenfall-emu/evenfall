@@ -5,7 +5,7 @@
 //! branch within the region adds two refill fetches.
 
 use super::mem::{Mem, Running};
-use super::{Op, PAGE_SHIFT, fresh_ops, split_memory};
+use super::{Load, Mmio, Op, PAGE_SHIFT, fresh_ops, split_memory};
 use crate::bus::{AccessWidth, Bus, EWRAM_SIZE, IWRAM_SIZE, read_ram};
 use evenfall_cpu_arm::{Core, InstructionSet, Pipeline, condition_passes};
 
@@ -300,11 +300,14 @@ struct Ctx<'a, const EW: bool> {
     core: &'a mut Core,
     /// The address of `ops[0]` in the current mirror.
     base: u32,
-    /// The budget left after the last load and after the last store.
+    /// The budget left after the last load, store and MMIO access.
     load_mark: i64,
     store_mark: i64,
+    mmio_mark: i64,
     /// The last load's bus value, the open-bus latch if it ends the run.
     data: u32,
+    /// The MMIO transfer the run stopped at, for the driver ([`Mmio`]).
+    mmio: Option<Mmio>,
 }
 
 /// The state every instruction changes, kept small so that it stays in host
@@ -384,61 +387,151 @@ pub(super) fn run<const EW: bool>(core: &mut Core, bus: &mut Bus, limit: u64) ->
     }
     let start = bus.now();
     let budget = (limit - start) as i64;
-    let memory = bus.engine_memory();
     let slots = (mask as usize + 1) / 4;
-    let mut ops = memory.code.take(Ctx::<EW>::REGION, false, || {
+    let mut ops = bus.code.take(Ctx::<EW>::REGION, false, || {
         let mut tail = vec![END_OP; slots];
         tail[slots - 1] = STOP_OP;
         fresh_ops(slots, &tail)
     });
-    let (mem, _) = split_memory(memory, budget);
-    let pipeline = core.pipeline;
-    let cpsr = core.cpsr;
-    let mut c = Ctx::<EW> { mem, core, base: pc & !mask, load_mark: -1, store_mark: -1, data: 0 };
-    let latched = [c.code_word(pc), c.code_word(pc.wrapping_add(4))];
-    if pipeline != Some(Pipeline { instructions: latched, instruction_set: InstructionSet::Arm }) {
-        bus.code.put(Ctx::<EW>::REGION, false, ops);
-        return false;
-    }
-    let hot = Hot { idx: (pc & mask) >> 2, budget, cpsr };
-    let hot = if EW {
-        let ops = (&mut *ops).try_into().expect("EWRAM op array");
-        run_loop::<EW, { 2 * EWRAM_SIZE / 4 }>(ops, &mut c, hot)
-    } else {
-        let ops = (&mut *ops).try_into().expect("IWRAM op array");
-        run_loop::<EW, { 2 * IWRAM_SIZE / 4 }>(ops, &mut c, hot)
+    let mut saved =
+        Saved { base: pc & !mask, load_mark: -1, store_mark: -1, mmio_mark: -1, data: 0 };
+    let mut resume = Resume::Start;
+    let exit = loop {
+        let left = limit as i64 - bus.now() as i64;
+        let (mem, _) = split_memory(bus.engine_memory(), left);
+        let mut c = saved.ctx::<EW>(mem, core);
+        let hot = match resume {
+            Resume::Start => {
+                let latched = [c.code_word(pc), c.code_word(pc.wrapping_add(4))];
+                let arm = Pipeline { instructions: latched, instruction_set: InstructionSet::Arm };
+                if c.core.pipeline != Some(arm) {
+                    break None;
+                }
+                Hot { idx: (pc & mask) >> 2, budget, cpsr: c.core.cpsr }
+            }
+            Resume::On(hot) => hot,
+            Resume::Out(hot) => break finish(c, hot, budget),
+        };
+        let hot = if EW {
+            let ops = (&mut *ops).try_into().expect("EWRAM op array");
+            run_loop::<EW, { 2 * EWRAM_SIZE / 4 }>(ops, &mut c, hot)
+        } else {
+            let ops = (&mut *ops).try_into().expect("IWRAM op array");
+            run_loop::<EW, { 2 * IWRAM_SIZE / 4 }>(ops, &mut c, hot)
+        };
+        let Some(access) = c.mmio.take() else {
+            break finish(c, hot, budget);
+        };
+        saved = c.save();
+        resume = serve::<EW>(core, bus, limit, hot, access, &mut saved);
     };
-    if hot.budget == budget {
-        bus.code.put(Ctx::<EW>::REGION, false, ops);
+    bus.code.put(Ctx::<EW>::REGION, false, ops);
+    let Some((cycle, open_bus, data_last)) = exit else {
         return false;
+    };
+    bus.engine_finish(start + cycle, open_bus, data_last);
+    true
+}
+
+/// What a run keeps of its [`Ctx`] while the driver has the bus back.
+#[derive(Clone, Copy)]
+struct Saved {
+    base: u32,
+    load_mark: i64,
+    store_mark: i64,
+    mmio_mark: i64,
+    data: u32,
+}
+
+impl Saved {
+    fn ctx<'a, const EW: bool>(self, mem: Mem<'a>, core: &'a mut Core) -> Ctx<'a, EW> {
+        let Self { base, load_mark, store_mark, mmio_mark, data } = self;
+        Ctx { mem, core, base, load_mark, store_mark, mmio_mark, data, mmio: None }
+    }
+}
+
+impl<const EW: bool> Ctx<'_, EW> {
+    fn save(&self) -> Saved {
+        let (base, load_mark, store_mark, mmio_mark, data) =
+            (self.base, self.load_mark, self.store_mark, self.mmio_mark, self.data);
+        Saved { base, load_mark, store_mark, mmio_mark, data }
+    }
+}
+
+/// Where a run goes after its driver had the bus: on from a state, or
+/// out after it.
+#[derive(Clone, Copy)]
+enum Resume {
+    Start,
+    On(Hot),
+    Out(Hot),
+}
+
+/// Completes the transfer to MMIO that stopped a run at `h` (see [`Mmio`]):
+/// charges it as the interpreter does, makes the access on the bus and
+/// writes the registers. Returns how the run goes on; the interpreter
+/// takes the transfer if the bus does not let the run make it or its
+/// cycles pass the limit.
+fn serve<const EW: bool>(
+    core: &mut Core,
+    bus: &mut Bus,
+    limit: u64,
+    h: Hot,
+    access: Mmio,
+    saved: &mut Saved,
+) -> Resume {
+    let store = access.store.is_some();
+    let fetch = Ctx::<EW>::FETCH;
+    let mut next = h;
+    if !access.allowed(bus) || !next.charge(fetch + if store { 1 } else { 2 }) {
+        return Resume::Out(h);
+    }
+    let value = access.perform(bus, &mut core.registers, limit - (h.budget - fetch) as u64);
+    next.next();
+    saved.mmio_mark = next.budget;
+    if !store {
+        saved.data = value;
+        saved.load_mark = next.budget;
+    }
+    if bus.engine_may_go_on(limit, core.cpsr & (1 << 7) != 0) {
+        Resume::On(next)
+    } else {
+        Resume::Out(next)
+    }
+}
+
+/// Publishes a run's CPU state; returns the cycles it took, the open-bus
+/// latch and whether its last instruction ended with a data access that
+/// makes the next fetch nonsequential, or None if no instruction ran.
+fn finish<const EW: bool>(c: Ctx<'_, EW>, hot: Hot, budget: i64) -> Option<(u64, u32, bool)> {
+    if hot.budget == budget {
+        return None;
     }
     let pc = c.pc(hot.idx);
     let pipeline = [c.code_word(pc), c.code_word(pc.wrapping_add(4))];
     let loaded = c.load_mark == hot.budget;
-    let data_last = loaded || c.store_mark == hot.budget;
+    // An MMIO access leaves the next fetch sequential.
+    let mmio = c.mmio_mark == hot.budget;
+    let data_last = (loaded && !mmio) || c.store_mark == hot.budget;
     let open_bus = if loaded { c.data } else { pipeline[1] };
     let core = c.core;
     core.registers[15] = pc.wrapping_add(8);
     core.cpsr = hot.cpsr;
     core.next_instruction_address = pc;
     core.pipeline = Some(Pipeline { instructions: pipeline, instruction_set: InstructionSet::Arm });
-    bus.code.put(Ctx::<EW>::REGION, false, ops);
-    bus.engine_finish(limit - hot.budget as u64, open_bus, data_last);
-    true
+    Some(((budget - hot.budget) as u64, open_bus, data_last))
 }
 
 /// Whether a run would refuse `op` as its first instruction with these
 /// registers, in the frequent cases that cost less to see than a run's
-/// setup: an instruction the engine never runs, and a transfer whose base
-/// points at MMIO (as in an interrupt handler). Refusing is always safe;
-/// this only has to be cheap and usually right.
+/// setup: an instruction the engine never runs, and a block transfer whose
+/// base points at MMIO. Refusing is always safe; this only has to be cheap
+/// and usually right.
 #[inline(always)]
 fn refused_at_once(op: &Op, registers: &[u32; 16]) -> bool {
     match op.kind {
         k::EXIT => true,
-        k::LDR..=k::BLOCK | k::LDR_R..=29 | k::LDR_W..=215 => {
-            registers[usize::from(op.rn & 15)] >> 24 == 4
-        }
+        k::BLOCK => registers[usize::from(op.rn & 15)] >> 24 == 4,
         _ => false,
     }
 }
@@ -1431,7 +1524,8 @@ fn transfer_elsewhere<const EW: bool, const MODE: u8>(
         let run = c.running(ops, h.idx);
         let fetch = Ctx::<EW>::FETCH;
         let Some(cost) = c.mem.store_cost(run, bus_address, width, fetch, h.budget) else {
-            return Hot::REFUSED;
+            let store = Some((regs[usize::from(op.rd)], width));
+            return to_bus(c, Mmio { address, store, ..Mmio::default() });
         };
         if !h.charge(cost) {
             return Hot::REFUSED;
@@ -1442,7 +1536,14 @@ fn transfer_elsewhere<const EW: bool, const MODE: u8>(
         return h;
     }
     let Some((value, cycles)) = c.mem.load(bus_address, width) else {
-        return Hot::REFUSED;
+        let load = match MODE {
+            LDR => Load::Word,
+            LDRB => Load::Byte,
+            LDRH => Load::Half,
+            LDRSB => Load::SignedByte,
+            _ => Load::SignedHalf,
+        };
+        return to_bus(c, Mmio { address, load: Some((op.rd, load)), ..Mmio::default() });
     };
     if !h.charge(Ctx::<EW>::FETCH + cycles + 1) {
         return Hot::REFUSED;
@@ -1464,10 +1565,11 @@ fn pre_indexed<const EW: bool, const MODE: u8>(
     op: &Op,
 ) -> bool {
     let address = immediate(regs, op);
-    transfer::<EW, MODE>(h, c, ops, regs, op, address) && {
-        regs[usize::from(op.rn)] = address;
-        true
+    if !transfer::<EW, MODE>(h, c, ops, regs, op, address) {
+        return with_writeback(c, op.rn, address);
     }
+    regs[usize::from(op.rn)] = address;
+    true
 }
 
 /// A transfer at the base address, which then moves by the offset.
@@ -1480,10 +1582,33 @@ fn post_indexed<const EW: bool, const MODE: u8>(
     op: &Op,
 ) -> bool {
     let base = regs[usize::from(op.rn)];
-    transfer::<EW, MODE>(h, c, ops, regs, op, base) && {
-        regs[usize::from(op.rn)] = base.wrapping_add(op.x);
-        true
+    if !transfer::<EW, MODE>(h, c, ops, regs, op, base) {
+        return with_writeback(c, op.rn, base.wrapping_add(op.x));
     }
+    regs[usize::from(op.rn)] = base.wrapping_add(op.x);
+    true
+}
+
+/// A transfer the run cannot make: to MMIO, for the driver to complete,
+/// otherwise for the interpreter.
+#[cold]
+#[inline(never)]
+fn to_bus<const EW: bool>(c: &mut Ctx<'_, EW>, access: Mmio) -> Hot {
+    if access.address >> 24 == 4 {
+        c.mmio = Some(access);
+    }
+    Hot::REFUSED
+}
+
+/// Adds the base register write of a writeback transfer to the MMIO access
+/// it left to the driver, if any; the run stops either way.
+#[cold]
+#[inline(never)]
+fn with_writeback<const EW: bool>(c: &mut Ctx<'_, EW>, rn: u8, base: u32) -> bool {
+    if let Some(access) = &mut c.mmio {
+        access.writeback = Some((rn, base));
+    }
+    false
 }
 
 /// LDR/STR/LDRB/STRB with any addressing mode.
@@ -1513,7 +1638,12 @@ fn single_op<const EW: bool>(
     let (width, bus_address) =
         if byte { (AccessWidth::Byte, address) } else { (AccessWidth::Word, address & !3) };
     if word & (1 << 20) != 0 {
-        let (value, cycles) = c.mem.load(bus_address, width)?;
+        let Some((value, cycles)) = c.mem.load(bus_address, width) else {
+            let load = Some((rd as u8, if byte { Load::Byte } else { Load::Word }));
+            let writeback = (writeback && rn != rd).then_some((rn as u8, adjusted));
+            to_bus(c, Mmio { address, load, writeback, ..Mmio::default() });
+            return None;
+        };
         if !h.charge(Ctx::<EW>::FETCH + cycles + 1) {
             return None;
         }
@@ -1525,11 +1655,17 @@ fn single_op<const EW: bool>(
         c.load_mark = h.budget;
     } else {
         let run = c.running(ops, h.idx);
-        let cost = c.mem.store_cost(run, bus_address, width, Ctx::<EW>::FETCH, h.budget)?;
+        let value = regs[rd].wrapping_add(if rd == 15 { 4 } else { 0 });
+        let Some(cost) = c.mem.store_cost(run, bus_address, width, Ctx::<EW>::FETCH, h.budget)
+        else {
+            let writeback = writeback.then_some((rn as u8, adjusted));
+            to_bus(c, Mmio { address, store: Some((value, width)), writeback, load: None });
+            return None;
+        };
         if !h.charge(cost) {
             return None;
         }
-        c.mem.store(bus_address, width, regs[rd].wrapping_add(if rd == 15 { 4 } else { 0 }));
+        c.mem.store(bus_address, width, value);
         if writeback {
             regs[rn] = adjusted;
         }
@@ -1568,7 +1704,13 @@ fn half_op<const EW: bool>(
         (AccessWidth::Half, address & !1)
     };
     if word & (1 << 20) != 0 {
-        let (value, cycles) = c.mem.load(bus_address, width)?;
+        let Some((value, cycles)) = c.mem.load(bus_address, width) else {
+            let load = [Load::Half, Load::Half, Load::SignedByte, Load::SignedHalf];
+            let load = Some((rd as u8, load[operation as usize]));
+            let writeback = (writeback && rn != rd).then_some((rn as u8, adjusted));
+            to_bus(c, Mmio { address, load, writeback, ..Mmio::default() });
+            return None;
+        };
         if !h.charge(Ctx::<EW>::FETCH + cycles + 1) {
             return None;
         }
@@ -1585,7 +1727,12 @@ fn half_op<const EW: bool>(
         c.load_mark = h.budget;
     } else {
         let run = c.running(ops, h.idx);
-        let cost = c.mem.store_cost(run, bus_address, width, Ctx::<EW>::FETCH, h.budget)?;
+        let Some(cost) = c.mem.store_cost(run, bus_address, width, Ctx::<EW>::FETCH, h.budget)
+        else {
+            let writeback = writeback.then_some((rn as u8, adjusted));
+            to_bus(c, Mmio { address, store: Some((regs[rd], width)), writeback, load: None });
+            return None;
+        };
         if !h.charge(cost) {
             return None;
         }

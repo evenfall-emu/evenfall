@@ -23,7 +23,7 @@ mod mem;
 mod tests;
 mod thumb;
 
-use crate::bus::{Bus, EWRAM_SIZE, EngineMemory, IWRAM_SIZE, PowerState};
+use crate::bus::{AccessWidth, Bus, EWRAM_SIZE, EngineMemory, IWRAM_SIZE, PowerState};
 use crate::cpu::Cpu;
 use mem::Mem;
 
@@ -47,6 +47,113 @@ pub(crate) struct Op {
 
 /// Thumb ops per Game Pak ROM page: 32 KiB of ROM.
 pub(crate) const ROM_PAGE_SLOTS: usize = 1 << 14;
+
+/// How a load makes a register value of the bus value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Load {
+    Word,
+    Byte,
+    Half,
+    SignedByte,
+    SignedHalf,
+}
+
+impl Load {
+    /// The register value a load at `address` makes of bus value `value`:
+    /// misaligned words and halfwords rotate, and a misaligned signed
+    /// halfword loads its high byte.
+    #[inline(always)]
+    pub(super) fn extend(self, value: u32, address: u32) -> u32 {
+        match self {
+            Self::Word => value.rotate_right((address & 3) * 8),
+            Self::Half => value.rotate_right((address & 1) * 8),
+            Self::SignedByte => (value as u8 as i8 as i32) as u32,
+            Self::SignedHalf if address & 1 != 0 => ((value >> 8) as u8 as i8 as i32) as u32,
+            Self::SignedHalf => (value as u16 as i16 as i32) as u32,
+            Self::Byte => value,
+        }
+    }
+
+    pub(super) fn width(self) -> AccessWidth {
+        match self {
+            Self::Word => AccessWidth::Word,
+            Self::Byte | Self::SignedByte => AccessWidth::Byte,
+            Self::Half | Self::SignedHalf => AccessWidth::Half,
+        }
+    }
+}
+
+/// A single transfer to MMIO that a run stops at and its driver completes:
+/// the driver charges the instruction, makes the access on the bus at its
+/// cycle and writes the registers, then resumes the run.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct Mmio {
+    /// The address the instruction computed.
+    pub(super) address: u32,
+    /// The value a store writes, or the register a load writes and how.
+    pub(super) store: Option<(u32, AccessWidth)>,
+    pub(super) load: Option<(u8, Load)>,
+    /// A base register write after the access (ARM).
+    pub(super) writeback: Option<(u8, u32)>,
+}
+
+impl Mmio {
+    /// The width and bus-aligned address of the access.
+    pub(super) fn access(&self) -> (AccessWidth, u32) {
+        let width = match (self.store, self.load) {
+            (Some((_, width)), _) => width,
+            (_, Some((_, load))) => load.width(),
+            _ => unreachable!("an MMIO access loads or stores"),
+        };
+        let aligned = match width {
+            AccessWidth::Word => self.address & !3,
+            AccessWidth::Half => self.address & !1,
+            AccessWidth::Byte => self.address,
+        };
+        (width, aligned)
+    }
+
+    /// Whether the bus lets the run make this access itself.
+    pub(super) fn allowed(&self, bus: &Bus) -> bool {
+        let (width, address) = self.access();
+        if self.store.is_some() {
+            bus.engine_mmio_storable(address, width)
+        } else {
+            bus.engine_mmio_loadable(address, width)
+        }
+    }
+
+    /// Makes the access, whose data cycle follows the instruction's fetch
+    /// ending at `fetched`, and writes the registers. Returns the bus value.
+    pub(super) fn perform(&self, bus: &mut Bus, registers: &mut [u32; 16], fetched: u64) -> u32 {
+        #[cfg(test)]
+        MMIO_ACCESSES.with(|count| count.set(count.get() + 1));
+        let (width, address) = self.access();
+        let value = match (self.store, self.load) {
+            (Some((value, _)), _) => {
+                bus.engine_mmio_store(fetched + 1, address, width, value);
+                value
+            }
+            (_, Some((rd, load))) => {
+                let value = bus.engine_mmio_load(fetched, address, width);
+                registers[usize::from(rd)] = load.extend(value, self.address);
+                value
+            }
+            _ => unreachable!("an MMIO access loads or stores"),
+        };
+        if let Some((rn, base)) = self.writeback {
+            registers[usize::from(rn)] = base;
+        }
+        value
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// MMIO accesses engine runs made on this thread, for tests to show
+    /// they exercised them.
+    pub(super) static MMIO_ACCESSES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
 
 /// Decoded-op caches: one array per RAM region and instruction set, with a
 /// slot per instruction address, and lazily allocated Thumb pages for ROM.
