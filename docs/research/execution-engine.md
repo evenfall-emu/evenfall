@@ -34,7 +34,11 @@ instructions, however execution is sliced:
 - **MMIO.** A single MMIO load or store runs at the instruction's cycle.
   IE, IF, IME, POSTFLG, HALTCNT and the DMA source, destination and count
   latches are read and written by the run itself, which stops only when a
-  store halts the CPU or raises an IRQ it takes. Other registers the device
+  store halts the CPU or raises an IRQ it takes. DISPSTAT and VCOUNT loads
+  read the PPU position the run started at, advanced to the access's data
+  cycle; halfword and word stores to the affine parameters and reference
+  points are made by the run where no dot is visible, where the bus's raster
+  segments would record nothing. Other registers the device
   batch can take go through the bus between passes of the same run; a store
   that can schedule no device event keeps the run's device deadline. Code
   that writes several I/O registers in a row, and interrupt handlers that
