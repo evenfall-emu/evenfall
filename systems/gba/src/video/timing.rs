@@ -5,29 +5,45 @@ use evenfall_state::Codec;
 
 pub const VISIBLE_LINE_COUNT: usize = 160;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Visible lines whose HBlank began, as a bitset: delivery visits only the
+/// completed lines instead of scanning every line on every LCD event.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LineSet([u64; VISIBLE_LINE_COUNT.div_ceil(64)]);
+
+impl LineSet {
+    pub fn insert(&mut self, line: usize) {
+        self.0[line / 64] |= 1 << (line % 64);
+    }
+
+    pub fn contains(&self, line: usize) -> bool {
+        self.0[line / 64] >> (line % 64) & 1 != 0
+    }
+
+    /// Lines in ascending order.
+    pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
+        self.0.iter().enumerate().flat_map(|(word, &bits)| {
+            let mut bits = bits;
+            std::iter::from_fn(move || {
+                if bits == 0 {
+                    return None;
+                }
+                let bit = bits.trailing_zeros() as usize;
+                bits &= bits - 1;
+                Some(word * 64 + bit)
+            })
+        })
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Events {
     pub entered_vblank: bool,
     pub vblank_irq: bool,
     pub hblank_irq: bool,
     pub vcount_irq: bool,
-    pub hblank_lines: [bool; VISIBLE_LINE_COUNT],
+    pub hblank_lines: LineSet,
     pub hblank_any: bool,
     pub frames_completed: Cycle,
-}
-
-impl Default for Events {
-    fn default() -> Self {
-        Self {
-            entered_vblank: false,
-            vblank_irq: false,
-            hblank_irq: false,
-            vcount_irq: false,
-            hblank_lines: [false; VISIBLE_LINE_COUNT],
-            hblank_any: false,
-            frames_completed: 0,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Codec)]
@@ -93,7 +109,7 @@ impl PpuTiming {
             }
             if boundary == 960 {
                 if usize::from(self.line) < VISIBLE_LINE_COUNT {
-                    events.hblank_lines[usize::from(self.line)] = true;
+                    events.hblank_lines.insert(usize::from(self.line));
                     events.hblank_any = true;
                 }
                 if self.dispstat_control & (1 << 4) != 0 {
@@ -161,8 +177,8 @@ mod tests {
         assert_eq!(timing.line, 160);
         assert_eq!(timing.cycle_in_line, 0);
         assert!(events.hblank_any);
-        assert!(events.hblank_lines[159]);
-        assert_eq!(events.hblank_lines.iter().filter(|&&set| set).count(), 1);
+        assert!(events.hblank_lines.contains(159));
+        assert_eq!(events.hblank_lines.iter().collect::<Vec<_>>(), [159]);
         assert!(events.entered_vblank);
         assert!(events.vblank_irq);
         assert!(events.vcount_irq);
@@ -179,7 +195,7 @@ mod tests {
         assert_eq!((timing.line, timing.cycle_in_line), (0, 960));
         assert_eq!(events.frames_completed, 2);
         assert!(events.hblank_any);
-        assert!(events.hblank_lines[0]);
+        assert!(events.hblank_lines.contains(0));
         assert!(events.hblank_irq);
         assert!(events.vcount_irq);
     }

@@ -9,7 +9,9 @@ use crate::cartridge::{
 use crate::dma::Channel as DmaChannel;
 use crate::timer::Timer;
 use crate::types::Cycle;
-use crate::video::{AffineTransition, scanline_memo, tile_row_cache, timing::PpuTiming};
+use crate::video::{
+    AffineTransition, LineLayers, scanline_memo, tile_row_cache, timing::PpuTiming,
+};
 use evenfall_state::Codec;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -410,6 +412,8 @@ pub struct Bus {
     #[codec(skip)]
     pub tile_row_cache: Box<tile_row_cache::Cache>,
     #[codec(skip)]
+    pub(crate) line_layers: Box<LineLayers>,
+    #[codec(skip)]
     pub scanline_memo: Box<scanline_memo::Memo<ScanlineRegisters, SCREEN_HEIGHT>>,
     #[codec(skip)]
     pub video_active_interval: u16,
@@ -638,6 +642,7 @@ impl Bus {
             line_unmasked_layers: 0x3f,
             line_window_key: 1 << 63,
             tile_row_cache: Box::default(),
+            line_layers: Box::default(),
             scanline_memo: Box::default(),
             video_active_interval: 1,
             video_requested_interval: 1,
@@ -3126,10 +3131,7 @@ impl Bus {
     }
 
     fn deliver_lcd_events(&mut self, events: crate::video::timing::Events) {
-        for (line, &completed) in events.hblank_lines.iter().enumerate() {
-            if !completed {
-                continue;
-            }
+        for line in events.hblank_lines.iter() {
             if self.video_render_current {
                 self.render_scanline(line);
                 if line == SCREEN_HEIGHT - 1 {
