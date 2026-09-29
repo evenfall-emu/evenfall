@@ -296,7 +296,7 @@ fn linked(ctx: &Context, connection: SioConnection, expected: &[u32]) -> Result 
 }
 
 fn press_a_three_times_then_start(machine: &mut Machine, step: usize) -> Result {
-    if step != 0 && step % 2000 == 0 && step <= 14_000 {
+    if step != 0 && step.is_multiple_of(2000) && step <= 14_000 {
         machine.set_keys(if step == 14_000 {
             KeyState { start: true, ..KeyState::default() }
         } else if step % 4000 == 2000 {
@@ -594,10 +594,11 @@ fn wave_chain(ctx: &Context) -> Result {
 // GBATEK's shift-register rotation, hashed as in wave_readback.c.
 fn wave_readback_hash() -> u32 {
     fn bytes(add: usize) -> [u8; 16] {
-        std::array::from_fn(|i| (((2 * i + add) % 16) << 4 | (2 * i + add + 1) % 16) as u8)
+        std::array::from_fn(|i| ((((2 * i + add) % 16) << 4) | ((2 * i + add + 1) % 16)) as u8)
     }
     fn rotate(bytes: &[u8], steps: usize) -> Vec<u8> {
-        let nibble = |q: usize| if q % 2 == 0 { bytes[q / 2] >> 4 } else { bytes[q / 2] & 15 };
+        let nibble =
+            |q: usize| if q.is_multiple_of(2) { bytes[q / 2] >> 4 } else { bytes[q / 2] & 15 };
         (0..bytes.len())
             .map(|i| {
                 nibble((2 * i + steps) % (bytes.len() * 2)) << 4
@@ -790,7 +791,7 @@ fn window_pixel(x: usize, y: usize) -> u16 {
 }
 fn mosaic_pixel(x: usize, y: usize) -> u16 {
     let index = ((y - y % 4) % 8 * 8 + (x - x % 4) % 8) as u32;
-    if index == 0 { BLACK } else { (index * 501 & 0x7fff) as u16 }
+    if index == 0 { BLACK } else { ((index * 501) & 0x7fff) as u16 }
 }
 fn text8_pixel(x: usize, y: usize) -> u16 {
     if y < 96 && x < 192 { RED } else { BLUE }
@@ -809,19 +810,19 @@ fn bitmap3_pixel(x: usize, _: usize) -> u16 {
     if x < 120 { RED } else { BLUE }
 }
 fn bitmap4_pixel(_: usize, y: usize) -> u16 {
-    if y % 2 == 0 { BLUE } else { WHITE }
+    if y.is_multiple_of(2) { BLUE } else { WHITE }
 }
 fn bitmap5_pixel(x: usize, y: usize) -> u16 {
     if x >= 160 || y >= 128 {
         BLACK
-    } else if (x / 8 + y / 8) % 2 == 0 {
+    } else if (x / 8 + y / 8).is_multiple_of(2) {
         RED
     } else {
         BLUE
     }
 }
 fn green_swap_pixel(x: usize, _: usize) -> u16 {
-    if x % 2 == 0 { 0x03ff } else { BLACK }
+    if x.is_multiple_of(2) { 0x03ff } else { BLACK }
 }
 
 const SPLIT_LINE: usize = 40;
@@ -848,13 +849,13 @@ fn split(ctx: &Context, baseline: Pixel, alternate: Option<fn(usize) -> u16>) ->
             if y != SPLIT_LINE {
                 return Err(format!("pixel ({x},{y}) is {got:04x} off the split line"));
             }
-            if let Some(other) = alternate {
-                if got != other(x) {
-                    return Err(format!(
-                        "split pixel ({x},{y}) is {got:04x}, expected {:04x}",
-                        other(x)
-                    ));
-                }
+            if let Some(other) = alternate
+                && got != other(x)
+            {
+                return Err(format!(
+                    "split pixel ({x},{y}) is {got:04x}, expected {:04x}",
+                    other(x)
+                ));
             }
             count += 1;
         }
