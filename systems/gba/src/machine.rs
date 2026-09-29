@@ -18,6 +18,104 @@ pub struct Fault {
     pub reason: FaultReason,
 }
 
+impl Fault {
+    /// One stable, host-agnostic diagnostic line, as in ZiGBA.
+    pub fn write_diagnostic(&self, writer: &mut impl Write) -> std::io::Result<()> {
+        write!(
+            writer,
+            "emulation fault cycle={} pc={:08x} {}={:08x} reason=",
+            self.cycle,
+            self.instruction_address,
+            tag_name(self.instruction_set),
+            self.instruction
+        )?;
+        match self.reason {
+            FaultReason::Isa(reason) => match reason {
+                evenfall_cpu_arm::FaultReason::InvalidPsrState { operation, kind, value } => {
+                    writeln!(
+                        writer,
+                        "invalid_psr_state operation={} kind={} value={value:08x}",
+                        tag_name(operation),
+                        tag_name(kind)
+                    )
+                }
+                evenfall_cpu_arm::FaultReason::MissingSpsr { operation, mode } => writeln!(
+                    writer,
+                    "missing_spsr operation={} mode={}",
+                    tag_name(operation),
+                    tag_name(mode)
+                ),
+                evenfall_cpu_arm::FaultReason::UnpredictableArmEncoding {
+                    instruction_class,
+                    offending_registers,
+                } => writeln!(
+                    writer,
+                    "unpredictable_arm_encoding class={} offending_registers={offending_registers:04x}",
+                    tag_name(instruction_class)
+                ),
+            },
+            FaultReason::UnsupportedHleSwi { service } => {
+                writeln!(writer, "unsupported_hle_swi service={service:02x}")
+            }
+            FaultReason::InvalidHleMemoryAccess { service, operation, address, width } => writeln!(
+                writer,
+                "invalid_hle_memory_access service={service:02x} operation={} address={address:08x} width={}",
+                tag_name(operation),
+                tag_name(width)
+            ),
+            FaultReason::HleIrqNestingLimit { depth } => {
+                writeln!(writer, "hle_irq_nesting_limit depth={depth}")
+            }
+            FaultReason::SampleFreqSetModeZero { mode } => {
+                writeln!(writer, "sample_freq_set_mode_zero mode={mode}")
+            }
+            FaultReason::SoundChannelClearInternalCallback { target } => {
+                writeln!(writer, "sound_channel_clear_internal_callback target={target:08x}")
+            }
+            FaultReason::TrackStopCgbCallback { target } => {
+                writeln!(writer, "track_stop_cgb_callback target={target:08x}")
+            }
+            FaultReason::Mp2kPlayerChainLimit { player } => {
+                writeln!(writer, "mp2k_player_chain_limit player={player:08x}")
+            }
+            FaultReason::Mp2kMissingRunningStatus { track, event } => {
+                writeln!(writer, "mp2k_missing_running_status track={track:08x} event={event:02x}")
+            }
+            FaultReason::Mp2kInternalCallback { target } => {
+                writeln!(writer, "mp2k_internal_callback target={target:08x}")
+            }
+            FaultReason::Mp2kReplacementCallback { command, target } => {
+                writeln!(writer, "mp2k_replacement_callback command={command} target={target:08x}")
+            }
+            FaultReason::SoundDriverMainInternalCallback { target } => {
+                writeln!(writer, "sound_driver_main_internal_callback target={target:08x}")
+            }
+            FaultReason::DmaLivelock { channel, started_at } => {
+                writeln!(writer, "dma_livelock channel={channel} started_at={started_at}")
+            }
+        }
+    }
+}
+
+fn tag_name(tag: impl std::fmt::Debug) -> String {
+    let name = format!("{tag:?}");
+    let chars: Vec<char> = name.chars().collect();
+    let mut result = String::with_capacity(name.len() + 4);
+    for (index, &ch) in chars.iter().enumerate() {
+        if ch.is_uppercase()
+            && index > 0
+            && (chars[index - 1].is_lowercase()
+                || chars[index - 1].is_ascii_digit()
+                || (chars[index - 1].is_uppercase()
+                    && chars.get(index + 1).is_some_and(|next| next.is_lowercase())))
+        {
+            result.push('_');
+        }
+        result.extend(ch.to_lowercase());
+    }
+    result
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StopReason {
     Deadline,
@@ -473,7 +571,7 @@ impl Machine {
     }
 
     pub fn read_register(&self, index: u8) -> u32 {
-        self.cpu.read_register(index)
+        self.cpu.read_register(usize::from(index))
     }
     pub fn next_instruction_address(&self) -> u32 {
         self.cpu.next_instruction_address()
@@ -521,7 +619,7 @@ impl Machine {
     pub fn completed_frames(&self) -> Cycle {
         self.bus.completed_frames()
     }
-    pub fn drain_audio_samples(&mut self, output: &mut [bus::StereoSample]) -> usize {
+    pub fn drain_audio_samples(&mut self, output: &mut [evenfall_audio::StereoSample]) -> usize {
         self.bus.drain_audio_samples(output)
     }
     pub fn set_audio_output(&mut self, enabled: bool) {
@@ -939,5 +1037,32 @@ impl evenfall_host::System for Machine {
         output: &mut [u8],
     ) -> Result<(), evenfall_host::AddressOverflow> {
         self.inspect_memory(address, output).map_err(|_| evenfall_host::AddressOverflow)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ZiGBA's stable diagnostic line includes width, instruction set, cycle,
+    /// and the reason payload; Debug's CamelCase names would be incompatible.
+    #[test]
+    fn fault_writes_stable_diagnostic_line() {
+        let fault = Fault {
+            cycle: 73,
+            instruction_address: 0x0800_0014,
+            instruction: 0xEF00_007F,
+            instruction_set: cpu::InstructionSet::Arm,
+            reason: FaultReason::InvalidHleMemoryAccess {
+                service: 0x0b,
+                operation: cpu::HleMemoryOperation::Write,
+                address: 0x0400_0122,
+                width: bus::AccessWidth::Half,
+            },
+        };
+        let mut output = Vec::new();
+        fault.write_diagnostic(&mut output).unwrap();
+        assert_eq!(output,
+            b"emulation fault cycle=73 pc=08000014 arm=ef00007f reason=invalid_hle_memory_access service=0b operation=write address=04000122 width=half\n");
     }
 }

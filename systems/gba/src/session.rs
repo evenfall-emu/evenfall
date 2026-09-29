@@ -609,4 +609,134 @@ mod tests {
         .unwrap();
         assert_eq!(session.write_state().unwrap(), loaded.write_state().unwrap());
     }
+
+    /// Zig: "rewind captures per-frame history and restores earlier frames"
+    #[test]
+    fn rewind_captures_per_frame_history_and_restores_earlier_frames() {
+        let mut session = Session::create(Config {
+            image: LOOP_ROM,
+            rewind: RewindConfig { interval_frames: 1, ..RewindConfig::default() },
+            ..Config::default()
+        })
+        .unwrap();
+        assert_eq!(session.rewind_depth(), 0);
+        assert!(matches!(session.rewind(1), Err(Error::RewindEmpty)));
+        assert!(matches!(session.rewind(0), Err(Error::InvalidRewindSteps)));
+        for _ in 0..4 {
+            session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        }
+        assert_eq!(session.machine.completed_frames(), 4);
+        assert_eq!(session.rewind_depth(), 4);
+        assert_eq!(session.rewind_info(0).unwrap().frame, 1);
+        assert_eq!(session.rewind_info(2).unwrap().frame, 3);
+        let at_four = session.write_state().unwrap();
+        assert_eq!(session.rewind(1).unwrap().frame, 3);
+        assert_eq!(session.rewind_depth(), 3);
+        session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        assert_eq!(session.write_state().unwrap(), at_four);
+        assert_eq!(session.rewind(1).unwrap().frame, 3);
+        assert_eq!(session.rewind(1).unwrap().frame, 2);
+        assert_eq!(session.rewind(1).unwrap().frame, 1);
+        assert!(matches!(session.rewind(1), Err(Error::RewindEmpty)));
+    }
+
+    /// Zig: "rewind bundles preserve live position, history and capture continuation"
+    #[test]
+    fn rewind_bundles_preserve_live_position_history_and_capture_continuation() {
+        for compression in
+            [RewindCompression::Off, RewindCompression::Fast, RewindCompression::Delta]
+        {
+            let mut a = Session::create(Config {
+                image: LOOP_ROM,
+                rewind: RewindConfig {
+                    interval_frames: 1,
+                    compression,
+                    age_exponent: 0.25,
+                    ..RewindConfig::default()
+                },
+                ..Config::default()
+            })
+            .unwrap();
+            a.set_rewind_speed_scale(512).unwrap();
+            for _ in 0..7 {
+                a.advance(a.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+            }
+            let live = a.write_state().unwrap();
+            let bundle = a.write_rewind_bundle().unwrap();
+            assert_eq!(a.write_state().unwrap(), live);
+            assert_eq!(a.rewind_depth(), 3);
+
+            let mut b = Session::create(Config { image: LOOP_ROM, ..Config::default() }).unwrap();
+            b.set_audio_output(false);
+            b.load_rewind_bundle(&bundle).unwrap();
+            assert_eq!(b.write_state().unwrap(), live);
+            assert_eq!(b.rewind_depth(), 3);
+            assert_eq!(b.write_rewind_bundle().unwrap(), bundle);
+            assert!(!b.audio_output_enabled);
+
+            a.advance(a.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+            b.advance(b.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+            assert_eq!(a.write_rewind_bundle().unwrap(), b.write_rewind_bundle().unwrap());
+        }
+    }
+
+    /// Zig: "rewind bundles reject corrupt envelopes metadata codecs and foreign media atomically"
+    #[test]
+    fn rewind_bundles_reject_corrupt_envelopes_metadata_codecs_and_foreign_media_atomically() {
+        let mut session = Session::create(Config {
+            image: LOOP_ROM,
+            rewind: RewindConfig { interval_frames: 1, ..RewindConfig::default() },
+            ..Config::default()
+        })
+        .unwrap();
+        for _ in 0..3 {
+            session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        }
+        let bundle = session.write_rewind_bundle().unwrap();
+        session.rewind(2).unwrap();
+        let before = session.write_rewind_bundle().unwrap();
+        let history = 16 + u32::from_le_bytes(bundle[12..16].try_into().unwrap()) as usize;
+        let anchor = history + 51;
+        let entry = anchor
+            + 8
+            + u32::from_le_bytes(bundle[anchor + 4..anchor + 8].try_into().unwrap()) as usize;
+        let payload = entry + 33;
+        let cases = [
+            (0, 0),
+            (8, 2),
+            (16, 0),
+            (history + 3, 255),
+            (history + 6, 255),
+            (history + 14, 255),
+            (history + 25, 2),
+            (history + 26, 4),
+            (history + 49, 1),
+            (anchor + 16, 7),
+            (entry + 8, 1),
+            (entry + 24, 255),
+            (entry + 25, 255),
+            (payload + 3, 255),
+            (payload + 8, 7),
+        ];
+        for (offset, value) in cases {
+            let mut corrupt = bundle.clone();
+            corrupt[offset] = value;
+            let hash = blake3::hash(&corrupt[..corrupt.len() - 32]);
+            let end = corrupt.len() - 32;
+            corrupt[end..].copy_from_slice(hash.as_bytes());
+            assert!(session.load_rewind_bundle(&corrupt).is_err(), "offset {offset}");
+            assert_eq!(session.write_rewind_bundle().unwrap(), before, "offset {offset}");
+        }
+        for length in [0, 47, bundle.len() - 1] {
+            assert!(session.load_rewind_bundle(&bundle[..length]).is_err());
+            assert_eq!(session.write_rewind_bundle().unwrap(), before);
+        }
+        let mut other =
+            Session::create(Config { image: &[0xfd, 0xff, 0xff, 0xea], ..Config::default() })
+                .unwrap();
+        assert!(matches!(
+            other.load_rewind_bundle(&bundle),
+            Err(Error::Rewind(evenfall_state::Error::SaveStateRomMismatch))
+        ));
+    }
 }
