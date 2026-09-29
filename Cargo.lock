@@ -116,6 +116,7 @@ dependencies = [
  "evenfall-cpu-arm",
  "evenfall-host",
  "evenfall-state",
+ "miniz_oxide 0.8.9",
  "sha1",
  "sha2",
  "wyhash",
@@ -135,7 +136,7 @@ dependencies = [
  "blake3",
  "evenfall-state-derive",
  "libm",
- "miniz_oxide",
+ "miniz_oxide 0.9.1",
 ]
 
 [[package]]
@@ -174,6 +175,15 @@ name = "libm"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
+
+[[package]]
+name = "miniz_oxide"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
+dependencies = [
+ "adler2",
+]
 
 [[package]]
 name = "miniz_oxide"
