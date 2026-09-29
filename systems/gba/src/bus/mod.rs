@@ -193,7 +193,7 @@ impl UartFifo {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Codec)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
 pub struct GamePakPrefetch {
     pub active: bool,
     pub head_address: u32,

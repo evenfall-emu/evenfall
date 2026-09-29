@@ -87,7 +87,9 @@ a speed change does not clear it.
 A bundle carries the exact live state, retention policy and retained history.
 `Session::write_rewind_bundle` does not advance time or take a checkpoint;
 `Session::load_rewind_bundle` validates the upload before replacing both live
-state and history. Unlike explicit state load, bundle load keeps its history.
+state and history. The owned-buffer variant adopts a successful upload and
+keeps stored payloads as views into it; later captures recycle freed bundle
+space. Unlike explicit state load, bundle load keeps its history.
 
 Bundle version 1 is little-endian and independent of the save-state version:
 
@@ -117,15 +119,14 @@ state and history.
 
 ZiGBA's rewind verification areas map to the following Rust tests. Buffer
 checks are in [`crates/state/tests/rewind.rs`](../../crates/state/tests/rewind.rs).
-Session checks live in [`systems/gba/src/session.rs`](../../systems/gba/src/session.rs)
-on the machine branch; they are being merged separately. The browser tests in
-`web/gba` exercise the SDK, not yet the Rust GBA WebAssembly core.
+Session checks live in [`systems/gba/src/session.rs`](../../systems/gba/src/session.rs).
+The browser tests in `web/gba` exercise the SDK.
 
 | ZiGBA verification area                        | Rust coverage                                                                                                                                                                                                                                                                                                                                                |
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Word runs, malformed deltas, length changes    | `word_run_diff_round_trips_length_changes_and_rejects_malformed_deltas`                                                                                                                                                                                                                                                                                      |
 | Age selection, ties and byte-weighted eviction | `age_exponent_selects_exact_historical_states_with_oldest_first_ties`, `square_root_age_weighting_prefers_freeing_expensive_entries`                                                                                                                                                                                                                         |
-| Entry cap, anchor release and adopted storage  | The standalone buffer tests do not yet port ZiGBA's entry-cap or adopted-block compaction and folding cases.                                                                                                                                                                                                                                                 |
+| Entry cap, anchor release and adopted storage  | `owned_bundle_borrows_entries_and_recycles_space_after_branching`, `invalid_owned_bundle_returns_the_original_upload` (buffer); entry-cap cases are not yet ported.                                                                                                                                                                                          |
 | Capture cadence and reconfiguration            | `capture_cadence_scales_with_speed_and_resets`; `invalid_rewind_reconfiguration_preserves_history` (session)                                                                                                                                                                                                                                                 |
 | Framing and bounded DEFLATE inflation          | `persisted_inflater_accepts_independent_stored_fixed_and_dynamic_vectors`, `deflate_framing_rejects_overlong_and_truncated_payloads`, `zig_frame_inflates_and_rust_frames_preserve_length_and_content`                                                                                                                                                       |
 | Bundle round trip and corrupt input            | `bundle_round_trip_and_corrupt_history_rejection`, `zigba_bundle_imports_and_reexports_original_compressed_entries`; `rewind_bundles_reject_corrupt_envelopes_metadata_codecs_and_foreign_media_atomically` (session)                                                                                                                                        |

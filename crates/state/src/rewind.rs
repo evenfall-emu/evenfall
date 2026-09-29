@@ -1,6 +1,7 @@
 //! Rewind word-run deltas and framed raw DEFLATE storage.
 use crate::{Codec, Error, Result, Sink, Source, rewind_inflate};
 use alloc::vec::Vec;
+use core::ops::Range;
 const INVALID: Error = Error::InvalidSaveState;
 pub const MAX_DECODED_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_BUNDLE_BYTES: usize = 68 * 1024 * 1024;
@@ -210,11 +211,32 @@ impl RewindConfig {
     }
 }
 #[derive(Clone, Debug)]
-pub struct Entry {
+enum Stored {
+    Owned(Vec<u8>),
+    Imported(Range<usize>),
+}
+impl Stored {
+    fn len(&self) -> usize {
+        match self {
+            Self::Owned(bytes) => bytes.len(),
+            Self::Imported(range) => range.len(),
+        }
+    }
+
+    fn bytes<'a>(&'a self, bundle: &'a [u8]) -> &'a [u8] {
+        match self {
+            Self::Owned(bytes) => bytes,
+            Self::Imported(range) => &bundle[range.clone()],
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct Entry {
     pub frame: u64,
     pub cycle: u64,
     pub sequence: u64,
-    pub state: Vec<u8>,
+    state: Stored,
     pub encoding: Encoding,
     pub anchor: u32,
 }
@@ -228,7 +250,7 @@ pub struct Info {
 #[derive(Clone, Debug)]
 struct Anchor {
     id: u32,
-    stored: Vec<u8>,
+    stored: Stored,
     refs: u32,
 }
 
@@ -238,6 +260,8 @@ pub struct RewindBuffer {
     pub config: RewindConfig,
     entries: Vec<Entry>,
     anchors: Vec<Anchor>,
+    bundle: Option<Vec<u8>>,
+    bundle_end: usize,
     current_anchor_raw: Option<Vec<u8>>,
     current_anchor: u32,
     next_anchor: u32,
@@ -253,6 +277,8 @@ impl RewindBuffer {
             config,
             entries: Vec::new(),
             anchors: Vec::new(),
+            bundle: None,
+            bundle_end: 0,
             current_anchor_raw: None,
             current_anchor: 0,
             next_anchor: 0,
@@ -278,6 +304,8 @@ impl RewindBuffer {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.anchors.clear();
+        self.bundle = None;
+        self.bundle_end = 0;
         self.current_anchor_raw = None;
         self.stored_bytes = 0;
         self.last_capture_frame = None;
@@ -335,7 +363,11 @@ impl RewindBuffer {
         self.current_anchor = self.next_anchor;
         self.next_anchor = self.next_anchor.wrapping_add(1);
         self.stored_bytes += anchor_stored.len();
-        self.anchors.push(Anchor { id: self.current_anchor, stored: anchor_stored, refs: 0 });
+        self.anchors.push(Anchor {
+            id: self.current_anchor,
+            stored: Stored::Owned(anchor_stored),
+            refs: 0,
+        });
         stored
     }
     pub fn push(&mut self, frame: u64, cycle: u64, raw: &[u8]) -> Result<()> {
@@ -364,28 +396,33 @@ impl RewindBuffer {
             frame,
             cycle,
             sequence: self.next_sequence,
-            state,
+            state: Stored::Owned(state),
             encoding,
             anchor,
         });
         self.next_sequence += 1;
         self.last_capture_frame = Some(frame);
         self.enforce_budget();
+        self.reuse_bundle_space();
         Ok(())
     }
     pub fn decode(&self, index: usize) -> Result<Vec<u8>> {
+        self.decode_with_bundle(index, self.bundle.as_deref().unwrap_or(&[]))
+    }
+    fn decode_with_bundle(&self, index: usize, bundle: &[u8]) -> Result<Vec<u8>> {
         let entry = self.entries.get(index).ok_or(Error::InvalidRewindSteps)?;
+        let stored = entry.state.bytes(bundle);
         match entry.encoding {
-            Encoding::Raw => Ok(entry.state.clone()),
-            Encoding::Deflate => inflate(&entry.state),
+            Encoding::Raw => Ok(stored.to_vec()),
+            Encoding::Deflate => inflate(stored),
             Encoding::Delta => {
                 if entry.anchor == self.current_anchor
                     && let Some(raw) = &self.current_anchor_raw
                 {
-                    return decode_delta(raw, &entry.state);
+                    return decode_delta(raw, stored);
                 }
                 let i = self.anchor_index(entry.anchor).ok_or(INVALID)?;
-                decode_delta(&inflate(&self.anchors[i].stored)?, &entry.state)
+                decode_delta(&inflate(self.anchors[i].stored.bytes(bundle))?, stored)
             }
         }
     }
@@ -407,6 +444,12 @@ impl RewindBuffer {
             self.remove_at(self.entries.len() - 1);
         }
         self.last_capture_frame = Some(self.entries[index].frame);
+        if !self.entries.iter().any(|entry| matches!(entry.state, Stored::Imported(_)))
+            && !self.anchors.iter().any(|anchor| matches!(anchor.stored, Stored::Imported(_)))
+        {
+            self.bundle = None;
+            self.bundle_end = 0;
+        }
     }
     fn bytes_freed_by(&self, entry: &Entry) -> usize {
         let mut bytes = entry.state.len() + ENTRY_OVERHEAD_BYTES;
@@ -485,10 +528,67 @@ impl RewindBuffer {
         {
             let stored = deflate(&raw, 1);
             self.stored_bytes -= self.entries[i].state.len();
-            self.entries[i].state = stored;
+            self.entries[i].state = Stored::Owned(stored);
             self.entries[i].encoding = Encoding::Deflate;
             self.stored_bytes += self.entries[i].state.len();
             self.free_anchor(index);
+        }
+    }
+
+    /// Compact live imported spans only when the tail cannot hold new
+    /// payloads, then move owned captures into the freed upload space.
+    fn reuse_bundle_space(&mut self) {
+        let Some(bundle) = &mut self.bundle else { return };
+        let mut spans: Vec<&mut Stored> = self
+            .anchors
+            .iter_mut()
+            .map(|anchor| &mut anchor.stored)
+            .chain(self.entries.iter_mut().map(|entry| &mut entry.state))
+            .collect();
+        let mut used = 0;
+        let mut incoming = 0;
+        let mut smallest = usize::MAX;
+        for span in &spans {
+            match span {
+                Stored::Imported(range) => used += range.len(),
+                Stored::Owned(bytes) => {
+                    incoming += bytes.len();
+                    smallest = smallest.min(bytes.len());
+                }
+            }
+        }
+        if used == 0 && smallest > bundle.len() {
+            self.bundle = None;
+            self.bundle_end = 0;
+            return;
+        }
+        if incoming == 0 || smallest > bundle.len() - used {
+            return;
+        }
+        if incoming > bundle.len() - self.bundle_end && used < self.bundle_end {
+            spans.sort_unstable_by_key(|span| match span {
+                Stored::Imported(range) => range.start,
+                Stored::Owned(_) => usize::MAX,
+            });
+            self.bundle_end = 0;
+            for span in &mut spans {
+                if let Stored::Imported(range) = &mut **span {
+                    let len = range.len();
+                    bundle.copy_within(range.clone(), self.bundle_end);
+                    *range = self.bundle_end..self.bundle_end + len;
+                    self.bundle_end += len;
+                }
+            }
+        }
+        for span in &mut spans {
+            if let Stored::Owned(bytes) = &mut **span {
+                let end = self.bundle_end + bytes.len();
+                if end <= bundle.len() {
+                    bundle[self.bundle_end..end].copy_from_slice(bytes);
+                    **span = Stored::Imported(self.bundle_end..end);
+                    self.bundle_end = end;
+                }
+            }
         }
     }
 
@@ -497,7 +597,15 @@ impl RewindBuffer {
         if live.len() > MAX_DECODED_BYTES {
             return Err(INVALID);
         }
-        let mut out = Vec::new();
+        let mut count = Sink::new(None, None);
+        self.write_history(&mut count)?;
+        let history_len = usize::try_from(count.count).map_err(|_| INVALID)?;
+        let len = 16usize
+            .checked_add(live.len())
+            .and_then(|n| n.checked_add(history_len))
+            .and_then(|n| n.checked_add(32))
+            .ok_or(INVALID)?;
+        let mut out = Vec::with_capacity(len);
         {
             let mut sink = Sink::new(Some(&mut out), None);
             sink.write_all(b"ZGBRWD\0\0")?;
@@ -508,6 +616,7 @@ impl RewindBuffer {
         }
         let hash = blake3::hash(&out);
         out.extend_from_slice(hash.as_bytes());
+        debug_assert_eq!(out.len(), len);
         Ok(out)
     }
     fn write_history(&self, sink: &mut Sink<'_>) -> Result<()> {
@@ -527,7 +636,7 @@ impl RewindBuffer {
         for anchor in &self.anchors {
             anchor.id.encode(sink)?;
             (anchor.stored.len() as u32).encode(sink)?;
-            sink.write_all(&anchor.stored)?;
+            sink.write_all(anchor.stored.bytes(self.bundle.as_deref().unwrap_or(&[])))?;
         }
         for entry in &self.entries {
             entry.frame.encode(sink)?;
@@ -536,7 +645,7 @@ impl RewindBuffer {
             (entry.encoding as u8).encode(sink)?;
             entry.anchor.encode(sink)?;
             (entry.state.len() as u32).encode(sink)?;
-            sink.write_all(&entry.state)?;
+            sink.write_all(entry.state.bytes(self.bundle.as_deref().unwrap_or(&[])))?;
         }
         Ok(())
     }
@@ -546,6 +655,32 @@ impl RewindBuffer {
     /// the separately returned live state only after both are accepted.
     pub fn read_bundle(
         bytes: &[u8],
+        validate: impl Fn(&[u8]) -> Result<(u64, u64)>,
+    ) -> Result<(Vec<u8>, Self)> {
+        Self::read_bundle_impl(bytes, true, validate)
+    }
+
+    /// Validates without copying stored payloads and adopts the upload only
+    /// after every state passes. On failure the caller gets the unchanged Vec.
+    pub fn read_bundle_owned(
+        bytes: Vec<u8>,
+        validate: impl Fn(&[u8]) -> Result<(u64, u64)>,
+    ) -> core::result::Result<(Vec<u8>, Self), (Error, Vec<u8>)> {
+        match Self::read_bundle_impl(&bytes, false, validate) {
+            Ok((live, mut history)) => {
+                if !history.entries.is_empty() {
+                    history.bundle_end = bytes.len();
+                    history.bundle = Some(bytes);
+                }
+                Ok((live, history))
+            }
+            Err(error) => Err((error, bytes)),
+        }
+    }
+
+    fn read_bundle_impl(
+        bytes: &[u8],
+        copy_payloads: bool,
         validate: impl Fn(&[u8]) -> Result<(u64, u64)>,
     ) -> Result<(Vec<u8>, Self)> {
         if bytes.len() > MAX_BUNDLE_BYTES {
@@ -567,7 +702,7 @@ impl RewindBuffer {
         if read_value::<u32>(&mut source)? != 1 {
             return Err(Error::UnsupportedRewindBundleVersion);
         }
-        let live = read_bytes(&mut source, MAX_DECODED_BYTES)?;
+        let live = read_bytes(&mut source, MAX_DECODED_BYTES)?.to_vec();
         let (live_frame, live_cycle) = validate(&live)?;
         let config = RewindConfig {
             budget_bytes: read_value(&mut source)?,
@@ -601,7 +736,12 @@ impl RewindBuffer {
             if history.anchor_index(id).is_some() {
                 return Err(Error::InvalidRewindBundle);
             }
-            let stored = read_bytes(&mut source, MAX_DECODED_BYTES * 2 + 64 * 1024)?;
+            let stored = read_stored(
+                &mut source,
+                body.len(),
+                MAX_DECODED_BYTES * 2 + 64 * 1024,
+                copy_payloads,
+            )?;
             history.stored_bytes += stored.len();
             history.anchors.push(Anchor { id, stored, refs: 0 });
         }
@@ -626,13 +766,15 @@ impl RewindBuffer {
             {
                 return Err(Error::InvalidRewindBundle);
             }
-            let stored = read_bytes(
+            let stored = read_stored(
                 &mut source,
+                body.len(),
                 if encoding == Encoding::Raw {
                     MAX_DECODED_BYTES
                 } else {
                     MAX_DECODED_BYTES * 2 + 64 * 1024
                 },
+                copy_payloads,
             )?;
             if encoding == Encoding::Delta {
                 let i = history.anchor_index(anchor).ok_or(Error::InvalidRewindBundle)?;
@@ -650,15 +792,15 @@ impl RewindBuffer {
         if has_current {
             let i =
                 history.anchor_index(history.current_anchor).ok_or(Error::InvalidRewindBundle)?;
-            history.current_anchor_raw = Some(inflate(&history.anchors[i].stored)?);
+            history.current_anchor_raw = Some(inflate(history.anchors[i].stored.bytes(body))?);
         } else if history.anchor_index(history.current_anchor).is_some() {
             return Err(Error::InvalidRewindBundle);
         }
         for anchor in &history.anchors {
-            validate(&inflate(&anchor.stored)?)?;
+            validate(&inflate(anchor.stored.bytes(body))?)?;
         }
         for (i, entry) in history.entries.iter().enumerate() {
-            let labels = validate(&history.decode(i)?)?;
+            let labels = validate(&history.decode_with_bundle(i, body)?)?;
             if labels != (entry.frame, entry.cycle) {
                 return Err(Error::InvalidRewindBundle);
             }
@@ -672,14 +814,29 @@ fn read_value<T: Codec + Default>(source: &mut Source<'_>) -> Result<T> {
     value.decode(source).map_err(|_| Error::InvalidRewindBundle)?;
     Ok(value)
 }
-fn read_bytes(source: &mut Source<'_>, limit: usize) -> Result<Vec<u8>> {
+fn read_bytes<'a>(source: &mut Source<'a>, limit: usize) -> Result<&'a [u8]> {
     let len = read_value::<u32>(source)? as usize;
     if len > limit || len > source.input.len() {
         return Err(Error::InvalidRewindBundle);
     }
-    let mut bytes = alloc::vec![0; len];
-    source.read_all(&mut bytes)?;
+    let (bytes, tail) = source.input.split_at(len);
+    source.input = tail;
+    source.count += len as u64;
     Ok(bytes)
+}
+fn read_stored(
+    source: &mut Source<'_>,
+    body_len: usize,
+    limit: usize,
+    copy: bool,
+) -> Result<Stored> {
+    let bytes = read_bytes(source, limit)?;
+    let start = body_len - source.input.len() - bytes.len();
+    Ok(if copy {
+        Stored::Owned(bytes.to_vec())
+    } else {
+        Stored::Imported(start..start + bytes.len())
+    })
 }
 fn compression(raw: u8) -> Result<Compression> {
     match raw {
@@ -695,5 +852,93 @@ fn encoding(raw: u8) -> Result<Encoding> {
         1 => Ok(Encoding::Deflate),
         2 => Ok(Encoding::Delta),
         _ => Err(Error::InvalidRewindBundle),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state(frame: u64) -> Vec<u8> {
+        let mut state = alloc::vec![0; 8192];
+        state[0] = frame as u8;
+        let mut random = frame as u32;
+        for byte in &mut state[1..] {
+            random ^= random << 13;
+            random ^= random >> 17;
+            random ^= random << 5;
+            *byte = random as u8;
+        }
+        state
+    }
+
+    #[test]
+    fn owned_bundle_borrows_entries_and_recycles_space_after_branching() {
+        for compression in [Compression::Off, Compression::Fast, Compression::Delta] {
+            let mut original = RewindBuffer::new(RewindConfig {
+                compression,
+                budget_bytes: 48 * 1024,
+                ..RewindConfig::default()
+            })
+            .unwrap();
+            for frame in 1..=12 {
+                original.push(frame, frame * 10, &state(frame)).unwrap();
+            }
+            let live = state(13);
+            let bytes = original.write_bundle(&live).unwrap();
+            let address = bytes.as_ptr();
+            drop(original);
+            let validate = |state: &[u8]| Ok((u64::from(state[0]), u64::from(state[0]) * 10));
+            let (loaded_live, mut loaded) =
+                RewindBuffer::read_bundle_owned(bytes, validate).unwrap();
+            assert_eq!(loaded_live, live);
+            assert_eq!(loaded.bundle.as_ref().unwrap().as_ptr(), address);
+            assert!(loaded.entries.iter().all(|entry| matches!(entry.state, Stored::Imported(_))));
+            for index in 0..loaded.depth() {
+                let frame = loaded.info(index).unwrap().frame;
+                assert_eq!(loaded.decode(index).unwrap(), state(frame));
+            }
+            loaded.truncate_newer(loaded.depth() / 2);
+            for frame in 14..=48 {
+                loaded.push(frame, frame * 10, &state(frame)).unwrap();
+                for index in 0..loaded.depth() {
+                    let retained = loaded.info(index).unwrap().frame;
+                    assert_eq!(loaded.decode(index).unwrap(), state(retained));
+                }
+            }
+            assert!(
+                loaded.entries.iter().any(|entry| {
+                    entry.frame >= 14 && matches!(entry.state, Stored::Imported(_))
+                })
+            );
+            let exported = loaded.write_bundle(&state(49)).unwrap();
+            let (_, reloaded) = RewindBuffer::read_bundle(&exported, validate).unwrap();
+            assert_eq!(reloaded.write_bundle(&state(49)).unwrap(), exported);
+            loaded.clear();
+            assert!(loaded.bundle.is_none());
+        }
+    }
+
+    #[test]
+    fn invalid_owned_bundle_returns_the_original_upload() {
+        let mut bundle =
+            RewindBuffer::new(RewindConfig::default()).unwrap().write_bundle(b"live").unwrap();
+        bundle[8] = 2;
+        let digest = blake3::hash(&bundle[..bundle.len() - 32]);
+        let end = bundle.len() - 32;
+        bundle[end..].copy_from_slice(digest.as_bytes());
+        let original = bundle.clone();
+        let (error, returned) =
+            RewindBuffer::read_bundle_owned(bundle, |_| Ok((0, 0))).unwrap_err();
+        assert_eq!(error, Error::UnsupportedRewindBundleVersion);
+        assert_eq!(returned, original);
+
+        let good =
+            RewindBuffer::new(RewindConfig::default()).unwrap().write_bundle(b"live").unwrap();
+        let address = good.as_ptr();
+        let (error, returned) =
+            RewindBuffer::read_bundle_owned(good, |_| Err(Error::InvalidSaveState)).unwrap_err();
+        assert_eq!(error, Error::InvalidSaveState);
+        assert_eq!(returned.as_ptr(), address);
     }
 }

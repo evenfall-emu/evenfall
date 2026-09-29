@@ -33,7 +33,7 @@ built-in replacement ([`bios.c`][mgba-bios], [`hle-bios.s`][mgba-hle-bios]).
 | External BIOS | `.external_bios`      | `--bios <path>` | reset vector, Supervisor mode, IRQ and FIQ masked | the image's code |
 | Skip BIOS     | `.skip_bios`          | library only    | `08000000h`, System mode                          | the image's code |
 
-The [`validator`](../../../systems/gba/tests/validator.rs) `--bios <path>`
+The [`validator`](../../../systems/gba/tests/validator/main.rs) `--bios <path>`
 option reruns the jsmolka suites under external boot (see ZiGBA's
 [`testing.md`](../../../refs/zigba/docs/testing.md)). A save state records the boot
 mode and the BIOS image's hash and loads only into a machine with the same

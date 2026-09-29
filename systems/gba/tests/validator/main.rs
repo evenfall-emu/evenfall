@@ -73,17 +73,21 @@ fn main() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut gba_tests = root.join("refs/gba-tests");
     let mut probes = root.join("probe/build");
-    let mut bios_path = env::var_os("EVENFALL_VALIDATE_BIOS").map(PathBuf::from);
+    let mut bios_path = env::var_os("EVENFALL_VALIDATE_BIOS").map(|path| root.join(path));
     let mut list = false;
     let mut require_roms = false;
     let mut args = env::args_os().skip(1);
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--gba-tests") => {
-                gba_tests = args.next().expect("--gba-tests needs a directory").into()
+                gba_tests = root.join(args.next().expect("--gba-tests needs a directory"))
             }
-            Some("--probes") => probes = args.next().expect("--probes needs a directory").into(),
-            Some("--bios") => bios_path = Some(args.next().expect("--bios needs a file").into()),
+            Some("--probes") => {
+                probes = root.join(args.next().expect("--probes needs a directory"))
+            }
+            Some("--bios") => {
+                bios_path = Some(root.join(args.next().expect("--bios needs a file")))
+            }
             Some("--list") => list = true,
             Some("--require-roms") => require_roms = true,
             Some(name) if !name.starts_with('-') => filters.push(name.to_owned()),

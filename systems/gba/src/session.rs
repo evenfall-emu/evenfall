@@ -121,7 +121,11 @@ impl From<video_recovery::Error> for Error {
 
 impl Session {
     pub fn create(config: Config<'_>) -> Result<Self, Error> {
-        Self::create_impl(config)
+        let mut session = Self::create_impl(config)?;
+        if !config.zipped {
+            session.rom = config.image.to_vec();
+        }
+        Ok(session)
     }
 
     /// Uses the prefix of the uploaded buffer as the image, leaving room for
@@ -160,22 +164,20 @@ impl Session {
         if config.rtc_epoch > 253_402_300_799 {
             return Err(Error::InvalidRtcEpoch);
         }
-        let rom = if config.zipped {
-            rom_image::extract_single_gba(config.image)?
-        } else {
-            config.image.to_vec()
-        };
+        let extracted =
+            config.zipped.then(|| rom_image::extract_single_gba(config.image)).transpose()?;
+        let rom = extracted.as_deref().unwrap_or(config.image);
         if rom.is_empty() || rom.len() > rom_image::MAX_ROM_SIZE {
             return Err(Error::InvalidRomSize);
         }
         let bios = config.bios.to_vec();
-        let save_type = rom_image::choose_save_type(&rom, config.save_type, config.save)?;
+        let save_type = rom_image::choose_save_type(rom, config.save_type, config.save)?;
         let save_data =
             config.save.map(|save| rom_image::save_prefix(save_type, save)).transpose()?;
-        let features = cartridge::detect_features(&rom);
+        let features = cartridge::detect_features(rom);
         let rtc_enabled = config.rtc_enabled.unwrap_or(features.rtc);
         let machine = Machine::new(MachineConfig {
-            rom: &rom,
+            rom,
             bios: &bios,
             immutable_media: true,
             boot: if bios.is_empty() { BootMode::Hle } else { BootMode::ExternalBios },
@@ -187,13 +189,13 @@ impl Session {
             rumble: features.rumble,
             tilt_sample: features.tilt.then_some(Default::default()),
         });
-        let rom_sha1 = Sha1::digest(&rom).into();
+        let rom_sha1 = Sha1::digest(rom).into();
         let resampler = Resampler::new(machine.audio_sample_rate(), config.output_rate)
             .map_err(|_| Error::InvalidSampleRate)?;
         let rewind_history = RewindBuffer::new(config.rewind)?;
         Ok(Self {
             machine,
-            rom,
+            rom: extracted.unwrap_or_default(),
             bios,
             rom_sha1,
             rtc_enabled,
@@ -438,6 +440,15 @@ impl Session {
     }
 
     pub fn load_rewind_bundle(&mut self, bytes: &[u8]) -> Result<(), Error> {
+        if bytes.len() > rewind::MAX_BUNDLE_BYTES {
+            return Err(evenfall_state::Error::RewindBundleTooLarge.into());
+        }
+        self.load_rewind_bundle_owned(bytes.to_vec())
+    }
+
+    /// Consumes an upload without copying its stored history payloads. A
+    /// failed import drops the upload and leaves the live session untouched.
+    pub fn load_rewind_bundle_owned(&mut self, bytes: Vec<u8>) -> Result<(), Error> {
         // A decoded checkpoint is never trusted just because the outer digest
         // matches. Reuse one scratch machine to validate all anchors/entries.
         let scratch = std::cell::RefCell::new(Machine::new(MachineConfig {
@@ -446,14 +457,15 @@ impl Session {
             boot: if self.bios.is_empty() { BootMode::Hle } else { BootMode::ExternalBios },
             ..MachineConfig::default()
         }));
-        let (live, history) = RewindBuffer::read_bundle(bytes, |state| {
+        let (live, history) = RewindBuffer::read_bundle_owned(bytes, |state| {
             let mut next = scratch.borrow_mut();
             next.load_state(state).map_err(|error| match error {
                 StateError::Codec(error) => error,
                 _ => evenfall_state::Error::InvalidSaveState,
             })?;
             Ok((next.completed_frames(), next.now()))
-        })?;
+        })
+        .map_err(|(error, _)| error)?;
         let mut next = scratch.into_inner();
         next.load_state(&live)?;
         next.set_audio_output(self.audio_output_enabled);
@@ -581,6 +593,22 @@ mod tests {
         .err()
         .unwrap();
         assert!(matches!(error, Error::InvalidSampleRate));
+        assert_eq!(returned.as_ptr(), address);
+        assert_eq!(returned, LOOP_ROM);
+
+        let buffer = LOOP_ROM.to_vec();
+        let address = buffer.as_ptr();
+        let (error, returned) = Session::create_from_owned_buffer(
+            Config {
+                rewind: RewindConfig { interval_frames: 0, ..RewindConfig::default() },
+                ..Config::default()
+            },
+            buffer,
+            LOOP_ROM.len(),
+        )
+        .err()
+        .unwrap();
+        assert!(matches!(error, Error::Rewind(evenfall_state::Error::InvalidRewindConfig)));
         assert_eq!(returned.as_ptr(), address);
         assert_eq!(returned, LOOP_ROM);
     }
@@ -898,7 +926,11 @@ mod tests {
 
             let mut b = Session::create(Config { image: LOOP_ROM, ..Config::default() }).unwrap();
             b.set_audio_output(false);
-            b.load_rewind_bundle(&bundle).unwrap();
+            if compression == RewindCompression::Off {
+                b.load_rewind_bundle(&bundle).unwrap();
+            } else {
+                b.load_rewind_bundle_owned(bundle.clone()).unwrap();
+            }
             assert_eq!(b.write_state().unwrap(), live);
             assert_eq!(b.rewind_depth(), 3);
             assert_eq!(b.write_rewind_bundle().unwrap(), bundle);
