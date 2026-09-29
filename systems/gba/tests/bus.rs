@@ -2234,10 +2234,7 @@ fn no_event_materialization_retains_simultaneous_input_serial_lcd_timer_and_dma_
         at: 960,
         change: TimedInputChange::Keys(KeyState { a: true, ..Default::default() }),
     }];
-    // SAFETY: `inputs` remains immutable and in scope through `end_external_inputs` below.
-    unsafe {
-        bus.begin_external_inputs(&inputs);
-    }
+    bus.begin_external_inputs(&inputs);
     bus.begin_device_batch();
     bus.elapse(1);
     bus.elapse(5);

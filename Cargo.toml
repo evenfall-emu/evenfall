@@ -35,6 +35,8 @@ quote = "1"
 syn = { version = "3", features = ["full"] }
 
 [workspace.lints.rust]
+# `unsafe` needs a measured reason: code that has one allows it where it lives.
+unsafe_code = "deny"
 unsafe_op_in_unsafe_fn = "deny"
 missing_debug_implementations = "allow"
 

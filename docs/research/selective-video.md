@@ -39,13 +39,16 @@ scheduling belongs to the frontend.
 ## Exact reconstruction
 
 While the interval exceeds one, `Session` journals advancing calls, key
-changes and steps, with their ending cycles and timed inputs. The Rust
-`VideoRecovery` stores its canonical anchor as **serialized state bytes** and
-has a reusable scratch `Machine`. Unlike ZiGBA, it does not copy a live
-`Machine` to rebase: `rebase` encodes a canonical anchor, and `materialize`
-loads it into scratch, switches to full video with host audio disabled, and
-replays the journal. This also restores/invalidates transient renderer
-caches on load. Both operations and inputs are bounded to 4,096 entries.
+changes and steps, with their ending cycles and timed inputs. As in ZiGBA,
+the anchor is a raw copy of the live machine: `rebase` copies it into
+`VideoRecovery`'s one preallocated replay `Machine` with `Machine::copy_from`,
+which reuses the replay machine's boxes, forgets decoded code and invalidates
+the scanline memo. `materialize` switches the replay machine to full video
+with host audio disabled and replays the journal on it; it then equals the
+live machine and anchors an empty journal, so reconstruction needs no second
+copy. A reconstruction that fails part-way leaves no anchor, and later ones
+return `VideoRecoveryDiverged` until the next rebase. Both operations and
+inputs are bounded to 4,096 entries.
 
 Calls ending at a newly completed selected image rebase. `Session::run_slice_with_input`
 splits runs at `Bus::next_rendered_frame_cycle`; before the journal fills or
@@ -55,7 +58,7 @@ rebases rather than discarding history. Even if STOP freezes the CPU, the
 `yield_at`, so a serial event can still wake it.
 
 `materialize` checks each replayed operation's end cycle and compares the
-scratch CPU, cycle and fault with the live machine before copying **only**
+replayed CPU, cycle and fault with the live machine before copying **only**
 pixels back through `Bus::accept_canonical_framebuffer` (which invalidates
 the scanline memo). Live RAM, timers, audio queues and cycle remain intact.
 Mismatch returns `VideoRecoveryDiverged`.

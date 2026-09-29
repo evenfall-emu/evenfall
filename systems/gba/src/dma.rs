@@ -2,7 +2,7 @@
 
 use evenfall_state::Codec;
 
-#[derive(Codec, Default)]
+#[derive(Clone, Codec, Default)]
 pub struct Channel {
     pub source: u32,
     pub destination: u32,

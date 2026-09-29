@@ -379,7 +379,7 @@ impl Session {
         self.machine.load_state(&state)?;
         self.machine.set_audio_output(self.audio_output_enabled);
         if let Some(recovery) = &mut self.video_recovery {
-            recovery.rebase(&self.machine)?;
+            recovery.rebase(&self.machine);
         }
         self.machine.bus.set_video_interval(self.video_interval);
         self.resampler.reset();
@@ -472,7 +472,7 @@ impl Session {
                 return Err(Error::MachineFaulted);
             }
             if self.video_recovery.is_none() {
-                self.video_recovery = Some(VideoRecovery::create(&self.machine)?);
+                self.video_recovery = Some(VideoRecovery::create(&self.machine));
             }
             self.machine.bus.set_video_interval(interval);
         }
@@ -542,7 +542,7 @@ impl Session {
         next.set_audio_output(self.audio_output_enabled);
         next.bus.set_video_interval(self.video_interval);
         if let Some(recovery) = &mut self.video_recovery {
-            recovery.rebase(&next)?;
+            recovery.rebase(&next);
         }
         self.machine = next;
         self.rewind_history = history;
@@ -557,7 +557,7 @@ impl Session {
         self.machine.load_state(bytes)?;
         self.machine.set_audio_output(self.audio_output_enabled);
         if let Some(recovery) = &mut self.video_recovery {
-            recovery.rebase(&self.machine)?;
+            recovery.rebase(&self.machine);
         }
         self.machine.bus.set_video_interval(self.video_interval);
         self.resampler.reset();
@@ -587,7 +587,7 @@ impl Session {
         );
         next.set_audio_output(self.audio_output_enabled);
         if let Some(recovery) = &mut self.video_recovery {
-            recovery.rebase(&next)?;
+            recovery.rebase(&next);
         }
         next.bus.set_video_interval(self.video_interval);
         self.machine = next;

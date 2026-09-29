@@ -327,11 +327,8 @@ fn synchronized_reads_and_fifo_writes_keep_the_device_batch_armed() {
         at: eager.now() + 40,
         change: TimedInputChange::Keys(KeyState { a: true, ..Default::default() }),
     }];
-    // SAFETY: inputs remains immutable and in scope until both end_external_inputs calls below.
-    unsafe {
-        eager.begin_external_inputs(&inputs);
-        batched.begin_external_inputs(&inputs);
-    }
+    eager.begin_external_inputs(&inputs);
+    batched.begin_external_inputs(&inputs);
     batched.begin_device_batch();
 
     for _ in 0..20 {

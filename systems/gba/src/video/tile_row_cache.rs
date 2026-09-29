@@ -13,7 +13,7 @@ pub struct Decoded<'a> {
     pub bg256: &'a [u16; 256],
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Cache {
     palette: [u8; 1024],
     /// RGB555 words of the BG (0..256) and OBJ (256..512) palettes.

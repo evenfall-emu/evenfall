@@ -5,7 +5,7 @@ use evenfall_state::Codec;
 
 pub const MASTER_CLOCK_HZ: Cycle = 16_777_216;
 
-#[derive(Default, Codec)]
+#[derive(Clone, Default, Codec)]
 pub struct Gpio {
     pub read_enabled: bool,
     #[codec(bits = 4)]

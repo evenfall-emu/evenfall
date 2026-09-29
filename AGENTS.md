@@ -105,8 +105,10 @@ The GBA core reads and writes ZiGBA's `ZIGBAST1` save states byte for byte.
 - Hot paths are monomorphized: no `dyn`, no allocation, no `Rc`/`RefCell`.
   A `Machine` allocates only at construction; arrays of 4 KiB or more live in
   boxes allocated without stack temporaries.
-- `unsafe` needs a measured reason and a `// SAFETY:` comment. Prefer masks
-  and fixed-size arrays that let the compiler drop bounds checks.
+- `unsafe` needs a measured reason and a `// SAFETY:` comment. The workspace
+  denies `unsafe_code`; allow it only on the module that has the reason.
+  Prefer masks and fixed-size arrays that let the compiler drop bounds
+  checks.
 - Profiles: `dev` (opt-level 1, dependencies at 3) runs games at playable
   speed; `release` is the optimized day-to-day build without LTO; `profiling`
   adds full debug info for `perf`; `wasm-release` is the only LTO profile.

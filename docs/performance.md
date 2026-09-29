@@ -176,6 +176,11 @@ cycles, audio 14%, affine and tiles 10% and bitmap-DMA 8%. For the same
 reason `PpuTiming::elapse` fills the caller's `Events`, the scanline memo
 receives the compositor's pages as a value, and `Bus::engine_memory` is
 inlined; the first two took idle's cycles down 9% and affine's 4%.
+`Bus`'s `WindowMasks` starts on a cache-line boundary: every line refills its
+240 bytes with fifteen 16-byte stores, and otherwise where it falls depends
+on `Bus`'s field layout. At 8 bytes past a boundary, a quarter of those
+stores split across two lines (`mem_inst_retired.split_stores`), and idle
+took 17% more cycles on CPU 3.
 
 ### Build-time budget
 
@@ -218,7 +223,7 @@ effects rather than merely counting invocations.
 | **Tile-row decoding:** [`video/backgrounds.rs`](../systems/gba/src/video/backgrounds.rs) writes whole text tiles; the [decoded palette](../systems/gba/src/video/tile_row_cache.rs) maps each 4bpp byte to two colors per bank and is validated against the palette's bytes; [research](research/tile-row-cache.md).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | The per-dot `render_text_background`. `text_tile_rows_match_the_per_dot_text_renderer` in [`video/tests.rs`](../systems/gba/src/video/tests.rs) and the table checks in [`tile_row_cache.rs`](../systems/gba/src/video/tile_row_cache.rs).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | **Front-to-back composition (history lines):** [`video/render.rs`](../systems/gba/src/video/render.rs) stops BG passes after top/second surfaces close, and [`video/objects.rs`](../systems/gba/src/video/objects.rs) composes regular OBJ rows in lanes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Per-pixel objects and `apply_color_effect_at` remain for special cases; `regular_object_rows_match_the_per_pixel_object_renderer`, `vector_color_effects_match_the_per_dot_effects_unit` and `front_to_back_passes_preserve_priority_and_the_next_visible_bg` in [`video/tests.rs`](../systems/gba/src/video/tests.rs) cover them.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | **Scanline memo:** [`render_scanline`](../systems/gba/src/video/render.rs) retains a line only while registers and video-memory reads remain valid; marked changes invalidate it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `check_kept_scanline` recomposes kept lines and compares their colors. `memoized_scanlines_match_fresh_renders_after_every_kind_of_input_change` in [`video/tests.rs`](../systems/gba/src/video/tests.rs) compares fresh and memoized frames; [research](research/scanline-memo.md).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| **Selective video:** [`Session`](../systems/gba/src/session.rs) skips only pixel production on unpresented frames; [`VideoRecovery`](../systems/gba/src/video_recovery.rs) replays a bounded journal for exact on-demand pixels.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Full-video execution and scratch replay are references. `selective_session_restores_exact_arbitrary_cycle_states_and_inputs_across_internal_frame_splits` in [`session.rs`](../systems/gba/src/session.rs) compares reconstructed states and frames; [research](research/selective-video.md).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **Selective video:** [`Session`](../systems/gba/src/session.rs) skips only pixel production on unpresented frames; [`VideoRecovery`](../systems/gba/src/video_recovery.rs) replays a bounded journal for exact on-demand pixels.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Full-video execution and the portable state load are references. `selective_session_restores_exact_arbitrary_cycle_states_and_inputs_across_internal_frame_splits` in [`session.rs`](../systems/gba/src/session.rs) compares reconstructed states and frames, and `copies_continue_exactly_like_their_source` in [`machine.rs`](../systems/gba/src/machine.rs) compares a raw copy's future with its source's and a loaded state's; [research](research/selective-video.md).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 These tests complement the ZiGBA/Rust [parity traces](parity.md): optimized
 paths must preserve timed access, IRQ/DMA ordering, full-frame pixels, DAC
@@ -271,16 +276,37 @@ and 0.88× for ZiGBA built ReleaseFast. The `simd128` module is 0.7% larger
 The front-to-back reference keeps fixed-size lane loops for text rows,
 objects and color effects where ZiGBA uses `@Vector` operations; the loops do
 not reliably auto-vectorize, which is why the layer-major kernel uses explicit
-lanes. The per-dot paths remain references. The portable-state
-anchor for selective video costs an encode and validated scratch decode
-instead of ZiGBA's raw machine copy. Shared `Arc` ROM and BIOS media avoid
-copying immutable uploads among machine, session and scratch loads; the ROM
-fetch view keeps a direct byte pointer, and Vec-backed versus slice-backed
-reads show no stable difference on measured ROM-bound kernels. The WASM
-runtime uses Rust's default `dlmalloc`, not ZiGBA's custom page-run allocator.
-These are implementation/performance differences, not permissions to change
-guest behavior; see the [roadmap](roadmap.md) and
+lanes. The per-dot paths remain references. Shared `Arc` ROM and BIOS media
+avoid copying immutable uploads among machine, session and scratch loads; the
+ROM fetch view keeps a direct byte pointer, and Vec-backed versus
+slice-backed reads show no stable difference on measured ROM-bound kernels.
+The WASM runtime uses Rust's default `dlmalloc`, not ZiGBA's custom page-run
+allocator. These are implementation/performance differences, not permissions
+to change guest behavior; see the [roadmap](roadmap.md) and
 [`web/gba/README.md`](../web/gba/README.md).
+
+[Selective video](research/selective-video.md) anchors on a raw copy of the
+machine, as ZiGBA does. An encoded anchor costs a state encode per presented
+frame (about 400 µs natively, more than a whole frame of most workloads),
+which makes skipping frames slower than drawing them. Microseconds per frame
+through `Session::advance` over 960 frames, native release build pinned to
+CPU 3, host audio off, encoded anchor → raw copy:
+
+| Workload    | Every frame drawn | Interval 4 | Interval 16 |
+| ----------- | ----------------: | ---------: | ----------: |
+| idle        |         5.5 → 5.6 |  131 → 8.0 |    35 → 4.7 |
+| arm-mixer   |         132 → 132 |  262 → 133 |   162 → 131 |
+| thumb-logic |         151 → 150 |  278 → 151 |   180 → 148 |
+| tiles       |         160 → 159 |   204 → 77 |     86 → 52 |
+| affine      |         290 → 274 |  336 → 205 |   218 → 184 |
+| bitmap-DMA  |         259 → 260 |  358 → 231 |   253 → 221 |
+| audio       |           74 → 75 |   201 → 77 |    104 → 74 |
+
+The render-heavy workloads (tiles, affine, bitmap DMA) now gain from
+skipping; the others stay within a few percent of full video. The one replay
+machine replaces the encoded anchor and the machine each reconstruction
+built, so a session at interval 4 holds about 0.5 MiB less heap
+(3.1–3.7 MiB).
 
 **What did not pay:** On pinned CPU 2, 240-frame tiles/affine skip-BIOS ROMs
 over five matched rounds, the baseline ratios were 1.75×/1.43×. Packed u8
@@ -362,8 +388,7 @@ single-transfer executor moved ARM 2.65×→2.65× and Thumb 1.88×→1.85×
 Open questions: which costs dominate on representative legally supplied
 games and on WASM rather than these synthetic ROMs? Can stable-Rust lane
 patterns improve vectorization without losing the scalar oracle? Does the
-portable selective-video anchor or shared ROM header matter enough to warrant
-an audited alternate path? Can direct DMA's specialized dispatch be isolated
+shared ROM header matter enough to warrant an audited alternate path? Can direct DMA's specialized dispatch be isolated
 against the generic path without introducing a production test switch? Each
 requires a workload, a reference comparison and an exactness check before
 claiming a speed improvement.

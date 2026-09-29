@@ -16,7 +16,7 @@ impl Default for Sample {
     }
 }
 
-#[derive(Codec)]
+#[derive(Clone, Copy, Codec)]
 pub struct Tilt {
     pub input: Sample,
     pub latched: Sample,

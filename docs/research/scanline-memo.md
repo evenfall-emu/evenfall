@@ -129,11 +129,11 @@ each invalidation point carries a short comment naming its part in them.
    wholesale calls `Memo::invalidate`.** State load, reset and framebuffer
    replacement (`Bus::accept_canonical_framebuffer`) do. Tests and tools that
    edit `Bus` fields directly must do the same.
-4. **Recovery replays from a canonical state.** Rust's
-   [`VideoRecovery`](../../systems/gba/src/video_recovery.rs) serializes the
-   anchor and loads it into scratch rather than copying a `Machine` with its
-   transient memo. State load invalidates the memo. Frames selective video
-   skips compose nothing; their marks apply before the next rendered line.
+4. **Recovery replays from a canonical copy.** Rust's
+   [`VideoRecovery`](../../systems/gba/src/video_recovery.rs) anchors on a
+   copy of the live `Machine` taken at a canonical frame, and the copy
+   invalidates its memo, as state load does. Frames selective video skips
+   compose nothing; their marks apply before the next rendered line.
 
 ## Check mode
 

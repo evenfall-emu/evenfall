@@ -30,6 +30,8 @@ const VRAM_SIZE: usize = 96 * 1024;
 const PALETTE_SIZE: usize = 1024;
 const OAM_SIZE: usize = 1024;
 const MAX_SCROLL_SEGMENTS: usize = 64;
+/// Timed inputs a run can take without the bus growing its input buffer.
+const EXTERNAL_INPUT_CAPACITY: usize = 64;
 const EWRAM_BASE: u32 = 0x0200_0000;
 const IWRAM_BASE: u32 = 0x0300_0000;
 const MMIO_BASE: u32 = 0x0400_0000;
@@ -117,13 +119,13 @@ pub struct KeyState {
     pub l: bool,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TimedInput {
     pub at: Cycle,
     pub change: TimedInputChange,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TimedInputChange {
     Keys(KeyState),
     SolarLevel(u8),
@@ -309,6 +311,27 @@ pub struct MosaicSegment {
     pub mosaic: u16,
 }
 
+/// The current line's per-pixel window masks. Every line refills them with
+/// 16-byte stores, which on a cache-line boundary never split a line; split
+/// stores stall, and where the field lands otherwise depends on `Bus`'s
+/// layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(align(64))]
+pub struct WindowMasks(pub [u8; SCREEN_WIDTH]);
+
+impl Deref for WindowMasks {
+    type Target = [u8; SCREEN_WIDTH];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for WindowMasks {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub enum LineScan {
     #[default]
@@ -420,7 +443,7 @@ pub struct Bus {
     #[codec(skip)]
     pub line_semitransparent_obj: LineScan,
     #[codec(skip)]
-    pub line_window_masks: [u8; SCREEN_WIDTH],
+    pub line_window_masks: WindowMasks,
     #[codec(skip)]
     pub line_unmasked_layers: u8,
     #[codec(skip)]
@@ -535,10 +558,10 @@ pub struct Bus {
     pub keys: KeyState,
     pub keypad_control: u16,
     pub keypad_condition_met: bool,
+    /// The timed inputs of the current synchronous run, copied from the
+    /// caller; empty between runs.
     #[codec(skip)]
-    pub external_input_pointer: Option<*const TimedInput>,
-    #[codec(skip)]
-    pub external_input_count: usize,
+    pub external_inputs: Vec<TimedInput>,
     #[codec(skip)]
     pub external_input_index: usize,
     pub sio_data: [u16; 4],
@@ -650,7 +673,7 @@ impl Bus {
             line_needs_second_surface: true,
             line_has_color_effects: true,
             line_semitransparent_obj: LineScan::Unknown,
-            line_window_masks: [0x3f; SCREEN_WIDTH],
+            line_window_masks: WindowMasks([0x3f; SCREEN_WIDTH]),
             line_unmasked_layers: 0x3f,
             line_window_key: 1 << 63,
             tile_row_cache: Box::default(),
@@ -731,8 +754,7 @@ impl Bus {
             keys: KeyState::default(),
             keypad_control: 0,
             keypad_condition_met: false,
-            external_input_pointer: None,
-            external_input_count: 0,
+            external_inputs: Vec::with_capacity(EXTERNAL_INPUT_CAPACITY),
             external_input_index: 0,
             sio_data: [0; 4],
             sio_control: 0,
@@ -792,50 +814,18 @@ impl Bus {
         bus
     }
 
-    /// Initialize a Bus in caller-provided uninitialized storage.
-    ///
-    /// # Safety
-    /// `ptr` must be aligned, writable storage for one Bus, with no live Bus
-    /// value at that address. The caller owns and drops the initialized value.
-    pub unsafe fn init_in_place(
-        ptr: *mut Self,
-        rom: &[u8],
-        bios: &[u8],
-        save_type: save::Type,
-        save_data: Option<&[u8]>,
-    ) {
-        // SAFETY: the caller provides the storage contract passed through to
-        // init_in_place_shared; the input slices are copied into owned media.
-        unsafe {
-            Self::init_in_place_shared(
-                ptr,
-                Media::from_slice(rom),
-                Media::from_slice(bios),
-                save_type,
-                save_data,
-            )
-        };
-    }
-
     /// Initialize a Bus using already-owned media without copying bytes.
-    ///
-    /// # Safety
-    /// `ptr` must be aligned, writable storage for one Bus, with no live Bus
-    /// value at that address. The caller owns and drops the initialized value.
-    pub unsafe fn init_in_place_shared(
-        ptr: *mut Self,
+    pub fn init_with_media(
         rom: Media,
         bios: Media,
         save_type: save::Type,
         save_data: Option<&[u8]>,
-    ) {
+    ) -> Self {
         let mut bus = Self::init_shared(rom, bios, save_type);
         if let Some(data) = save_data {
             bus.save = SaveDevice::init_with_data(save_type, data);
         }
-        // SAFETY: guaranteed by the caller; the constructor owns its ROM,
-        // BIOS and boxed large arrays, and does not borrow the input slices.
-        unsafe { ptr.write(bus) };
+        bus
     }
 
     pub fn rom(&self) -> &[u8] {
@@ -851,8 +841,7 @@ impl Bus {
         if self.servicing_dma
             || self.active_dma_channel.is_some()
             || self.dma_livelock.is_some()
-            || self.external_input_pointer.is_some()
-            || self.external_input_count != 0
+            || !self.external_inputs.is_empty()
             || self.external_input_index != 0
         {
             return Err(Error::InvalidSaveState);
@@ -879,8 +868,7 @@ impl Bus {
         self.apu.high_speed_audio_enabled = high_speed_audio_enabled;
         self.decode(source)?;
         self.code.clear();
-        self.external_input_pointer = None;
-        self.external_input_count = 0;
+        self.external_inputs.clear();
         self.external_input_index = 0;
         self.servicing_dma = false;
         self.dma_livelock = None;
@@ -903,6 +891,59 @@ impl Bus {
         self.validate_state()?;
         self.apu.write_state(&mut evenfall_state::Sink::new(None, None))?;
         Ok(())
+    }
+
+    /// Makes this bus a copy of `source`, reusing this bus's allocations.
+    /// Both must hold the same ROM and BIOS, which are not copied, and
+    /// neither may be inside a run. Everything else is copied, transient
+    /// timing and render caches included, so the copy continues exactly as
+    /// `source` would. As after any wholesale memory change, decoded code is
+    /// forgotten and the scanline memo invalidated.
+    pub(crate) fn copy_from(&mut self, source: &Self) {
+        debug_assert!(self.rom.len() == source.rom.len() && self.bios.len() == source.bios.len());
+        debug_assert!(source.external_inputs.is_empty());
+        clone_fields_from!(
+            self,
+            source,
+            [
+                ewram, iwram, palette, vram, oam, save, frame_pixels, frame_priorities,
+                frame_layers, frame_second_pixels, frame_second_priorities, frame_second_layers,
+                frame_semitransparent, frame_obj_window, line_needs_second_surface,
+                line_has_color_effects, line_semitransparent_obj, line_window_masks,
+                line_unmasked_layers, line_window_key, tile_row_cache, line_layers,
+                scanline_memo, video_active_interval, video_requested_interval,
+                video_skip_remaining, video_render_current, video_framebuffer_canonical,
+                video_publication_active, video_published_pixels, video_frame_id,
+                video_frame_cycle, cartridge_gpio, cartridge_tilt, timers, prescaler_origin,
+                dma_channels, apu, ppu_timing, dispcnt, green_swap_enabled, bg_controls,
+                bg_horizontal_offsets, bg_vertical_offsets, scroll_segments,
+                scroll_segment_counts, scroll_segment_line, backdrop_segments,
+                backdrop_segment_count, backdrop_segment_line, win_segments, win_segment_count,
+                win_segment_line, blend_segments, blend_segment_count, blend_segment_line,
+                affine_segments, affine_segment_counts, affine_segment_line, mosaic_segments,
+                mosaic_segment_count, mosaic_segment_line, bg_affine_parameters,
+                bg_reference_points, bg_affine_current, win0h, win1h, win0v, win1v, winin,
+                winout, mosaic, bldcnt, bldalpha, bldy, completed_frame_count, irq, waitcnt,
+                game_pak_timing_key, game_pak_n_cycles, game_pak_s_cycles, game_pak_prefetch,
+                duty_valid_until, fetch_kind, oam_compact, oam_compact_count, oam_compact_valid,
+                object_line, object_line_count, object_line_index, game_pak_code_active,
+                prefetch_disabled_bug_pending, prefetch_buffer_was_disabled, keys,
+                keypad_control, keypad_condition_met, external_inputs, external_input_index,
+                sio_data, sio_control, sio_send, sio_start_cycle, sio_completion_cycle,
+                sio_receive_value, sio_multiplayer_receive, sio_multiplayer_id, uart_tx_fifo,
+                uart_rx_fifo, uart_tx_active, uart_tx_completion_cycle, uart_tx_peer_scheduled,
+                uart_rx_arrival_cycle, uart_rx_arrival_value, uart_error, uart_cts_ready, rcnt,
+                joy_control, joy_receive, joy_transmit, joy_status, joy_pending_command,
+                joy_completion_cycle, joy_response, dma_start_cycles, pending_dma,
+                servicing_dma, dma_burst_start, dma_livelock, active_dma_channel,
+                dma_transfer_latch, open_bus_value, bios_latch, current_cycle, batch_active,
+                batch_device_cycle, batch_deadline, devices_deferred, apu_cycle, timer_cycle,
+                timer_deadline, fifo_clock, dma_epoch,
+            ],
+            keep [code, rom, bios]
+        );
+        self.code.clear();
+        self.scanline_memo.invalidate();
     }
 
     fn validate_state(&self) -> evenfall_state::Result<()> {
@@ -1791,18 +1832,14 @@ impl Bus {
         self.update_keypad_condition();
     }
 
-    /// Install caller-owned inputs for one synchronous run. The caller must
-    /// keep the slice alive and immobile until `end_external_inputs`.
-    ///
-    /// # Safety
-    /// `inputs` must remain allocated and immutable through that call.
-    pub unsafe fn begin_external_inputs(&mut self, inputs: &[TimedInput]) {
-        debug_assert!(self.external_input_pointer.is_none());
+    /// Installs the inputs of one synchronous run, which lasts until
+    /// `end_external_inputs`. The bus keeps a copy, so it borrows nothing.
+    pub fn begin_external_inputs(&mut self, inputs: &[TimedInput]) {
+        debug_assert!(self.external_inputs.is_empty());
         if inputs.is_empty() {
             return;
         }
-        self.external_input_pointer = Some(inputs.as_ptr());
-        self.external_input_count = inputs.len();
+        self.external_inputs.extend_from_slice(inputs);
         self.external_input_index = 0;
         self.apply_due_external_inputs();
         if self.batch_active {
@@ -1816,8 +1853,7 @@ impl Bus {
     }
 
     pub fn end_external_inputs(&mut self) {
-        self.external_input_pointer = None;
-        self.external_input_count = 0;
+        self.external_inputs.clear();
         self.external_input_index = 0;
         if self.batch_active {
             self.flush_device_batch();
@@ -1826,20 +1862,11 @@ impl Bus {
     }
 
     fn next_external_input_cycle(&self) -> Option<Cycle> {
-        if self.external_input_index == self.external_input_count {
-            return None;
-        }
-        // SAFETY: begin_external_inputs requires this slice to remain alive
-        // and immutable until end_external_inputs; index is strictly in range.
-        Some(unsafe { (*self.external_input_pointer.unwrap().add(self.external_input_index)).at })
+        self.external_inputs.get(self.external_input_index).map(|input| input.at)
     }
 
     fn apply_due_external_inputs(&mut self) {
-        while self.external_input_index < self.external_input_count {
-            // SAFETY: the synchronous run holds the input slice alive, and
-            // the loop bounds the index by the supplied slice length.
-            let input =
-                unsafe { *self.external_input_pointer.unwrap().add(self.external_input_index) };
+        while let Some(&input) = self.external_inputs.get(self.external_input_index) {
             if input.at > self.current_cycle {
                 break;
             }
@@ -4368,19 +4395,7 @@ mod tests {
         let upload_bytes = image.as_ptr();
         let rom = Media::from_vec(image);
         let bios = Media::from_slice(&vec![0x5a; BIOS_SIZE]);
-        let mut storage = Box::<Bus>::new_uninit();
-        // SAFETY: the box is aligned, uninitialized storage for exactly one Bus.
-        unsafe {
-            Bus::init_in_place_shared(
-                storage.as_mut_ptr(),
-                rom.clone(),
-                bios.clone(),
-                save::Type::None,
-                None,
-            );
-        }
-        // SAFETY: init_in_place_shared wrote a complete Bus into the box.
-        let bus = unsafe { storage.assume_init() };
+        let bus = Box::new(Bus::init_with_media(rom.clone(), bios.clone(), save::Type::None, None));
         assert_eq!(bus.rom().as_ptr(), upload_bytes);
         assert_eq!(bus.bios().as_ptr(), bios.as_ptr());
         assert_eq!(
@@ -5024,10 +5039,7 @@ mod tests {
             at: 73,
             change: TimedInputChange::Keys(KeyState { a: true, ..KeyState::default() }),
         }];
-        // SAFETY: `inputs` stays alive and immutable until end_external_inputs.
-        unsafe {
-            bus.begin_external_inputs(&inputs);
-        }
+        bus.begin_external_inputs(&inputs);
         bus.begin_device_batch();
         bus.elapse(72);
         assert_eq!(bus.irq.interrupt_request_flags & (1 << 12), 0);

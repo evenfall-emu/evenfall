@@ -442,44 +442,31 @@ impl Machine {
         );
         let entry_address = if config.boot == BootMode::ExternalBios { 0 } else { 0x0800_0000 };
         let initial_cpsr = if config.boot == BootMode::ExternalBios { 0xD3 } else { 0x1F };
-        let mut storage = Box::<Self>::new_uninit();
-        let ptr = storage.as_mut_ptr();
-        // SAFETY: Each field is written once before assume_init; Bus writes its
-        // own large arrays directly into the allocated field, never on stack.
-        unsafe {
-            std::ptr::addr_of_mut!((*ptr).boot_mode).write(config.boot);
-            Bus::init_in_place_shared(
-                std::ptr::addr_of_mut!((*ptr).bus),
-                rom,
-                bios,
-                config.save_type,
-                config.save_data,
-            );
-            std::ptr::addr_of_mut!((*ptr).cpu).write(Cpu::init(
-                entry_address,
-                initial_cpsr,
-                config.boot == BootMode::Hle,
-            ));
-            std::ptr::addr_of_mut!((*ptr).latched_fault).write(None);
-            std::ptr::addr_of_mut!((*ptr).media_identity).write(identity);
-            let mut machine = storage.assume_init();
-            if let Some(epoch) = config.rtc_epoch_seconds {
-                machine.bus.enable_rtc(epoch);
-            }
-            if let Some(level) = config.solar_level {
-                machine.bus.enable_solar_sensor(level);
-            }
-            if let Some(sample) = config.gyro_sample {
-                machine.bus.enable_gyro(sample);
-            }
-            if config.rumble {
-                machine.bus.enable_rumble();
-            }
-            if let Some(sample) = config.tilt_sample {
-                machine.bus.enable_tilt(sample);
-            }
-            machine
+        // Bus boxes its large arrays, so the machine itself is small enough
+        // to build in place.
+        let mut machine = Box::new(Self {
+            boot_mode: config.boot,
+            bus: Bus::init_with_media(rom, bios, config.save_type, config.save_data),
+            cpu: Cpu::init(entry_address, initial_cpsr, config.boot == BootMode::Hle),
+            latched_fault: None,
+            media_identity: identity,
+        });
+        if let Some(epoch) = config.rtc_epoch_seconds {
+            machine.bus.enable_rtc(epoch);
         }
+        if let Some(level) = config.solar_level {
+            machine.bus.enable_solar_sensor(level);
+        }
+        if let Some(sample) = config.gyro_sample {
+            machine.bus.enable_gyro(sample);
+        }
+        if config.rumble {
+            machine.bus.enable_rumble();
+        }
+        if let Some(sample) = config.tilt_sample {
+            machine.bus.enable_tilt(sample);
+        }
+        machine
     }
 
     pub fn now(&self) -> Cycle {
@@ -553,9 +540,7 @@ impl Machine {
             });
         }
         self.validate_inputs(inputs)?;
-        // SAFETY: The caller's slice stays allocated and immutable until
-        // end_external_inputs below; step is synchronous and retains nothing.
-        unsafe { self.bus.begin_external_inputs(inputs) };
+        self.bus.begin_external_inputs(inputs);
         let outcome = self.step();
         let inputs_consumed = self.bus.external_inputs_consumed();
         self.bus.end_external_inputs();
@@ -578,9 +563,7 @@ impl Machine {
 
     fn begin_inputs_until(&mut self, inputs: &[TimedInput], deadline: Cycle) {
         let count = inputs.partition_point(|input| input.at <= deadline);
-        // SAFETY: Both bounded call sites synchronously finish the bus run
-        // and call end_external_inputs before returning to the input owner.
-        unsafe { self.bus.begin_external_inputs(&inputs[..count]) };
+        self.bus.begin_external_inputs(&inputs[..count]);
     }
 
     pub fn wait_until(&mut self, deadline: Cycle) -> Result<WaitResult, RunError> {
@@ -960,6 +943,21 @@ impl Machine {
         Ok(())
     }
 
+    /// Makes this machine an exact copy of `source`, reusing this machine's
+    /// allocations: a raw copy instead of encoding and loading a state. Both
+    /// must run the same media in the same boot mode. The copy forgets
+    /// decoded code but otherwise continues exactly as `source` would.
+    pub(crate) fn copy_from(&mut self, source: &Self) {
+        assert!(
+            self.boot_mode == source.boot_mode && self.media_identity == source.media_identity,
+            "a machine copies only a machine running the same media"
+        );
+        let Self { boot_mode: _, bus, cpu, latched_fault, media_identity: _ } = source;
+        self.bus.copy_from(bus);
+        self.cpu.clone_from(cpu);
+        self.latched_fault = *latched_fault;
+    }
+
     /// Validates into a private scratch machine without creating another one.
     /// The caller must not expose this machine if decoding fails. All durable
     /// fields are decoded and Bus::read_state resets transient output/caches.
@@ -1180,6 +1178,103 @@ mod tests {
             include_str!("../../../tools/parity/fixtures/schema-v6.blake3").trim()
         );
         assert_eq!(Machine::schema_digest().unwrap(), *blake3::hash(expected).as_bytes());
+    }
+
+    /// Runs an IWRAM loop that stores KEYINPUT to palette RAM through
+    /// `store` (`strh r2, [r1, #n]`), under a mode-0 display of random video
+    /// memory with a cascaded timer pair, a repeating HBlank DMA and a sound
+    /// channel running.
+    fn busy_machine(machine: &mut Machine, seed: u32, store: u32) {
+        use crate::bus::{Access, AccessKind, AccessSource, AccessWidth};
+        let loop_words =
+            [0xe59f_0010, 0xe59f_1010, 0xe1d0_20b0, store, 0xeaff_fffc, 0xe1a0_0000, 0x0400_0130];
+        for (index, word) in loop_words.into_iter().chain([0x0500_0000]).enumerate() {
+            machine.bus.iwram[index * 4..index * 4 + 4].copy_from_slice(&word.to_le_bytes());
+        }
+        let mut random = seed;
+        let mut next = move || {
+            random ^= random << 13;
+            random ^= random >> 17;
+            random ^= random << 5;
+            random as u8
+        };
+        machine.bus.vram.iter_mut().for_each(|byte| *byte = next());
+        machine.bus.palette.iter_mut().for_each(|byte| *byte = next());
+        machine.bus.oam.iter_mut().for_each(|byte| *byte = next());
+        machine.bus.ewram[..1024].iter_mut().for_each(|byte| *byte = next());
+        machine.bus.scanline_memo.invalidate();
+        let mut write = |address: u32, width, value: u32| {
+            let access = Access {
+                address,
+                width,
+                kind: AccessKind::Nonsequential,
+                source: AccessSource::CpuData,
+            };
+            machine.bus.write(access, value);
+        };
+        for (address, value) in [
+            (0x0400_0000, 0x1100), // DISPCNT: mode 0, BG0 and objects
+            (0x0400_0100, 0xff00), // TM0: reload, then enabled with its IRQ flag
+            (0x0400_0102, 0x00c0),
+            (0x0400_0106, 0x0084), // TM1: counts TM0's overflows
+            (0x0400_0084, 0x0080), // Sound on; square 1 at full volume, both sides
+            (0x0400_0080, 0x11ff),
+            (0x0400_0062, 0xf780),
+            (0x0400_0064, 0x8400),
+        ] {
+            write(address, AccessWidth::Half, value);
+        }
+        // DMA0 repeats one halfword from EWRAM into BG0HOFS every HBlank.
+        write(0x0400_00b0, AccessWidth::Word, 0x0200_0000);
+        write(0x0400_00b4, AccessWidth::Word, 0x0400_0010);
+        write(0x0400_00b8, AccessWidth::Half, 1);
+        write(0x0400_00ba, AccessWidth::Half, 0xa240);
+    }
+
+    /// A copy continues exactly as its source does, and as a machine loaded
+    /// from the source's portable state does, whatever it held before: here
+    /// other code at the same IWRAM addresses, already decoded.
+    #[test]
+    fn copies_continue_exactly_like_their_source() {
+        const F: Cycle = Machine::CYCLES_PER_FRAME;
+        let keys = |at, a| TimedInput {
+            at,
+            change: bus::TimedInputChange::Keys(bus::KeyState { a, ..Default::default() }),
+        };
+        let mut rom = [0; 8];
+        rom[..4].copy_from_slice(&0xe51f_f004u32.to_le_bytes()); // ldr pc, [pc, #-4]
+        rom[4..].copy_from_slice(&0x0300_0000u32.to_le_bytes());
+        let mut source = Machine::new(Config { rom: &rom, ..Config::default() });
+        let shared = Config { boot: source.boot_mode, ..Config::default() };
+        let mut copy = Machine::new_with_shared_media(&source, shared);
+        busy_machine(&mut source, 0x1234_5678, 0xe1c1_20b0);
+        busy_machine(&mut copy, 0x9abc_def0, 0xe1c1_20b2);
+        copy.run_until_with_input(3 * F + 777, &[keys(1_000, true)]).unwrap();
+        source
+            .run_until_with_input(2 * F + 12_345, &[keys(5_000, true), keys(F + 9, false)])
+            .unwrap();
+
+        copy.copy_from(&source);
+        let mut loaded = Machine::new_with_shared_media(&source, shared);
+        loaded.load_state(&source.write_state_alloc().unwrap()).unwrap();
+        let same_state = |machine: &Machine, expected: &[u8], what: &str| {
+            let actual = machine.write_state_alloc().unwrap();
+            let first = actual.iter().zip(expected).position(|(a, b)| a != b);
+            assert!(actual == expected, "{what}: state differs from byte {first:?}");
+        };
+        same_state(&copy, &source.write_state_alloc().unwrap(), "copy");
+        let mut start = source.now();
+        for (index, end) in [2 * F + 70_001, 3 * F + 5, 5 * F + 101].into_iter().enumerate() {
+            let inputs = [keys(start + 50, index % 2 == 0), keys(end - 7, index % 2 != 0)];
+            for machine in [&mut source, &mut copy, &mut loaded] {
+                machine.run_until_with_input(end, &inputs).unwrap();
+            }
+            let expected = source.write_state_alloc().unwrap();
+            same_state(&copy, &expected, &format!("copy after slice {index}"));
+            same_state(&loaded, &expected, &format!("loaded after slice {index}"));
+            assert!(copy.framebuffer() == source.framebuffer(), "frame after slice {index}");
+            start = end;
+        }
     }
 
     #[test]

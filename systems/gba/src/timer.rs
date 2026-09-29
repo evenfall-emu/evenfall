@@ -3,7 +3,7 @@
 use crate::types::Cycle;
 use evenfall_state::Codec;
 
-#[derive(Default, Codec)]
+#[derive(Clone, Copy, Default, Codec)]
 pub struct Timer {
     pub reload: u16,
     pub counter: u16,

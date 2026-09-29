@@ -23,8 +23,7 @@ fn assert_same_bus(reference: &Bus, optimized: &Bus) {
     assert_eq!(reference.batch_device_cycle, optimized.batch_device_cycle);
     assert_eq!(reference.devices_deferred, optimized.devices_deferred);
     assert_eq!(reference.dma_epoch, optimized.dma_epoch);
-    assert_eq!(reference.external_input_pointer, optimized.external_input_pointer);
-    assert_eq!(reference.external_input_count, optimized.external_input_count);
+    assert_eq!(reference.external_inputs, optimized.external_inputs);
     assert_eq!(reference.external_input_index, optimized.external_input_index);
     assert_eq!(reference.servicing_dma, optimized.servicing_dma);
     assert_eq!(reference.active_dma_channel, optimized.active_dma_channel);

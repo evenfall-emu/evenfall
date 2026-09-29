@@ -62,6 +62,7 @@ struct Surfaces {
 }
 
 /// The front and minimum-priority object rows.
+#[derive(Clone, Copy)]
 struct ObjectRows {
     front: [u16; SCREEN_WIDTH],
     front_meta: [u16; SCREEN_WIDTH],
@@ -70,6 +71,7 @@ struct ObjectRows {
 }
 
 /// Transient per-line buffers of the layer-major compositor.
+#[derive(Clone, Copy)]
 pub(crate) struct LineLayers {
     pub(super) backgrounds: [[u16; ROW]; 4],
     /// Where each background row's screen line starts.

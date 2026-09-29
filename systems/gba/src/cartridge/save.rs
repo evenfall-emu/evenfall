@@ -100,6 +100,7 @@ pub struct Device {
     pub tag: Tag,
     pub state: State,
 }
+impl_clone_fields!(Device { tag, state });
 
 pub enum State {
     Auto(Auto),
@@ -107,6 +108,28 @@ pub enum State {
     Sram(Box<Sram>),
     Flash(Box<Flash>),
     Eeprom(Box<Eeprom>),
+}
+
+/// Copying into the same kind of memory reuses its box.
+impl Clone for State {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Auto(auto) => Self::Auto(*auto),
+            Self::None => Self::None,
+            Self::Sram(sram) => Self::Sram(sram.clone()),
+            Self::Flash(flash) => Self::Flash(flash.clone()),
+            Self::Eeprom(eeprom) => Self::Eeprom(eeprom.clone()),
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        match (self, source) {
+            (Self::Sram(target), Self::Sram(source)) => target.clone_from(source),
+            (Self::Flash(target), Self::Flash(source)) => target.clone_from(source),
+            (Self::Eeprom(target), Self::Eeprom(source)) => target.clone_from(source),
+            (target, source) => *target = source.clone(),
+        }
+    }
 }
 
 // The schema is independent of allocation: ZiGBA's union payloads are the
@@ -457,7 +480,7 @@ pub struct PendingWrite {
     pub offset: u16,
     pub value: u8,
 }
-#[derive(Default, Codec)]
+#[derive(Clone, Copy, Default, Codec)]
 pub struct Auto {
     pub pending: [PendingWrite; 2],
     #[codec(bits = 2)]
@@ -467,6 +490,7 @@ pub struct Auto {
 pub struct Sram {
     pub data: Box<[u8; SRAM_SIZE]>,
 }
+impl_clone_fields!(Sram { data });
 impl Sram {
     fn init() -> Self {
         Self { data: vec![0xff; SRAM_SIZE].into_boxed_slice().try_into().unwrap() }
@@ -505,6 +529,16 @@ pub struct Flash {
     #[codec(bits = 4)]
     pub busy_sector: u8,
 }
+impl_clone_fields!(Flash {
+    data,
+    large,
+    bank,
+    identification,
+    phase,
+    autodetect_capacity,
+    busy_until,
+    busy_sector,
+});
 impl Default for Flash {
     fn default() -> Self {
         Self::init(false)
@@ -691,6 +725,17 @@ pub struct Eeprom {
     pub read_block: u16,
     pub busy_until: Cycle,
 }
+impl_clone_fields!(Eeprom {
+    data,
+    large,
+    input_count,
+    command,
+    address,
+    write_value,
+    output_index,
+    read_block,
+    busy_until,
+});
 impl Default for Eeprom {
     fn default() -> Self {
         Self::init(false)

@@ -65,11 +65,10 @@ timed continuations without making them part of the generic ARM core.
 owns uploaded ROM/BIOS buffers, validates configuration, limits a call to at
 most one frame, resamples PCM, manages rewind and reconstructs omitted video
 on demand. [`VideoRecovery`](../systems/gba/src/video_recovery.rs) journals
-bounded calls and replays them from a portable anchor into scratch with full
-video, publishing only exact pixels; the live CPU, audio and cycle do not
-change. The cost of this anchor relative to ZiGBA's raw copy is tracked in
-the [roadmap](roadmap.md). Host mutations must pass through Session while
-selective video is active so they enter its journal.
+bounded calls and replays them with full video on a raw copy of the machine
+taken at the last presented frame, publishing only exact pixels; the live
+CPU, audio and cycle do not change. Host mutations must pass through Session
+while selective video is active so they enter its journal.
 
 ## Time and faults
 

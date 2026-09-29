@@ -1,4 +1,6 @@
 //! A large ROM stays in the same allocation through reset and bundle import.
+// A counting global allocator is `unsafe` to implement.
+#![allow(unsafe_code)]
 use evenfall_gba::machine::Machine;
 use evenfall_gba::session::{Config, RewindConfig, Session};
 use std::alloc::{GlobalAlloc, Layout, System};

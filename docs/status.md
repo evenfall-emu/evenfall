@@ -72,8 +72,6 @@ These change no emulated result; each is recorded with its evidence in
   media mode does not exist.
 - The WebAssembly build keeps Rust's default allocator, which reuses freed
   large blocks, and fails caller-sized allocations with `OutOfMemory`.
-- Selective-video recovery anchors on a portable state instead of a raw
-  machine copy.
 
 ## Known issues
 

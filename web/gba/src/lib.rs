@@ -1,6 +1,9 @@
 //! One-session, import-free WebAssembly ABI consumed by the private JS adapter.
 //! Output pointers are borrowed until the next command; JS copies them at once.
 
+// The exports need `#[unsafe(no_mangle)]`; the crate has no `unsafe` code.
+#![allow(unsafe_code)]
+
 use evenfall_audio::StereoSample;
 use evenfall_gba::{
     bus::{KeyState, TimedInput, TimedInputChange},
@@ -96,7 +99,6 @@ fn state_error(error: StateError) -> String {
 
 fn recovery_error(error: video_recovery::Error) -> String {
     match error {
-        video_recovery::Error::State(error) => state_error(error),
         video_recovery::Error::Run(error) => format!("{error:?}"),
         other => format!("{other:?}"),
     }
