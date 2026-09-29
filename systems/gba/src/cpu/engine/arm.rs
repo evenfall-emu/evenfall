@@ -376,6 +376,12 @@ pub(super) fn run<const EW: bool>(core: &mut Core, bus: &mut Bus, limit: u64) ->
     if pc & 3 != 0 || pc & !mask == Ctx::<EW>::LAST || !bus.game_pak_code_idle() {
         return false;
     }
+    // `[EWRAM, IWRAM]` by `[ARM, Thumb]`, as `CodeCache::take` indexes.
+    let region = (Ctx::<EW>::REGION & 1) as usize;
+    let cached = bus.code.ram[region][0].as_ref().map(|ops| ops[((pc & mask) >> 2) as usize]);
+    if cached.is_some_and(|op| refused_at_once(&op, &core.registers)) {
+        return false;
+    }
     let start = bus.now();
     let budget = (limit - start) as i64;
     let memory = bus.engine_memory();
@@ -419,6 +425,22 @@ pub(super) fn run<const EW: bool>(core: &mut Core, bus: &mut Bus, limit: u64) ->
     bus.code.put(Ctx::<EW>::REGION, false, ops);
     bus.engine_finish(limit - hot.budget as u64, open_bus, data_last);
     true
+}
+
+/// Whether a run would refuse `op` as its first instruction with these
+/// registers, in the frequent cases that cost less to see than a run's
+/// setup: an instruction the engine never runs, and a transfer whose base
+/// points at MMIO (as in an interrupt handler). Refusing is always safe;
+/// this only has to be cheap and usually right.
+#[inline(always)]
+fn refused_at_once(op: &Op, registers: &[u32; 16]) -> bool {
+    match op.kind {
+        k::EXIT => true,
+        k::LDR..=k::BLOCK | k::LDR_R..=29 | k::LDR_W..=215 => {
+            registers[usize::from(op.rn & 15)] >> 24 == 4
+        }
+        _ => false,
+    }
 }
 
 /// Runs an inline handler; a refused instruction ends the run.

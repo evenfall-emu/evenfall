@@ -121,8 +121,11 @@ The engine's monomorphized run loops cost build time and code size: a dev
 one-line rebuild takes 3.6 s against 2.3 s, a release one 2.5 s against
 2.0 s and a wasm-release one 7.7 s against 4.8 s, and the WebAssembly module
 grows from 0.87 MB to 1.26 MB. The two ARM loops (IWRAM and EWRAM) are
-about 170 KB of that module; one loop with the region as values would
-remove one of them at a small cost per instruction.
+about 170 KB of that module. One loop with the region as values, and both
+op arrays of EWRAM's length, would remove about 85 KB, but in a same-run
+comparison on CPU 1 it took 2% longer on arm-mixer (3% more instructions in
+the loop) and 1% longer on affine, so the design keeps both loops and pays
+their size and the slower wasm rebuild.
 
 ### Build-time budget
 

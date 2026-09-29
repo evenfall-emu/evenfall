@@ -29,8 +29,10 @@ instructions, however execution is sliced:
   interpreter then executes that instruction. A refused run changes nothing.
   When the cached op at the entry address is certainly refused with the
   current registers (an op the engine never runs, BX to ARM, a transfer to
-  MMIO), the run is refused before any setup: code that writes several I/O
-  registers in a row would otherwise pay a run's setup for each.
+  MMIO or, in ARM code, through a base register pointing at MMIO), the run
+  is refused before any setup: code that writes several I/O registers in a
+  row, and interrupt handlers that start by reading them, would otherwise
+  pay a run's setup for each.
 - **Exit state.** Registers live in a local 256-entry array (any byte
   indexes it, so decoded register fields need no masks) and the CPSR or the
   Thumb flags in host registers. r15, the two-instruction pipeline, the next
@@ -171,7 +173,10 @@ one out-of-line body for conditional ops, reached only when a condition
 passes, costs nothing measurable and brings them to 7.7 s and 3.6 s. A
 closure defined inside a macro that expands once per dispatch arm is a new
 type each time: passing one to a generic block loop instantiated that loop
-132 times in debug builds.
+132 times in debug builds. One ARM dispatch loop for both RAM regions, with
+the region's fetch cost, mask and slots as values, would save about 85 KB of
+WebAssembly, but it retired 3% more instructions in the ARM mixer's loop and
+took 2% longer; the loop stays specialized per region.
 
 ## Open questions
 
