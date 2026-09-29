@@ -89,6 +89,104 @@ pub enum LinkedRunError {
     DuplicateMachine,
 }
 
+/// Advances two to four machines on the same deterministic cable timeline.
+pub fn run_linked_until(
+    machines: &mut [&mut Machine],
+    deadline: Cycle,
+    connection: bus::SioConnection,
+) -> Result<LinkedRunResult, LinkedRunError> {
+    if !(2..=4).contains(&machines.len()) {
+        return Err(LinkedRunError::Link(bus::SioLinkError::UnsupportedPeerCount));
+    }
+    for index in 0..machines.len() {
+        for other in index + 1..machines.len() {
+            if std::ptr::eq(machines[index], machines[other]) {
+                return Err(LinkedRunError::DuplicateMachine);
+            }
+        }
+    }
+    loop {
+        for (index, machine) in machines.iter().enumerate() {
+            if let Some(fault) = machine.fault() {
+                return Ok(linked_run_result(
+                    machines,
+                    LinkedStopReason::Faulted(LinkedFault { machine_index: index, fault }),
+                ));
+            }
+        }
+        let mut buses: Vec<_> = machines.iter_mut().map(|machine| &mut machine.bus).collect();
+        match bus::synchronize_sio(&mut buses, connection) {
+            Ok(_) | Err(bus::SioLinkError::UnsupportedMode) => {}
+            Err(error) => return Err(LinkedRunError::Link(error)),
+        }
+        if machines.iter().all(|machine| machine.now() >= deadline) {
+            return Ok(linked_run_result(machines, LinkedStopReason::Deadline));
+        }
+
+        let runnable = machines
+            .iter()
+            .enumerate()
+            .filter(|(_, machine)| {
+                machine.now() < deadline
+                    && (machine.cpu.inside_hle_bulk_service()
+                        || match machine.bus.power_state() {
+                            bus::PowerState::Running => true,
+                            bus::PowerState::Halted => machine.bus.halt_wake_pending(),
+                            bus::PowerState::Stopped => machine.bus.stop_wake_pending(),
+                        })
+            })
+            .min_by_key(|(_, machine)| machine.now())
+            .map(|(index, _)| index);
+        if let Some(index) = runnable {
+            if let StepOutcome::Faulted(fault) = machines[index].step() {
+                return Ok(linked_run_result(
+                    machines,
+                    LinkedStopReason::Faulted(LinkedFault { machine_index: index, fault }),
+                ));
+            }
+            continue;
+        }
+        let halted = machines
+            .iter()
+            .enumerate()
+            .filter(|(_, machine)| {
+                machine.now() < deadline && machine.bus.power_state() == bus::PowerState::Halted
+            })
+            .min_by_key(|(_, machine)| machine.now())
+            .map(|(index, _)| index);
+        if let Some(index) = halted {
+            machines[index].bus.idle_halt_until(deadline);
+            let _ = machines[index].latch_bus_fault();
+            continue;
+        }
+        let mut stopped_progress = false;
+        for machine in machines.iter_mut() {
+            if machine.bus.now() >= deadline
+                || machine.bus.power_state() != bus::PowerState::Stopped
+            {
+                continue;
+            }
+            let before = machine.now();
+            let woke = machine.bus.idle_stop_until(deadline);
+            if woke || machine.now() != before {
+                stopped_progress = true;
+            }
+        }
+        if stopped_progress {
+            continue;
+        }
+        return Ok(linked_run_result(machines, LinkedStopReason::PowerStopped));
+    }
+}
+
+fn linked_run_result(machines: &[&mut Machine], reason: LinkedStopReason) -> LinkedRunResult {
+    LinkedRunResult {
+        earliest_cycle: machines.iter().map(|machine| machine.now()).min().expect("two peers"),
+        latest_cycle: machines.iter().map(|machine| machine.now()).max().expect("two peers"),
+        reason,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BootMode {
     Hle,
@@ -214,7 +312,7 @@ impl Machine {
             std::ptr::addr_of_mut!((*ptr).latched_fault).write(None);
             std::ptr::addr_of_mut!((*ptr).media_identity)
                 .write(config.immutable_media.then(|| MediaIdentity::new(config.rom, config.bios)));
-            let machine = storage.assume_init();
+            let mut machine = storage.assume_init();
             if let Some(epoch) = config.rtc_epoch_seconds {
                 machine.bus.enable_rtc(epoch);
             }
