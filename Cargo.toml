@@ -60,9 +60,20 @@ lto = false
 incremental = true
 debug = "line-tables-only"
 
-# Symbolized builds for `perf record` and flame graphs.
-[profile.profiling]
+# Native builds with the shipped WebAssembly's code generation: whole-program
+# optimization, as Zig's ReleaseFast does. The benchmark runner compares with
+# this profile; day-to-day work stays on `release`.
+[profile.release-lto]
 inherits = "release"
+lto = "fat"
+codegen-units = 1
+incremental = false
+panic = "abort"
+
+# Symbolized builds for `perf record` and flame graphs, with the benchmark's
+# code generation so profiles show what is measured.
+[profile.profiling]
+inherits = "release-lto"
 debug = "full"
 
 # Shipped WebAssembly only: whole-program optimization.

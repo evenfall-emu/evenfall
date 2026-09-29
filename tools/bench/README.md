@@ -15,8 +15,10 @@ Requires Linux, Node, `flock`, `taskset`, Zig 0.16, Rust and
 user-supplied; no assets are downloaded or modified. The adapter compiles
 ZiGBA's pinned `refs/zigba/tools/emu-bench/harness/zigba-harness.zig` at
 `ReleaseFast` into `target/bench`, with both Zig caches there. Nothing is
-written into `refs/zigba`. The Rust adapter builds `evenfall-harness` at
-Cargo release and needs a working `Machine` integration.
+written into `refs/zigba`. The Rust adapter builds `evenfall-harness` with the
+`release-lto` profile (fat LTO, one codegen unit, abort on panic), the native
+equivalent of the shipped WebAssembly build and of Zig's whole-program
+ReleaseFast.
 
 ```sh
 node --test tools/bench/*.test.mjs

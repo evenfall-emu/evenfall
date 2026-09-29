@@ -271,6 +271,7 @@ impl Core {
         }
     }
 
+    #[inline]
     pub fn condition_passed(&self, condition: u32) -> bool {
         let n = self.cpsr & (1 << 31) != 0;
         let z = self.cpsr & (1 << 30) != 0;
@@ -422,6 +423,7 @@ impl Core {
         );
     }
 
+    #[inline]
     pub fn multiply_iterations(multiplier: u32, signed: bool) -> Cycle {
         let magnitude =
             if signed && multiplier & 0x8000_0000 != 0 { !multiplier } else { multiplier };
@@ -430,6 +432,7 @@ impl Core {
             + u64::from(magnitude > 0xff_ffff)
     }
 
+    #[inline]
     pub fn decode_operand2(&self, instruction: u32, immediate: bool) -> ShifterResult {
         if immediate {
             let rotate = ((instruction >> 8) & 15) * 2;
@@ -474,6 +477,7 @@ impl Core {
         }
     }
 
+    #[inline]
     pub fn decode_register_shift(source: u32, shift_type: u32, amount: u8) -> ShifterResult {
         if amount == 0 {
             return ShifterResult { value: source, carry: None };

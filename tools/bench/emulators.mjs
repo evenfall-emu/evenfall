@@ -50,14 +50,15 @@ export const EMULATORS = {
     },
   },
   evenfall: {
-    title: "Evenfall Rust, release",
+    title: "Evenfall Rust, release-lto",
     boots: ["hle", "skip-bios"],
     build() {
       run(
         "cargo",
         [
           "build",
-          "--release",
+          "--profile",
+          "release-lto",
           "-p",
           "evenfall-bench",
           "--bin",
@@ -66,9 +67,9 @@ export const EMULATORS = {
         { cwd: ROOT },
       );
       return {
-        binary: join(ROOT, "target/release/evenfall-harness"),
+        binary: join(ROOT, "target/release-lto/evenfall-harness"),
         source: git(["rev-parse", "HEAD"]),
-        build: "cargo release",
+        build: "cargo release-lto",
       };
     },
   },
