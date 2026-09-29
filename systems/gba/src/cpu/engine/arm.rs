@@ -61,6 +61,10 @@ mod k {
     pub const DPS_X: u8 = 176;
     /// Conditional B, plus the condition.
     pub const BCOND: u8 = 192;
+    /// Single transfers by an immediate offset `x` with writeback, pre- and
+    /// post-indexed, in LDR, LDRB, STR, STRB order; never with rd = rn.
+    pub const LDR_W: u8 = 208;
+    pub const LDR_P: u8 = 212;
     /// A condition, then `inner`, plus the condition.
     pub const COND: u8 = 240;
 }
@@ -84,7 +88,7 @@ fn uses_rn(opcode: u32) -> bool {
     opcode != 13 && opcode != 15
 }
 
-fn is_logical(opcode: u32) -> bool {
+const fn is_logical(opcode: u32) -> bool {
     matches!(opcode, 0 | 1 | 8 | 9 | 12..=15)
 }
 
@@ -172,22 +176,22 @@ fn decode_unconditional(word: u32) -> Op {
             if (rn == 15 && (!pre || writeback)) || (rd == 15 && (byte || load)) {
                 return EXIT_OP;
             }
-            if !pre
-                || writeback
-                || rn == 15
-                || rd == 15
-                || (word & (1 << 25) != 0 && word & 15 == 15)
-            {
-                return raw(k::SINGLE);
-            }
             let mode = u8::from(!load) << 1 | u8::from(byte);
             let down = word & (1 << 23) == 0;
-            if word & (1 << 25) != 0 {
+            let immediate = word & (1 << 25) == 0;
+            let offset = word & 0xfff;
+            let x = if down { offset.wrapping_neg() } else { offset };
+            // Pre-indexed with writeback, or post-indexed (not the T forms).
+            if immediate && pre == writeback && rn != 15 && rd != 15 && rd != rn {
+                return Op { x, ..raw(if pre { k::LDR_W } else { k::LDR_P } + mode) };
+            }
+            if !pre || writeback || rn == 15 || rd == 15 || (!immediate && word & 15 == 15) {
+                return raw(k::SINGLE);
+            }
+            if !immediate {
                 let x = word & 15 | (word >> 5 & 3) << 8 | (word >> 7 & 31) << 16;
                 return Op { x: x | u32::from(down) << 24, ..raw(k::LDR_R + mode) };
             }
-            let offset = word & 0xfff;
-            let x = if down { offset.wrapping_neg() } else { offset };
             Op { x, ..raw(k::LDR + mode) }
         }
         4 => {
@@ -422,6 +426,23 @@ macro_rules! call {
     }};
 }
 
+/// A data processing op of kind `$kind`: with the rest of the block it
+/// leads in one charge when the budget covers the block, else alone. The
+/// first time it runs, it measures its block and dispatches again.
+macro_rules! dp {
+    ($h:ident, $c:ident, $ops:ident, $regs:ident, $op:ident, $kind:literal) => {{
+        if !in_block($kind) || $op.inner == 1 {
+            go!($h, $c, dp::<EW, $kind>(&mut $h, $regs, $op))
+        } else if $op.inner == 0 {
+            measure_block(&mut $ops[..], $c, $h.idx);
+        } else if $h.budget >= i64::from($op.inner) * Ctx::<EW>::FETCH {
+            $h = alu_block::<EW, N>($h, $c, $ops, $regs);
+        } else {
+            go!($h, $c, dp::<EW, $kind>(&mut $h, $regs, $op))
+        }
+    }};
+}
+
 /// A conditional wrapper: run the instruction through the generic handlers
 /// if condition `$cond` passes, otherwise charge the fetch and move on.
 macro_rules! cond {
@@ -486,10 +507,7 @@ fn run_ops<const EW: bool, const N: usize>(
         // the compiler drop the bounds check.
         let op = &ops[h.idx as usize & (N - 1)];
         #[cfg(debug_assertions)]
-        if !matches!(op.kind, k::UNDECODED | k::END | k::STOP) {
-            let pc = c.pc(h.idx);
-            debug_assert_eq!(*op, decode(c.code_word(pc)), "stale op at {pc:08x}");
-        }
+        check_op(c, h.idx, op);
         match op.kind {
             k::UNDECODED => decode_slot(&mut ops[..], c, h.idx),
             k::END => go!(h, c, end(&mut h, c)),
@@ -548,138 +566,146 @@ fn run_ops<const EW: bool, const N: usize>(
             27 => go!(h, c, transfer::<EW, LDRH>(&mut h, c, ops, regs, op, indexed(regs, op))),
             28 => go!(h, c, transfer::<EW, LDRSB>(&mut h, c, ops, regs, op, indexed(regs, op))),
             29 => go!(h, c, transfer::<EW, LDRSH>(&mut h, c, ops, regs, op, indexed(regs, op))),
-            32 => go!(h, c, dp::<EW, 0, false, FI>(&mut h, regs, op)),
-            33 => go!(h, c, dp::<EW, 1, false, FI>(&mut h, regs, op)),
-            34 => go!(h, c, dp::<EW, 2, false, FI>(&mut h, regs, op)),
-            35 => go!(h, c, dp::<EW, 3, false, FI>(&mut h, regs, op)),
-            36 => go!(h, c, dp::<EW, 4, false, FI>(&mut h, regs, op)),
-            37 => go!(h, c, dp::<EW, 5, false, FI>(&mut h, regs, op)),
-            38 => go!(h, c, dp::<EW, 6, false, FI>(&mut h, regs, op)),
-            39 => go!(h, c, dp::<EW, 7, false, FI>(&mut h, regs, op)),
-            44 => go!(h, c, dp::<EW, 12, false, FI>(&mut h, regs, op)),
-            45 => go!(h, c, dp::<EW, 13, false, FI>(&mut h, regs, op)),
-            46 => go!(h, c, dp::<EW, 14, false, FI>(&mut h, regs, op)),
-            47 => go!(h, c, dp::<EW, 15, false, FI>(&mut h, regs, op)),
-            48 => go!(h, c, dp::<EW, 0, false, FR>(&mut h, regs, op)),
-            49 => go!(h, c, dp::<EW, 1, false, FR>(&mut h, regs, op)),
-            50 => go!(h, c, dp::<EW, 2, false, FR>(&mut h, regs, op)),
-            51 => go!(h, c, dp::<EW, 3, false, FR>(&mut h, regs, op)),
-            52 => go!(h, c, dp::<EW, 4, false, FR>(&mut h, regs, op)),
-            53 => go!(h, c, dp::<EW, 5, false, FR>(&mut h, regs, op)),
-            54 => go!(h, c, dp::<EW, 6, false, FR>(&mut h, regs, op)),
-            55 => go!(h, c, dp::<EW, 7, false, FR>(&mut h, regs, op)),
-            60 => go!(h, c, dp::<EW, 12, false, FR>(&mut h, regs, op)),
-            61 => go!(h, c, dp::<EW, 13, false, FR>(&mut h, regs, op)),
-            62 => go!(h, c, dp::<EW, 14, false, FR>(&mut h, regs, op)),
-            63 => go!(h, c, dp::<EW, 15, false, FR>(&mut h, regs, op)),
-            64 => go!(h, c, dp::<EW, 0, false, FL>(&mut h, regs, op)),
-            65 => go!(h, c, dp::<EW, 1, false, FL>(&mut h, regs, op)),
-            66 => go!(h, c, dp::<EW, 2, false, FL>(&mut h, regs, op)),
-            67 => go!(h, c, dp::<EW, 3, false, FL>(&mut h, regs, op)),
-            68 => go!(h, c, dp::<EW, 4, false, FL>(&mut h, regs, op)),
-            69 => go!(h, c, dp::<EW, 5, false, FL>(&mut h, regs, op)),
-            70 => go!(h, c, dp::<EW, 6, false, FL>(&mut h, regs, op)),
-            71 => go!(h, c, dp::<EW, 7, false, FL>(&mut h, regs, op)),
-            76 => go!(h, c, dp::<EW, 12, false, FL>(&mut h, regs, op)),
-            77 => go!(h, c, dp::<EW, 13, false, FL>(&mut h, regs, op)),
-            78 => go!(h, c, dp::<EW, 14, false, FL>(&mut h, regs, op)),
-            79 => go!(h, c, dp::<EW, 15, false, FL>(&mut h, regs, op)),
-            80 => go!(h, c, dp::<EW, 0, false, FG>(&mut h, regs, op)),
-            81 => go!(h, c, dp::<EW, 1, false, FG>(&mut h, regs, op)),
-            82 => go!(h, c, dp::<EW, 2, false, FG>(&mut h, regs, op)),
-            83 => go!(h, c, dp::<EW, 3, false, FG>(&mut h, regs, op)),
-            84 => go!(h, c, dp::<EW, 4, false, FG>(&mut h, regs, op)),
-            85 => go!(h, c, dp::<EW, 5, false, FG>(&mut h, regs, op)),
-            86 => go!(h, c, dp::<EW, 6, false, FG>(&mut h, regs, op)),
-            87 => go!(h, c, dp::<EW, 7, false, FG>(&mut h, regs, op)),
-            92 => go!(h, c, dp::<EW, 12, false, FG>(&mut h, regs, op)),
-            93 => go!(h, c, dp::<EW, 13, false, FG>(&mut h, regs, op)),
-            94 => go!(h, c, dp::<EW, 14, false, FG>(&mut h, regs, op)),
-            95 => go!(h, c, dp::<EW, 15, false, FG>(&mut h, regs, op)),
-            96 => go!(h, c, dp::<EW, 0, false, FX>(&mut h, regs, op)),
-            97 => go!(h, c, dp::<EW, 1, false, FX>(&mut h, regs, op)),
-            98 => go!(h, c, dp::<EW, 2, false, FX>(&mut h, regs, op)),
-            99 => go!(h, c, dp::<EW, 3, false, FX>(&mut h, regs, op)),
-            100 => go!(h, c, dp::<EW, 4, false, FX>(&mut h, regs, op)),
-            101 => go!(h, c, dp::<EW, 5, false, FX>(&mut h, regs, op)),
-            102 => go!(h, c, dp::<EW, 6, false, FX>(&mut h, regs, op)),
-            103 => go!(h, c, dp::<EW, 7, false, FX>(&mut h, regs, op)),
-            108 => go!(h, c, dp::<EW, 12, false, FX>(&mut h, regs, op)),
-            109 => go!(h, c, dp::<EW, 13, false, FX>(&mut h, regs, op)),
-            110 => go!(h, c, dp::<EW, 14, false, FX>(&mut h, regs, op)),
-            111 => go!(h, c, dp::<EW, 15, false, FX>(&mut h, regs, op)),
-            112 => go!(h, c, dp::<EW, 0, true, FI>(&mut h, regs, op)),
-            113 => go!(h, c, dp::<EW, 1, true, FI>(&mut h, regs, op)),
-            114 => go!(h, c, dp::<EW, 2, true, FI>(&mut h, regs, op)),
-            115 => go!(h, c, dp::<EW, 3, true, FI>(&mut h, regs, op)),
-            116 => go!(h, c, dp::<EW, 4, true, FI>(&mut h, regs, op)),
-            117 => go!(h, c, dp::<EW, 5, true, FI>(&mut h, regs, op)),
-            118 => go!(h, c, dp::<EW, 6, true, FI>(&mut h, regs, op)),
-            119 => go!(h, c, dp::<EW, 7, true, FI>(&mut h, regs, op)),
-            120 => go!(h, c, dp::<EW, 8, true, FI>(&mut h, regs, op)),
-            121 => go!(h, c, dp::<EW, 9, true, FI>(&mut h, regs, op)),
-            122 => go!(h, c, dp::<EW, 10, true, FI>(&mut h, regs, op)),
-            123 => go!(h, c, dp::<EW, 11, true, FI>(&mut h, regs, op)),
-            124 => go!(h, c, dp::<EW, 12, true, FI>(&mut h, regs, op)),
-            125 => go!(h, c, dp::<EW, 13, true, FI>(&mut h, regs, op)),
-            126 => go!(h, c, dp::<EW, 14, true, FI>(&mut h, regs, op)),
-            127 => go!(h, c, dp::<EW, 15, true, FI>(&mut h, regs, op)),
-            128 => go!(h, c, dp::<EW, 0, true, FIC>(&mut h, regs, op)),
-            129 => go!(h, c, dp::<EW, 1, true, FIC>(&mut h, regs, op)),
-            136 => go!(h, c, dp::<EW, 8, true, FIC>(&mut h, regs, op)),
-            137 => go!(h, c, dp::<EW, 9, true, FIC>(&mut h, regs, op)),
-            140 => go!(h, c, dp::<EW, 12, true, FIC>(&mut h, regs, op)),
-            141 => go!(h, c, dp::<EW, 13, true, FIC>(&mut h, regs, op)),
-            142 => go!(h, c, dp::<EW, 14, true, FIC>(&mut h, regs, op)),
-            143 => go!(h, c, dp::<EW, 15, true, FIC>(&mut h, regs, op)),
-            144 => go!(h, c, dp::<EW, 0, true, FR>(&mut h, regs, op)),
-            145 => go!(h, c, dp::<EW, 1, true, FR>(&mut h, regs, op)),
-            146 => go!(h, c, dp::<EW, 2, true, FR>(&mut h, regs, op)),
-            147 => go!(h, c, dp::<EW, 3, true, FR>(&mut h, regs, op)),
-            148 => go!(h, c, dp::<EW, 4, true, FR>(&mut h, regs, op)),
-            149 => go!(h, c, dp::<EW, 5, true, FR>(&mut h, regs, op)),
-            150 => go!(h, c, dp::<EW, 6, true, FR>(&mut h, regs, op)),
-            151 => go!(h, c, dp::<EW, 7, true, FR>(&mut h, regs, op)),
-            152 => go!(h, c, dp::<EW, 8, true, FR>(&mut h, regs, op)),
-            153 => go!(h, c, dp::<EW, 9, true, FR>(&mut h, regs, op)),
-            154 => go!(h, c, dp::<EW, 10, true, FR>(&mut h, regs, op)),
-            155 => go!(h, c, dp::<EW, 11, true, FR>(&mut h, regs, op)),
-            156 => go!(h, c, dp::<EW, 12, true, FR>(&mut h, regs, op)),
-            157 => go!(h, c, dp::<EW, 13, true, FR>(&mut h, regs, op)),
-            158 => go!(h, c, dp::<EW, 14, true, FR>(&mut h, regs, op)),
-            159 => go!(h, c, dp::<EW, 15, true, FR>(&mut h, regs, op)),
-            160 => go!(h, c, dp::<EW, 0, true, FG>(&mut h, regs, op)),
-            161 => go!(h, c, dp::<EW, 1, true, FG>(&mut h, regs, op)),
-            162 => go!(h, c, dp::<EW, 2, true, FG>(&mut h, regs, op)),
-            163 => go!(h, c, dp::<EW, 3, true, FG>(&mut h, regs, op)),
-            164 => go!(h, c, dp::<EW, 4, true, FG>(&mut h, regs, op)),
-            165 => go!(h, c, dp::<EW, 5, true, FG>(&mut h, regs, op)),
-            166 => go!(h, c, dp::<EW, 6, true, FG>(&mut h, regs, op)),
-            167 => go!(h, c, dp::<EW, 7, true, FG>(&mut h, regs, op)),
-            168 => go!(h, c, dp::<EW, 8, true, FG>(&mut h, regs, op)),
-            169 => go!(h, c, dp::<EW, 9, true, FG>(&mut h, regs, op)),
-            170 => go!(h, c, dp::<EW, 10, true, FG>(&mut h, regs, op)),
-            171 => go!(h, c, dp::<EW, 11, true, FG>(&mut h, regs, op)),
-            172 => go!(h, c, dp::<EW, 12, true, FG>(&mut h, regs, op)),
-            173 => go!(h, c, dp::<EW, 13, true, FG>(&mut h, regs, op)),
-            174 => go!(h, c, dp::<EW, 14, true, FG>(&mut h, regs, op)),
-            175 => go!(h, c, dp::<EW, 15, true, FG>(&mut h, regs, op)),
-            176 => go!(h, c, dp::<EW, 0, true, FX>(&mut h, regs, op)),
-            177 => go!(h, c, dp::<EW, 1, true, FX>(&mut h, regs, op)),
-            178 => go!(h, c, dp::<EW, 2, true, FX>(&mut h, regs, op)),
-            179 => go!(h, c, dp::<EW, 3, true, FX>(&mut h, regs, op)),
-            180 => go!(h, c, dp::<EW, 4, true, FX>(&mut h, regs, op)),
-            181 => go!(h, c, dp::<EW, 5, true, FX>(&mut h, regs, op)),
-            182 => go!(h, c, dp::<EW, 6, true, FX>(&mut h, regs, op)),
-            183 => go!(h, c, dp::<EW, 7, true, FX>(&mut h, regs, op)),
-            184 => go!(h, c, dp::<EW, 8, true, FX>(&mut h, regs, op)),
-            185 => go!(h, c, dp::<EW, 9, true, FX>(&mut h, regs, op)),
-            186 => go!(h, c, dp::<EW, 10, true, FX>(&mut h, regs, op)),
-            187 => go!(h, c, dp::<EW, 11, true, FX>(&mut h, regs, op)),
-            188 => go!(h, c, dp::<EW, 12, true, FX>(&mut h, regs, op)),
-            189 => go!(h, c, dp::<EW, 13, true, FX>(&mut h, regs, op)),
-            190 => go!(h, c, dp::<EW, 14, true, FX>(&mut h, regs, op)),
-            191 => go!(h, c, dp::<EW, 15, true, FX>(&mut h, regs, op)),
+            208 => go!(h, c, pre_indexed::<EW, LDR>(&mut h, c, ops, regs, op)),
+            209 => go!(h, c, pre_indexed::<EW, LDRB>(&mut h, c, ops, regs, op)),
+            210 => go!(h, c, pre_indexed::<EW, STR>(&mut h, c, ops, regs, op)),
+            211 => go!(h, c, pre_indexed::<EW, STRB>(&mut h, c, ops, regs, op)),
+            212 => go!(h, c, post_indexed::<EW, LDR>(&mut h, c, ops, regs, op)),
+            213 => go!(h, c, post_indexed::<EW, LDRB>(&mut h, c, ops, regs, op)),
+            214 => go!(h, c, post_indexed::<EW, STR>(&mut h, c, ops, regs, op)),
+            215 => go!(h, c, post_indexed::<EW, STRB>(&mut h, c, ops, regs, op)),
+            32 => dp!(h, c, ops, regs, op, 32),
+            33 => dp!(h, c, ops, regs, op, 33),
+            34 => dp!(h, c, ops, regs, op, 34),
+            35 => dp!(h, c, ops, regs, op, 35),
+            36 => dp!(h, c, ops, regs, op, 36),
+            37 => dp!(h, c, ops, regs, op, 37),
+            38 => dp!(h, c, ops, regs, op, 38),
+            39 => dp!(h, c, ops, regs, op, 39),
+            44 => dp!(h, c, ops, regs, op, 44),
+            45 => dp!(h, c, ops, regs, op, 45),
+            46 => dp!(h, c, ops, regs, op, 46),
+            47 => dp!(h, c, ops, regs, op, 47),
+            48 => dp!(h, c, ops, regs, op, 48),
+            49 => dp!(h, c, ops, regs, op, 49),
+            50 => dp!(h, c, ops, regs, op, 50),
+            51 => dp!(h, c, ops, regs, op, 51),
+            52 => dp!(h, c, ops, regs, op, 52),
+            53 => dp!(h, c, ops, regs, op, 53),
+            54 => dp!(h, c, ops, regs, op, 54),
+            55 => dp!(h, c, ops, regs, op, 55),
+            60 => dp!(h, c, ops, regs, op, 60),
+            61 => dp!(h, c, ops, regs, op, 61),
+            62 => dp!(h, c, ops, regs, op, 62),
+            63 => dp!(h, c, ops, regs, op, 63),
+            64 => dp!(h, c, ops, regs, op, 64),
+            65 => dp!(h, c, ops, regs, op, 65),
+            66 => dp!(h, c, ops, regs, op, 66),
+            67 => dp!(h, c, ops, regs, op, 67),
+            68 => dp!(h, c, ops, regs, op, 68),
+            69 => dp!(h, c, ops, regs, op, 69),
+            70 => dp!(h, c, ops, regs, op, 70),
+            71 => dp!(h, c, ops, regs, op, 71),
+            76 => dp!(h, c, ops, regs, op, 76),
+            77 => dp!(h, c, ops, regs, op, 77),
+            78 => dp!(h, c, ops, regs, op, 78),
+            79 => dp!(h, c, ops, regs, op, 79),
+            80 => dp!(h, c, ops, regs, op, 80),
+            81 => dp!(h, c, ops, regs, op, 81),
+            82 => dp!(h, c, ops, regs, op, 82),
+            83 => dp!(h, c, ops, regs, op, 83),
+            84 => dp!(h, c, ops, regs, op, 84),
+            85 => dp!(h, c, ops, regs, op, 85),
+            86 => dp!(h, c, ops, regs, op, 86),
+            87 => dp!(h, c, ops, regs, op, 87),
+            92 => dp!(h, c, ops, regs, op, 92),
+            93 => dp!(h, c, ops, regs, op, 93),
+            94 => dp!(h, c, ops, regs, op, 94),
+            95 => dp!(h, c, ops, regs, op, 95),
+            96 => dp!(h, c, ops, regs, op, 96),
+            97 => dp!(h, c, ops, regs, op, 97),
+            98 => dp!(h, c, ops, regs, op, 98),
+            99 => dp!(h, c, ops, regs, op, 99),
+            100 => dp!(h, c, ops, regs, op, 100),
+            101 => dp!(h, c, ops, regs, op, 101),
+            102 => dp!(h, c, ops, regs, op, 102),
+            103 => dp!(h, c, ops, regs, op, 103),
+            108 => dp!(h, c, ops, regs, op, 108),
+            109 => dp!(h, c, ops, regs, op, 109),
+            110 => dp!(h, c, ops, regs, op, 110),
+            111 => dp!(h, c, ops, regs, op, 111),
+            112 => dp!(h, c, ops, regs, op, 112),
+            113 => dp!(h, c, ops, regs, op, 113),
+            114 => dp!(h, c, ops, regs, op, 114),
+            115 => dp!(h, c, ops, regs, op, 115),
+            116 => dp!(h, c, ops, regs, op, 116),
+            117 => dp!(h, c, ops, regs, op, 117),
+            118 => dp!(h, c, ops, regs, op, 118),
+            119 => dp!(h, c, ops, regs, op, 119),
+            120 => dp!(h, c, ops, regs, op, 120),
+            121 => dp!(h, c, ops, regs, op, 121),
+            122 => dp!(h, c, ops, regs, op, 122),
+            123 => dp!(h, c, ops, regs, op, 123),
+            124 => dp!(h, c, ops, regs, op, 124),
+            125 => dp!(h, c, ops, regs, op, 125),
+            126 => dp!(h, c, ops, regs, op, 126),
+            127 => dp!(h, c, ops, regs, op, 127),
+            128 => dp!(h, c, ops, regs, op, 128),
+            129 => dp!(h, c, ops, regs, op, 129),
+            136 => dp!(h, c, ops, regs, op, 136),
+            137 => dp!(h, c, ops, regs, op, 137),
+            140 => dp!(h, c, ops, regs, op, 140),
+            141 => dp!(h, c, ops, regs, op, 141),
+            142 => dp!(h, c, ops, regs, op, 142),
+            143 => dp!(h, c, ops, regs, op, 143),
+            144 => dp!(h, c, ops, regs, op, 144),
+            145 => dp!(h, c, ops, regs, op, 145),
+            146 => dp!(h, c, ops, regs, op, 146),
+            147 => dp!(h, c, ops, regs, op, 147),
+            148 => dp!(h, c, ops, regs, op, 148),
+            149 => dp!(h, c, ops, regs, op, 149),
+            150 => dp!(h, c, ops, regs, op, 150),
+            151 => dp!(h, c, ops, regs, op, 151),
+            152 => dp!(h, c, ops, regs, op, 152),
+            153 => dp!(h, c, ops, regs, op, 153),
+            154 => dp!(h, c, ops, regs, op, 154),
+            155 => dp!(h, c, ops, regs, op, 155),
+            156 => dp!(h, c, ops, regs, op, 156),
+            157 => dp!(h, c, ops, regs, op, 157),
+            158 => dp!(h, c, ops, regs, op, 158),
+            159 => dp!(h, c, ops, regs, op, 159),
+            160 => dp!(h, c, ops, regs, op, 160),
+            161 => dp!(h, c, ops, regs, op, 161),
+            162 => dp!(h, c, ops, regs, op, 162),
+            163 => dp!(h, c, ops, regs, op, 163),
+            164 => dp!(h, c, ops, regs, op, 164),
+            165 => dp!(h, c, ops, regs, op, 165),
+            166 => dp!(h, c, ops, regs, op, 166),
+            167 => dp!(h, c, ops, regs, op, 167),
+            168 => dp!(h, c, ops, regs, op, 168),
+            169 => dp!(h, c, ops, regs, op, 169),
+            170 => dp!(h, c, ops, regs, op, 170),
+            171 => dp!(h, c, ops, regs, op, 171),
+            172 => dp!(h, c, ops, regs, op, 172),
+            173 => dp!(h, c, ops, regs, op, 173),
+            174 => dp!(h, c, ops, regs, op, 174),
+            175 => dp!(h, c, ops, regs, op, 175),
+            176 => dp!(h, c, ops, regs, op, 176),
+            177 => dp!(h, c, ops, regs, op, 177),
+            178 => dp!(h, c, ops, regs, op, 178),
+            179 => dp!(h, c, ops, regs, op, 179),
+            180 => dp!(h, c, ops, regs, op, 180),
+            181 => dp!(h, c, ops, regs, op, 181),
+            182 => dp!(h, c, ops, regs, op, 182),
+            183 => dp!(h, c, ops, regs, op, 183),
+            184 => dp!(h, c, ops, regs, op, 184),
+            185 => dp!(h, c, ops, regs, op, 185),
+            186 => dp!(h, c, ops, regs, op, 186),
+            187 => dp!(h, c, ops, regs, op, 187),
+            188 => dp!(h, c, ops, regs, op, 188),
+            189 => dp!(h, c, ops, regs, op, 189),
+            190 => dp!(h, c, ops, regs, op, 190),
+            191 => dp!(h, c, ops, regs, op, 191),
             192 => bcond!(h, c, regs, op, 0),
             193 => bcond!(h, c, regs, op, 1),
             194 => bcond!(h, c, regs, op, 2),
@@ -721,7 +747,8 @@ fn run_ops<const EW: bool, const N: usize>(
             | 130..=135
             | 138
             | 139
-            | 207..=239
+            | 207
+            | 216..=239
             | 255 => return stopped(h),
         }
     }
@@ -844,18 +871,39 @@ fn mrs<const EW: bool>(h: &mut Hot, regs: &mut Registers, op: &Op) -> bool {
     h.next()
 }
 
-#[inline(always)]
-fn dp<const EW: bool, const OP: u32, const S: bool, const FORM: u8>(
-    h: &mut Hot,
-    regs: &mut Registers,
-    op: &Op,
-) -> bool {
-    if !h.charge(Ctx::<EW>::FETCH + i64::from(FORM == FX)) {
+/// The operand form of a data processing kind.
+const fn form(kind: u8) -> u8 {
+    [FI, FR, FL, FG, FX, FI, FIC, FR, FG, FX][((kind - k::DP_I) / 16) as usize]
+}
+
+/// Whether ops of a kind cost exactly one fetch, whatever their operands,
+/// and change only registers and flags: the ops a block may hold, besides
+/// conditional ones whose inner kind is such a kind.
+const fn in_block(kind: u8) -> bool {
+    if !matches!(kind, k::DP_I..k::BCOND) || form(kind) == FX {
         return false;
     }
+    let opcode = (kind % 16) as u32;
+    // The decoder leaves compares without S, and FIC for arithmetic, out.
+    (kind >= k::DPS_I || !matches!(opcode, 8..=11)) && (form(kind) != FIC || is_logical(opcode))
+}
+
+/// A data processing op of kind `KIND` (in `DP_I..BCOND`).
+#[inline(always)]
+fn dp<const EW: bool, const KIND: u8>(h: &mut Hot, regs: &mut Registers, op: &Op) -> bool {
+    if !h.charge(Ctx::<EW>::FETCH + i64::from(form(KIND) == FX)) {
+        return false;
+    }
+    dp_body::<KIND>(h, regs, op);
+    h.next()
+}
+
+/// The effect of a data processing op of kind `KIND` on registers and flags.
+#[inline(always)]
+fn dp_body<const KIND: u8>(h: &mut Hot, regs: &mut Registers, op: &Op) {
     let carry_in = (h.cpsr >> 29) & 1;
     let rm = regs[op.x as u8 as usize];
-    let (rhs, carry) = match FORM {
+    let (rhs, carry) = match form(KIND) {
         FI => (op.x, None),
         FIC => (op.x, Some(op.x >> 31 != 0)),
         FR => (rm, None),
@@ -871,8 +919,214 @@ fn dp<const EW: bool, const OP: u32, const S: bool, const FORM: u8>(
         }
     };
     let lhs = regs[usize::from(op.rn)];
-    alu(h, regs, OP, S, op.rd, lhs, rhs, carry, carry_in);
-    h.next()
+    alu(h, regs, u32::from(KIND % 16), KIND >= k::DPS_I, op.rd, lhs, rhs, carry, carry_in);
+}
+
+/// Calls `$m!` with the data processing kinds a block holds.
+macro_rules! block_kinds {
+    ($m:ident $(, $arg:tt)*) => {
+        $m!(
+            $($arg),*;
+            32 33 34 35 36 37 38 39 44 45 46 47
+            48 49 50 51 52 53 54 55 60 61 62 63
+            64 65 66 67 68 69 70 71 76 77 78 79
+            80 81 82 83 84 85 86 87 92 93 94 95
+            112 113 114 115 116 117 118 119 120 121 122 123 124 125 126 127
+            128 129 136 137 140 141 142 143
+            144 145 146 147 148 149 150 151 152 153 154 155 156 157 158 159
+            160 161 162 163 164 165 166 167 168 169 170 171 172 173 174 175
+        )
+    };
+}
+
+/// One op `$op` of a block: its effect on `$h` and `$regs`, or `$stop` if
+/// it does not belong to one. A single table dispatch over every kind,
+/// conditional ones included.
+macro_rules! block_step {
+    ($h:ident, $regs:ident, $op:ident, $stop:tt; $($kind:literal)*) => {
+        match $op.kind {
+            $($kind => dp_body::<$kind>($h, $regs, $op),)*
+            240 if !cond_step::<0>($h, $regs, $op) => $stop,
+            241 if !cond_step::<1>($h, $regs, $op) => $stop,
+            242 if !cond_step::<2>($h, $regs, $op) => $stop,
+            243 if !cond_step::<3>($h, $regs, $op) => $stop,
+            244 if !cond_step::<4>($h, $regs, $op) => $stop,
+            245 if !cond_step::<5>($h, $regs, $op) => $stop,
+            246 if !cond_step::<6>($h, $regs, $op) => $stop,
+            247 if !cond_step::<7>($h, $regs, $op) => $stop,
+            248 if !cond_step::<8>($h, $regs, $op) => $stop,
+            249 if !cond_step::<9>($h, $regs, $op) => $stop,
+            250 if !cond_step::<10>($h, $regs, $op) => $stop,
+            251 if !cond_step::<11>($h, $regs, $op) => $stop,
+            252 if !cond_step::<12>($h, $regs, $op) => $stop,
+            253 if !cond_step::<13>($h, $regs, $op) => $stop,
+            254 if !cond_step::<14>($h, $regs, $op) => $stop,
+            k::NOP | 240..=254 => {}
+            0..=2
+            | 4..=31
+            | 40..=43
+            | 56..=59
+            | 72..=75
+            | 88..=91
+            | 96..=111
+            | 130..=135
+            | 138
+            | 139
+            | 176..=239
+            | 255 => $stop,
+        }
+    };
+}
+
+/// Runs the block `ops[h.idx]` leads, whose cost the caller checked the
+/// budget covers, up to its end or to the first op that no longer belongs
+/// to it (a slot changed since the block was measured). Each op is one
+/// table dispatch over every kind, conditional ones included. A B or taken
+/// conditional B that ends the block continues here if it lands on a
+/// measured block that the budget covers.
+#[inline(never)]
+fn alu_block<const EW: bool, const N: usize>(
+    mut h: Hot,
+    c: &Ctx<'_, EW>,
+    ops: &[Op; N],
+    regs: &mut Registers,
+) -> Hot {
+    loop {
+        if !run_block(&mut h, c, ops, regs) {
+            return h;
+        }
+        let branch = &ops[h.idx as usize & (N - 1)];
+        #[cfg(debug_assertions)]
+        check_op(c, h.idx, branch);
+        let taken = match branch.kind {
+            k::B => true,
+            k::BCOND..=206 => condition_passes(h.cpsr, u32::from(branch.kind - k::BCOND)),
+            _ => false,
+        };
+        let target = h.idx.wrapping_add(branch.x);
+        if !taken || target as usize >= Ctx::<EW>::SLOTS {
+            return h;
+        }
+        // Only measured block leaders, of kinds below BCOND, have an inner
+        // of 2 or more there.
+        let lead = &ops[target as usize & (N - 1)];
+        let cost = 3 * Ctx::<EW>::FETCH + i64::from(lead.inner) * Ctx::<EW>::FETCH;
+        if lead.kind >= k::BCOND || lead.inner < 2 || h.budget < cost {
+            return h;
+        }
+        h.budget -= 3 * Ctx::<EW>::FETCH;
+        h.idx = target;
+    }
+}
+
+/// Runs one block (see [`alu_block`]); false if it stopped before an op
+/// that no longer belongs to it.
+#[inline(always)]
+fn run_block<const EW: bool, const N: usize>(
+    h: &mut Hot,
+    c: &Ctx<'_, EW>,
+    ops: &[Op; N],
+    regs: &mut Registers,
+) -> bool {
+    let start = h.idx as usize & (N - 1);
+    let block = &ops[start..(start + usize::from(ops[start].inner)).min(N)];
+    let mut rest = block;
+    #[cfg(debug_assertions)]
+    let first = h.idx;
+    #[cfg(debug_assertions)]
+    let check = |rest: &[Op]| check_op(c, first + (block.len() - rest.len()) as u32, &rest[0]);
+    #[cfg(not(debug_assertions))]
+    let _ = c;
+    // Two ops per turn, so that the loop's own work is shared.
+    'run: {
+        while let [a, b, tail @ ..] = rest {
+            #[cfg(debug_assertions)]
+            check(rest);
+            block_kinds!(block_step, h, regs, a, { break 'run });
+            #[cfg(debug_assertions)]
+            check(&rest[1..]);
+            block_kinds!(block_step, h, regs, b, {
+                rest = &rest[1..];
+                break 'run;
+            });
+            rest = tail;
+        }
+        if let [a, ..] = rest {
+            #[cfg(debug_assertions)]
+            check(rest);
+            block_kinds!(block_step, h, regs, a, { break 'run });
+            rest = &rest[1..];
+        }
+    }
+    let ran = block.len() - rest.len();
+    h.idx += ran as u32;
+    h.budget -= ran as i64 * Ctx::<EW>::FETCH;
+    rest.is_empty()
+}
+
+/// A conditional op in a block: a failed condition costs the fetch,
+/// whatever the op.
+#[inline(always)]
+fn cond_step<const C: u32>(h: &mut Hot, regs: &mut Registers, op: &Op) -> bool {
+    !condition_passes(h.cpsr, C) || block_body(op.inner, h, regs, op)
+}
+
+/// The effect of a block op of `kind`: false if no block holds that kind.
+#[inline(always)]
+fn block_body(kind: u8, h: &mut Hot, regs: &mut Registers, op: &Op) -> bool {
+    macro_rules! bodies {
+        (; $($kind:literal)*) => {
+            match kind {
+                $($kind => dp_body::<$kind>(h, regs, op),)*
+                _ => return false,
+            }
+        };
+    }
+    block_kinds!(bodies);
+    true
+}
+
+/// Whether a decoded op may sit in a block.
+fn joins_block(op: &Op) -> bool {
+    match op.kind {
+        k::COND..=254 => in_block(op.inner),
+        k::NOP => true,
+        kind => in_block(kind),
+    }
+}
+
+/// Records in `ops[idx].inner` how many ops from it form a block, decoding
+/// the ones after it that are not decoded yet.
+#[cold]
+#[inline(never)]
+fn measure_block<const EW: bool>(ops: &mut [Op], c: &mut Ctx<'_, EW>, idx: u32) {
+    let start = idx as usize;
+    let mut end = start + 1;
+    while end - start < usize::from(u8::MAX) && end < Ctx::<EW>::SLOTS {
+        if ops[end].kind == k::UNDECODED {
+            decode_slot(ops, c, end as u32);
+        }
+        if !joins_block(&ops[end]) {
+            break;
+        }
+        end += 1;
+    }
+    ops[start].inner = (end - start) as u8;
+}
+
+/// Asserts that a cached op is what its instruction decodes to; a block
+/// leader carries its block's length besides.
+#[cfg(debug_assertions)]
+fn check_op<const EW: bool>(c: &Ctx<'_, EW>, idx: u32, op: &Op) {
+    if matches!(op.kind, k::UNDECODED | k::END | k::STOP) {
+        return;
+    }
+    let pc = c.pc(idx);
+    let mut expected = decode(c.code_word(pc));
+    if matches!(op.kind, k::DP_I..k::BCOND) {
+        expected.inner = op.inner;
+    }
+    debug_assert_eq!(*op, expected, "stale op at {pc:08x}");
 }
 
 /// Data processing with r15 among its operands, which reads as the
@@ -1044,7 +1298,32 @@ fn indexed(regs: &Registers, op: &Op) -> u32 {
     if op.x >> 8 != 0 { base.wrapping_sub(offset) } else { base.wrapping_add(offset) }
 }
 
-/// A pre-indexed transfer without writeback at `address`.
+/// The width and bus-aligned address of a transfer in mode `MODE`.
+#[inline(always)]
+fn access<const MODE: u8>(address: u32) -> (AccessWidth, u32) {
+    match MODE {
+        LDR | STR => (AccessWidth::Word, address & !3),
+        LDRB | STRB | LDRSB => (AccessWidth::Byte, address),
+        _ => (AccessWidth::Half, address & !1),
+    }
+}
+
+/// The register value a load in mode `MODE` at `address` makes of the
+/// bus value.
+#[inline(always)]
+fn loaded<const MODE: u8>(value: u32, address: u32) -> u32 {
+    match MODE {
+        LDR => value.rotate_right((address & 3) * 8),
+        LDRH => value.rotate_right((address & 1) * 8),
+        LDRSB => (value as u8 as i8 as i32) as u32,
+        LDRSH if address & 1 != 0 => ((value >> 8) as u8 as i8 as i32) as u32,
+        LDRSH => (value as u16 as i16 as i32) as u32,
+        _ => value,
+    }
+}
+
+/// A pre-indexed transfer without writeback at `address`: inline for RAM
+/// (a store only to a page that never held code), out of line otherwise.
 #[inline(always)]
 fn transfer<const EW: bool, const MODE: u8>(
     h: &mut Hot,
@@ -1054,40 +1333,102 @@ fn transfer<const EW: bool, const MODE: u8>(
     op: &Op,
     address: u32,
 ) -> bool {
-    let (width, bus_address) = match MODE {
-        LDR | STR => (AccessWidth::Word, address & !3),
-        LDRB | STRB | LDRSB => (AccessWidth::Byte, address),
-        _ => (AccessWidth::Half, address & !1),
-    };
+    let (width, bus_address) = access::<MODE>(address);
     if matches!(MODE, STR | STRB | STRH) {
-        let Some(cycles) = c.mem.store_cycles(c.running(ops, h.idx), bus_address, width) else {
+        if let Some(cycles) = c.mem.plain_ram_store(bus_address, width) {
+            if !h.charge(Ctx::<EW>::FETCH + cycles) {
+                return false;
+            }
+            c.mem.store(bus_address, width, regs[usize::from(op.rd)]);
+            c.store_mark = h.budget;
+            return h.next();
+        }
+    } else if let Some((value, cycles)) = c.mem.ram_load(bus_address, width) {
+        if !h.charge(Ctx::<EW>::FETCH + cycles + 1) {
             return false;
+        }
+        regs[usize::from(op.rd)] = loaded::<MODE>(value, address);
+        c.data = value;
+        c.load_mark = h.budget;
+        return h.next();
+    }
+    let next = transfer_elsewhere::<EW, MODE>(*h, c, ops, regs, op, address);
+    if next.idx == u32::MAX {
+        return false;
+    }
+    *h = next;
+    true
+}
+
+/// A transfer outside plain RAM: to video memory, the Game Pak or pages
+/// that have held code.
+#[inline(never)]
+fn transfer_elsewhere<const EW: bool, const MODE: u8>(
+    mut h: Hot,
+    c: &mut Ctx<'_, EW>,
+    ops: &[Op],
+    regs: &mut Registers,
+    op: &Op,
+    address: u32,
+) -> Hot {
+    let (width, bus_address) = access::<MODE>(address);
+    if matches!(MODE, STR | STRB | STRH) {
+        let run = c.running(ops, h.idx);
+        let fetch = Ctx::<EW>::FETCH;
+        let Some(cost) = c.mem.store_cost(run, bus_address, width, fetch, h.budget) else {
+            return Hot::REFUSED;
         };
-        let cost = Ctx::<EW>::FETCH + cycles;
-        if !c.mem.store_ends_in_time(bus_address, h.budget - cost) || !h.charge(cost) {
-            return false;
+        if !h.charge(cost) {
+            return Hot::REFUSED;
         }
         c.mem.store(bus_address, width, regs[usize::from(op.rd)]);
         c.store_mark = h.budget;
-        return h.next();
+        h.next();
+        return h;
     }
     let Some((value, cycles)) = c.mem.load(bus_address, width) else {
-        return false;
+        return Hot::REFUSED;
     };
     if !h.charge(Ctx::<EW>::FETCH + cycles + 1) {
-        return false;
+        return Hot::REFUSED;
     }
-    regs[usize::from(op.rd)] = match MODE {
-        LDR => value.rotate_right((address & 3) * 8),
-        LDRH => value.rotate_right((address & 1) * 8),
-        LDRSB => (value as u8 as i8 as i32) as u32,
-        LDRSH if address & 1 != 0 => ((value >> 8) as u8 as i8 as i32) as u32,
-        LDRSH => (value as u16 as i16 as i32) as u32,
-        _ => value,
-    };
+    regs[usize::from(op.rd)] = loaded::<MODE>(value, address);
     c.data = value;
     c.load_mark = h.budget;
-    h.next()
+    h.next();
+    h
+}
+
+/// A transfer by an immediate offset that writes the address back.
+#[inline(always)]
+fn pre_indexed<const EW: bool, const MODE: u8>(
+    h: &mut Hot,
+    c: &mut Ctx<'_, EW>,
+    ops: &[Op],
+    regs: &mut Registers,
+    op: &Op,
+) -> bool {
+    let address = immediate(regs, op);
+    transfer::<EW, MODE>(h, c, ops, regs, op, address) && {
+        regs[usize::from(op.rn)] = address;
+        true
+    }
+}
+
+/// A transfer at the base address, which then moves by the offset.
+#[inline(always)]
+fn post_indexed<const EW: bool, const MODE: u8>(
+    h: &mut Hot,
+    c: &mut Ctx<'_, EW>,
+    ops: &[Op],
+    regs: &mut Registers,
+    op: &Op,
+) -> bool {
+    let base = regs[usize::from(op.rn)];
+    transfer::<EW, MODE>(h, c, ops, regs, op, base) && {
+        regs[usize::from(op.rn)] = base.wrapping_add(op.x);
+        true
+    }
 }
 
 /// LDR/STR/LDRB/STRB with any addressing mode.
@@ -1128,9 +1469,9 @@ fn single_op<const EW: bool>(
         c.data = value;
         c.load_mark = h.budget;
     } else {
-        let cycles = c.mem.store_cycles(c.running(ops, h.idx), bus_address, width)?;
-        let cost = Ctx::<EW>::FETCH + cycles;
-        if !c.mem.store_ends_in_time(bus_address, h.budget - cost) || !h.charge(cost) {
+        let run = c.running(ops, h.idx);
+        let cost = c.mem.store_cost(run, bus_address, width, Ctx::<EW>::FETCH, h.budget)?;
+        if !h.charge(cost) {
             return None;
         }
         c.mem.store(bus_address, width, regs[rd].wrapping_add(if rd == 15 { 4 } else { 0 }));
@@ -1188,9 +1529,9 @@ fn half_op<const EW: bool>(
         c.data = value;
         c.load_mark = h.budget;
     } else {
-        let cycles = c.mem.store_cycles(c.running(ops, h.idx), bus_address, width)?;
-        let cost = Ctx::<EW>::FETCH + cycles;
-        if !c.mem.store_ends_in_time(bus_address, h.budget - cost) || !h.charge(cost) {
+        let run = c.running(ops, h.idx);
+        let cost = c.mem.store_cost(run, bus_address, width, Ctx::<EW>::FETCH, h.budget)?;
+        if !h.charge(cost) {
             return None;
         }
         c.mem.store(bus_address, width, regs[rd]);
@@ -1237,7 +1578,7 @@ fn block_op<const EW: bool>(
     };
     if !load_list
         && (0..count).any(|beat| {
-            c.mem.store_cycles(c.running(ops, h.idx), first + 4 * beat, AccessWidth::Word).is_none()
+            c.mem.store_reaches_code(c.running(ops, h.idx), first + 4 * beat, AccessWidth::Word)
         })
     {
         return None;
@@ -1308,7 +1649,9 @@ fn conditional_op<const EW: bool>(
         k::MRS => mrs::<EW>(&mut h, regs, op).then_some(h),
         k::MUL => multiply::<EW>(&mut h, regs, word).then_some(h),
         k::MULL => multiply_long_op::<EW>(h, regs, word),
-        k::LDR..=k::STRB | k::SINGLE | k::LDR_R..k::HALF_I => single_op(h, c, ops, regs, word),
+        k::LDR..=k::STRB | k::SINGLE | k::LDR_R..k::HALF_I | k::LDR_W..=215 => {
+            single_op(h, c, ops, regs, word)
+        }
         k::HALF | k::HALF_I..=29 => half_op(h, c, ops, regs, word),
         k::BLOCK => block_op(h, c, ops, regs, word),
         k::DP_PC | k::DP_I..k::BCOND => dp_pc_op(h, c, regs, word),
@@ -1385,4 +1728,31 @@ fn stopped(h: Hot) -> Hot {
 #[inline(never)]
 fn refund(budget: i64, cycles: i64) -> i64 {
     budget + cycles
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The kinds a block admits are exactly the kinds its loop runs, and
+    /// every data processing kind the decoder produces without a register
+    /// shift is one of them.
+    #[test]
+    fn block_kinds_match_the_block_loop_and_the_decoder() {
+        for kind in 0..=u8::MAX {
+            let mut h = Hot { budget: 0, idx: 0, cpsr: 0 };
+            let ran = block_body(kind, &mut h, &mut [0; 256], &Op::default());
+            assert_eq!(in_block(kind), ran, "kind {kind}");
+        }
+        let mut word = 0x2545_f00d_u32;
+        for _ in 0..200_000 {
+            word ^= word << 13;
+            word ^= word >> 17;
+            word ^= word << 5;
+            let op = decode_unconditional(word & 0x0fff_ffff);
+            if matches!(op.kind, k::DP_I..k::BCOND) {
+                assert_eq!(in_block(op.kind), form(op.kind) != FX, "{word:08x}");
+            }
+        }
+    }
 }

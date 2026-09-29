@@ -43,39 +43,97 @@ impl Mem<'_> {
                 read_ram(self.ewram, (address as usize) & (EWRAM_SIZE - 1), width),
                 if width == AccessWidth::Word { 6 } else { 3 },
             )),
-            5..=7 => Some((self.video.read(address, width), video_cycles(address, width))),
+            5..=7 => self.load_video(address, width),
             _ => self.rom.load(address, width).map(|(value, cycles)| (value, cycles as i64)),
         }
     }
 
-    /// The data cycles of a store at a bus-aligned address that the engine
-    /// may perform: to RAM, but not to a decoded instruction of either set
-    /// or to one of the instructions prefetched after the running one; or
-    /// to video memory, if [`Self::store_ends_in_time`] also agrees.
+    /// [`Self::load`] for IWRAM and EWRAM only.
     #[inline(always)]
-    pub(super) fn store_cycles(
+    pub(super) fn ram_load(&self, address: u32, width: AccessWidth) -> Option<(u32, i64)> {
+        match address >> 24 {
+            3 => Some((read_ram(self.iwram, (address as usize) & (IWRAM_SIZE - 1), width), 1)),
+            2 => Some((
+                read_ram(self.ewram, (address as usize) & (EWRAM_SIZE - 1), width),
+                if width == AccessWidth::Word { 6 } else { 3 },
+            )),
+            _ => None,
+        }
+    }
+
+    /// The data cycles of a store to IWRAM or EWRAM in a page that has never
+    /// held code, which needs no further check.
+    #[inline(always)]
+    pub(super) fn plain_ram_store(&self, address: u32, width: AccessWidth) -> Option<i64> {
+        match address >> 24 {
+            3 => (!self.iwram_code[((address as usize) & (IWRAM_SIZE - 1)) >> PAGE_SHIFT])
+                .then_some(1),
+            2 => (!self.ewram_code[((address as usize) & (EWRAM_SIZE - 1)) >> PAGE_SHIFT])
+                .then_some(if width == AccessWidth::Word { 6 } else { 3 }),
+            _ => None,
+        }
+    }
+
+    #[inline(never)]
+    fn load_video(&self, address: u32, width: AccessWidth) -> Option<(u32, i64)> {
+        Some((self.video.read(address, width), video_cycles(address, width)))
+    }
+
+    /// The cost of an instruction whose fetch costs `fetch` and which ends
+    /// with a store at a bus-aligned address, starting with `budget` left,
+    /// if the engine may perform the store: to RAM, but not to a decoded
+    /// instruction of either set or to one of the instructions prefetched
+    /// after the running one; to OAM; or to VRAM and palette RAM, if the
+    /// store ends before the next visible dot.
+    #[inline(always)]
+    pub(super) fn store_cost(
         &self,
         running: Running<'_>,
         address: u32,
         width: AccessWidth,
+        fetch: i64,
+        budget: i64,
     ) -> Option<i64> {
-        let (cycles, code) = match address >> 24 {
-            3 => (1, self.iwram_code[((address as usize) & (IWRAM_SIZE - 1)) >> PAGE_SHIFT]),
-            2 => (
-                if width == AccessWidth::Word { 6 } else { 3 },
-                self.ewram_code[((address as usize) & (EWRAM_SIZE - 1)) >> PAGE_SHIFT],
-            ),
-            5..=7 => return Some(video_cycles(address, width)),
-            _ => return None,
+        let cycles = match address >> 24 {
+            3 => 1,
+            2 if width == AccessWidth::Word => 6,
+            2 => 3,
+            _ => return self.video_store_cost(address, width, fetch, budget),
         };
-        (!code || !self.store_hits_code(running, address, width)).then_some(cycles)
+        (!self.store_reaches_code(running, address, width)).then_some(fetch + cycles)
     }
 
-    /// Whether a store to `address` that leaves `budget` ends before any
-    /// visible dot could record it: always, unless to VRAM or palette RAM.
+    #[inline(never)]
+    fn video_store_cost(
+        &self,
+        address: u32,
+        width: AccessWidth,
+        fetch: i64,
+        budget: i64,
+    ) -> Option<i64> {
+        let region = address >> 24;
+        if !(5..=7).contains(&region) {
+            return None;
+        }
+        let cost = fetch + video_cycles(address, width);
+        (region == 7 || budget - cost > self.video_floor).then_some(cost)
+    }
+
+    /// Whether a RAM store reaches a decoded instruction of either set or
+    /// one of the instructions prefetched after the running one.
     #[inline(always)]
-    pub(super) fn store_ends_in_time(&self, address: u32, budget: i64) -> bool {
-        !matches!(address >> 24, 5 | 6) || budget > self.video_floor
+    pub(super) fn store_reaches_code(
+        &self,
+        running: Running<'_>,
+        address: u32,
+        width: AccessWidth,
+    ) -> bool {
+        let code = if address >> 24 == 3 {
+            self.iwram_code[((address as usize) & (IWRAM_SIZE - 1)) >> PAGE_SHIFT]
+        } else {
+            self.ewram_code[((address as usize) & (EWRAM_SIZE - 1)) >> PAGE_SHIFT]
+        };
+        code && self.store_hits_code(running, address, width)
     }
 
     /// Whether a store in a page that has held code reaches a decoded op of
@@ -120,7 +178,7 @@ impl Mem<'_> {
         decoded(false) || decoded(true)
     }
 
-    /// A store [`Self::store_cycles`] admitted.
+    /// A store [`Self::store_cost`] admitted.
     #[inline(always)]
     pub(super) fn store(&mut self, address: u32, width: AccessWidth, value: u32) {
         match address >> 24 {

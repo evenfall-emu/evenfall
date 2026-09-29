@@ -1276,12 +1276,12 @@ fn transfer<const N: usize, T: Timing, const MODE: u8>(
         _ => (AccessWidth::Half, address & !1),
     };
     if matches!(MODE, STR | STRH | STRB) {
-        let Some(cycles) = c.mem.store_cycles(running(c, ops, h.idx), bus_address, width) else {
+        let before = h.budget;
+        let run = running(c, ops, h.idx);
+        let Some(cost) = c.mem.store_cost(run, bus_address, width, t.fetch(h), before) else {
             return Flow::Refused;
         };
-        let before = h.budget;
-        let cost = t.fetch(h) + cycles;
-        if !c.mem.store_ends_in_time(bus_address, before - cost) || !h.charge(cost) {
+        if !h.charge(cost) {
             return Flow::Refused;
         }
         c.mem.store(bus_address, width, r[usize::from(op.rd)]);
@@ -1353,8 +1353,7 @@ fn push<const N: usize, T: Timing>(
         return Flow::Refused;
     };
     let run = running(c, ops, h.idx);
-    if (0..count).any(|beat| c.mem.store_cycles(run, first + 4 * beat, AccessWidth::Word).is_none())
-    {
+    if (0..count).any(|beat| c.mem.store_reaches_code(run, first + 4 * beat, AccessWidth::Word)) {
         return Flow::Refused;
     }
     let before = h.budget;
@@ -1454,8 +1453,7 @@ fn multiple<const N: usize, T: Timing>(
     };
     if !load {
         let run = running(c, ops, h.idx);
-        if (0..count)
-            .any(|beat| c.mem.store_cycles(run, first + 4 * beat, AccessWidth::Word).is_none())
+        if (0..count).any(|beat| c.mem.store_reaches_code(run, first + 4 * beat, AccessWidth::Word))
         {
             return Flow::Refused;
         }

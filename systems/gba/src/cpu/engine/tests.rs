@@ -388,6 +388,69 @@ fn arm_iwram_loop_runs_to_the_horizon_like_stepping() {
     }
 }
 
+/// Runs the engine and the reference to `yield_at`, letting the
+/// interpreter take every instruction the engine refuses.
+fn run_pair_to(pair: &mut Pair, yield_at: u64, context: &str) {
+    while pair.engine_bus.now() < yield_at {
+        if !pair.compare(yield_at, context) {
+            let outcome = pair.engine.step(&mut pair.engine_bus);
+            assert_eq!(outcome, pair.reference.step(&mut pair.reference_bus), "{context}");
+            pair.assert_equal(&format!("{context} after refusal"));
+        }
+    }
+}
+
+/// A measured block of ALU ops whose slots change afterwards, at every
+/// position: to ops outside blocks, which end the block there, and to other
+/// block ops, which it runs.
+#[test]
+fn arm_blocks_follow_slots_that_change_after_measuring() {
+    // ADD rN, rN, #i for r0..r3, then B back to the first.
+    let mut code: Vec<u32> =
+        (0..16).map(|i| 0xe280_0000 | ((i % 4) * 0x0001_1000) | (i + 1)).collect();
+    code.push(0xeaff_ffee);
+    let replacements = [
+        0xe598_1000, // LDR r1, [r8]
+        0xe001_0091, // MUL r1, r1, r0
+        0xe081_1110, // ADD r1, r1, r0, LSL r1
+        0xe281_1005, // ADD r1, r1, #5
+        0x1081_1002, // ADDNE r1, r1, r2
+    ];
+    for slot in 1..16 {
+        for replacement in replacements {
+            let context = format!("slot {slot} replacement {replacement:08x}");
+            let mut cpu = Cpu::init(0x0300_0100, 0x1f, true);
+            cpu.registers[8] = 0x0300_4000;
+            let mut pair = Pair::new(
+                &[],
+                |bus| {
+                    for (i, &word) in code.iter().enumerate() {
+                        write_word(bus, 0x0300_0100 + 4 * i as u32, word);
+                    }
+                },
+                cpu,
+                1,
+            );
+            let yield_at = pair.engine_bus.now() + 200;
+            run_pair_to(&mut pair, yield_at, &context);
+            for bus in [&mut pair.engine_bus, &mut pair.reference_bus] {
+                bus.write(
+                    Access {
+                        address: 0x0300_0100 + 4 * slot,
+                        width: AccessWidth::Word,
+                        kind: AccessKind::Nonsequential,
+                        source: AccessSource::CpuData,
+                    },
+                    replacement,
+                );
+            }
+            pair.assert_equal(&context);
+            let yield_at = pair.engine_bus.now() + 300;
+            run_pair_to(&mut pair, yield_at, &context);
+        }
+    }
+}
+
 /// Back-to-back VRAM stores from HBlank into the next line: the engine runs
 /// the stores that end before the line's first visible dot and leaves the
 /// rest to the interpreter, which records them in the raster history.
