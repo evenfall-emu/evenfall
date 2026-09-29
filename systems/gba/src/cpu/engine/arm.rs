@@ -6,7 +6,7 @@
 
 use super::mem::{Mem, Running};
 use super::{CodeCache, Load, Mmio, Op, PAGE_SHIFT, fresh_ops, split_memory};
-use crate::bus::{AccessWidth, BIOS_SIZE, Bus, EWRAM_SIZE, IWRAM_SIZE, read_ram};
+use crate::bus::{AccessWidth, BIOS_SIZE, Bus, EWRAM_SIZE, IWRAM_SIZE, PowerState, read_ram};
 use evenfall_cpu_arm::{Core, InstructionSet, Pipeline, condition_passes};
 
 /// Op kinds. Data processing kinds are a form's base plus the opcode;
@@ -553,13 +553,13 @@ fn drive<const EW: bool>(
     let mut saved =
         Saved { base, load_mark: -1, store_mark: -1, mmio_mark: -1, data: 0, bios, bios_ok };
     let mut resume = Resume::Start;
-    let exit = loop {
+    let exit = 'pass: loop {
         let left = limit as i64 - bus.now() as i64;
         let memory = bus.engine_memory(saved.bios);
         let image = memory.bios;
         let (mem, _) = split_memory(memory, left);
         let mut c = saved.ctx::<EW>(mem, image, core);
-        let hot = match resume {
+        let mut hot = match resume {
             Resume::Start => {
                 let latched = [c.code_word(pc), c.code_word(pc.wrapping_add(4))];
                 let arm = Pipeline { instructions: latched, instruction_set: InstructionSet::Arm };
@@ -571,12 +571,25 @@ fn drive<const EW: bool>(
             Resume::On(hot) => hot,
             Resume::Out(hot) => break finish(c, hot, budget),
         };
-        let hot = if EW {
-            let ops = (&mut *ops).try_into().expect("EWRAM op array");
-            run_loop::<EW, { 2 * EWRAM_SIZE / 4 }>(ops, &mut c, hot)
-        } else {
-            let ops = (&mut *ops).try_into().expect("IWRAM op array");
-            run_loop::<EW, { 2 * IWRAM_SIZE / 4 }>(ops, &mut c, hot)
+        // Passes on this view of memory, through interrupt register
+        // accesses, which need no other.
+        let (hot, access) = loop {
+            hot = if EW {
+                let ops = (&mut *ops).try_into().expect("EWRAM op array");
+                run_loop::<EW, { 2 * EWRAM_SIZE / 4 }>(ops, &mut c, hot)
+            } else {
+                let ops = (&mut *ops).try_into().expect("IWRAM op array");
+                run_loop::<EW, { 2 * IWRAM_SIZE / 4 }>(ops, &mut c, hot)
+            };
+            let Some(access) = c.mmio.take() else {
+                break (hot, None);
+            };
+            match serve_irq::<EW>(&mut c, hot, &access) {
+                Some(Resume::On(next)) => hot = next,
+                Some(Resume::Out(next)) => break 'pass finish(c, next, budget),
+                Some(Resume::Start) => unreachable!("an access leaves a run going or out"),
+                None => break (hot, Some(access)),
+            }
         };
         if let Some((target, hot)) = c.switch.take() {
             #[cfg(test)]
@@ -589,7 +602,7 @@ fn drive<const EW: bool>(
             resume = Resume::On(Hot { idx: target.wrapping_sub(saved.base) >> 2, ..hot });
             continue;
         }
-        let Some(access) = c.mmio.take() else {
+        let Some(access) = access else {
             break finish(c, hot, budget);
         };
         saved = c.save();
@@ -690,6 +703,39 @@ fn serve<const EW: bool>(
         saved.load_mark = next.budget;
     }
     if bus.engine_may_go_on(limit, core.cpsr & (1 << 7) != 0) {
+        Resume::On(next)
+    } else {
+        Resume::Out(next)
+    }
+}
+
+/// Completes `access` on the run's own view of the interrupt registers if
+/// it touches only them ([`Mmio::irq`]), charged as [`serve`] charges it;
+/// None if it touches other registers. The run stops after a store that
+/// halts, stops or raises an IRQ the CPU takes.
+#[inline(always)]
+fn serve_irq<const EW: bool>(c: &mut Ctx<'_, EW>, h: Hot, access: &Mmio) -> Option<Resume> {
+    access.irq().then(|| complete_irq::<EW>(c, h, access))
+}
+
+/// The part of [`serve_irq`] past the test of the registers.
+#[inline(never)]
+fn complete_irq<const EW: bool>(c: &mut Ctx<'_, EW>, h: Hot, access: &Mmio) -> Resume {
+    let store = access.store.is_some();
+    let mut next = h;
+    if !next.charge(Ctx::<EW>::FETCH + if store { 1 } else { 2 }) {
+        return Resume::Out(h);
+    }
+    let value = access.perform_irq(c.mem.irq, &mut c.core.registers);
+    next.next();
+    c.mmio_mark = next.budget;
+    if !store {
+        c.data = value;
+        c.load_mark = next.budget;
+    }
+    let irq = &c.mem.irq;
+    let taken = irq.irq_line && h.cpsr & (1 << 7) == 0;
+    if irq.power_state == PowerState::Running && !taken {
         Resume::On(next)
     } else {
         Resume::Out(next)
@@ -1984,7 +2030,9 @@ fn block_op<const EW: bool>(
         (2, 2) => 6,
         _ => return None,
     };
+    // A block spans at most two code pages: most stores reach neither.
     if !load_list
+        && (c.mem.holds_code(first) || c.mem.holds_code(last))
         && (0..count).any(|beat| {
             c.mem.store_reaches_code(c.running(ops, h.idx), first + 4 * beat, AccessWidth::Word)
         })
@@ -1995,39 +2043,36 @@ fn block_op<const EW: bool>(
         return None;
     }
     if user_bank {
-        c.core.registers.copy_from_slice(&regs[..16]);
-    }
-    let mut address = first;
-    let mut remaining = list;
-    let mut index = 0;
-    while remaining != 0 {
-        let register = remaining.trailing_zeros() as usize;
-        remaining &= remaining - 1;
-        if load_list {
-            let (value, _) = c.mem.load(address, AccessWidth::Word).expect("RAM block");
-            if user_bank {
-                c.core.write_user_bank_register(register, value);
-            } else {
+        user_bank_block(c, regs, word, first, final_base);
+    } else {
+        let ram: &mut [u8] =
+            if first >> 24 == 3 { &mut c.mem.iwram[..] } else { &mut c.mem.ewram[..] };
+        let mask = ram.len() - 4;
+        let mut address = first as usize;
+        let mut remaining = list;
+        let mut index = 0;
+        while remaining != 0 {
+            let register = remaining.trailing_zeros() as usize;
+            remaining &= remaining - 1;
+            let at = address & mask;
+            let slot: &mut [u8; 4] = (&mut ram[at..at + 4]).try_into().expect("a word");
+            if load_list {
+                let value = u32::from_le_bytes(*slot);
                 regs[register] = value;
-            }
-            c.data = value;
-        } else {
-            let value = if register == 15 {
-                regs[15].wrapping_add(4)
-            } else if writeback && register as u32 == rn && index != 0 {
-                final_base
-            } else if user_bank {
-                c.core.read_user_bank_register(register)
+                c.data = value;
             } else {
-                regs[register]
-            };
-            c.mem.store(address, AccessWidth::Word, value);
+                let value = if register == 15 {
+                    regs[15].wrapping_add(4)
+                } else if writeback && register as u32 == rn && index != 0 {
+                    final_base
+                } else {
+                    regs[register]
+                };
+                *slot = value.to_le_bytes();
+            }
+            address = address.wrapping_add(4);
+            index += 1;
         }
-        address = address.wrapping_add(4);
-        index += 1;
-    }
-    if user_bank {
-        regs[..16].copy_from_slice(&c.core.registers);
     }
     if writeback && !(load_list && !user_bank && list & (1 << rn) != 0) {
         regs[rn as usize] = final_base;
@@ -2039,6 +2084,48 @@ fn block_op<const EW: bool>(
     }
     h.next();
     Some(h)
+}
+
+/// The transfers of an LDM or STM with S that moves user-bank registers,
+/// from `first` in one RAM region.
+#[cold]
+#[inline(never)]
+fn user_bank_block<const EW: bool>(
+    c: &mut Ctx<'_, EW>,
+    regs: &mut Registers,
+    word: u32,
+    first: u32,
+    final_base: u32,
+) {
+    let list = word & 0xffff;
+    let rn = (word >> 16) & 15;
+    let load_list = word & (1 << 20) != 0;
+    let writeback = word & (1 << 21) != 0;
+    c.core.registers.copy_from_slice(&regs[..16]);
+    let mut address = first;
+    let mut remaining = list;
+    let mut index = 0;
+    while remaining != 0 {
+        let register = remaining.trailing_zeros() as usize;
+        remaining &= remaining - 1;
+        if load_list {
+            let (value, _) = c.mem.load(address, AccessWidth::Word).expect("RAM block");
+            c.core.write_user_bank_register(register, value);
+            c.data = value;
+        } else {
+            let value = if register == 15 {
+                regs[15].wrapping_add(4)
+            } else if writeback && register as u32 == rn && index != 0 {
+                final_base
+            } else {
+                c.core.read_user_bank_register(register)
+            };
+            c.mem.store(address, AccessWidth::Word, value);
+        }
+        address = address.wrapping_add(4);
+        index += 1;
+    }
+    regs[..16].copy_from_slice(&c.core.registers);
 }
 
 /// A conditional instruction whose condition passed, through the generic

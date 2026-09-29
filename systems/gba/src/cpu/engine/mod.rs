@@ -23,7 +23,9 @@ mod mem;
 mod tests;
 mod thumb;
 
-use crate::bus::{AccessWidth, Bus, EWRAM_SIZE, EngineMemory, IWRAM_SIZE, PowerState};
+use crate::bus::{
+    AccessWidth, Bus, EWRAM_SIZE, EngineMemory, IWRAM_SIZE, IrqRegisters, PowerState,
+};
 use crate::cpu::Cpu;
 use mem::Mem;
 
@@ -123,6 +125,38 @@ impl Mmio {
         }
     }
 
+    /// Whether the access touches only IE, IF, IME, POSTFLG or HALTCNT,
+    /// which a run reads and writes itself ([`Self::perform_irq`]).
+    #[inline(always)]
+    pub(super) fn irq(&self) -> bool {
+        let (width, address) = self.access();
+        IrqRegisters::holds(address, width, self.store.is_some())
+    }
+
+    /// Makes an access [`Self::irq`] admits on the run's own view of the
+    /// registers, and writes the CPU registers. Returns the bus value.
+    pub(super) fn perform_irq(&self, irq: &mut IrqRegisters, registers: &mut [u32; 16]) -> u32 {
+        #[cfg(test)]
+        IRQ_ACCESSES.with(|count| count.set(count.get() + 1));
+        let (width, address) = self.access();
+        let value = match (self.store, self.load) {
+            (Some((value, _)), _) => {
+                irq.store(address, width, value);
+                value
+            }
+            (_, Some((rd, load))) => {
+                let value = irq.load(address, width);
+                registers[usize::from(rd)] = load.extend(value, self.address);
+                value
+            }
+            _ => unreachable!("an MMIO access loads or stores"),
+        };
+        if let Some((rn, base)) = self.writeback {
+            registers[usize::from(rn)] = base;
+        }
+        value
+    }
+
     /// Makes the access, whose data cycle follows the instruction's fetch
     /// ending at `fetched`, and writes the registers. Returns the bus value.
     pub(super) fn perform(&self, bus: &mut Bus, registers: &mut [u32; 16], fetched: u64) -> u32 {
@@ -155,6 +189,8 @@ thread_local! {
     pub(super) static MMIO_ACCESSES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// Branches between the BIOS and IWRAM inside engine runs.
     pub(super) static SWITCHES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Interrupt register accesses engine runs made on their own view.
+    pub(super) static IRQ_ACCESSES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// Decoded-op caches: one array per RAM region and instruction set, with a
@@ -255,6 +291,7 @@ fn split_memory(memory: EngineMemory<'_>, budget: i64) -> (Mem<'_>, &mut Vec<Opt
         rom: memory.rom,
         others,
         video: memory.video,
+        irq: memory.irq,
         video_floor: budget.saturating_sub(i64::try_from(memory.quiet).unwrap_or(i64::MAX)),
     };
     (mem, rom_thumb)
@@ -264,7 +301,7 @@ impl Cpu {
     /// Runs decoded instructions from the next instruction address. Returns
     /// whether any instruction ran; if none did, nothing changed.
     pub(crate) fn run_engine(&mut self, bus: &mut Bus, yield_at: u64) -> bool {
-        if (bus.irq_line && self.cpsr & (1 << 7) == 0)
+        if (bus.irq.irq_line && self.cpsr & (1 << 7) == 0)
             || self.hle_service.is_some()
             || bus.power_state() != PowerState::Running
         {

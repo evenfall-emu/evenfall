@@ -4,7 +4,9 @@
 //! dot could observe, for the interpreter.
 
 use super::{Op, PAGE_SHIFT};
-use crate::bus::{AccessWidth, EWRAM_SIZE, IWRAM_SIZE, RomData, VideoMemory, read_ram, write_ram};
+use crate::bus::{
+    AccessWidth, EWRAM_SIZE, IWRAM_SIZE, IrqRegisters, RomData, VideoMemory, read_ram, write_ram,
+};
 
 /// Memory an engine run works on. The array the run executes from is held
 /// apart; `others` sees every other RAM op array, `[EWRAM, IWRAM]` by
@@ -17,6 +19,8 @@ pub(super) struct Mem<'a> {
     pub(super) rom: RomData<'a>,
     pub(super) others: [[Option<&'a [Op]>; 2]; 2],
     pub(super) video: VideoMemory<'a>,
+    /// IE, IF, IME, POSTFLG and HALTCNT, which runs access themselves.
+    pub(super) irq: &'a mut IrqRegisters,
     /// A VRAM or palette store may run only if it ends with more budget
     /// left than this: before the next visible dot.
     pub(super) video_floor: i64,
@@ -117,6 +121,16 @@ impl Mem<'_> {
         }
         let cost = fetch + video_cycles(address, width);
         (region == 7 || budget - cost > self.video_floor).then_some(cost)
+    }
+
+    /// Whether the code page of a RAM address has held decoded code.
+    #[inline(always)]
+    pub(super) fn holds_code(&self, address: u32) -> bool {
+        if address >> 24 == 3 {
+            self.iwram_code[((address as usize) & (IWRAM_SIZE - 1)) >> PAGE_SHIFT]
+        } else {
+            self.ewram_code[((address as usize) & (EWRAM_SIZE - 1)) >> PAGE_SHIFT]
+        }
     }
 
     /// Whether a RAM store reaches a decoded instruction of either set or

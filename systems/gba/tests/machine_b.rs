@@ -1266,7 +1266,7 @@ fn high_speed_audio_preserves_machine_execution_and_fifo_dma_timing() {
     fast.set_high_speed_audio(true);
     let deadline = exact.now() + 300_003;
     assert_eq!(exact.run_until(deadline), fast.run_until(deadline));
-    assert_ne!(exact.bus.interrupt_request_flags & (1 << 9), 0);
+    assert_ne!(exact.bus.irq.interrupt_request_flags & (1 << 9), 0);
     assert_eq!(exact.bus.apu.fifo_a, fast.bus.apu.fifo_a);
     assert_eq!(exact.bus.apu.sample_a, fast.bus.apu.sample_a);
     assert_eq!(exact.bus.apu.read_half(0x0400_0084), fast.bus.apu.read_half(0x0400_0084));
@@ -1656,9 +1656,9 @@ fn pending_irq_can_interrupt_supervisor_mode_without_losing_its_bank() {
         ..Config::default()
     });
     machine.cpu.supervisor_r13 = 0x0300_7e00;
-    machine.bus.interrupt_enable_mask = 1;
-    machine.bus.interrupt_request_flags = 1;
-    machine.bus.interrupt_master_enabled = true;
+    machine.bus.irq.interrupt_enable_mask = 1;
+    machine.bus.irq.interrupt_request_flags = 1;
+    machine.bus.irq.interrupt_master_enabled = true;
     machine.bus.update_irq_line();
     executed_step(&mut machine);
     assert_eq!(machine.read_cpsr() & 0x1f, 0x12);
@@ -1880,7 +1880,7 @@ fn linked_scheduler_advances_a_halted_child_to_the_serial_irq_and_resumes_it() {
         run_linked_until(&mut [&mut parent, &mut child], 520, SioConnection::Cable2p).unwrap();
     assert_eq!(result.reason, LinkedStopReason::Deadline);
     assert_eq!(child.bus.power_state(), PowerState::Running);
-    assert_eq!(child.bus.interrupt_request_flags & (1 << 7), 1 << 7);
+    assert_eq!(child.bus.irq.interrupt_request_flags & (1 << 7), 1 << 7);
     assert_eq!(read_machine_half(&mut child, 0x0400_012a), 0x0012);
 }
 
@@ -2197,9 +2197,9 @@ fn hle_irq_nesting_limit_faults_before_exception_state_changes() {
     machine.cpu.irq_r13 = 0x0300_7fa0;
     machine.cpu.irq_r14 = 0x1111_2222;
     machine.cpu.spsr_irq = 0x3333_4444;
-    machine.bus.interrupt_enable_mask = 1;
-    machine.bus.interrupt_request_flags = 1;
-    machine.bus.interrupt_master_enabled = true;
+    machine.bus.irq.interrupt_enable_mask = 1;
+    machine.bus.irq.interrupt_request_flags = 1;
+    machine.bus.irq.interrupt_master_enabled = true;
     machine.bus.update_irq_line();
     let fault = faulted_step(&mut machine);
     assert_eq!(fault.instruction_address, 0x0800_0000);
@@ -2893,7 +2893,7 @@ fn an_irq_raised_inside_a_multi_step_hle_service_is_taken_when_the_service_retur
     assert!(two.cpu.hle_service.is_none());
     let next_record = step.stopped_at - step.started_at - first_record;
     let mut pending = irq_obj_affine_workload(1, 1);
-    pending.bus.interrupt_request_flags = 1;
+    pending.bus.irq.interrupt_request_flags = 1;
     pending.bus.update_irq_line();
     let step = executed_step(&mut pending);
     assert!(pending.cpu.hle_service.is_none());
@@ -2912,7 +2912,7 @@ fn an_irq_raised_inside_a_multi_step_hle_service_is_taken_when_the_service_retur
         assert_eq!(machine.read_cpsr() & 0x1f, 0x1f);
         assert_eq!(machine.next_instruction_address(), 0x0800_0004);
         assert_eq!(machine.cpu.hle_irq_depth, 0);
-        if machine.bus.irq_line {
+        if machine.bus.irq.irq_line {
             pending_steps += 1;
         }
     }
