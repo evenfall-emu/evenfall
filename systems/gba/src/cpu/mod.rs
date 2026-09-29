@@ -1,8 +1,9 @@
 //! GBA CPU state and the scheduling seam around the ARM7TDMI core.
 
 use crate::bus::{
-    Access, AccessKind, AccessSource, AccessWidth, Bus, InstructionFetchRegion, PowerState,
-    ThumbStream,
+    Access, AccessKind, AccessSource, AccessWidth, ArmIwramExecutionRegion, Bus,
+    InstructionFetchRegion, PowerState, ThumbRomRun, ThumbStream, begin_arm_iwram_slice,
+    fetch_arm_iwram_in_slice, is_arm_iwram_slice_fetch,
 };
 pub use crate::multiboot::{
     Encoder as MultiBootEncoder, Mode as MultiBootMode, Parameters as MultiBootParameters,
@@ -95,6 +96,142 @@ impl evenfall_cpu_arm::Bus for Bus {
     #[inline]
     fn finish_cpu_ram_store_block(&mut self, cycles: evenfall_cpu_arm::Cycle) {
         self.finish_cpu_ram_store_block(cycles);
+    }
+}
+
+impl evenfall_cpu_arm::Bus for ArmIwramExecutionRegion<'_> {
+    #[inline]
+    fn read_cpu_data(
+        &mut self,
+        address: u32,
+        width: evenfall_cpu_arm::AccessWidth,
+        kind: evenfall_cpu_arm::AccessKind,
+    ) -> u32 {
+        self.read_cpu_data(address, width.into(), kind.into())
+    }
+
+    #[inline]
+    fn write_cpu_data(
+        &mut self,
+        address: u32,
+        width: evenfall_cpu_arm::AccessWidth,
+        kind: evenfall_cpu_arm::AccessKind,
+        value: u32,
+    ) {
+        self.write(
+            Access {
+                address,
+                width: width.into(),
+                kind: kind.into(),
+                source: AccessSource::CpuData,
+            },
+            value,
+        );
+    }
+
+    #[inline]
+    fn elapse_cpu_internal(&mut self, cycles: u64) {
+        self.elapse_cpu_internal(cycles);
+    }
+
+    // The ARM kernel's block preflight admits RAM, but the shared executor
+    // uses its ordinary per-beat path rather than a second optimized path.
+    fn cpu_ram_word(&self, _address: u32) -> u32 {
+        unreachable!("the ARM region does not admit a fast block")
+    }
+    fn set_cpu_ram_word(&mut self, _address: u32, _value: u32) {
+        unreachable!("the ARM region does not admit a fast block")
+    }
+    fn finish_cpu_ram_load_block(&mut self, _cycles: u64, _last_word: u32) {
+        unreachable!("the ARM region does not admit a fast block")
+    }
+    fn finish_cpu_ram_store_block(&mut self, _cycles: u64) {
+        unreachable!("the ARM region does not admit a fast block")
+    }
+}
+
+impl evenfall_cpu_arm::Bus for ThumbRomRun<'_> {
+    #[inline]
+    fn read_cpu_data(
+        &mut self,
+        address: u32,
+        width: evenfall_cpu_arm::AccessWidth,
+        kind: evenfall_cpu_arm::AccessKind,
+    ) -> u32 {
+        self.read_cpu_data(address, width.into(), kind.into())
+    }
+
+    #[inline]
+    fn write_cpu_data(
+        &mut self,
+        address: u32,
+        width: evenfall_cpu_arm::AccessWidth,
+        _kind: evenfall_cpu_arm::AccessKind,
+        value: u32,
+    ) {
+        self.write_cpu_data(
+            Access {
+                address,
+                width: width.into(),
+                kind: AccessKind::Nonsequential,
+                source: AccessSource::CpuData,
+            },
+            value,
+        );
+    }
+
+    #[inline]
+    fn elapse_cpu_internal(&mut self, cycles: u64) {
+        self.elapse_cpu_internal(cycles);
+    }
+
+    fn cpu_ram_block_cycles(&self, first: u32, beats: u32, internal: u64) -> Option<u64> {
+        self.cpu_ram_block_cycles(first, beats, internal)
+    }
+
+    fn cpu_ram_word(&self, address: u32) -> u32 {
+        self.cpu_ram_word(address)
+    }
+
+    fn set_cpu_ram_word(&mut self, address: u32, value: u32) {
+        self.set_cpu_ram_word(address, value);
+    }
+
+    fn finish_cpu_ram_load_block(&mut self, cycles: u64, last_word: u32) {
+        self.finish_cpu_ram_load_block(cycles, last_word);
+    }
+
+    fn finish_cpu_ram_store_block(&mut self, cycles: u64) {
+        self.finish_cpu_ram_store_block(cycles);
+    }
+}
+
+struct ArmKernelState<'a> {
+    region: ArmIwramExecutionRegion<'a>,
+    pc8: u32,
+    current: u32,
+    next: u32,
+    limit: u64,
+}
+
+impl ArmKernelState<'_> {
+    #[inline]
+    fn fits(&self, required: u64) -> bool {
+        self.region.cycle <= self.limit && self.limit - self.region.cycle >= required
+    }
+
+    #[inline]
+    fn bound(&mut self) {
+        let words = u64::from((0x0400_0000 - self.pc8) / 4);
+        self.limit = self.region.end.min(self.region.cycle + words);
+    }
+
+    #[inline]
+    fn advance(&mut self, cpu: &mut Cpu, fetched: u32) {
+        self.current = self.next;
+        self.next = fetched;
+        self.pc8 = self.pc8.wrapping_add(4);
+        cpu.registers[15] = self.pc8;
     }
 }
 
@@ -953,6 +1090,449 @@ impl Cpu {
         }
     }
 
+    /// A whole-instruction preflight: fetch first, then all data and internal
+    /// cycles, and finally any refill. A failed condition still consumes its
+    /// fetch, even if the encoding would otherwise leave the kernel.
+    fn arm_kernel_cycles(&self, state: &mut ArmKernelState<'_>, instruction: u32) -> Option<u64> {
+        if instruction & 0x0f00_0000 == 0x0f00_0000 {
+            return None; // SWIs always leave through step_impl.
+        }
+        if !self.core.condition_passed(instruction >> 28) {
+            return Some(1);
+        }
+        let rn = ((instruction >> 16) & 15) as usize;
+        let rd = ((instruction >> 12) & 15) as usize;
+        let load = instruction & (1 << 20) != 0;
+        match (instruction >> 25) & 7 {
+            0 if instruction & 0x0fc0_00f0 == 0x0000_0090 => {
+                let rm = (instruction & 15) as usize;
+                let rs = ((instruction >> 8) & 15) as usize;
+                let accumulate = instruction & (1 << 21) != 0;
+                if rd == 15 || rs == 15 || rm == 15 || (accumulate && rn == 15) {
+                    return None;
+                }
+                Some(
+                    1 + Core::multiply_iterations(self.registers[rs], true) + u64::from(accumulate),
+                )
+            }
+            0 if instruction & 0x0e00_0090 == 0x0000_0090 && (instruction >> 5) & 3 != 0 => {
+                let operation = (instruction >> 5) & 3;
+                if rd == 15
+                    || (rn == 15 && (instruction & (1 << 24) == 0 || instruction & (1 << 21) != 0))
+                    || (instruction & (1 << 22) == 0 && instruction & 15 == 15)
+                    || (!load && operation != 1)
+                {
+                    return None;
+                }
+                let base = self.registers[rn];
+                let offset = if instruction & (1 << 22) != 0 {
+                    ((instruction >> 8) & 15) << 4 | (instruction & 15)
+                } else {
+                    self.registers[(instruction & 15) as usize]
+                };
+                let adjusted = if instruction & (1 << 23) != 0 {
+                    base.wrapping_add(offset)
+                } else {
+                    base.wrapping_sub(offset)
+                };
+                let address = if instruction & (1 << 24) != 0 { adjusted } else { base };
+                let width = if operation == 2 { AccessWidth::Byte } else { AccessWidth::Half };
+                let bus_address = if width == AccessWidth::Byte { address } else { address & !1 };
+                let cycles = if load {
+                    state.region.load_cycles(bus_address, width)
+                } else {
+                    ArmIwramExecutionRegion::ram_cycles(bus_address, width)
+                }?;
+                Some(1 + cycles + u64::from(load))
+            }
+            0 | 1
+                if rd != 15
+                    && (instruction & (1 << 25) != 0 || instruction & 0x0e00_0010 == 0)
+                    && instruction & 0x0fbf_0000 != 0x010f_0000 =>
+            {
+                Some(1)
+            }
+            2 | 3 => {
+                let pre = instruction & (1 << 24) != 0;
+                if rd == 15
+                    || (rn == 15 && (!pre || instruction & (1 << 21) != 0))
+                    || instruction & 0x0e00_0010 == 0x0600_0010
+                {
+                    return None;
+                }
+                let base = self.registers[rn];
+                let offset = if instruction & (1 << 25) != 0 {
+                    self.core.decode_operand2(instruction, false).value
+                } else {
+                    instruction & 0xfff
+                };
+                let adjusted = if instruction & (1 << 23) != 0 {
+                    base.wrapping_add(offset)
+                } else {
+                    base.wrapping_sub(offset)
+                };
+                let address = if pre { adjusted } else { base };
+                let byte = instruction & (1 << 22) != 0;
+                let width = if byte { AccessWidth::Byte } else { AccessWidth::Word };
+                let bus_address = if byte { address } else { address & !3 };
+                let cycles = if load {
+                    state.region.load_cycles(bus_address, width)
+                } else {
+                    ArmIwramExecutionRegion::ram_cycles(bus_address, width)
+                }?;
+                Some(1 + cycles + u64::from(load))
+            }
+            4 => {
+                let list = instruction as u16;
+                if list == 0 || list & 0x8000 != 0 || rn == 15 {
+                    return None;
+                }
+                let count = list.count_ones();
+                let base = self.registers[rn];
+                let up = instruction & (1 << 23) != 0;
+                let pre = instruction & (1 << 24) != 0;
+                let first = if up {
+                    base.wrapping_add(if pre { 4 } else { 0 })
+                } else {
+                    base.wrapping_sub(count * 4).wrapping_add(if pre { 0 } else { 4 })
+                } & !3;
+                let last = first.wrapping_add((count - 1) * 4);
+                if first >> 24 != last >> 24 {
+                    return None;
+                }
+                Some(
+                    1 + u64::from(count)
+                        * ArmIwramExecutionRegion::ram_cycles(first, AccessWidth::Word)?
+                        + u64::from(load),
+                )
+            }
+            5 => {
+                let displacement = (((instruction & 0x00ff_ffff) << 8) as i32 >> 6) as u32;
+                let target = state.pc8.wrapping_add(displacement);
+                (target >= 0x0300_0000 && is_arm_iwram_slice_fetch(target.wrapping_add(8)))
+                    .then_some(3)
+            }
+            _ => None,
+        }
+    }
+
+    /// Local IWRAM supply and clock stay inside one event-free device batch.
+    /// The refused instruction remains untouched for the ordinary runner.
+    fn run_arm_iwram_kernel(&mut self, bus: &mut Bus, yield_at: u64) -> bool {
+        if bus.irq_line && self.cpsr & (1 << 7) == 0 {
+            return false;
+        }
+        let Some(region) = ArmIwramExecutionRegion::begin(bus, yield_at) else {
+            return false;
+        };
+        let pipeline = self.pipeline.expect("ordinary ARM runner has a pipeline");
+        let mut state = ArmKernelState {
+            region,
+            pc8: self.core.next_instruction_address.wrapping_add(8),
+            current: pipeline.instructions[0],
+            next: pipeline.instructions[1],
+            limit: 0,
+        };
+        let started = state.region.cycle;
+        if is_arm_iwram_slice_fetch(state.pc8) {
+            state.bound();
+            loop {
+                let instruction = state.current;
+                let Some(required) = self.arm_kernel_cycles(&mut state, instruction) else {
+                    break;
+                };
+                if !state.fits(required) {
+                    break;
+                }
+                let fetched = state.region.fetch(state.pc8);
+                if !self.core.condition_passed(instruction >> 28) {
+                    state.advance(self, fetched);
+                    continue;
+                }
+                let execution = self
+                    .core
+                    .execute_arm(&mut state.region, instruction)
+                    .expect("an admitted ARM instruction cannot fault");
+                if execution.branched {
+                    let target = self.core.next_instruction_address;
+                    state.pc8 = target;
+                    state.current = state.region.fetch(state.pc8);
+                    state.pc8 = state.pc8.wrapping_add(4);
+                    state.next = state.region.fetch(state.pc8);
+                    state.pc8 = state.pc8.wrapping_add(4);
+                    self.registers[15] = state.pc8;
+                    state.bound();
+                } else {
+                    debug_assert!(execution.software_interrupt.is_none());
+                    if (instruction >> 25) & 7 == 4
+                        || (instruction >> 25) & 6 == 2
+                        || (instruction & 0x0e00_0090 == 0x0000_0090 && (instruction >> 5) & 3 != 0)
+                    {
+                        state.region.complete_data();
+                    }
+                    state.advance(self, fetched);
+                }
+            }
+        }
+        self.core.next_instruction_address = state.pc8.wrapping_sub(8);
+        self.pipeline = Some(Pipeline {
+            instructions: [state.current, state.next],
+            instruction_set: InstructionSet::Arm,
+        });
+        let ran = state.region.cycle != started;
+        state.region.finish(state.next);
+        ran
+    }
+
+    /// The next Thumb instruction's work after its successor fetch. Refuse
+    /// accesses whose timing or target cannot be represented by ThumbRomRun.
+    /// In particular, an empty register list and BX to ARM stay with the
+    /// ordinary interpreter rather than relaxing the ROM run's admission.
+    fn thumb_kernel_work(
+        &self,
+        run: &ThumbRomRun<'_>,
+        instruction: u16,
+    ) -> Option<(u64, Option<u32>, bool)> {
+        let high = instruction >> 8;
+        let pc = self.core.next_instruction_address;
+        let mut branch = None;
+        let mut data = false;
+        let cycles = match high {
+            0x00..=0x3f | 0xa0..=0xb0 | 0xf0..=0xf7 => 0,
+            0x40..=0x43 => {
+                let opcode = (instruction >> 6) & 15;
+                match opcode {
+                    2 | 3 | 4 | 7 => 1,
+                    13 => {
+                        Core::multiply_iterations(self.registers[(instruction & 7) as usize], true)
+                    }
+                    _ => 0,
+                }
+            }
+            0x44..=0x47 => {
+                let operation = (instruction >> 8) & 3;
+                let rd = ((instruction & 7) | ((instruction >> 4) & 8)) as usize;
+                let source = self.registers[((instruction >> 3) & 15) as usize];
+                if operation == 3 {
+                    if source & 1 == 0 {
+                        return None;
+                    }
+                    branch = Some(source & !1);
+                } else if rd == 15 && operation != 1 {
+                    branch = Some(
+                        if operation == 0 {
+                            pc.wrapping_add(4).wrapping_add(source)
+                        } else {
+                            source
+                        } & !1,
+                    );
+                }
+                0
+            }
+            0x48..=0x9f => {
+                let (address, width, load) = match high {
+                    0x48..=0x4f => (
+                        (pc.wrapping_add(4) & !3).wrapping_add(u32::from(instruction & 255) << 2),
+                        AccessWidth::Word,
+                        true,
+                    ),
+                    0x50..=0x5f => {
+                        let operation = (instruction >> 9) & 7;
+                        let address = self.registers[((instruction >> 3) & 7) as usize]
+                            .wrapping_add(self.registers[((instruction >> 6) & 7) as usize]);
+                        let width = match operation {
+                            0 | 4 => AccessWidth::Word,
+                            1 | 5 | 7 => AccessWidth::Half,
+                            _ => AccessWidth::Byte,
+                        };
+                        (address, width, operation >= 3)
+                    }
+                    0x60..=0x7f => {
+                        let byte = instruction & (1 << 12) != 0;
+                        let address = self.registers[((instruction >> 3) & 7) as usize]
+                            .wrapping_add(
+                                u32::from((instruction >> 6) & 31) << if byte { 0 } else { 2 },
+                            );
+                        (
+                            address,
+                            if byte { AccessWidth::Byte } else { AccessWidth::Word },
+                            instruction & (1 << 11) != 0,
+                        )
+                    }
+                    0x80..=0x8f => (
+                        self.registers[((instruction >> 3) & 7) as usize]
+                            .wrapping_add(u32::from((instruction >> 6) & 31) << 1),
+                        AccessWidth::Half,
+                        instruction & (1 << 11) != 0,
+                    ),
+                    _ => (
+                        self.registers[13].wrapping_add(u32::from(instruction & 255) << 2),
+                        AccessWidth::Word,
+                        instruction & (1 << 11) != 0,
+                    ),
+                };
+                let aligned = match width {
+                    AccessWidth::Byte => address,
+                    AccessWidth::Half => address & !1,
+                    AccessWidth::Word => address & !3,
+                };
+                data = true;
+                if load {
+                    run.load_cycles(aligned, width)? + 1
+                } else {
+                    ThumbRomRun::store_cycles(aligned, width)?
+                }
+            }
+            0xb4 | 0xb5 | 0xbc | 0xbd | 0xc0..=0xcf => {
+                let pop = instruction & (1 << 11) != 0;
+                let stack = high < 0xc0;
+                let count = (instruction as u8).count_ones()
+                    + u32::from(stack && instruction & (1 << 8) != 0);
+                if count == 0 {
+                    return None;
+                }
+                let base =
+                    self.registers[if stack { 13 } else { ((instruction >> 8) & 7) as usize }];
+                let start = if stack && !pop { base.wrapping_sub(count * 4) } else { base };
+                let cycles = ThumbRomRun::block_cycles(start & !3, count, u64::from(pop))?;
+                if stack && pop && instruction & (1 << 8) != 0 {
+                    branch = Some(run.cpu_ram_word(start.wrapping_add((count - 1) * 4) & !3) & !1);
+                }
+                data = true;
+                cycles
+            }
+            0xd0..=0xdd => {
+                if self.core.condition_passed(u32::from(high & 15)) {
+                    let offset = ((i32::from(instruction as u8 as i8)) << 1) as u32;
+                    branch = Some(pc.wrapping_add(4).wrapping_add(offset));
+                }
+                0
+            }
+            0xe0..=0xe7 => {
+                let offset = (((u32::from(instruction & 0x7ff) << 21) as i32) >> 20) as u32;
+                branch = Some(pc.wrapping_add(4).wrapping_add(offset));
+                0
+            }
+            0xf8..=0xff => {
+                branch =
+                    Some(self.registers[14].wrapping_add(u32::from(instruction & 0x7ff) << 1) & !1);
+                0
+            }
+            // SWI and ARMv4T undefined instructions must enter via the
+            // ordinary step (which also owns HLE and exception refills).
+            _ => return None,
+        };
+        Some((cycles, branch, data))
+    }
+
+    /// Bounded ROM execution with a runtime high-byte dispatch instead of
+    /// Zig's 49 comptime-labelled handler classes. The shared ISA executor
+    /// remains the semantics source of truth; this loop only admits work.
+    fn run_thumb_rom_kernel(
+        &mut self,
+        bus: &mut Bus,
+        view: &mut InstructionFetchRegion,
+        yield_at: u64,
+    ) -> usize {
+        if bus.irq_line && self.cpsr & (1 << 7) == 0 {
+            return 0;
+        }
+        let pipeline = self.pipeline.expect("ordinary Thumb runner has a pipeline");
+        if pipeline.instruction_set != InstructionSet::Thumb
+            || pipeline.instructions.iter().any(|&word| word > 0xffff)
+        {
+            return 0;
+        }
+        let mut pc = self.core.next_instruction_address;
+        let Some(mut run) = ThumbRomRun::begin(bus, view, pc, yield_at) else {
+            return 0;
+        };
+        let started = run.cycle;
+        let mut executed = 0;
+        let mut waiting = pipeline.instructions[0] as u16;
+        let mut next = pipeline.instructions[1] as u16;
+        loop {
+            let saved_cycle = run.cycle;
+            let saved_ready = run.head_ready;
+            let fetched = run.fetch(pc.wrapping_add(4)) as u16;
+            let work = self.thumb_kernel_work(&run, waiting);
+            let admitted = work.and_then(|(cycles, branch, data)| {
+                if !run.fits(cycles) {
+                    return None;
+                }
+                if let Some(target) = branch {
+                    if !run.admits(target) {
+                        return None;
+                    }
+                    // Predict the two refill fetches without touching the
+                    // run or CPU; a refusal leaves the waiting opcode intact.
+                    let mut clock = run.cycle + cycles;
+                    let mut ready = run.head_ready;
+                    let offset = target.wrapping_sub(pc.wrapping_add(6));
+                    if offset != 0 {
+                        let lands = ready.max(clock - run.fill) + u64::from(offset / 2) * run.duty;
+                        ready = if offset < 16 && lands > clock && lands - run.duty <= clock {
+                            lands
+                        } else {
+                            clock + run.miss
+                        };
+                    }
+                    for _ in 0..2 {
+                        let now = clock;
+                        clock = (now + 1).max(ready);
+                        ready = ready.max(now - run.fill) + run.duty;
+                    }
+                    if clock > run.bound {
+                        return None;
+                    }
+                }
+                Some((branch, data))
+            });
+            let Some((branch, data)) = admitted else {
+                run.cycle = saved_cycle;
+                run.head_ready = saved_ready;
+                break;
+            };
+            self.registers[15] = pc.wrapping_add(4);
+            let execution = self.core.execute_thumb(&mut run, waiting);
+            executed += 1;
+            debug_assert!(execution.software_interrupt.is_none());
+            debug_assert_eq!(execution.branched, branch.is_some());
+            if data {
+                run.complete_data(
+                    waiting & (1 << 11) != 0
+                        || (waiting >> 8 & 0xf8) == 0x48
+                        || ((waiting >> 8) & 0xf0) == 0x50 && (waiting >> 9) & 7 >= 3,
+                );
+            }
+            if let Some(target) = branch {
+                debug_assert_eq!(self.core.next_instruction_address, target);
+                let words = run.refill(pc.wrapping_add(6), target);
+                waiting = words[0] as u16;
+                next = words[1] as u16;
+                pc = target;
+                run.enter(pc);
+            } else {
+                pc = pc.wrapping_add(2);
+                self.core.next_instruction_address = pc;
+                waiting = next;
+                next = fetched;
+            }
+            self.registers[15] = pc.wrapping_add(4);
+        }
+        if executed == 0 {
+            debug_assert_eq!(run.cycle, started);
+            return 0;
+        }
+        self.core.next_instruction_address = pc;
+        self.pipeline = Some(Pipeline {
+            instructions: [u32::from(waiting), u32::from(next)],
+            instruction_set: InstructionSet::Thumb,
+        });
+        run.finish(pc, u32::from(next));
+        executed
+    }
+
     /// Ordinary instruction loop; HLE, power transitions and SWIs return to
     /// the generic step without touching the waiting instruction.
     pub fn run_normal_until(
@@ -970,6 +1550,7 @@ impl Cpu {
         }
         let mut region = InstructionFetchRegion::default();
         let mut stream = ThumbStream::default();
+        let mut arm_slice = false;
         while bus.now() < yield_at {
             if bus.power_state() != PowerState::Running
                 || self.core.next_instruction_address < 0x4000
@@ -978,7 +1559,7 @@ impl Cpu {
             }
             let set = if self.is_thumb() { InstructionSet::Thumb } else { InstructionSet::Arm };
             let width: u32 = if set == InstructionSet::Thumb { 2 } else { 4 };
-            let pipeline = self.pipeline.as_ref().expect("checked before loop");
+            let pipeline = self.pipeline.expect("checked before loop");
             if pipeline.instruction_set != set {
                 return ChunkOutcome::Generic;
             }
@@ -989,9 +1570,36 @@ impl Cpu {
             {
                 return ChunkOutcome::Generic;
             }
+            let arm_iwram =
+                set == InstructionSet::Arm && is_arm_iwram_slice_fetch(address.wrapping_add(8));
+            if arm_iwram {
+                if !arm_slice {
+                    begin_arm_iwram_slice(bus);
+                    arm_slice = true;
+                }
+                if self.run_arm_iwram_kernel(bus, yield_at) {
+                    if bus.now() >= yield_at {
+                        return ChunkOutcome::Deadline;
+                    }
+                    continue;
+                }
+            } else if set == InstructionSet::Thumb {
+                arm_slice = false;
+                if self.run_thumb_rom_kernel(bus, &mut region, yield_at) != 0 {
+                    stream.armed = false;
+                    if bus.now() >= yield_at {
+                        return ChunkOutcome::Deadline;
+                    }
+                    continue;
+                }
+            } else {
+                arm_slice = false;
+            }
             self.pipeline.as_mut().unwrap().instructions[0] = pipeline.instructions[1];
             let fetched = if set == InstructionSet::Thumb {
                 bus.fetch_thumb_in_region(&mut region, address.wrapping_add(4), &mut stream)
+            } else if arm_iwram {
+                fetch_arm_iwram_in_slice(bus, address.wrapping_add(8))
             } else {
                 bus.fetch_instruction_in_region(
                     &mut region,
@@ -1537,5 +2145,444 @@ mod tests {
                 reference_bus.game_pak_prefetch.head_address
             );
         }
+    }
+
+    /// ZiGBA: "Thumb ROM kernel matches ordinary stepping for random code, queues and horizons".
+    /// The reference takes the exact number of instructions admitted by the
+    /// kernel; comparing only final clocks would miss mispredicted branches.
+    #[test]
+    fn thumb_rom_kernel_matches_ordinary_steps_for_random_code_queues_and_horizons() {
+        fn next(seed: &mut u32) -> u32 {
+            *seed ^= *seed << 13;
+            *seed ^= *seed >> 17;
+            *seed ^= *seed << 5;
+            *seed
+        }
+
+        let mut seed = 0x7eed_7b01;
+        let mut rom = vec![0u8; 0x30000];
+        let mut runs = 0;
+        let mut executed = 0;
+        let mut refusals = 0;
+        for trial in 0..4000 {
+            let offset = match next(&mut seed) % 4 {
+                0 => 0x1ff80 + next(&mut seed) % 0x80,
+                1 => 0x2ff80 + next(&mut seed) % 0x7c,
+                2 => 0x80 + next(&mut seed) % 0x40,
+                _ => 0x100 + next(&mut seed) % (0x30000 - 0x200),
+            } & !1;
+            let pc =
+                [0x0800_0000, 0x0a00_0000, 0x0c00_0000][(next(&mut seed) % 3) as usize] + offset;
+            for at in (offset.saturating_sub(0x40)..(offset + 0xc0).min(0x30000)).step_by(2) {
+                let bits = next(&mut seed) as u16;
+                let near = (next(&mut seed) % 25) as u16;
+                let opcode = match next(&mut seed) % 22 {
+                    0 | 1 => bits % 0x1800,
+                    2 => 0x1800 | bits & 0x07ff,
+                    3 | 4 => 0x2000 | bits & 0x1fff,
+                    5 | 6 => 0x4000 | bits & 0x03ff,
+                    7 => 0x4400 | bits & 0x03ff,
+                    8 => 0x4800 | bits & 0x07ff,
+                    9 => 0x5000 | bits & 0x0fff,
+                    10 | 11 => 0x6000 | bits & 0x1fff,
+                    12 => 0x8000 | bits & 0x0fff,
+                    13 => 0x9000 | bits & 0x0fff,
+                    14 => {
+                        if bits & 1 != 0 {
+                            0xa000 | bits & 0x0fff
+                        } else {
+                            0xb000 | bits & 0xff
+                        }
+                    }
+                    15 => 0xb400 | bits & 0x09ff,
+                    16 => 0xc000 | bits & 0x0fff,
+                    17 => 0xd000 | (bits % 14) << 8 | near.wrapping_sub(12) & 0xff,
+                    18 => 0xe000 | near.wrapping_sub(12) & 0x7ff,
+                    19 => {
+                        if bits & 1 == 0 {
+                            0xf000
+                        } else {
+                            0xf800 | near
+                        }
+                    }
+                    20 => 0xdf00 | bits & 0xff,
+                    _ => 0xde00 | bits & 0xff,
+                };
+                rom[at as usize..at as usize + 2].copy_from_slice(&opcode.to_le_bytes());
+            }
+            let wait = [0x4000, 0x4317, 0x43a8][(next(&mut seed) % 3) as usize];
+            let mut bus = Bus::init(&rom);
+            let mut reference_bus = Bus::init(&rom);
+            for bus in [&mut bus, &mut reference_bus] {
+                bus.write(
+                    Access {
+                        address: 0x0400_0204,
+                        width: AccessWidth::Half,
+                        kind: AccessKind::Nonsequential,
+                        source: AccessSource::CpuData,
+                    },
+                    wait,
+                );
+                for address in (0x7c00..0x7e00).step_by(4) {
+                    let value = (address as u32).wrapping_mul(0x1021_0041);
+                    bus.iwram[address..address + 4].copy_from_slice(&value.to_le_bytes());
+                }
+                bus.begin_device_batch();
+                bus.elapse(100);
+            }
+            let mut cpu = Cpu::init(pc, next(&mut seed) & 0xf000_0000 | 0x3f, true);
+            for register in &mut cpu.registers[..15] {
+                let value = next(&mut seed);
+                *register = match value % 7 {
+                    0 | 1 => 0x0200_0000 + (value & 0x3ffff),
+                    2 | 3 => 0x0300_0000 + (value & 0x7fff),
+                    4 => pc & 0xfe00_0000 | value & 0x1ffff,
+                    5 => (pc.wrapping_add((value & 31) * 2)) | 1,
+                    _ => value & 255,
+                };
+            }
+            cpu.registers[13] = 0x0300_7c00 + (next(&mut seed) & 0x1fc);
+            cpu.refill_pipeline(&mut bus);
+            let mut reference = cpu.clone();
+            reference.refill_pipeline(&mut reference_bus);
+            match next(&mut seed) % 4 {
+                0 => {}
+                1 => {
+                    let pause = 1 + u64::from(next(&mut seed) % 80);
+                    bus.elapse(pause);
+                    reference_bus.elapse(pause);
+                }
+                2 => {
+                    let pause = 1 + u64::from(next(&mut seed) % 12);
+                    bus.elapse(pause);
+                    reference_bus.elapse(pause);
+                }
+                _ => {
+                    bus.game_pak_prefetch = Default::default();
+                    reference_bus.game_pak_prefetch = Default::default();
+                    bus.fetch_kind = AccessKind::Sequential;
+                    reference_bus.fetch_kind = AccessKind::Sequential;
+                }
+            }
+            let before = cpu.clone();
+            let started = bus.now();
+            let yield_at = started + 1 + u64::from(next(&mut seed) % 400);
+            let mut view = InstructionFetchRegion::default();
+            let count = cpu.run_thumb_rom_kernel(&mut bus, &mut view, yield_at);
+            if count == 0 {
+                refusals += 1;
+                assert_eq!(cpu, before, "refused trial {trial}");
+                assert_eq!(bus.now(), started, "refused trial {trial}");
+                assert_eq!(bus.game_pak_prefetch, reference_bus.game_pak_prefetch);
+            } else {
+                runs += 1;
+                executed += count;
+                for _ in 0..count {
+                    assert!(
+                        matches!(reference.step(&mut reference_bus), StepOutcome::Executed(_)),
+                        "trial {trial}"
+                    );
+                }
+                assert_eq!(cpu, reference, "CPU trial {trial}, {count} instructions");
+                assert_eq!(bus.now(), reference_bus.now(), "clock trial {trial}");
+                assert!(bus.now() <= yield_at && bus.now() < bus.batch_deadline);
+                assert_eq!(
+                    bus.open_bus_value, reference_bus.open_bus_value,
+                    "open bus trial {trial}"
+                );
+                assert_eq!(bus.fetch_kind, reference_bus.fetch_kind, "fetch trial {trial}");
+                assert_eq!(
+                    bus.game_pak_prefetch, reference_bus.game_pak_prefetch,
+                    "prefetch trial {trial}"
+                );
+                assert_eq!(bus.duty_valid_until, reference_bus.duty_valid_until);
+                assert_eq!(bus.game_pak_code_active, reference_bus.game_pak_code_active);
+                assert_eq!(&bus.iwram[..], &reference_bus.iwram[..]);
+                assert_eq!(&bus.ewram[..], &reference_bus.ewram[..]);
+            }
+            bus.end_device_batch();
+            reference_bus.end_device_batch();
+        }
+        assert!(runs > 600, "only {runs} runs; {refusals} refusals");
+        assert!(executed > 3 * runs, "{executed} instructions in {runs} runs");
+    }
+
+    /// ZiGBA `thumbKernelBranch`: a taken branch and a POP {pc} must admit
+    /// both refill fetches, not only the opcode and data beat. One cycle
+    /// short refuses the *whole* instruction without changing its pipeline.
+    #[test]
+    fn thumb_rom_branch_refill_requires_its_full_horizon() {
+        for opcode in [0xe7fe_u16, 0xbd00] {
+            let mut rom = vec![0u8; 0x200];
+            rom[0x80..0x82].copy_from_slice(&opcode.to_le_bytes());
+            rom[0x82..0x84].copy_from_slice(&0x2103_u16.to_le_bytes());
+            rom[0xa0..0xa2].copy_from_slice(&0x2007_u16.to_le_bytes());
+            let mut bus = Bus::init(&rom);
+            let mut reference_bus = Bus::init(&rom);
+            for target in [&mut bus, &mut reference_bus] {
+                target.iwram[0x7c00..0x7c04].copy_from_slice(&0x0800_00a1_u32.to_le_bytes());
+                target.write(
+                    Access {
+                        address: 0x0400_0204,
+                        width: AccessWidth::Half,
+                        kind: AccessKind::Nonsequential,
+                        source: AccessSource::CpuData,
+                    },
+                    0x4000,
+                );
+                target.begin_device_batch();
+                target.elapse(100);
+            }
+            let mut cpu = Cpu::init(0x0800_0080, 0x3f, false);
+            cpu.registers[13] = 0x0300_7c00;
+            let mut reference = cpu.clone();
+            cpu.refill_pipeline(&mut bus);
+            reference.refill_pipeline(&mut reference_bus);
+            let started = bus.now();
+            assert!(matches!(reference.step(&mut reference_bus), StepOutcome::Executed(_)));
+            let required = reference_bus.now() - started;
+            assert!(required > 1);
+            let before = cpu.clone();
+            assert_eq!(
+                cpu.run_thumb_rom_kernel(
+                    &mut bus,
+                    &mut InstructionFetchRegion::default(),
+                    started + required - 1,
+                ),
+                0,
+            );
+            assert_eq!(cpu, before);
+            assert_eq!(bus.now(), started);
+            assert_eq!(
+                cpu.run_thumb_rom_kernel(
+                    &mut bus,
+                    &mut InstructionFetchRegion::default(),
+                    started + required,
+                ),
+                1,
+            );
+            assert_eq!(cpu, reference);
+            assert_eq!(bus.now(), reference_bus.now());
+            assert_eq!(bus.open_bus_value, reference_bus.open_bus_value);
+            assert_eq!(bus.game_pak_prefetch, reference_bus.game_pak_prefetch);
+            assert_eq!(bus.fetch_kind, reference_bus.fetch_kind);
+            bus.end_device_batch();
+            reference_bus.end_device_batch();
+        }
+    }
+
+    /// ZiGBA `runNormalUntil`: IWRAM kernel instructions, RAM transfers and
+    /// a backward branch publish the same pipeline, memory and bus timing.
+    #[test]
+    fn arm_iwram_runner_matches_ordinary_steps_through_a_backwards_branch() {
+        let mut reference_bus = Bus::init(&[]);
+        let mut runner_bus = Bus::init(&[]);
+        for (i, instruction) in [
+            0xe280_0003_u32, // ADD r0, r0, #3
+            0xe581_0000,     // STR r0, [r1]
+            0xe591_2000,     // LDR r2, [r1]
+            0xeaff_fffb,     // B back to ADD
+        ]
+        .iter()
+        .enumerate()
+        {
+            let offset = 0x100 + i * 4;
+            reference_bus.iwram[offset..offset + 4].copy_from_slice(&instruction.to_le_bytes());
+            runner_bus.iwram[offset..offset + 4].copy_from_slice(&instruction.to_le_bytes());
+        }
+        let mut reference = Cpu::init(0x0300_0100, 0x1f, false);
+        reference.registers[1] = 0x0200_0100;
+        let mut runner = reference.clone();
+        reference.refill_pipeline(&mut reference_bus);
+        runner.refill_pipeline(&mut runner_bus);
+        reference_bus.begin_device_batch();
+        runner_bus.begin_device_batch();
+        for _ in 0..11 {
+            assert!(matches!(reference.step(&mut reference_bus), StepOutcome::Executed(_)));
+        }
+        let mut reason = None;
+        let mut fault = None;
+        assert_eq!(
+            runner.run_normal_until(&mut runner_bus, reference_bus.now(), &mut reason, &mut fault),
+            ChunkOutcome::Deadline
+        );
+        assert_eq!(reason, None);
+        assert_eq!(fault, None);
+        assert_eq!(runner, reference);
+        assert_eq!(runner.registers[0], 9);
+        assert_eq!(runner.registers[2], 9);
+        assert_eq!(&runner_bus.ewram[0x100..0x104], &9_u32.to_le_bytes());
+        assert_eq!(runner_bus.now(), reference_bus.now());
+        assert_eq!(runner_bus.open_bus_value, reference_bus.open_bus_value);
+        assert_eq!(runner_bus.fetch_kind, reference_bus.fetch_kind);
+        assert_eq!(runner_bus.game_pak_prefetch.count, reference_bus.game_pak_prefetch.count);
+        reference_bus.end_device_batch();
+        runner_bus.end_device_batch();
+    }
+
+    /// Zig: unified kernel RAM transfers match reference at full and short horizons.
+    #[test]
+    fn unified_kernel_ram_transfers_match_reference_at_full_and_short_horizons() {
+        for base in [0x0200_0103_u32, 0x03ff_8103] {
+            for (class, prefix) in [(0, 0xe401_2003_u32), (1, 0xe801_000b), (2, 0xe001_20b3)] {
+                // L, W, B/user, U, P and (single only) register offset.
+                for mode in [0_u32, 1, 2, 3, 4, 5, 7, 8, 16, 17, 24, 31, 32, 33, 40, 63] {
+                    if class != 0 && mode >= 32 {
+                        continue;
+                    }
+                    for short in [false, true] {
+                        let mut bus = Bus::init(&[]);
+                        let mut reference_bus = Bus::init(&[]);
+                        for i in 0..256 {
+                            let ewram_byte = (i as u8).wrapping_mul(13).wrapping_add(83);
+                            let iwram_byte = (i as u8).wrapping_mul(37).wrapping_add(19);
+                            bus.ewram[0x80 + i] = ewram_byte;
+                            reference_bus.ewram[0x80 + i] = ewram_byte;
+                            bus.iwram[0x80 + i] = iwram_byte;
+                            reference_bus.iwram[0x80 + i] = iwram_byte;
+                        }
+                        bus.iwram[8..12].copy_from_slice(&0xef08_0000_u32.to_le_bytes());
+                        reference_bus.iwram[8..12].copy_from_slice(&0xef08_0000_u32.to_le_bytes());
+                        let opcode = prefix | mode << 20;
+                        bus.begin_device_batch();
+                        reference_bus.begin_device_batch();
+                        bus.elapse(1);
+                        reference_bus.elapse(1);
+                        begin_arm_iwram_slice(&mut bus);
+                        begin_arm_iwram_slice(&mut reference_bus);
+                        let mut cpu = Cpu::init(0x0300_0000, 0xa000_001f, true);
+                        cpu.pipeline = Some(Pipeline {
+                            instructions: [opcode, 0xef08_0000],
+                            instruction_set: InstructionSet::Arm,
+                        });
+                        cpu.registers[0] = 0x9173_250b;
+                        cpu.registers[1] = base;
+                        cpu.registers[2] = 0xab37_1589;
+                        cpu.registers[3] = 3;
+                        let before = cpu.clone();
+                        let mut reference = cpu.clone();
+                        let _ = reference.step(&mut reference_bus);
+                        let load = mode & 1 != 0;
+                        let per_access = if base >> 24 == 3 {
+                            1
+                        } else if class == 2 || (class == 0 && mode & 4 != 0) {
+                            3
+                        } else {
+                            6
+                        };
+                        let required =
+                            1 + per_access * if class == 1 { 3 } else { 1 } + u64::from(load);
+                        let started = bus.now();
+                        let ran = cpu
+                            .run_arm_iwram_kernel(&mut bus, started + required - u64::from(short));
+                        assert_eq!(ran, !short, "class {class} mode {mode} base {base:08x}");
+                        if short {
+                            assert_eq!(cpu, before);
+                            assert_eq!(bus.now(), started);
+                            let _ = cpu.step(&mut bus);
+                        }
+                        assert_eq!(cpu, reference, "class {class} mode {mode} base {base:08x}");
+                        assert_eq!(bus.now(), reference_bus.now());
+                        assert_eq!(bus.open_bus_value, reference_bus.open_bus_value);
+                        assert_eq!(bus.fetch_kind, reference_bus.fetch_kind);
+                        assert_eq!(&bus.iwram[..], &reference_bus.iwram[..]);
+                        assert_eq!(&bus.ewram[..], &reference_bus.ewram[..]);
+                        bus.end_device_batch();
+                        reference_bus.end_device_batch();
+                    }
+                }
+            }
+        }
+    }
+
+    /// Zig: ARM kernel matches ordinary execution for random encodings and operands.
+    #[test]
+    fn arm_kernel_matches_ordinary_execution_for_random_encodings_and_operands() {
+        let mut seed = 0x5eed_a4a1_u32;
+        let mut random = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let mut executed = 0;
+        for trial in 0..320 {
+            let mut instruction = random();
+            if instruction & (1 << 29) == 0 {
+                instruction = instruction & 0x0fff_ffff | 0xe000_0000;
+            }
+            if (instruction >> 26) & 3 == 3 {
+                instruction &= !(1 << 27);
+            }
+            if (instruction >> 25) & 7 == 5 {
+                instruction =
+                    instruction & 0xff00_0000 | (random() % 17).wrapping_sub(8) & 0xff_ffff;
+            }
+            match trial % 8 {
+                0 => instruction = instruction & 0xf03f_ff0f | 0x0000_0090,
+                1 | 2 => {
+                    instruction =
+                        instruction & 0xf1ff_ff9f | 0x0000_0090 | ((random() % 3 + 1) << 5)
+                }
+                _ => {}
+            }
+            let address = 0x0300_0100 + (random() & 0x3fc);
+            let mut runner_bus = Bus::init(&[]);
+            let mut reference_bus = Bus::init(&[]);
+            for index in (address & 0x7fff).saturating_sub(0x40)..(address & 0x7fff) + 0x40 {
+                if index & 3 == 0 {
+                    runner_bus.iwram[index as usize..index as usize + 4]
+                        .copy_from_slice(&0xef08_0000_u32.to_le_bytes());
+                    reference_bus.iwram[index as usize..index as usize + 4]
+                        .copy_from_slice(&0xef08_0000_u32.to_le_bytes());
+                }
+            }
+            runner_bus.begin_device_batch();
+            reference_bus.begin_device_batch();
+            runner_bus.elapse(1);
+            reference_bus.elapse(1);
+            begin_arm_iwram_slice(&mut runner_bus);
+            begin_arm_iwram_slice(&mut reference_bus);
+            let mut cpu = Cpu::init(address, (random() & 0xf000_0000) | 0x1f, true);
+            cpu.pipeline = Some(Pipeline {
+                instructions: [instruction, 0xef08_0000],
+                instruction_set: InstructionSet::Arm,
+            });
+            for register in &mut cpu.registers[..15] {
+                *register = match random() & 7 {
+                    0 | 1 => random() & 255,
+                    2 => 0x0300_0000 + (random() & 0x7fff),
+                    3 => 0x0200_0000 + (random() & 0x3_ffff),
+                    4 => 0x03ff_fff0 + (random() & 15),
+                    5 => 0x0800_0000 + (random() & 0x1_ffff),
+                    6 => 0x0400_0000 + (random() & 0x3ff),
+                    _ => random(),
+                };
+            }
+            let mut reference = cpu.clone();
+            let before = cpu.clone();
+            let started = runner_bus.now();
+            let budget = u64::from(random() % 40 + 1);
+            if cpu.run_arm_iwram_kernel(&mut runner_bus, started + budget) {
+                executed += 1;
+                let _ = reference.step(&mut reference_bus);
+                assert_eq!(cpu, reference, "trial {trial}: {instruction:08x}");
+                assert_eq!(runner_bus.now(), reference_bus.now(), "trial {trial}");
+                assert_eq!(
+                    runner_bus.open_bus_value, reference_bus.open_bus_value,
+                    "trial {trial}"
+                );
+                assert_eq!(runner_bus.fetch_kind, reference_bus.fetch_kind, "trial {trial}");
+                assert_eq!(&runner_bus.iwram[..], &reference_bus.iwram[..], "trial {trial}");
+                assert_eq!(&runner_bus.ewram[..], &reference_bus.ewram[..], "trial {trial}");
+                assert!(runner_bus.now() <= started + budget);
+            } else {
+                assert_eq!(cpu, before, "trial {trial}");
+                assert_eq!(runner_bus.now(), started, "trial {trial}");
+            }
+            runner_bus.end_device_batch();
+            reference_bus.end_device_batch();
+        }
+        assert!(executed > 320 / 3, "kernel did not exercise enough random instructions");
     }
 }
