@@ -469,7 +469,9 @@ JavaScript, not a stable public interface: functions can change in any release.
 `zb_version()` identifies the ABI, and `WasmCore` rejects a binary whose version
 it does not speak ("Unsupported WASM ABI"). Always use the
 `evenfall-gba.wasm` built for this package version, and build on the JavaScript
-API instead of the exports. The Rust WASM build strips DWARF.
+API instead of the exports. The Rust WASM build strips DWARF. The
+[web runtime design](design/web-runtime.md) describes the Worker, module memory
+and native/WASM parity boundary.
 
 ## Versioning
 

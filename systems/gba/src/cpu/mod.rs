@@ -1093,11 +1093,16 @@ impl Cpu {
     /// A whole-instruction preflight: fetch first, then all data and internal
     /// cycles, and finally any refill. A failed condition still consumes its
     /// fetch, even if the encoding would otherwise leave the kernel.
-    fn arm_kernel_cycles(&self, state: &mut ArmKernelState<'_>, instruction: u32) -> Option<u64> {
+    fn arm_kernel_cycles(
+        &self,
+        state: &mut ArmKernelState<'_>,
+        instruction: u32,
+        condition_passed: bool,
+    ) -> Option<u64> {
         if instruction & 0x0f00_0000 == 0x0f00_0000 {
             return None; // SWIs always leave through step_impl.
         }
-        if !self.core.condition_passed(instruction >> 28) {
+        if !condition_passed {
             return Some(1);
         }
         let rn = ((instruction >> 16) & 15) as usize;
@@ -1108,7 +1113,9 @@ impl Cpu {
                 let rm = (instruction & 15) as usize;
                 let rs = ((instruction >> 8) & 15) as usize;
                 let accumulate = instruction & (1 << 21) != 0;
-                if rd == 15 || rs == 15 || rm == 15 || (accumulate && rn == 15) {
+                // MUL's Rd is bits 19..16 and its accumulator Rn is 15..12;
+                // the transfer decoder's `rd`/`rn` names are reversed here.
+                if rn == 15 || rs == 15 || rm == 15 || (accumulate && rd == 15) {
                     return None;
                 }
                 Some(
@@ -1147,7 +1154,9 @@ impl Cpu {
             }
             0 | 1
                 if rd != 15
+                    && (instruction & 0x90 != 0x90 || instruction & (1 << 25) != 0)
                     && (instruction & (1 << 25) != 0 || instruction & 0x0e00_0010 == 0)
+                    && (!((8..=11).contains(&((instruction >> 21) & 15))) || load)
                     && instruction & 0x0fbf_0000 != 0x010f_0000 =>
             {
                 Some(1)
@@ -1238,20 +1247,28 @@ impl Cpu {
             state.bound();
             loop {
                 let instruction = state.current;
-                let Some(required) = self.arm_kernel_cycles(&mut state, instruction) else {
+                let condition_passed = self.core.condition_passed(instruction >> 28);
+                let Some(required) =
+                    self.arm_kernel_cycles(&mut state, instruction, condition_passed)
+                else {
                     break;
                 };
                 if !state.fits(required) {
                     break;
                 }
                 let fetched = state.region.fetch(state.pc8);
-                if !self.core.condition_passed(instruction >> 28) {
+                if !condition_passed {
                     state.advance(self, fetched);
                     continue;
                 }
+                // The ordinary step exposes the waiting instruction address
+                // throughout execution. In particular BL derives LR from it;
+                // after a fall-through the kernel's Core otherwise still held
+                // the address from the prior instruction.
+                self.core.next_instruction_address = state.pc8.wrapping_sub(8);
                 let execution = self
                     .core
-                    .execute_arm(&mut state.region, instruction)
+                    .execute_arm_condition_passed(&mut state.region, instruction)
                     .expect("an admitted ARM instruction cannot fault");
                 if execution.branched {
                     let target = self.core.next_instruction_address;
@@ -1689,6 +1706,9 @@ impl DerefMut for Cpu {
         &mut self.core
     }
 }
+
+#[cfg(test)]
+mod audit_tests;
 
 #[cfg(test)]
 mod tests {
@@ -2159,12 +2179,49 @@ mod tests {
             *seed
         }
 
+        fn test_register(seed: &mut u32, pc: u32, friendly: bool) -> u32 {
+            let value = next(seed);
+            if friendly {
+                return match value % 6 {
+                    0 | 1 => 0x0300_0000 + (next(seed) & 0x7fff),
+                    2 | 3 => 0x0200_0000 + (next(seed) & 0x3ffff),
+                    4 => (pc & 0xfe00_0000).wrapping_add(next(seed) & 0x1ffff),
+                    _ => {
+                        pc.wrapping_add(((next(seed) % 33) as i32 - 16).wrapping_mul(2) as u32) | 1
+                    }
+                };
+            }
+            match value % 16 {
+                0..=3 => next(seed) & 0xff,
+                4 | 5 => 0x0300_0000 + (next(seed) & 0x7fff),
+                6 | 7 => 0x0200_0000 + (next(seed) & 0x3ffff),
+                8 => 0x03ff_fff0 + (next(seed) & 15),
+                9 | 10 => (pc & 0xfe00_0000).wrapping_add(next(seed) & 0x3ffff),
+                11 => 0x0800_0000 + (next(seed) & 0x05ff_ffff),
+                12 => 0x0400_0000 + (next(seed) & 0x3ff),
+                13 | 14 => {
+                    pc.wrapping_add(((next(seed) % 33) as i32 - 16).wrapping_mul(2) as u32)
+                        | (next(seed) & 1)
+                }
+                _ => next(seed),
+            }
+        }
+
         let mut seed = 0x7eed_7b01;
         let mut rom = vec![0u8; 0x30000];
+        for byte in &mut rom {
+            *byte = next(&mut seed) as u8;
+        }
+        let mut iwram = vec![0u8; 0x8000];
+        let mut ewram = vec![0u8; 0x40000];
+        for byte in iwram.iter_mut().chain(ewram.iter_mut()) {
+            *byte = next(&mut seed) as u8;
+        }
         let mut runs = 0;
         let mut executed = 0;
         let mut refusals = 0;
         for trial in 0..4000 {
+            let friendly = trial % 2 == 0;
             let offset = match next(&mut seed) % 4 {
                 0 => 0x1ff80 + next(&mut seed) % 0x80,
                 1 => 0x2ff80 + next(&mut seed) % 0x7c,
@@ -2176,7 +2233,7 @@ mod tests {
             for at in (offset.saturating_sub(0x40)..(offset + 0xc0).min(0x30000)).step_by(2) {
                 let bits = next(&mut seed) as u16;
                 let near = (next(&mut seed) % 25) as u16;
-                let opcode = match next(&mut seed) % 22 {
+                let opcode = match next(&mut seed) % if friendly { 18 } else { 20 } {
                     0 | 1 => bits % 0x1800,
                     2 => 0x1800 | bits & 0x07ff,
                     3 | 4 => 0x2000 | bits & 0x1fff,
@@ -2188,7 +2245,7 @@ mod tests {
                     12 => 0x8000 | bits & 0x0fff,
                     13 => 0x9000 | bits & 0x0fff,
                     14 => {
-                        if bits & 1 != 0 {
+                        if bits & 0x8000 != 0 {
                             0xa000 | bits & 0x0fff
                         } else {
                             0xb000 | bits & 0xff
@@ -2197,23 +2254,38 @@ mod tests {
                     15 => 0xb400 | bits & 0x09ff,
                     16 => 0xc000 | bits & 0x0fff,
                     17 => 0xd000 | (bits % 14) << 8 | near.wrapping_sub(12) & 0xff,
-                    18 => 0xe000 | near.wrapping_sub(12) & 0x7ff,
-                    19 => {
-                        if bits & 1 == 0 {
-                            0xf000
-                        } else {
-                            0xf800 | near
+                    18 => match bits & 3 {
+                        0 => 0xe000 | near.wrapping_sub(12) & 0x7ff,
+                        1 => {
+                            if bits & 4 != 0 {
+                                0xf000
+                            } else {
+                                0xf7ff
+                            }
                         }
-                    }
-                    20 => 0xdf00 | bits & 0xff,
-                    _ => 0xde00 | bits & 0xff,
+                        2 => 0xf800 | near.wrapping_sub(12) & 0x7ff,
+                        _ => 0xdf00 | bits & 0xff,
+                    },
+                    _ => match bits & 3 {
+                        0 => 0xde00 | bits & 0xff,
+                        1 => 0xb100 | bits & 0x02ff,
+                        2 => 0xe800 | bits & 0x07ff,
+                        _ => 0x4700 | bits & 0x0078,
+                    },
                 };
                 rom[at as usize..at as usize + 2].copy_from_slice(&opcode.to_le_bytes());
             }
-            let wait = [0x4000, 0x4317, 0x43a8][(next(&mut seed) % 3) as usize];
+            let wait = (next(&mut seed) & 0x3fff) as u16
+                | if !next(&mut seed).is_multiple_of(8) { 0x4000 } else { 0 };
             let mut bus = Bus::init(&rom);
             let mut reference_bus = Bus::init(&rom);
+            let stack_words: Vec<_> = (0x7c00..0x7e00)
+                .step_by(4)
+                .map(|_| test_register(&mut seed, pc, friendly))
+                .collect();
             for bus in [&mut bus, &mut reference_bus] {
+                bus.iwram.copy_from_slice(&iwram);
+                bus.ewram.copy_from_slice(&ewram);
                 bus.write(
                     Access {
                         address: 0x0400_0204,
@@ -2221,10 +2293,9 @@ mod tests {
                         kind: AccessKind::Nonsequential,
                         source: AccessSource::CpuData,
                     },
-                    wait,
+                    u32::from(wait),
                 );
-                for address in (0x7c00..0x7e00).step_by(4) {
-                    let value = (address as u32).wrapping_mul(0x1021_0041);
+                for (address, value) in (0x7c00..0x7e00).step_by(4).zip(&stack_words) {
                     bus.iwram[address..address + 4].copy_from_slice(&value.to_le_bytes());
                 }
                 bus.begin_device_batch();
@@ -2232,16 +2303,11 @@ mod tests {
             }
             let mut cpu = Cpu::init(pc, next(&mut seed) & 0xf000_0000 | 0x3f, true);
             for register in &mut cpu.registers[..15] {
-                let value = next(&mut seed);
-                *register = match value % 7 {
-                    0 | 1 => 0x0200_0000 + (value & 0x3ffff),
-                    2 | 3 => 0x0300_0000 + (value & 0x7fff),
-                    4 => pc & 0xfe00_0000 | value & 0x1ffff,
-                    5 => (pc.wrapping_add((value & 31) * 2)) | 1,
-                    _ => value & 255,
-                };
+                *register = test_register(&mut seed, pc, friendly);
             }
-            cpu.registers[13] = 0x0300_7c00 + (next(&mut seed) & 0x1fc);
+            if next(&mut seed) & 1 != 0 {
+                cpu.registers[13] = 0x0300_7c00 + (next(&mut seed) & 0x1fc);
+            }
             cpu.refill_pipeline(&mut bus);
             let mut reference = cpu.clone();
             reference.refill_pipeline(&mut reference_bus);
@@ -2260,8 +2326,13 @@ mod tests {
                 _ => {
                     bus.game_pak_prefetch = Default::default();
                     reference_bus.game_pak_prefetch = Default::default();
-                    bus.fetch_kind = AccessKind::Sequential;
-                    reference_bus.fetch_kind = AccessKind::Sequential;
+                    let kind = if next(&mut seed) & 1 != 0 {
+                        AccessKind::Sequential
+                    } else {
+                        AccessKind::Nonsequential
+                    };
+                    bus.fetch_kind = kind;
+                    reference_bus.fetch_kind = kind;
                 }
             }
             let before = cpu.clone();
@@ -2302,8 +2373,18 @@ mod tests {
             }
             bus.end_device_batch();
             reference_bus.end_device_batch();
+            if count != 0 && trial % 64 == 0 {
+                use evenfall_state::Codec as _;
+                let mut actual = Vec::new();
+                let mut expected = Vec::new();
+                bus.encode(&mut evenfall_state::Sink::new(Some(&mut actual), None)).unwrap();
+                reference_bus
+                    .encode(&mut evenfall_state::Sink::new(Some(&mut expected), None))
+                    .unwrap();
+                assert_eq!(actual, expected, "durable bus trial {trial}");
+            }
         }
-        assert!(runs > 600, "only {runs} runs; {refusals} refusals");
+        assert!(runs > 2000, "only {runs} runs; {refusals} refusals");
         assert!(executed > 3 * runs, "{executed} instructions in {runs} runs");
     }
 
@@ -2426,7 +2507,7 @@ mod tests {
         for base in [0x0200_0103_u32, 0x03ff_8103] {
             for (class, prefix) in [(0, 0xe401_2003_u32), (1, 0xe801_000b), (2, 0xe001_20b3)] {
                 // L, W, B/user, U, P and (single only) register offset.
-                for mode in [0_u32, 1, 2, 3, 4, 5, 7, 8, 16, 17, 24, 31, 32, 33, 40, 63] {
+                for mode in 0_u32..64 {
                     if class != 0 && mode >= 32 {
                         continue;
                     }
@@ -2506,7 +2587,7 @@ mod tests {
             seed
         };
         let mut executed = 0;
-        for trial in 0..320 {
+        for trial in 0..3000 {
             let mut instruction = random();
             if instruction & (1 << 29) == 0 {
                 instruction = instruction & 0x0fff_ffff | 0xe000_0000;
@@ -2583,6 +2664,6 @@ mod tests {
             runner_bus.end_device_batch();
             reference_bus.end_device_batch();
         }
-        assert!(executed > 320 / 3, "kernel did not exercise enough random instructions");
+        assert!(executed > 3000 / 3, "kernel did not exercise enough random instructions");
     }
 }

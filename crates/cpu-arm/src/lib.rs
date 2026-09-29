@@ -508,6 +508,7 @@ impl Core {
 
     /// ARM data processing, including legacy compare-to-PC and exception
     /// returns. The caller has already checked the instruction's condition.
+    #[inline(always)]
     pub fn execute_arm_data_processing<B: Bus>(
         &mut self,
         bus: &mut B,
@@ -604,6 +605,17 @@ impl Core {
         if !self.condition_passed(instruction >> 28) {
             return Ok(ExecuteResult::default());
         }
+        self.execute_arm_condition_passed(bus, instruction)
+    }
+
+    /// Execute an opcode whose condition was checked by the bounded kernel.
+    /// Ordinary execution continues to enter through `execute_arm`.
+    #[inline(always)]
+    pub fn execute_arm_condition_passed<B: Bus>(
+        &mut self,
+        bus: &mut B,
+        instruction: u32,
+    ) -> Result<ExecuteResult, FaultReason> {
         match (instruction >> 25) & 7 {
             0 => {
                 if instruction & 0x0fff_fff0 == 0x012f_ff10 {
