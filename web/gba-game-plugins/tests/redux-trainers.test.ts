@@ -111,6 +111,62 @@ it("resolves signed level offsets, difficulty-selected teams, EV order and start
   expect(disabled.data[0].team[0].stats.actual?.speed).toBe(26);
 });
 
+it("matches trainer names and classes without case, accents or punctuation", () => {
+  const bytes = new Uint8Array(4096);
+  const view = new DataView(bytes.buffer);
+  const trainer = 0x100 + 0x38;
+  view.setUint32(trainer + 4, 0x08000300, true);
+  bytes.set([0xca, 0xe3, 0xdf, 0x1b, 0xda, 0xd5, 0xe2, 0xff], 0x300); // Pokéfan
+  bytes.set(
+    [0xca, 0xe3, 0xdf, 0x1b, 0x00, 0xc7, 0xd5, 0xe2, 0xdd, 0xd5, 0xd7, 0xff],
+    0x400,
+  ); // Poké Maniac
+  for (const [i, offset] of [0x18, 0x20, 0x28].entries()) {
+    bytes[trainer + offset] = 1;
+    view.setUint32(trainer + offset + 4, 0x08000800 + i * 0x100, true);
+    const address = 0x800 + i * 0x100;
+    bytes[address] = 254; // -2 levels.
+    view.setUint16(address + 2, i + 1, true);
+    bytes[address + 6] = 1;
+    bytes[address + 0x17] = 13; // Jolly: +Speed, -SpA.
+  }
+  const base = pokemonResources().catalog;
+  const search = createReduxTrainerSearch(
+    createMemoryReader([{ address: 0x08000000, bytes }]),
+    {
+      ...base,
+      species: (id) => ({ ...base.species(id), innates: [11, 12, 13] }),
+      abilityFlags: () => ({ unsuppressable: false, blocksSuppression: false }),
+      holdEffect: () => 0,
+    },
+    {
+      trainers: 0x08000100,
+      trainerCount: 2,
+      classes: 0x08000400,
+      classCount: 1,
+      portraitCount: 1,
+      hellSkills: 0x08000600,
+    },
+    "fixture",
+  );
+  const context = {
+    difficulty: 0,
+    highestLevel: 20,
+    hellLevelBonus: 0,
+    evsEnabled: true,
+  };
+  const names = (query: string) => {
+    const result = search(query, context);
+    if (result.status !== "ready") throw new Error(result.reason);
+    return result.data.map((entry) => entry.name);
+  };
+  expect(names("pokefan")).toEqual(["Pokéfan"]);
+  expect(names("POKÉFAN")).toEqual(["Pokéfan"]);
+  expect(names("poke maniac")).toEqual(["Pokéfan"]);
+  expect(names("poké")).toEqual(["Pokéfan"]);
+  expect(names("maniac zzz")).toEqual([]);
+});
+
 const path = process.env.ZIGBA_REDUX_ROM;
 describe.skipIf(!path)(
   "Redux trainer previews from the verified release ROM",

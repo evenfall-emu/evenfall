@@ -387,6 +387,12 @@ describe("filterGames", () => {
     ]);
   });
 
+  it("matches titles without case, accents or punctuation", () => {
+    expect(ids({ query: "poke" })).toEqual(["unbound"]);
+    expect(ids({ query: "POKÉMON" })).toEqual(["unbound"]);
+    expect(ids({ query: "emblem: vision" })).toEqual(["vision-quest"]);
+  });
+
   it("lists franchises and tags once, alphabetically", () => {
     expect(franchisesOf(games)).toEqual([
       "Fire Emblem",

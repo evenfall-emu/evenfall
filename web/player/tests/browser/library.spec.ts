@@ -206,6 +206,24 @@ test("Library joins the catalog with this device's ROMs and filters it", async (
   ).toBe(true);
 });
 
+test("Library search ignores case, accents and punctuation", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockCatalog(page);
+  // A ROM the catalog does not list takes the name it was stored with.
+  await importRoms(page, [[45, "Café: Démo"]]);
+  const search = page.getByRole("searchbox", { name: "Search games" });
+  await search.fill("cafe demo");
+  await expect.poll(() => titles(page)).toEqual(["Café: Démo"]);
+  await search.fill("CAFÉ: DÉMO");
+  await expect.poll(() => titles(page)).toEqual(["Café: Démo"]);
+  await search.fill("café zzz");
+  await expect(
+    page.getByRole("heading", { name: "No matching games" }),
+  ).toBeVisible();
+});
+
 test("experimental releases need a persistent Library opt-in", async ({
   page,
 }) => {

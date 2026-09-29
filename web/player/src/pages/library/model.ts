@@ -358,15 +358,28 @@ const order: Record<SortOrder, (a: LibraryGame, b: LibraryGame) => number> = {
   popularity: (a, b) => b.cloudPlaythroughs - a.cloudPlaythroughs,
 };
 
+/**
+ * A search key: case, accents and punctuation folded away, so "poke" finds
+ * "Pokémon" and "emblem vision" finds "Fire Emblem: Vision Quest".
+ */
+function searchKey(text: string): string {
+  return text
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
 export function filterGames(
   games: readonly LibraryGame[],
   filters: LibraryFilters,
 ): LibraryGame[] {
-  const query = filters.query.trim().toLocaleLowerCase();
+  const query = searchKey(filters.query);
   return games
     .filter(
       (game) =>
-        game.title.toLocaleLowerCase().includes(query) &&
+        searchKey(game.title).includes(query) &&
         (filters.show === "all" || game.availability === filters.show) &&
         (!filters.franchise || game.franchise === filters.franchise) &&
         filters.tags.every((tag) => game.tags.includes(tag)),

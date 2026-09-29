@@ -87,7 +87,8 @@ HP under the screen, with the active opponents in a battle or the arena's
 known fields outside one, and opens the Team and Info (Battle) panels in a
 sheet. Team cards support click and Arrow/Home/End;
 selection follows identity through reordering and resets on a new timeline,
-and search includes PC storage. While the game runs, observations refresh up
+and search includes PC storage, ignoring case, accents and punctuation. While
+the game runs, observations refresh up
 to 20 times a second; pausing keeps the last reading, and loading a state
 refreshes it.
 
@@ -105,7 +106,8 @@ refreshes it.
   paralysis yellow, freeze ice-blue, bleed red, sleep white, poison and
   unknown ailments purple.
 - Elite Redux adds trainer previews for inactive battles and Pokédex links
-  for the selected Pokémon.
+  for the selected Pokémon. Its trainer search matches names, classes and
+  encounter labels without case, accents or punctuation.
 
 Move-category icons are original inline SVG drawn for ZiGBA. Values the
 bridges cannot verify stay visibly unavailable with a reason: randomized

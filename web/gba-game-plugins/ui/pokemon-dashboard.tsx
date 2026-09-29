@@ -16,6 +16,7 @@ import type { BridgeState, GameArenaStatus } from "@evenfall/gba/bridge";
 import type { Gen3Game } from "../src/gen3";
 import { heartNSoul } from "../src/heart-n-soul";
 import { eliteRedux } from "../src/elite-redux";
+import { searchKey } from "../src/search";
 import type { PokemonResources } from "../src/bridges";
 import type { BuildInfo, GameLayoutProps } from "./layout";
 import type {
@@ -588,9 +589,9 @@ export function PokemonRoster({
   const visible = entries.filter(
     ({ pokemon }) =>
       !query ||
-      `${pokemon.nickname} ${pokemon.speciesName}`
-        .toLowerCase()
-        .includes(query.toLowerCase()),
+      searchKey(`${pokemon.nickname} ${pokemon.speciesName}`).includes(
+        searchKey(query),
+      ),
   );
   const selected =
     visible.find(({ id }) => id === selectedId) ??

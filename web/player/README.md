@@ -233,7 +233,9 @@ game changes the URL to `/library/<game ID>`; filtering the list keeps that
 game's details. On narrow screens the details replace the list, and Back or
 Escape returns to it with its scroll position and focus. Search, **Show**,
 **Franchise**, **Sort** and a tag picker combine; a game must carry every
-selected tag. **Show** offers All, Installed and Ready, where the base ROM is
+selected tag. Search matches titles without case, accents or punctuation, so
+"poke" finds "Pokémon" and "emblem vision" finds "Fire Emblem: Vision Quest".
+**Show** offers All, Installed and Ready, where the base ROM is
 on this device and the release's patch is hosted, so the game plays at once.
 **Sort** orders by Played (the default, with unplayed titles following by
 name), Recently updated (latest release date, undated releases last) or
