@@ -4,8 +4,9 @@
 //! instruction costs its fetch plus its own data and internal cycles, and a
 //! branch within the region adds two refill fetches.
 
-use super::{CodeCache, Op, PAGE_SHIFT, fresh_ops};
-use crate::bus::{AccessWidth, Bus, EWRAM_SIZE, IWRAM_SIZE, RomData, read_ram, write_ram};
+use super::mem::{Mem, Running};
+use super::{Op, PAGE_SHIFT, fresh_ops, split_memory};
+use crate::bus::{AccessWidth, Bus, EWRAM_SIZE, IWRAM_SIZE, read_ram};
 use evenfall_cpu_arm::{Core, InstructionSet, Pipeline, condition_passes};
 
 /// Op kinds. Data processing kinds are a form's base plus the opcode;
@@ -290,13 +291,7 @@ type Registers = [u32; 256];
 /// Memory, caches and rarely changing state of a run of ARM code from IWRAM
 /// (`EW` false) or EWRAM (`EW` true).
 struct Ctx<'a, const EW: bool> {
-    /// The other RAM region's ARM ops, if any were decoded.
-    other_ops: Option<&'a [Op]>,
-    iwram: &'a mut [u8; IWRAM_SIZE],
-    ewram: &'a mut [u8; EWRAM_SIZE],
-    iwram_code: &'a mut [bool; IWRAM_SIZE >> PAGE_SHIFT],
-    ewram_code: &'a mut [bool; EWRAM_SIZE >> PAGE_SHIFT],
-    rom: RomData<'a>,
+    mem: Mem<'a>,
     /// Banked registers, for user-bank transfers.
     core: &'a mut Core,
     /// The address of `ops[0]` in the current mirror.
@@ -336,10 +331,16 @@ impl<const EW: bool> Ctx<'_, EW> {
     fn code_word(&self, address: u32) -> u32 {
         let index = (address & Self::MASK) as usize;
         if EW {
-            read_ram(self.ewram, index, AccessWidth::Word)
+            read_ram(self.mem.ewram, index, AccessWidth::Word)
         } else {
-            read_ram(self.iwram, index, AccessWidth::Word)
+            read_ram(self.mem.iwram, index, AccessWidth::Word)
         }
+    }
+
+    /// The running code, for store checks.
+    #[inline(always)]
+    fn running<'o>(&self, ops: &'o [Op], idx: u32) -> Running<'o> {
+        Running { ops, region: Self::REGION, thumb: false, pc: self.pc(idx) }
     }
 
     #[inline(always)]
@@ -358,47 +359,32 @@ pub(super) fn run<const EW: bool>(core: &mut Core, bus: &mut Bus, limit: u64) ->
     }
     let start = bus.now();
     let memory = bus.engine_memory();
-    let CodeCache { iwram_arm, ewram_arm, iwram_code, ewram_code } = memory.code;
-    let (ops, other_ops): (&mut [Op], Option<&[Op]>) = if EW {
-        (
-            &mut ewram_arm.get_or_insert_with(|| fresh_ops(END_OP, STOP_OP))[..],
-            iwram_arm.as_deref().map(|o| &o[..]),
-        )
-    } else {
-        (
-            &mut iwram_arm.get_or_insert_with(|| fresh_ops(END_OP, STOP_OP))[..],
-            ewram_arm.as_deref().map(|o| &o[..]),
-        )
-    };
+    let slots = (mask as usize + 1) / 4;
+    let mut ops = memory.code.take(Ctx::<EW>::REGION, false, || {
+        let mut tail = vec![END_OP; slots];
+        tail[slots - 1] = STOP_OP;
+        fresh_ops(slots, &tail)
+    });
+    let (mem, _) = split_memory(memory);
     let pipeline = core.pipeline;
     let cpsr = core.cpsr;
-    let mut c = Ctx::<EW> {
-        other_ops,
-        iwram: memory.iwram,
-        ewram: memory.ewram,
-        iwram_code,
-        ewram_code,
-        rom: memory.rom,
-        core,
-        base: pc & !mask,
-        load_mark: -1,
-        store_mark: -1,
-        data: 0,
-    };
+    let mut c = Ctx::<EW> { mem, core, base: pc & !mask, load_mark: -1, store_mark: -1, data: 0 };
     let latched = [c.code_word(pc), c.code_word(pc.wrapping_add(4))];
     if pipeline != Some(Pipeline { instructions: latched, instruction_set: InstructionSet::Arm }) {
+        bus.code.put(Ctx::<EW>::REGION, false, ops);
         return false;
     }
     let budget = (limit - start) as i64;
     let hot = Hot { idx: (pc & mask) >> 2, budget, cpsr };
     let hot = if EW {
-        let ops = ops.try_into().expect("EWRAM op array");
+        let ops = (&mut *ops).try_into().expect("EWRAM op array");
         run_loop::<EW, { 2 * EWRAM_SIZE / 4 }>(ops, &mut c, hot)
     } else {
-        let ops = ops.try_into().expect("IWRAM op array");
+        let ops = (&mut *ops).try_into().expect("IWRAM op array");
         run_loop::<EW, { 2 * IWRAM_SIZE / 4 }>(ops, &mut c, hot)
     };
     if hot.budget == budget {
+        bus.code.put(Ctx::<EW>::REGION, false, ops);
         return false;
     }
     let pc = c.pc(hot.idx);
@@ -411,6 +397,7 @@ pub(super) fn run<const EW: bool>(core: &mut Core, bus: &mut Bus, limit: u64) ->
     core.cpsr = hot.cpsr;
     core.next_instruction_address = pc;
     core.pipeline = Some(Pipeline { instructions: pipeline, instruction_set: InstructionSet::Arm });
+    bus.code.put(Ctx::<EW>::REGION, false, ops);
     bus.engine_finish(limit - hot.budget as u64, open_bus, data_last);
     true
 }
@@ -751,9 +738,9 @@ fn decode_slot<const EW: bool>(ops: &mut [Op], c: &mut Ctx<'_, EW>, idx: u32) {
     for offset in [offset, (offset + 8) & Ctx::<EW>::MASK] {
         let page = (offset >> PAGE_SHIFT) as usize;
         if EW {
-            c.ewram_code[page] = true;
+            c.mem.ewram_code[page] = true;
         } else {
-            c.iwram_code[page] = true;
+            c.mem.iwram_code[page] = true;
         }
     }
 }
@@ -1073,17 +1060,17 @@ fn transfer<const EW: bool, const MODE: u8>(
         _ => (AccessWidth::Half, address & !1),
     };
     if matches!(MODE, STR | STRB | STRH) {
-        let Some(cycles) = store_cycles(c, ops, c.pc(h.idx), bus_address, width) else {
+        let Some(cycles) = c.mem.store_cycles(c.running(ops, h.idx), bus_address, width) else {
             return false;
         };
         if !h.charge(Ctx::<EW>::FETCH + cycles) {
             return false;
         }
-        store(c, bus_address, width, regs[usize::from(op.rd)]);
+        c.mem.store(bus_address, width, regs[usize::from(op.rd)]);
         c.store_mark = h.budget;
         return h.next();
     }
-    let Some((value, cycles)) = load(c, bus_address, width) else {
+    let Some((value, cycles)) = c.mem.load(bus_address, width) else {
         return false;
     };
     if !h.charge(Ctx::<EW>::FETCH + cycles + 1) {
@@ -1129,7 +1116,7 @@ fn single_op<const EW: bool>(
     let (width, bus_address) =
         if byte { (AccessWidth::Byte, address) } else { (AccessWidth::Word, address & !3) };
     if word & (1 << 20) != 0 {
-        let (value, cycles) = load(c, bus_address, width)?;
+        let (value, cycles) = c.mem.load(bus_address, width)?;
         if !h.charge(Ctx::<EW>::FETCH + cycles + 1) {
             return None;
         }
@@ -1140,11 +1127,11 @@ fn single_op<const EW: bool>(
         c.data = value;
         c.load_mark = h.budget;
     } else {
-        let cycles = store_cycles(c, ops, c.pc(h.idx), bus_address, width)?;
+        let cycles = c.mem.store_cycles(c.running(ops, h.idx), bus_address, width)?;
         if !h.charge(Ctx::<EW>::FETCH + cycles) {
             return None;
         }
-        store(c, bus_address, width, regs[rd].wrapping_add(if rd == 15 { 4 } else { 0 }));
+        c.mem.store(bus_address, width, regs[rd].wrapping_add(if rd == 15 { 4 } else { 0 }));
         if writeback {
             regs[rn] = adjusted;
         }
@@ -1183,7 +1170,7 @@ fn half_op<const EW: bool>(
         (AccessWidth::Half, address & !1)
     };
     if word & (1 << 20) != 0 {
-        let (value, cycles) = load(c, bus_address, width)?;
+        let (value, cycles) = c.mem.load(bus_address, width)?;
         if !h.charge(Ctx::<EW>::FETCH + cycles + 1) {
             return None;
         }
@@ -1199,11 +1186,11 @@ fn half_op<const EW: bool>(
         c.data = value;
         c.load_mark = h.budget;
     } else {
-        let cycles = store_cycles(c, ops, c.pc(h.idx), bus_address, width)?;
+        let cycles = c.mem.store_cycles(c.running(ops, h.idx), bus_address, width)?;
         if !h.charge(Ctx::<EW>::FETCH + cycles) {
             return None;
         }
-        store(c, bus_address, width, regs[rd]);
+        c.mem.store(bus_address, width, regs[rd]);
         if writeback {
             regs[rn] = adjusted;
         }
@@ -1246,8 +1233,9 @@ fn block_op<const EW: bool>(
         _ => return None,
     };
     if !load_list
-        && (0..count)
-            .any(|beat| store_cycles(c, ops, pc, first + 4 * beat, AccessWidth::Word).is_none())
+        && (0..count).any(|beat| {
+            c.mem.store_cycles(c.running(ops, h.idx), first + 4 * beat, AccessWidth::Word).is_none()
+        })
     {
         return None;
     }
@@ -1264,7 +1252,7 @@ fn block_op<const EW: bool>(
         let register = remaining.trailing_zeros() as usize;
         remaining &= remaining - 1;
         if load_list {
-            let (value, _) = load(c, address, AccessWidth::Word).expect("RAM block");
+            let (value, _) = c.mem.load(address, AccessWidth::Word).expect("RAM block");
             if user_bank {
                 c.core.write_user_bank_register(register, value);
             } else {
@@ -1281,7 +1269,7 @@ fn block_op<const EW: bool>(
             } else {
                 regs[register]
             };
-            store(c, address, AccessWidth::Word, value);
+            c.mem.store(address, AccessWidth::Word, value);
         }
         address = address.wrapping_add(4);
         index += 1;
@@ -1394,69 +1382,4 @@ fn stopped(h: Hot) -> Hot {
 #[inline(never)]
 fn refund(budget: i64, cycles: i64) -> i64 {
     budget + cycles
-}
-
-/// A data load at a bus-aligned address: its bus value and data cycles, or
-/// None when the ordinary bus must perform it.
-#[inline(always)]
-fn load<const EW: bool>(c: &Ctx<'_, EW>, address: u32, width: AccessWidth) -> Option<(u32, i64)> {
-    match address >> 24 {
-        3 => Some((read_ram(c.iwram, (address as usize) & (IWRAM_SIZE - 1), width), 1)),
-        2 => Some((
-            read_ram(c.ewram, (address as usize) & (EWRAM_SIZE - 1), width),
-            if width == AccessWidth::Word { 6 } else { 3 },
-        )),
-        _ => c.rom.load(address, width).map(|(value, cycles)| (value, cycles as i64)),
-    }
-}
-
-/// The data cycles of a store at a bus-aligned address that the engine
-/// may perform: to RAM, and not to a decoded instruction or to one of the
-/// two instructions prefetched after the one at `pc`.
-#[inline(always)]
-fn store_cycles<const EW: bool>(
-    c: &Ctx<'_, EW>,
-    ops: &[Op],
-    pc: u32,
-    address: u32,
-    width: AccessWidth,
-) -> Option<i64> {
-    let (cycles, code) = match address >> 24 {
-        3 => (1, c.iwram_code[((address as usize) & (IWRAM_SIZE - 1)) >> PAGE_SHIFT]),
-        2 => (
-            if width == AccessWidth::Word { 6 } else { 3 },
-            c.ewram_code[((address as usize) & (EWRAM_SIZE - 1)) >> PAGE_SHIFT],
-        ),
-        _ => return None,
-    };
-    (!code || !store_hits_code(c, ops, pc, address)).then_some(cycles)
-}
-
-/// Whether a store to the RAM word holding `address`, in a page that has
-/// held code, reaches a decoded op or the prefetch window.
-#[cold]
-#[inline(never)]
-fn store_hits_code<const EW: bool>(c: &Ctx<'_, EW>, ops: &[Op], pc: u32, address: u32) -> bool {
-    let region = address >> 24;
-    let mask = if region == 2 { EWRAM_SIZE - 1 } else { IWRAM_SIZE - 1 } as u32;
-    let word = address & mask & !3;
-    let ops = if region == Ctx::<EW>::REGION {
-        let window = pc.wrapping_add(4) & Ctx::<EW>::MASK;
-        if word.wrapping_sub(window) & Ctx::<EW>::MASK < 8 {
-            return true;
-        }
-        Some(ops)
-    } else {
-        c.other_ops
-    };
-    ops.is_some_and(|ops| ops[(word >> 2) as usize].kind != k::UNDECODED)
-}
-
-#[inline(always)]
-fn store<const EW: bool>(c: &mut Ctx<'_, EW>, address: u32, width: AccessWidth, value: u32) {
-    if address >> 24 == 3 {
-        write_ram(c.iwram, (address as usize) & (IWRAM_SIZE - 1), width, value);
-    } else {
-        write_ram(c.ewram, (address as usize) & (EWRAM_SIZE - 1), width, value);
-    }
 }

@@ -15,10 +15,10 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 mod kernel;
-pub(crate) use kernel::RomData;
 pub use kernel::{
     ArmIwramExecutionRegion, RamWords, ThumbRomRun, begin_arm_iwram_slice, fetch_arm_iwram_in_slice,
 };
+pub(crate) use kernel::{EngineMemory, RomData};
 
 pub const SCREEN_WIDTH: usize = 240;
 pub const SCREEN_HEIGHT: usize = 160;

@@ -66,7 +66,8 @@ impl Pair {
         let end = self.engine_bus.now();
         assert!(
             end <= yield_at && end > started,
-            "{context}: clock {started}..{end} vs {yield_at}"
+            "{context}: clock {started}..{end} vs {yield_at}; before {before:x?}, after {:x?}",
+            self.engine
         );
         let mut steps = 0;
         while self.reference_bus.now() < end {
@@ -323,4 +324,138 @@ fn arm_iwram_loop_runs_to_the_horizon_like_stepping() {
             }
         }
     }
+}
+
+/// A Thumb instruction drawn to cover the engine's kinds and the forms it
+/// leaves to the interpreter.
+fn thumb_instruction(random: &mut Random, index: u32, length: u32) -> u16 {
+    let bits = random.next() as u16;
+    let near = |random: &mut Random| (random.below(length + 6) as i32 - index as i32 - 5) as u16;
+    match random.below(24) {
+        0 | 1 => bits % 0x1800,
+        2 => 0x1800 | bits & 0x07ff,
+        3 | 4 => 0x2000 | bits & 0x1fff,
+        5 | 6 => 0x4000 | bits & 0x03ff,
+        7 => 0x4400 | bits & 0x03ff,
+        8 => 0x4800 | bits & 0x07ff,
+        9 => 0x5000 | bits & 0x0fff,
+        10 | 11 => 0x6000 | bits & 0x1fff,
+        12 => 0x8000 | bits & 0x0fff,
+        13 => 0x9000 | bits & 0x0fff,
+        14 => 0xa000 | bits & 0x0fff,
+        15 => 0xb000 | bits & 0xff,
+        16 => 0xb400 | bits & 0x09ff,
+        17 => 0xc000 | bits & 0x0fff,
+        18 => 0xd000 | (bits % 14) << 8 | near(random) & 0xff,
+        19 => 0xe000 | near(random) & 0x7ff,
+        20 => {
+            if bits & 1 == 0 {
+                0xf000 | (bits >> 1) & 0x0007
+            } else {
+                0xf7ff
+            }
+        }
+        21 => 0xf800 | near(random) & 0x7ff,
+        22 => 0xdf00 | bits & 0xff,
+        _ => match bits & 3 {
+            0 => 0xde00 | bits & 0xff,
+            1 => 0xb100 | bits & 0x02ff,
+            2 => 0xe800 | bits & 0x07ff,
+            _ => 0x4700 | bits & 0x0078,
+        },
+    }
+}
+
+fn thumb_cpu(random: &mut Random, pc: u32) -> Cpu {
+    let mut cpu = Cpu::init(pc, random.next() & 0xf000_0000 | 0x3f, true);
+    for register in 0..15 {
+        cpu.registers[register] = operand(random);
+    }
+    // Low registers often point at data; SP at a stack in IWRAM.
+    cpu.registers[1] = 0x0300_4000 + (random.next() & 0x3fc);
+    cpu.registers[2] = 0x0200_8000 + (random.next() & 0x3ff);
+    cpu.registers[3] = random.below(64);
+    cpu.registers[13] = 0x0300_5000 + (random.next() & 0x3fc);
+    cpu.registers[14] = pc.wrapping_add(random.below(64) * 2) | 1;
+    cpu
+}
+
+/// Thumb code from IWRAM, EWRAM and Game Pak ROM without prefetch: every
+/// run of random code, flags, wait states, horizons and page edges matches
+/// single stepping.
+#[test]
+fn thumb_engine_matches_interpreter_for_random_code() {
+    let mut random = Random(0x7eed_7b01);
+    let mut rom = vec![0u8; 0x2_0000];
+    for byte in &mut rom {
+        *byte = random.next() as u8;
+    }
+    let (mut runs, mut refusals, mut cycles) = (0, 0, 0);
+    for trial in 0..4000 {
+        let place = trial % 4;
+        let base = match place {
+            0 => 0x0300_1000,
+            1 => 0x0203_0000,
+            2 => 0x0800_7f80, // a ROM page edge
+            _ => [0x0800_2000, 0x0a00_2000, 0x0c00_2000][(trial / 4) % 3],
+        };
+        let pc = base + random.below(48) * 2;
+        let length = 8 + random.below(40);
+        let code: Vec<u16> =
+            (0..length).map(|i| thumb_instruction(&mut random, i, length)).collect();
+        let first = pc - random.below(4) * 2;
+        let mut image = rom.clone();
+        if pc >> 24 >= 8 {
+            for (i, &half) in code.iter().enumerate() {
+                let at = ((first & 0x01ff_ffff) as usize + 2 * i) % image.len();
+                image[at..at + 2].copy_from_slice(&half.to_le_bytes());
+            }
+        }
+        let (iwram, ewram) = data_setup(&mut random);
+        let cpu = thumb_cpu(&mut random, pc);
+        let waitcnt = random.next() as u16 & 0x3fff;
+        let mut pair = Pair::new(
+            &image,
+            |bus| {
+                set_waitcnt(bus, waitcnt);
+                bus.iwram[0x4000..0x6000].copy_from_slice(&iwram);
+                bus.ewram[0x8000..0xa000].copy_from_slice(&ewram);
+                if pc >> 24 < 8 {
+                    for (i, &half) in code.iter().enumerate() {
+                        let address = first + 2 * i as u32;
+                        let index = (address & 0x00ff_ffff) as usize;
+                        let ram: &mut [u8] = if address >> 24 == 3 {
+                            &mut bus.iwram[..]
+                        } else {
+                            &mut bus.ewram[..]
+                        };
+                        let index = index & (ram.len() - 1);
+                        ram[index..index + 2].copy_from_slice(&half.to_le_bytes());
+                    }
+                }
+            },
+            cpu,
+            1 + u64::from(random.below(1200)),
+        );
+        for attempt in 0..6 {
+            let budget = 1 + u64::from(random.below(if attempt == 0 { 30 } else { 300 }));
+            let yield_at = pair.engine_bus.now() + budget;
+            let before = pair.engine_bus.now();
+            if pair.compare(yield_at, &format!("trial {trial} attempt {attempt}")) {
+                runs += 1;
+                cycles += pair.engine_bus.now() - before;
+            } else {
+                refusals += 1;
+                let outcome = pair.engine.step(&mut pair.engine_bus);
+                let reference = pair.reference.step(&mut pair.reference_bus);
+                assert_eq!(outcome, reference, "trial {trial}");
+                pair.assert_equal(&format!("trial {trial} step after refusal"));
+                if !matches!(outcome, StepOutcome::Executed(_)) {
+                    break;
+                }
+            }
+        }
+    }
+    assert!(runs > 5000, "only {runs} runs ({refusals} refusals)");
+    assert!(cycles > 60_000, "only {cycles} cycles in engine runs");
 }
