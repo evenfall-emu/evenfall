@@ -10,8 +10,10 @@
 // [apu]
 
 // [video]
+pub mod video;
 
 // [bus]
+pub mod bus;
 
 // [cpu]
 pub mod cpu;
