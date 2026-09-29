@@ -430,8 +430,8 @@ impl Core {
             + u64::from(magnitude > 0xff_ffff)
     }
 
-    pub fn decode_operand2(&self, instruction: u32) -> ShifterResult {
-        if instruction & (1 << 25) != 0 {
+    pub fn decode_operand2(&self, instruction: u32, immediate: bool) -> ShifterResult {
+        if immediate {
             let rotate = ((instruction >> 8) & 15) * 2;
             let value = (instruction & 255).rotate_right(rotate);
             return ShifterResult { value, carry: (rotate != 0).then_some(value & (1 << 31) != 0) };
@@ -516,7 +516,7 @@ impl Core {
         let opcode = (instruction >> 21) & 15;
         let updates_flags = instruction & (1 << 20) != 0;
         let flags_only = (8..=11).contains(&opcode);
-        let shifted = self.decode_operand2(instruction);
+        let shifted = self.decode_operand2(instruction, instruction & (1 << 25) != 0);
         let rhs = shifted.value;
         let rn = ((instruction >> 16) & 15) as usize;
         let register_shifted = instruction & (1 << 25) == 0 && instruction & (1 << 4) != 0;
@@ -648,7 +648,7 @@ impl Core {
                 }
             }
             1 if instruction & 0x0fb0_f000 == 0x0320_f000 => {
-                self.write_psr(instruction, self.decode_operand2(instruction).value)?;
+                self.write_psr(instruction, self.decode_operand2(instruction, true).value)?;
                 return Ok(ExecuteResult::default());
             }
             2 | 3 => {
@@ -862,7 +862,7 @@ impl Core {
         debug_assert!(!register_offset || instruction & (1 << 4) == 0);
         let base = self.registers[rn];
         let offset = if register_offset {
-            self.decode_operand2(instruction).value
+            self.decode_operand2(instruction, false).value
         } else {
             instruction & 0xfff
         };
@@ -1233,6 +1233,25 @@ mod tests {
         assert!(cpu.execute_arm(&mut bus, 0xe591_f000).unwrap().branched);
         assert_eq!(bus.reads, [(0x0200_0000, AccessWidth::Word, AccessKind::Nonsequential)]);
         assert_eq!(cpu.next_instruction_address, 0x0001_8000);
+        assert_eq!(bus.internal, 1);
+    }
+
+    /// ZiGBA `executeSingleDataTransfer` / jsmolka-arm test 353: the I bit of
+    /// a transfer selects a shifted register, not a rotated immediate.
+    #[test]
+    fn register_offset_transfer_indexes_and_writes_back() {
+        let mut cpu = Core::new(0x0800_0040, 0x1f);
+        cpu.registers[0] = 32;
+        cpu.registers[1] = 1;
+        cpu.registers[2] = 0x0300_0100;
+        let mut bus = TraceBus { read_value: 32, ..TraceBus::default() };
+        cpu.execute_arm(&mut bus, 0xe482_0004).unwrap(); // STR r0, [r2], #4
+        assert_eq!(cpu.registers[2], 0x0300_0104);
+        cpu.execute_arm(&mut bus, 0xe732_3101).unwrap(); // LDR r3, [r2, -r1, LSL #2]!
+        assert_eq!(bus.writes, [(0x0300_0100, AccessWidth::Word, AccessKind::Nonsequential, 32)]);
+        assert_eq!(bus.reads, [(0x0300_0100, AccessWidth::Word, AccessKind::Nonsequential)]);
+        assert_eq!(cpu.registers[3], 32);
+        assert_eq!(cpu.registers[2], 0x0300_0100);
         assert_eq!(bus.internal, 1);
     }
 
