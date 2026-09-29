@@ -508,6 +508,7 @@ impl Core {
 
     /// ARM data processing, including legacy compare-to-PC and exception
     /// returns. The caller has already checked the instruction's condition.
+    #[inline(always)]
     pub fn execute_arm_data_processing<B: Bus>(
         &mut self,
         bus: &mut B,
@@ -609,6 +610,7 @@ impl Core {
 
     /// Execute an opcode whose condition was checked by the bounded kernel.
     /// Ordinary execution continues to enter through `execute_arm`.
+    #[inline(always)]
     pub fn execute_arm_condition_passed<B: Bus>(
         &mut self,
         bus: &mut B,
