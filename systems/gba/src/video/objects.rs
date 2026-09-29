@@ -236,8 +236,8 @@ impl Bus {
                 let (source_x, source_y) = if record.affine {
                     let cx = sampled_x as i32 - (display_width / 2) as i32;
                     let cy = sampled_y as i32 - (display_height / 2) as i32;
-                    let sx = (i32::from(pa) * cx + i32::from(pb) * cy >> 8) + (width / 2) as i32;
-                    let sy = (i32::from(pc) * cx + i32::from(pd) * cy >> 8) + (height / 2) as i32;
+                    let sx = ((i32::from(pa) * cx + i32::from(pb) * cy) >> 8) + (width / 2) as i32;
+                    let sy = ((i32::from(pc) * cx + i32::from(pd) * cy) >> 8) + (height / 2) as i32;
                     if sx < 0 || sy < 0 || sx >= width as i32 || sy >= height as i32 {
                         continue;
                     }
@@ -319,11 +319,11 @@ impl Bus {
         priority: u8,
         semi: bool,
     ) {
-        for lane in 0..8 {
-            if indices[lane] == 0 || self.line_window_masks[x + lane] & (1 << 4) == 0 {
+        for (lane, &index) in indices.iter().enumerate() {
+            if index == 0 || self.line_window_masks[x + lane] & (1 << 4) == 0 {
                 continue;
             }
-            let color = self.palette_entry_color(palette_start + usize::from(indices[lane]));
+            let color = self.palette_entry_color(palette_start + usize::from(index));
             self.compose_object_pixel(first + lane, color, priority, semi);
         }
     }
@@ -395,8 +395,8 @@ impl Bus {
         while x + 8 <= end {
             let lanes: &[u8; 8] = indices[display_x..display_x + 8].try_into().unwrap();
             if window_pass {
-                for lane in 0..8 {
-                    if lanes[lane] != 0 {
+                for (lane, &index) in lanes.iter().enumerate() {
+                    if index != 0 {
                         self.frame_obj_window[line * SCREEN_WIDTH + x + lane] = true;
                     }
                 }
