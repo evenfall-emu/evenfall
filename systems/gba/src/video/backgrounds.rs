@@ -46,8 +46,9 @@ impl Bus {
             if source == 0 {
                 return None;
             }
-            indices = self.tile_row_cache.lookup(source).indices;
-            colors = *self.tile_row_cache.colors(source, (entry >> 12) as u8);
+            let row = self.tile_row_cache.row(source, (entry >> 12) as u8);
+            indices = row.indices;
+            colors = row.colors;
             if flipped {
                 indices.reverse();
                 colors.reverse();
@@ -111,6 +112,8 @@ impl Bus {
         }
     }
 
+    // Isolate the text loop from unrelated bitmap and Bus inlining decisions.
+    #[inline(never)]
     fn render_text_tile_rows(
         &mut self,
         line: usize,
@@ -174,6 +177,8 @@ impl Bus {
         }
     }
 
+    // Keep mosaic/raster text code out of compose_scanline's hot-path codegen.
+    #[inline(never)]
     pub(super) fn render_text_background(
         &mut self,
         line: usize,

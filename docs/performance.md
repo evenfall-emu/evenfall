@@ -134,12 +134,17 @@ The [Mode 4 renderer](../systems/gba/src/video/backgrounds.rs) reads a
 contiguous VRAM row when BG2 has an identity transform, every pixel admits it,
 and no raster history changes its source or palette. Transparent index zero
 still leaves the backdrop visible; affine, mosaic, window and raster cases use
-the per-dot path. On CPU 3 with release-LTO, HLE boot and 240-frame matched
-rounds, this changed bitmap-DMA from 1.51× to 1.28× ZiGBA loop time, while
-tiles moved from 1.58× to 1.63× and affine from 1.30× to 1.33×; the full
-seven-workload geometric mean moved from 1.52× to 1.50×. A longer 600-frame
-comparison reproduced the bitmap gain and tiled slowdown. The result is a
-workload tradeoff, not an across-the-board rendering speedup.
+the per-dot path. The text renderer keeps the raster/mosaic and ordinary tile
+loops separate from `compose_scanline` so unrelated code does not alter their
+inlining. The decoded 4bpp row cache keys both source bytes and palette bank,
+avoiding repeated palette expansion across layers. On CPU 3 with release-LTO,
+HLE boot and five matched 600-frame rounds, tiles take 1.55× ZiGBA loop time
+versus 1.56× without these changes, and bitmap-DMA takes 1.30× versus 1.50×;
+the seven-workload geometric mean is 1.44× versus 1.51×. With the Bus inlining
+hints, tiles remain at 1.56× and bitmap-DMA reaches 1.24×. In 1,200 tiles
+frames, retired instructions fall from 21.80 G to 20.86 G (20.80 G with the
+Bus hints), against ZiGBA's 11.92 G. Tiled composition remains the larger
+renderer instruction gap.
 
 Stable Rust uses fixed-size lane loops for text rows, objects and color
 effects where ZiGBA uses `@Vector` operations; the loops do not reliably
@@ -165,6 +170,10 @@ On CPU 3, skipping offscreen VRAM snapshots cut bitmap-DMA to about 1.30×
 but slowed tiles to 1.64× (or 1.62× when restricted to bitmap modes).
 Inlining snapshots or separating the Mode 4 row renderer did not remove the
 tiled slowdown or improve the retained Mode 4 path; those trials were reverted.
+Force-inlining the cache-row lookup raised tile instructions from 21.43 G to
+21.85 G per 1,200 frames. Hoisting per-lane frame bounds checks with slices
+lowered instructions to 21.29 G but did not lower cycles (about 4.80 G for
+both); neither trial is retained.
 
 In a separate pinned-CPU-1 HLE comparison (matched rounds with equal final
 images), **retained** CPU work reduced the ARM-mixer ratio from 3.21× to
