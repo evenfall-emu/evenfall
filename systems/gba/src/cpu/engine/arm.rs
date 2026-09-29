@@ -5,7 +5,7 @@
 //! branch within the region adds two refill fetches.
 
 use super::mem::{Mem, Running};
-use super::{CodeCache, Load, Mmio, Op, PAGE_SHIFT, fresh_ops, split_memory};
+use super::{CodeCache, Load, Mmio, Op, PAGE_SHIFT, Reg, fresh_ops, split_memory};
 use crate::bus::{AccessWidth, BIOS_SIZE, Bus, EWRAM_SIZE, IWRAM_SIZE, PowerState, read_ram};
 use evenfall_cpu_arm::{Core, InstructionSet, Pipeline, condition_passes};
 
@@ -87,9 +87,9 @@ const FL: u8 = 3;
 const FG: u8 = 4;
 const FX: u8 = 5;
 
-const END_OP: Op = Op { kind: k::END, inner: 0, rd: 0, rn: 0, x: 0 };
-const EXIT_OP: Op = Op { kind: k::EXIT, inner: 0, rd: 0, rn: 0, x: 0 };
-const STOP_OP: Op = Op { kind: k::STOP, inner: 0, rd: 0, rn: 0, x: 0 };
+const END_OP: Op = Op { kind: k::END, inner: 0, rd: Reg::R0, rn: Reg::R0, x: 0 };
+const EXIT_OP: Op = Op { kind: k::EXIT, inner: 0, rd: Reg::R0, rn: Reg::R0, x: 0 };
+const STOP_OP: Op = Op { kind: k::STOP, inner: 0, rd: Reg::R0, rn: Reg::R0, x: 0 };
 
 fn uses_rn(opcode: u32) -> bool {
     opcode != 13 && opcode != 15
@@ -147,11 +147,11 @@ fn decode_bios(word: u32, idx: u32) -> Op {
 fn decode_unconditional(word: u32) -> Op {
     let rn = (word >> 16) & 15;
     let rd = (word >> 12) & 15;
-    let raw = |kind| Op { kind, inner: 0, rd: rd as u8, rn: rn as u8, x: word };
+    let raw = |kind| Op { kind, inner: 0, rd: Reg::new(rd), rn: Reg::new(rn), x: word };
     match (word >> 25) & 7 {
         0 => {
             if word & 0x0fff_fff0 == 0x012f_ff10 {
-                return Op { rn: (word & 15) as u8, ..raw(k::BX) };
+                return Op { rn: Reg::new(word), ..raw(k::BX) };
             }
             if word & 0x0fb0_fff0 == 0x0120_f000 {
                 return EXIT_OP; // MSR
@@ -253,8 +253,8 @@ fn decode_unconditional(word: u32) -> Op {
         5 => Op {
             kind: if word & (1 << 24) != 0 { k::BL } else { k::B },
             inner: 0,
-            rd: 0,
-            rn: 0,
+            rd: Reg::R0,
+            rn: Reg::R0,
             x: ((((word & 0x00ff_ffff) << 8) as i32 >> 8) + 2) as u32,
         },
         _ => EXIT_OP,
@@ -274,10 +274,10 @@ fn decode_data_processing(word: u32) -> Op {
         return if flags {
             EXIT_OP
         } else {
-            Op { kind: k::DP_JUMP, inner: 0, rd: 15, rn: 0, x: word }
+            Op { kind: k::DP_JUMP, inner: 0, rd: Reg::R15, rn: Reg::R0, x: word }
         };
     }
-    let pc_operand = Op { kind: k::DP_PC, inner: 0, rd: rd as u8, rn: rn as u8, x: word };
+    let pc_operand = Op { kind: k::DP_PC, inner: 0, rd: Reg::new(rd), rn: Reg::new(rn), x: word };
     let reads_pc = rn == 15 && uses_rn(opcode);
     let (form, x) = if word & (1 << 25) != 0 {
         let rotate = ((word >> 8) & 15) * 2;
@@ -321,7 +321,7 @@ fn decode_data_processing(word: u32) -> Op {
         (true, FG) => k::DPS_G,
         (true, _) => k::DPS_X,
     };
-    Op { kind: base + opcode as u8, inner: 0, rd: rd as u8, rn: rn as u8, x }
+    Op { kind: base + opcode as u8, inner: 0, rd: Reg::new(rd), rn: Reg::new(rn), x }
 }
 
 /// ARM immediate shifts (`LSR #0` means 32 and so on) with their carry out.
@@ -343,9 +343,11 @@ fn shift_immediate(value: u32, shift: u32, amount: u32, carry: u32) -> (u32, Opt
     }
 }
 
-/// The register file of a run: r0..r15, indexed by any byte so that decoded
-/// register fields need neither masks nor bounds checks.
-type Registers = [u32; 256];
+/// The register file of a run: r0..r15 alone. [`Reg`] operands index it
+/// with no bounds check, and the register numbers packed in `x` are
+/// masked. The run loop is entered again after every MMIO access, so a
+/// file padded for byte indices would be cleared that often (Thumb's is).
+type Registers = [u32; 16];
 
 /// Memory, caches and rarely changing state of a run of ARM code from IWRAM
 /// (`EW` false) or EWRAM (`EW` true).
@@ -726,7 +728,9 @@ fn complete_local<const EW: bool>(c: &mut Ctx<'_, EW>, h: Hot, access: &Mmio) ->
     if !next.charge(Ctx::<EW>::FETCH + if store { 1 } else { 2 }) {
         return Resume::Out(h);
     }
-    let value = access.perform_local(&mut c.mem.registers, &mut c.core.registers);
+    // The data cycle follows the fetch, as in [`serve`].
+    let elapsed = (c.mem.start - (h.budget - Ctx::<EW>::FETCH)) as u64;
+    let value = access.perform_local(&mut c.mem.registers, &mut c.core.registers, elapsed);
     next.next();
     c.mmio_mark = next.budget;
     if !store {
@@ -773,7 +777,7 @@ fn finish<const EW: bool>(c: Ctx<'_, EW>, hot: Hot, budget: i64) -> Option<(u64,
 fn refused_at_once(op: &Op, registers: &[u32; 16]) -> bool {
     match op.kind {
         k::EXIT => true,
-        k::BLOCK => registers[usize::from(op.rn & 15)] >> 24 == 4,
+        k::BLOCK => registers[usize::from(op.rn)] >> 24 == 4,
         _ => false,
     }
 }
@@ -782,7 +786,7 @@ fn refused_at_once(op: &Op, registers: &[u32; 16]) -> bool {
 macro_rules! go {
     ($h:ident, $c:ident, $run:expr) => {
         if !$run {
-            return stopped($h);
+            return stopped($h.budget, $h.idx, $h.cpsr);
         }
     };
 }
@@ -792,7 +796,7 @@ macro_rules! call {
     ($h:ident, $c:ident, $run:expr) => {{
         let next = $run;
         if next.idx == u32::MAX {
-            return stopped($h);
+            return stopped($h.budget, $h.idx, $h.cpsr);
         }
         $h = next;
     }};
@@ -859,10 +863,9 @@ fn run_loop<const EW: bool, const N: usize>(
     c: &mut Ctx<'_, EW>,
     state: Hot,
 ) -> Hot {
-    let mut regs: Registers = [0; 256];
-    regs[..16].copy_from_slice(&c.core.registers);
+    let mut regs: Registers = c.core.registers;
     let h = run_ops(ops, c, &mut regs, state);
-    c.core.registers.copy_from_slice(&regs[..16]);
+    c.core.registers = regs;
     h
 }
 
@@ -883,7 +886,7 @@ fn run_ops<const EW: bool, const N: usize>(
         match op.kind {
             k::UNDECODED => decode_slot(&mut ops[..], c, h.idx),
             k::END => go!(h, c, end(&mut h, c)),
-            k::STOP => return stopped(h),
+            k::STOP => return stopped(h.budget, h.idx, h.cpsr),
             k::NOP => go!(h, c, h.skip::<EW>()),
             k::B => go!(h, c, branch(&mut h, c, regs, op, false)),
             k::BL => go!(h, c, branch(&mut h, c, regs, op, true)),
@@ -1125,7 +1128,7 @@ fn run_ops<const EW: bool, const N: usize>(
             | 139
             | 207
             | 220..=239
-            | 255 => return stopped(h),
+            | 255 => return stopped(h.budget, h.idx, h.cpsr),
         }
     }
 }
@@ -1282,7 +1285,7 @@ fn dp<const EW: bool, const KIND: u8>(h: &mut Hot, regs: &mut Registers, op: &Op
 #[inline(always)]
 fn dp_body<const KIND: u8>(h: &mut Hot, regs: &mut Registers, op: &Op) {
     let carry_in = (h.cpsr >> 29) & 1;
-    let rm = regs[op.x as u8 as usize];
+    let rm = regs[(op.x & 15) as usize];
     let (rhs, carry) = match form(KIND) {
         FI => (op.x, None),
         FIC => (op.x, Some(op.x >> 31 != 0)),
@@ -1293,7 +1296,7 @@ fn dp_body<const KIND: u8>(h: &mut Hot, regs: &mut Registers, op: &Op) {
         }
         FG => shift_immediate(rm, op.x >> 8, op.x >> 16, carry_in),
         _ => {
-            let amount = regs[(op.x >> 16) as u8 as usize] as u8;
+            let amount = regs[((op.x >> 16) & 15) as usize] as u8;
             let shifted = Core::decode_register_shift(rm, (op.x >> 8) & 3, amount);
             (shifted.value, shifted.carry)
         }
@@ -1560,7 +1563,7 @@ fn dp_pc_op<const EW: bool>(
     let rn = ((word >> 16) & 15) as usize;
     let lhs = regs[rn].wrapping_add(if rn == 15 && register_shift { 4 } else { 0 });
     let flags = word & (1 << 20) != 0;
-    let rd = ((word >> 12) & 15) as u8;
+    let rd = Reg::new(word >> 12);
     alu(&mut h, regs, (word >> 21) & 15, flags, rd, lhs, rhs, carry, carry_in);
     h.next();
     Some(h)
@@ -1572,7 +1575,7 @@ fn alu(
     regs: &mut Registers,
     opcode: u32,
     flags: bool,
-    rd: u8,
+    rd: Reg,
     lhs: u32,
     rhs: u32,
     shifter_carry: Option<bool>,
@@ -1685,7 +1688,7 @@ fn immediate(regs: &Registers, op: &Op) -> u32 {
 #[inline(always)]
 fn shifted(cpsr: u32, regs: &Registers, op: &Op) -> u32 {
     let carry_in = (cpsr >> 29) & 1;
-    let offset = shift_immediate(regs[op.x as u8 as usize], op.x >> 8, op.x >> 16, carry_in).0;
+    let offset = shift_immediate(regs[(op.x & 15) as usize], op.x >> 8, op.x >> 16, carry_in).0;
     let base = regs[usize::from(op.rn)];
     if op.x >> 24 != 0 { base.wrapping_sub(offset) } else { base.wrapping_add(offset) }
 }
@@ -1693,7 +1696,7 @@ fn shifted(cpsr: u32, regs: &Registers, op: &Op) -> u32 {
 /// The address of a fast halfword transfer with a register offset.
 #[inline(always)]
 fn indexed(regs: &Registers, op: &Op) -> u32 {
-    let offset = regs[op.x as u8 as usize];
+    let offset = regs[(op.x & 15) as usize];
     let base = regs[usize::from(op.rn)];
     if op.x >> 8 != 0 { base.wrapping_sub(offset) } else { base.wrapping_add(offset) }
 }
@@ -1856,7 +1859,7 @@ fn to_bus<const EW: bool>(c: &mut Ctx<'_, EW>, access: Mmio) -> Hot {
 /// it left to the driver, if any; the run stops either way.
 #[cold]
 #[inline(never)]
-fn with_writeback<const EW: bool>(c: &mut Ctx<'_, EW>, rn: u8, base: u32) -> bool {
+fn with_writeback<const EW: bool>(c: &mut Ctx<'_, EW>, rn: Reg, base: u32) -> bool {
     if let Some(access) = &mut c.mmio {
         access.writeback = Some((rn, base));
     }
@@ -1891,8 +1894,8 @@ fn single_op<const EW: bool>(
         if byte { (AccessWidth::Byte, address) } else { (AccessWidth::Word, address & !3) };
     if word & (1 << 20) != 0 {
         let Some((value, cycles)) = c.load_any(bus_address, width) else {
-            let load = Some((rd as u8, if byte { Load::Byte } else { Load::Word }));
-            let writeback = (writeback && rn != rd).then_some((rn as u8, adjusted));
+            let load = Some((Reg::new(rd as u32), if byte { Load::Byte } else { Load::Word }));
+            let writeback = (writeback && rn != rd).then_some((Reg::new(rn as u32), adjusted));
             to_bus(c, Mmio { address, load, writeback, ..Mmio::default() });
             return None;
         };
@@ -1910,7 +1913,7 @@ fn single_op<const EW: bool>(
         let value = regs[rd].wrapping_add(if rd == 15 { 4 } else { 0 });
         let Some(cost) = c.mem.store_cost(run, bus_address, width, Ctx::<EW>::FETCH, h.budget)
         else {
-            let writeback = writeback.then_some((rn as u8, adjusted));
+            let writeback = writeback.then_some((Reg::new(rn as u32), adjusted));
             to_bus(c, Mmio { address, store: Some((value, width)), writeback, load: None });
             return None;
         };
@@ -1958,8 +1961,8 @@ fn half_op<const EW: bool>(
     if word & (1 << 20) != 0 {
         let Some((value, cycles)) = c.load_any(bus_address, width) else {
             let load = [Load::Half, Load::Half, Load::SignedByte, Load::SignedHalf];
-            let load = Some((rd as u8, load[operation as usize]));
-            let writeback = (writeback && rn != rd).then_some((rn as u8, adjusted));
+            let load = Some((Reg::new(rd as u32), load[operation as usize]));
+            let writeback = (writeback && rn != rd).then_some((Reg::new(rn as u32), adjusted));
             to_bus(c, Mmio { address, load, writeback, ..Mmio::default() });
             return None;
         };
@@ -1981,7 +1984,7 @@ fn half_op<const EW: bool>(
         let run = c.running(ops, h.idx);
         let Some(cost) = c.mem.store_cost(run, bus_address, width, Ctx::<EW>::FETCH, h.budget)
         else {
-            let writeback = writeback.then_some((rn as u8, adjusted));
+            let writeback = writeback.then_some((Reg::new(rn as u32), adjusted));
             to_bus(c, Mmio { address, store: Some((regs[rd], width)), writeback, load: None });
             return None;
         };
@@ -2058,7 +2061,7 @@ fn block_op<const EW: bool>(
             let slot: &mut [u8; 4] = (&mut ram[at..at + 4]).try_into().expect("a word");
             if load_list {
                 let value = u32::from_le_bytes(*slot);
-                regs[register] = value;
+                regs[register & 15] = value;
                 c.data = value;
             } else {
                 let value = if register == 15 {
@@ -2066,7 +2069,7 @@ fn block_op<const EW: bool>(
                 } else if writeback && register as u32 == rn && index != 0 {
                     final_base
                 } else {
-                    regs[register]
+                    regs[register & 15]
                 };
                 *slot = value.to_le_bytes();
             }
@@ -2325,7 +2328,7 @@ fn ldm_jump_op<const EW: bool>(
     while remaining != 0 {
         let register = remaining.trailing_zeros() as usize;
         remaining &= remaining - 1;
-        regs[register] = c.mem.load(address, AccessWidth::Word).expect("RAM block").0;
+        regs[register & 15] = c.mem.load(address, AccessWidth::Word).expect("RAM block").0;
         address = address.wrapping_add(4);
     }
     if writeback && list & (1 << rn) == 0 {
@@ -2411,11 +2414,13 @@ fn conditional<const EW: bool>(
 }
 
 /// The state a run stops with. Out of line, so that the compiler keeps the
-/// many exits of the dispatch loop apart from its hot path.
+/// many exits of the dispatch loop apart from its hot path. Its fields come
+/// in registers: a state stored field by field and passed by reference
+/// would be read back whole, which stalls store forwarding.
 #[cold]
 #[inline(never)]
-fn stopped(h: Hot) -> Hot {
-    std::hint::black_box(h)
+fn stopped(budget: i64, idx: u32, cpsr: u32) -> Hot {
+    Hot { budget, idx, cpsr }
 }
 
 /// Returns an overdrawn budget to where it was, off the hot path.
@@ -2436,7 +2441,7 @@ mod tests {
     fn block_kinds_match_the_block_loop_and_the_decoder() {
         for kind in 0..=u8::MAX {
             let mut h = Hot { budget: 0, idx: 0, cpsr: 0 };
-            let ran = block_body(kind, &mut h, &mut [0; 256], &Op::default());
+            let ran = block_body(kind, &mut h, &mut [0; 16], &Op::default());
             assert_eq!(in_block(kind), ran, "kind {kind}");
         }
         let mut word = 0x2545_f00d_u32;

@@ -21,19 +21,24 @@ pub(crate) struct EngineMemory<'a> {
 }
 
 /// The MMIO registers an engine run reads and writes itself: IE, IF, IME,
-/// POSTFLG and HALTCNT, and the DMA source, destination and word count
-/// latches. Their accesses schedule no device event and read no device
-/// state, so they need neither the device batch nor the clock. The bus's
-/// own MMIO paths are the reference for [`Self::load`] and [`Self::store`].
+/// POSTFLG and HALTCNT, the DMA source, destination and word count
+/// latches, and for loads DISPSTAT and VCOUNT. Their accesses schedule no
+/// device event and read no device state but the PPU's position, which the
+/// run knows from its clock (no PPU event falls inside a run), so they need
+/// neither the device batch nor the bus's clock. The bus's own MMIO paths
+/// are the reference for [`Self::load`] and [`Self::store`].
 pub(crate) struct RunRegisters<'a> {
     pub(crate) irq: &'a mut IrqRegisters,
     pub(crate) dma: &'a mut [DmaChannel; 4],
+    /// The PPU's position when the run took this view.
+    pub(crate) ppu: PpuTiming,
 }
 
 impl RunRegisters<'_> {
     /// Whether an access of `width` at the bus-aligned MMIO `address`
     /// touches only these registers. A DMA control register takes no store
-    /// here: enabling a channel schedules its transfer.
+    /// here: enabling a channel schedules its transfer; nor does DISPSTAT,
+    /// whose interrupt enables and VCOUNT setting schedule the PPU's.
     #[inline(always)]
     pub(crate) fn holds(address: u32, width: AccessWidth, store: bool) -> bool {
         // Offsets from DMA0SAD: one compare tells the DMA latches apart.
@@ -42,11 +47,27 @@ impl RunRegisters<'_> {
             // A bus-aligned access stays within one 12-byte channel.
             return !store || offset % 12 + width.bytes() as u32 <= 10;
         }
+        // A bus-aligned load at DISPSTAT or VCOUNT reads only those.
+        if !store && address.wrapping_sub(MMIO_BASE + 0x004) < 4 {
+            return true;
+        }
         IrqRegisters::holds(address, width, store)
     }
 
-    /// A load [`Self::holds`] admits, as [`Bus::read_mmio`] makes it.
-    pub(crate) fn load(&self, address: u32, width: AccessWidth) -> u32 {
+    /// A load [`Self::holds`] admits, as [`Bus::read_mmio`] makes it
+    /// `elapsed` cycles after the run took this view.
+    pub(crate) fn load(&self, address: u32, width: AccessWidth, elapsed: Cycle) -> u32 {
+        if address.wrapping_sub(MMIO_BASE + 0x004) < 4 {
+            let mut ppu = self.ppu;
+            ppu.elapse_before_boundary(elapsed);
+            let (status, line) = (u32::from(ppu.read_dispstat()), u32::from(ppu.read_vcount()));
+            return match width {
+                AccessWidth::Word => status | line << 16,
+                AccessWidth::Half if address & 2 == 0 => status,
+                AccessWidth::Half => line,
+                AccessWidth::Byte => (status | line << 16) >> ((address & 3) * 8) & 0xff,
+            };
+        }
         let offset = address.wrapping_sub(MMIO_BASE + 0xb0);
         if offset >= 0x30 {
             return self.irq.load(address, width);
@@ -484,7 +505,8 @@ impl Bus {
             game_pak_timing(self.waitcnt)
         };
         let size = self.rom.len().min(GAME_PAK_WINDOW_SIZE as usize);
-        let quiet = self.video_quiet_cycles();
+        let ppu = self.ppu_now();
+        let quiet = video_quiet_cycles(&ppu);
         EngineMemory {
             iwram: &mut self.iwram,
             ewram: &mut self.ewram,
@@ -507,28 +529,19 @@ impl Bus {
                 object_line_index: &mut self.object_line_index,
                 dispcnt: self.dispcnt,
             },
-            registers: RunRegisters { irq: &mut self.irq, dma: &mut self.dma_channels },
+            registers: RunRegisters { irq: &mut self.irq, dma: &mut self.dma_channels, ppu },
             quiet,
         }
     }
 
-    /// Cycles from now, within the device batch, during which the PPU
-    /// shows no visible dot: to the next line's start in HBlank, to the
-    /// frame's end in VBlank, zero while a visible dot is drawn.
+    /// The PPU's position now, within the device batch.
     #[inline(never)]
-    fn video_quiet_cycles(&self) -> Cycle {
+    fn ppu_now(&self) -> PpuTiming {
         let mut timing = self.ppu_timing;
         if self.batch_active {
             timing.elapse_before_boundary(self.current_cycle - self.batch_device_cycle);
         }
-        let (line, dot) = (Cycle::from(timing.line), Cycle::from(timing.cycle_in_line));
-        if line >= SCREEN_HEIGHT as Cycle {
-            (228 - line) * 1232 - dot
-        } else if dot >= 960 {
-            1232 - dot
-        } else {
-            0
-        }
+        timing
     }
 
     /// Publishes the end of an engine run that executed at least one
@@ -630,6 +643,20 @@ impl Bus {
             && self.irq.power_state == PowerState::Running
             && (irq_masked || !self.irq.irq_line)
             && limit < self.batch_deadline
+    }
+}
+
+/// Cycles from `timing`'s position during which the PPU shows no visible
+/// dot: to the next line's start in HBlank, to the frame's end in VBlank,
+/// zero while a visible dot is drawn.
+fn video_quiet_cycles(timing: &PpuTiming) -> Cycle {
+    let (line, dot) = (Cycle::from(timing.line), Cycle::from(timing.cycle_in_line));
+    if line >= SCREEN_HEIGHT as Cycle {
+        (228 - line) * 1232 - dot
+    } else if dot >= 960 {
+        1232 - dot
+    } else {
+        0
     }
 }
 
@@ -860,7 +887,7 @@ mod tests {
                 bus.write(access, value);
                 stores += 1;
             } else {
-                let loaded = registers.load(address, width);
+                let loaded = registers.load(address, width, 0);
                 assert_eq!(loaded, bus.read(access).value, "{context}");
                 loads += 1;
             }
@@ -873,9 +900,61 @@ mod tests {
         );
     }
 
+    /// DISPSTAT and VCOUNT loads of every width at every byte, `elapsed`
+    /// cycles into a run, read what `Bus::read_mmio` reads from a PPU that
+    /// the event-producing `PpuTiming::elapse` advanced as far: across
+    /// lines, HBlank, VBlank and VCOUNT matches.
+    #[test]
+    fn run_registers_read_the_lcd_status_at_the_access_cycle() {
+        let mut seed = 0x5eed_0004_u32;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let (mut lines, mut matches) = (0, 0);
+        for _ in 0..20_000 {
+            let mut ppu = PpuTiming {
+                cycle_in_line: (next() % 1232) as u16,
+                line: (next() % 228) as u16,
+                dispstat_control: next() as u16 & 0xff38,
+            };
+            if next() % 2 == 0 {
+                // A VCOUNT setting a few lines ahead, which a run may reach.
+                let ahead = (ppu.line + (next() % 4) as u16) % 228;
+                ppu.dispstat_control = (ppu.dispstat_control & 0xff) | ahead << 8;
+            }
+            let room = ppu.cycles_until_next_event();
+            let elapsed = Cycle::from(next()) % room.min(4 * 1232);
+            let mut advanced = ppu;
+            let mut events = crate::video::timing::Events::default();
+            advanced.elapse(elapsed, &mut events);
+            assert_eq!(events, crate::video::timing::Events::default());
+            lines += usize::from(advanced.line != ppu.line);
+            matches += usize::from(advanced.line == advanced.dispstat_control >> 8);
+            let mut bus = Bus::init(&[]);
+            bus.ppu_timing = advanced;
+            let width =
+                [AccessWidth::Byte, AccessWidth::Half, AccessWidth::Word][next() as usize % 3];
+            let address = MMIO_BASE + ((4 + next() % 4) & !(width.bytes() as u32 - 1));
+            let mut engine = Bus::init(&[]);
+            engine.ppu_timing = ppu;
+            let registers = engine.engine_memory(false).registers;
+            assert!(RunRegisters::holds(address, width, false));
+            assert_eq!(
+                registers.load(address, width, elapsed),
+                bus.read_mmio(address, width),
+                "{ppu:?} + {elapsed}: {address:08x} {width:?}"
+            );
+        }
+        assert!(lines > 2000 && matches > 1000, "{lines} line changes, {matches} VCOUNT matches");
+    }
+
     /// [`RunRegisters::holds`] admits exactly the accesses whose every byte
     /// is IE, IF or IME, or for stores POSTFLG or HALTCNT, or is a DMA
-    /// register other than, for stores, a control register.
+    /// register other than, for stores, a control register, or for loads
+    /// DISPSTAT or VCOUNT.
     #[test]
     fn run_registers_hold_exactly_their_bytes() {
         for store in [false, true] {
@@ -887,13 +966,14 @@ mod tests {
                         matches!(byte, 0x200..=0x203 | 0x208..=0x20b)
                             || (store && matches!(byte, 0x300 | 0x301))
                     });
+                    let lcd = !store && bytes.clone().all(|byte| (0x004..=0x007).contains(&byte));
                     let dma = bytes.clone().all(|byte| {
                         (0xb0..0xe0).contains(&byte) && !(store && (byte - 0xb0) % 12 >= 10)
                     });
                     let address = MMIO_BASE + offset;
                     assert_eq!(
                         RunRegisters::holds(address, width, store),
-                        interrupt || dma,
+                        interrupt || dma || lcd,
                         "{address:08x} {width:?} store {store}"
                     );
                 }

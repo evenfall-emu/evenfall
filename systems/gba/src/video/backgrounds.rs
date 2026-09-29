@@ -247,6 +247,8 @@ impl AffineMap<'_> {
 }
 
 /// Render one bitmap line (modes 3–5, BG2) and return the VRAM pages read.
+/// Out of line: its row loop gets registers of its own.
+#[inline(never)]
 pub(super) fn bitmap_row(
     vram: &[u8; VRAM_SIZE],
     colors: &[u16; 256],
@@ -274,11 +276,30 @@ pub(super) fn bitmap_row(
         // (ref_x >> 8) + x exactly.
         let sy = affine.ref_y >> 8;
         let sx = affine.ref_x >> 8;
-        for (x, color) in out.iter_mut().enumerate() {
-            *color = texel(sx + x as i32, sy);
-        }
         if sy < 0 || sy >= height {
+            out.fill(TRANSPARENT);
             return 0;
+        }
+        // The screen columns whose source column is in the bitmap; the
+        // texels at the others are transparent.
+        let first = (-sx).clamp(0, SCREEN_WIDTH as i32) as usize;
+        let end = (width - sx).clamp(0, SCREEN_WIDTH as i32).max(first as i32) as usize;
+        out[..first].fill(TRANSPARENT);
+        out[end..].fill(TRANSPARENT);
+        if first < end {
+            // The first shown pixel: its column, sx + first, is in the row.
+            let pixel = sy as usize * width as usize + (sx + first as i32) as usize;
+            if mode == 4 {
+                let indices = &vram[page + pixel..][..end - first];
+                for (color, &index) in out[first..end].iter_mut().zip(indices) {
+                    *color = colors[usize::from(index)];
+                }
+            } else {
+                let bytes = &vram[page + 2 * pixel..][..2 * (end - first)];
+                for (color, pair) in out[first..end].iter_mut().zip(bytes.as_chunks::<2>().0) {
+                    *color = u16::from_le_bytes(*pair) & 0x7FFF;
+                }
+            }
         }
         let bytes = if mode == 4 { 1 } else { 2 };
         let start = page + sy as usize * width as usize * bytes;

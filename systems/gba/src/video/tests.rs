@@ -1069,6 +1069,57 @@ fn layer_major_lines_match_the_front_to_back_reference() {
     assert!(counts.iter().all(|&count| count > 50), "{counts:?}");
 }
 
+/// An untransformed bitmap row, translated anywhere, shows each texel the
+/// per-pixel rule gives: the pixel at (x + ref_x / 256, ref_y / 256) of the
+/// page if that is inside the bitmap, otherwise transparent; in modes 3, 4
+/// and 5, including rows translated wholly off either side.
+#[test]
+fn untransformed_bitmap_rows_match_the_per_pixel_rule() {
+    use super::backgrounds::bitmap_row;
+    use super::history::AffineState;
+    use super::tile_row_cache::TRANSPARENT;
+    let mut seed = 0xB17_4A93;
+    let mut vram = Box::new([0u8; super::scanline_memo::VRAM_SIZE]);
+    for byte in vram.iter_mut() {
+        *byte = next(&mut seed) as u8;
+    }
+    let colors: [u16; 256] =
+        std::array::from_fn(|index| (index as u16).wrapping_mul(0x9E3) & 0x7FFF);
+    let mut shown = 0;
+    for mode in [3u16, 4, 5] {
+        let (width, height) = if mode == 5 { (160i32, 128i32) } else { (240, 160) };
+        for page in [0usize, 0xA000] {
+            if mode == 3 && page != 0 {
+                continue;
+            }
+            for sx in (-600..600).step_by(7).chain([-240, -239, -1, 0, 1, 159, 160, 239, 240]) {
+                let sy = (next(&mut seed) % (height as u32 + 8)) as i32 - 4;
+                let affine =
+                    AffineState { pa: 0x100, pc: 0, ref_x: sx << 8 | 0x5A, ref_y: sy << 8 | 0xA5 };
+                let mut out = [0u16; SCREEN_WIDTH];
+                bitmap_row(&vram, &colors, mode, page, affine, 1, &mut out);
+                for (x, &color) in out.iter().enumerate() {
+                    let column = sx + x as i32;
+                    let expected = if column < 0 || column >= width || sy < 0 || sy >= height {
+                        TRANSPARENT
+                    } else {
+                        let index = (sy * width + column) as usize;
+                        if mode == 4 {
+                            colors[usize::from(vram[page + index])]
+                        } else {
+                            u16::from_le_bytes([vram[page + 2 * index], vram[page + 2 * index + 1]])
+                                & 0x7FFF
+                        }
+                    };
+                    shown += usize::from(expected != TRANSPARENT);
+                    assert_eq!(color, expected, "mode {mode} page {page:#x} at ({sx}, {sy}) x {x}");
+                }
+            }
+        }
+    }
+    assert!(shown > 20_000, "only {shown} texels inside the bitmap");
+}
+
 /// Mid-line VRAM writes outside the pages a line reads leave it to the
 /// layer-major compositor; writes to a page it reads select the reference.
 #[test]

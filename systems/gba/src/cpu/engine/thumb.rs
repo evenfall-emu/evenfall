@@ -11,7 +11,7 @@
 //! schedule (see [`PrefetchClock`]), expressed in the run's budget.
 
 use super::mem::{Mem, Running};
-use super::{CodeCache, Load, Mmio, Op, PAGE_SHIFT, ROM_PAGE_SLOTS, fresh_ops, split_memory};
+use super::{CodeCache, Load, Mmio, Op, PAGE_SHIFT, ROM_PAGE_SLOTS, Reg, fresh_ops, split_memory};
 use crate::bus::{
     AccessKind, AccessWidth, Bus, EWRAM_SIZE, IWRAM_SIZE, PowerState, PrefetchClock, RomData,
     read_ram,
@@ -86,12 +86,17 @@ const LDRH: u8 = 5;
 const LDRB: u8 = 6;
 const LDRSH: u8 = 7;
 
-const EXIT_OP: Op = Op { kind: k::EXIT, inner: 0, rd: 0, rn: 0, x: 0 };
+const EXIT_OP: Op = Op { kind: k::EXIT, inner: 0, rd: Reg::R0, rn: Reg::R0, x: 0 };
 
 /// Decodes one Thumb instruction.
 pub(super) fn decode(i: u16) -> Op {
-    let op =
-        |kind: u8, rd: u16, rn: u16, x: u32| Op { kind, inner: 0, rd: rd as u8, rn: rn as u8, x };
+    let op = |kind: u8, rd: u16, rn: u16, x: u32| Op {
+        kind,
+        inner: 0,
+        rd: Reg::new(rd.into()),
+        rn: Reg::new(rn.into()),
+        x,
+    };
     let (low, mid) = (i & 7, (i >> 3) & 7);
     let high = (i >> 8) & 7;
     let imm5 = u32::from((i >> 6) & 31);
@@ -295,7 +300,11 @@ impl Timing for Prefetch {
     }
 }
 
-/// The register file of a run, indexed by any byte.
+/// The register file of a run, indexed by any byte: padded to 256 entries
+/// so that a register number in a byte of an op (a third operand in `x`)
+/// indexes it with no mask or bounds check. The run loop clears it on
+/// entry, which Thumb's long runs amortize; the ARM loop, entered again
+/// after every MMIO access, keeps 16 entries instead.
 type Registers = [u32; 256];
 
 /// Where the code of a run lives.
@@ -525,7 +534,7 @@ fn cached_op(code: &CodeCache, pc: u32) -> Option<Op> {
 fn refused_at_once(op: &Op, registers: &[u32; 16]) -> bool {
     match op.kind {
         k::EXIT => true,
-        k::BX => registers[usize::from(op.rn & 15)] & 1 == 0,
+        k::BX => registers[usize::from(op.rn)] & 1 == 0,
         _ => false,
     }
 }
@@ -600,7 +609,7 @@ enum Resume {
 /// run's loop refuses it as any transfer it cannot make, so that MMIO costs
 /// the loop nothing; its driver looks closer and completes it ([`serve`]).
 fn mmio_transfer(op: &Op, r: &[u32; 16]) -> Option<Mmio> {
-    let base = r[usize::from(op.rn & 15)];
+    let base = r[usize::from(op.rn)];
     let (mode, address) = match op.kind {
         k::REG..k::IMM => (op.kind - k::REG, base.wrapping_add(r[op.x as usize & 15])),
         k::IMM..=61 => {
@@ -619,7 +628,7 @@ fn mmio_transfer(op: &Op, r: &[u32; 16]) -> Option<Mmio> {
     };
     let load = match mode {
         STR | STRH | STRB => {
-            let store = Some((r[usize::from(op.rd & 15)], width));
+            let store = Some((r[usize::from(op.rd)], width));
             return Some(Mmio { address, store, ..Mmio::default() });
         }
         LDR => Load::Word,
@@ -696,11 +705,14 @@ fn complete_local<T: Timing>(
 ) -> Resume {
     let store = access.store.is_some();
     let before = h.budget;
+    let fetch = t.fetch(&h);
     let mut next = h;
-    if !next.charge(t.fetch(&h) + if store { 1 } else { 2 }) {
+    if !next.charge(fetch + if store { 1 } else { 2 }) {
         return Resume::Out(h);
     }
-    let value = access.perform_local(&mut c.mem.registers, &mut core.registers);
+    // The data cycle follows the fetch, as in [`serve`].
+    let elapsed = (c.mem.start - (before - fetch)) as u64;
+    let value = access.perform_local(&mut c.mem.registers, &mut core.registers, elapsed);
     next.idx += 1;
     t.after(&mut next, before, !store);
     c.mmio_mark = next.budget;
