@@ -784,7 +784,7 @@ fn refused_at_once(op: &Op, registers: &[u32; 16]) -> bool {
 macro_rules! go {
     ($h:ident, $c:ident, $run:expr) => {
         if !$run {
-            return stopped($h);
+            return stopped($h.budget, $h.idx, $h.cpsr);
         }
     };
 }
@@ -794,7 +794,7 @@ macro_rules! call {
     ($h:ident, $c:ident, $run:expr) => {{
         let next = $run;
         if next.idx == u32::MAX {
-            return stopped($h);
+            return stopped($h.budget, $h.idx, $h.cpsr);
         }
         $h = next;
     }};
@@ -884,7 +884,7 @@ fn run_ops<const EW: bool, const N: usize>(
         match op.kind {
             k::UNDECODED => decode_slot(&mut ops[..], c, h.idx),
             k::END => go!(h, c, end(&mut h, c)),
-            k::STOP => return stopped(h),
+            k::STOP => return stopped(h.budget, h.idx, h.cpsr),
             k::NOP => go!(h, c, h.skip::<EW>()),
             k::B => go!(h, c, branch(&mut h, c, regs, op, false)),
             k::BL => go!(h, c, branch(&mut h, c, regs, op, true)),
@@ -1126,7 +1126,7 @@ fn run_ops<const EW: bool, const N: usize>(
             | 139
             | 207
             | 220..=239
-            | 255 => return stopped(h),
+            | 255 => return stopped(h.budget, h.idx, h.cpsr),
         }
     }
 }
@@ -2412,11 +2412,13 @@ fn conditional<const EW: bool>(
 }
 
 /// The state a run stops with. Out of line, so that the compiler keeps the
-/// many exits of the dispatch loop apart from its hot path.
+/// many exits of the dispatch loop apart from its hot path. Its fields come
+/// in registers: a state stored field by field and passed by reference
+/// would be read back whole, which stalls store forwarding.
 #[cold]
 #[inline(never)]
-fn stopped(h: Hot) -> Hot {
-    std::hint::black_box(h)
+fn stopped(budget: i64, idx: u32, cpsr: u32) -> Hot {
+    Hot { budget, idx, cpsr }
 }
 
 /// Returns an overdrawn budget to where it was, off the hot path.
