@@ -12,6 +12,11 @@ use crate::types::Cycle;
 use crate::video::{AffineTransition, scanline_memo, tile_row_cache, timing::PpuTiming};
 use evenfall_state::Codec;
 
+mod kernel;
+pub use kernel::{
+    ArmIwramExecutionRegion, RamWords, ThumbRomRun, begin_arm_iwram_slice, fetch_arm_iwram_in_slice,
+};
+
 pub const SCREEN_WIDTH: usize = 240;
 pub const SCREEN_HEIGHT: usize = 160;
 const BIOS_SIZE: usize = 16 * 1024;
