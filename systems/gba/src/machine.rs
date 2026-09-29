@@ -376,6 +376,7 @@ pub struct Slice {
 }
 
 impl Machine {
+    pub const CYCLES_PER_FRAME: Cycle = 280_896;
     pub const STATE_MAGIC: &'static [u8; 8] = b"ZIGBAST1";
     pub const STATE_VERSION: u32 = 6;
     pub const MAX_STATE_PAYLOAD: usize = 1024 * 1024;

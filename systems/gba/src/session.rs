@@ -739,4 +739,100 @@ mod tests {
             Err(Error::Rewind(evenfall_state::Error::SaveStateRomMismatch))
         ));
     }
+
+    fn video_recovery_rom(fault_on_a: bool) -> [u8; 32] {
+        let words = if fault_on_a {
+            [
+                0xe59f0010_u32,
+                0xe1d020b0,
+                0xe3120001,
+                0x0fff0000,
+                0xeafffffb,
+                0xe1a00000,
+                0x04000130,
+                0,
+            ]
+        } else {
+            [
+                0xe59f0010, 0xe59f1010, 0xe1d020b0, 0xe1c120b0, 0xeafffffc, 0xe1a00000, 0x04000130,
+                0x05000000,
+            ]
+        };
+        let mut rom = [0; 32];
+        for (bytes, word) in rom.chunks_exact_mut(4).zip(words) {
+            bytes.copy_from_slice(&word.to_le_bytes());
+        }
+        rom
+    }
+
+    /// Zig: "selective Session restores exact arbitrary-cycle states and inputs across internal frame splits"
+    #[test]
+    fn selective_session_restores_exact_arbitrary_cycle_states_and_inputs_across_internal_frame_splits()
+     {
+        let rom = video_recovery_rom(false);
+        let mut full = Session::create(Config { image: &rom, ..Config::default() }).unwrap();
+        let mut selective = Session::create(Config { image: &rom, ..Config::default() }).unwrap();
+        full.machine.bus.dispcnt = 0;
+        selective.machine.bus.dispcnt = 0;
+        full.advance(100_003).unwrap();
+        selective.advance(100_003).unwrap();
+        selective.set_video_interval(16).unwrap();
+        selective.set_audio_output(false);
+        let mut reconstructed = false;
+        for index in 0..24 {
+            let deadline = full.machine.now() + Machine::CYCLES_PER_FRAME;
+            let inputs = [
+                TimedInput {
+                    at: full.machine.now() + 97,
+                    change: crate::bus::TimedInputChange::Keys(KeyState {
+                        a: index % 2 != 0,
+                        b: index % 3 == 0,
+                        ..KeyState::default()
+                    }),
+                },
+                TimedInput {
+                    at: deadline - 3,
+                    change: crate::bus::TimedInputChange::Keys(KeyState {
+                        start: index % 2 == 0,
+                        ..KeyState::default()
+                    }),
+                },
+            ];
+            let expected = full.run_slice_with_input(deadline, deadline, &inputs).unwrap();
+            let actual = selective.run_slice_with_input(deadline, deadline, &inputs).unwrap();
+            assert_eq!(actual, expected);
+            if index % 7 == 3 {
+                reconstructed |= !selective.machine.bus.is_framebuffer_canonical();
+                let at = selective.machine.now();
+                assert_eq!(selective.write_state().unwrap(), full.write_state().unwrap());
+                assert_eq!(selective.machine.now(), at);
+            }
+        }
+        assert!(reconstructed);
+        selective.set_video_interval(1).unwrap();
+        assert!(selective.video_recovery.is_none());
+        assert_eq!(selective.write_state().unwrap(), full.write_state().unwrap());
+    }
+
+    /// Zig: "selective Session load and reset replace recovery anchors transactionally"
+    #[test]
+    fn selective_session_load_and_reset_replace_recovery_anchors_transactionally() {
+        let rom = video_recovery_rom(false);
+        let mut session = Session::create(Config { image: &rom, ..Config::default() }).unwrap();
+        session.advance(73_127).unwrap();
+        let state = session.write_state().unwrap();
+        session.set_video_interval(8).unwrap();
+        for _ in 0..5 {
+            session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        }
+        let before = session.machine.now();
+        assert!(session.load_state(&[1, 2, 3]).is_err());
+        assert_eq!(session.machine.now(), before);
+        session.load_state(&state).unwrap();
+        assert_eq!(session.write_state().unwrap(), state);
+        assert_eq!(session.video_interval, 8);
+        session.reset_with_save(&[]).unwrap();
+        assert_eq!(session.machine.now(), 0);
+        assert_eq!(session.video_interval, 8);
+    }
 }
