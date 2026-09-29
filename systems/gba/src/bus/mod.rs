@@ -2370,7 +2370,7 @@ impl Bus {
         self.peek_mmio_half(address)
     }
 
-    fn write_mmio_half(&mut self, address: u32, value: u16) {
+    pub(crate) fn write_mmio_half(&mut self, address: u32, value: u16) {
         let offset = address.wrapping_sub(MMIO_BASE);
         if offset < 0x60 {
             self.scanline_memo.mark_registers();
@@ -3400,7 +3400,7 @@ impl Bus {
         read_ram(&self.palette, address as usize & (PALETTE_SIZE - 1), width)
     }
 
-    fn write_palette(&mut self, address: u32, width: AccessWidth, value: u32) {
+    pub(crate) fn write_palette(&mut self, address: u32, width: AccessWidth, value: u32) {
         let address = (if width == AccessWidth::Byte { address & !1 } else { address }) as usize
             & (PALETTE_SIZE - 1);
         let mut changed = false;
@@ -3427,7 +3427,7 @@ impl Bus {
         })
     }
 
-    fn write_vram(&mut self, address: u32, width: AccessWidth, value: u32) {
+    pub(crate) fn write_vram(&mut self, address: u32, width: AccessWidth, value: u32) {
         if width == AccessWidth::Byte {
             let Some(index) = vram_index(address & !1, self.dispcnt) else {
                 return;
@@ -3458,7 +3458,7 @@ impl Bus {
         read_ram(&self.oam, address as usize & (OAM_SIZE - 1), width)
     }
 
-    fn write_oam(&mut self, address: u32, width: AccessWidth, value: u32) {
+    pub(crate) fn write_oam(&mut self, address: u32, width: AccessWidth, value: u32) {
         if width == AccessWidth::Byte {
             return;
         }
