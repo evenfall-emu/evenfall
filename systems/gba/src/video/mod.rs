@@ -6,3 +6,6 @@ mod objects;
 mod render;
 pub mod scanline_memo;
 pub mod tile_row_cache;
+
+#[cfg(test)]
+mod tests;

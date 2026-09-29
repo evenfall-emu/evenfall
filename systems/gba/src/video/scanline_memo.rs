@@ -100,6 +100,7 @@ pub enum UnmarkedChange {
     Oam,
 }
 
+#[cfg(any(debug_assertions, test))]
 #[derive(Clone)]
 struct Verification {
     palette: [u8; PALETTE_SIZE],
@@ -110,6 +111,11 @@ struct Verification {
     previous_line: usize,
 }
 
+#[cfg(not(any(debug_assertions, test)))]
+#[derive(Clone, Default)]
+struct Verification;
+
+#[cfg(any(debug_assertions, test))]
 impl Default for Verification {
     fn default() -> Self {
         Self {
@@ -211,10 +217,14 @@ impl<R: Copy + PartialEq + Default, const L: usize> Memo<R, L> {
         memory: Memory<'_>,
         object_rows: fn(u16, u16) -> Option<ObjectRows>,
     ) {
-        let snapshot = if CHECK { self.verify_marks(line, &memory) } else { false };
+        #[cfg(any(debug_assertions, test))]
+        let snapshot = self.verify_marks(line, &memory);
+        #[cfg(not(any(debug_assertions, test)))]
+        let _ = line;
         if self.changes.memory {
             self.apply_memory_changes(memory.oam, object_rows);
         }
+        #[cfg(any(debug_assertions, test))]
         if snapshot {
             self.verification.marks = Changes::default();
         }
@@ -228,9 +238,8 @@ impl<R: Copy + PartialEq + Default, const L: usize> Memo<R, L> {
     ) {
         let changes = std::mem::take(&mut self.changes);
         self.changes.registers = self.changes_registers;
-        if CHECK {
-            self.verification.marks.add(changes);
-        }
+        #[cfg(any(debug_assertions, test))]
+        self.verification.marks.add(changes);
         let mut stale = [false; L];
         if changes.oam && self.oam != *oam {
             for object in 0..OAM_SIZE / 8 {
@@ -313,11 +322,13 @@ impl<R: Copy + PartialEq + Default, const L: usize> Memo<R, L> {
         self.valid.fill(false);
         self.changes = Changes::unknown();
         self.changes_registers = true;
-        if CHECK {
+        #[cfg(any(debug_assertions, test))]
+        {
             self.verification.snapshot_valid = false;
         }
     }
 
+    #[cfg(any(debug_assertions, test))]
     fn verify_marks(&mut self, line: usize, memory: &Memory<'_>) -> bool {
         let previous = std::mem::replace(&mut self.verification.previous_line, line);
         if line > previous {
@@ -341,6 +352,7 @@ impl<R: Copy + PartialEq + Default, const L: usize> Memo<R, L> {
         true
     }
 
+    #[cfg(any(debug_assertions, test))]
     pub fn unmarked_change(&self, memory: &Memory<'_>) -> Option<UnmarkedChange> {
         let verification = &self.verification;
         if !verification.snapshot_valid {
