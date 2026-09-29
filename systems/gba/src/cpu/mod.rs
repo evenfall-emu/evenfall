@@ -8,7 +8,7 @@ use crate::bus::{
 pub use crate::multiboot::{
     Encoder as MultiBootEncoder, Mode as MultiBootMode, Parameters as MultiBootParameters,
 };
-use evenfall_cpu_arm::{Core, Pipeline};
+use evenfall_cpu_arm::{ArmAluHandler, Core, Pipeline};
 use evenfall_state::Codec;
 use std::ops::{Deref, DerefMut};
 
@@ -1266,10 +1266,12 @@ impl Cpu {
                 // after a fall-through the kernel's Core otherwise still held
                 // the address from the prior instruction.
                 self.core.next_instruction_address = state.pc8.wrapping_sub(8);
-                let execution = self
-                    .core
-                    .execute_arm_condition_passed(&mut state.region, instruction)
-                    .expect("an admitted ARM instruction cannot fault");
+                let execution = if let Some(handler) = ArmAluHandler::decode(instruction) {
+                    Ok(handler.execute(&mut self.core, &mut state.region, instruction))
+                } else {
+                    self.core.execute_arm_condition_passed(&mut state.region, instruction)
+                }
+                .expect("an admitted ARM instruction cannot fault");
                 if execution.branched {
                     let target = self.core.next_instruction_address;
                     state.pc8 = target;
