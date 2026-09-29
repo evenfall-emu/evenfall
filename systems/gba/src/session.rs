@@ -1086,6 +1086,41 @@ mod tests {
         assert_eq!(selective.write_state().unwrap(), full.write_state().unwrap());
     }
 
+    /// Zig: "selective recovery reserves bounded history and preserves failing instruction pixels"
+    #[test]
+    fn selective_recovery_bounds_history_and_preserves_faulting_instruction_pixels() {
+        let rom = video_recovery_rom(true);
+        let mut full = Session::create(Config { image: &rom, ..Config::default() }).unwrap();
+        let mut selective = Session::create(Config { image: &rom, ..Config::default() }).unwrap();
+        full.machine.bus.dispcnt = 0;
+        selective.machine.bus.dispcnt = 0;
+        selective.set_video_interval(16).unwrap();
+        for _ in 0..4 {
+            full.advance(full.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+            selective.advance(selective.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        }
+        assert!(!selective.machine.bus.is_framebuffer_canonical());
+        for _ in 0..4100 {
+            full.set_keys(KeyState::default()).unwrap();
+            selective.set_keys(KeyState::default()).unwrap();
+        }
+        full.advance(full.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        selective.advance(selective.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        full.set_keys(KeyState { a: true, ..KeyState::default() }).unwrap();
+        selective.set_keys(KeyState { a: true, ..KeyState::default() }).unwrap();
+        let expected = full.advance(full.machine.now() + 100).unwrap();
+        let actual = selective.advance(selective.machine.now() + 100).unwrap();
+        assert_eq!(actual, expected);
+        assert!(selective.machine.fault().is_some());
+        for _ in 0..4100 {
+            selective.set_keys(KeyState::default()).unwrap();
+        }
+        let cycle = selective.machine.now();
+        assert_eq!(full.machine.framebuffer(), selective.canonical_framebuffer().unwrap());
+        assert_eq!(selective.machine.now(), cycle);
+        assert!(matches!(selective.write_state(), Err(Error::State(StateError::MachineFaulted))));
+    }
+
     /// Zig: "selective Session load and reset replace recovery anchors transactionally"
     #[test]
     fn selective_session_load_and_reset_replace_recovery_anchors_transactionally() {
