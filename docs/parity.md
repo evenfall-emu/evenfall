@@ -80,6 +80,7 @@ every machine. Compare saved traces independently with:
 
 ```sh
 cargo run -p evenfall-parity -- compare target/parity/traces/SCENARIO/oracle.trace target/parity/traces/SCENARIO/rust-slice-0.trace
+cargo run -p evenfall-parity -- compare target/parity/traces/probe-link/oracle-machine-1.trace target/parity/traces/probe-link/rust-slice-0-machine-1.trace
 ```
 
 The compact `EFPAR01\0` binary format is little-endian: an eight-byte magic,
