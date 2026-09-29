@@ -17,6 +17,7 @@ pub mod types;
 pub mod video;
 
 // [apu]
+pub mod apu;
 
 // [video]
 
