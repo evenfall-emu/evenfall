@@ -143,29 +143,33 @@ matched rounds in one run, against the front-to-back design it replaces:
 
 | Workload    | Before | After | Instructions before → after (1,200 frames) |
 | ----------- | -----: | ----: | ------------------------------------------ |
-| idle        |  1.00× | 0.58× | 0.38 G → 0.26 G (ZiGBA 0.19 G)             |
-| arm-mixer   |  1.99× | 1.68× | 29.31 G → 25.26 G (ZiGBA 14.08 G)          |
-| thumb-logic |  1.55× | 1.23× | 18.97 G → 15.56 G (ZiGBA 11.05 G)          |
-| tiles       |  1.53× | 0.44× | 19.98 G → 8.31 G (ZiGBA 11.91 G)           |
-| affine      |  1.22× | 0.99× | 18.59 G → 15.30 G (ZiGBA 13.04 G)          |
-| bitmap-DMA  |  1.13× | 0.71× | 27.20 G → 18.19 G (ZiGBA 21.64 G)          |
-| audio       |  1.30× | 0.91× | 12.05 G → 8.53 G (ZiGBA 8.24 G)            |
-| geomean     |  1.36× | 0.86× |                                            |
+| idle        |  1.05× | 0.59× | 0.38 G → 0.26 G (ZiGBA 0.19 G)             |
+| arm-mixer   |  1.99× | 1.69× | 29.31 G → 25.25 G (ZiGBA 14.08 G)          |
+| thumb-logic |  1.55× | 1.29× | 18.97 G → 15.55 G (ZiGBA 11.05 G)          |
+| tiles       |  1.52× | 0.43× | 19.98 G → 8.17 G (ZiGBA 11.91 G)           |
+| affine      |  1.21× | 0.93× | 18.59 G → 14.16 G (ZiGBA 13.04 G)          |
+| bitmap-DMA  |  1.12× | 0.70× | 27.20 G → 18.15 G (ZiGBA 21.64 G)          |
+| audio       |  1.31× | 0.92× | 12.05 G → 8.53 G (ZiGBA 8.24 G)            |
+| geomean     |  1.36× | 0.85× |                                            |
 
 Ratios are Evenfall/ZiGBA loop time; every final image agrees. In tiles the
 renderer now retires fewer instructions than the Thumb kernel, and host
-cycles fall from 4.67 G to 1.34 G per 1,200 frames against ZiGBA's 3.00 G.
+cycles fall from 4.65 G to 1.30 G per 1,200 frames against ZiGBA's 3.00 G.
+Thumb-logic's ratio varies between runs (1.23× in another) with unchanged
+instruction counts.
 Bitmap-DMA gains most from its VRAM history: writes to the hidden page during
 HDraw give 45% of its lines history, and the compositor keeps them because
-none of the written pages is read. The kernel variants cost about 0.4 s on a
-release-LTO one-line rebuild (6.6 s → 7.0 s) and under 0.1 s on `release`.
+none of the written pages is read. The kernel and row variants cost about 0.6 s on a release-LTO one-line
+rebuild of the harness (6.5 s → 7.1 s) and 0.1 s on a `release` one
+(1.9 s → 2.0 s).
 
 The WebAssembly module, measured in Node with
 [`tools/bench/wasm.mjs`](../tools/bench/README.md#webassembly) on the same
-CPU and ROMs, takes 0.60× the loop time of ZiGBA's shipped ReleaseSafe
-module with scalar lanes and 0.50× with `simd128` (geometric means; tiles
-0.58× and 0.27×), against 0.82× before this design. The `simd128` module is
-1% larger and slower on no workload.
+CPU and ROMs, takes 0.58× the loop time of ZiGBA's shipped ReleaseSafe
+module with scalar lanes and 0.48× with `simd128` (geometric means; tiles
+0.46× and 0.25×, affine 0.64× and 0.58×), against 0.82× before this design
+and 0.88× for ZiGBA built ReleaseFast. The `simd128` module is 0.7% larger
+(875,620 against 869,231 bytes) and slower on no workload.
 
 The front-to-back reference keeps fixed-size lane loops for text rows,
 objects and color effects where ZiGBA uses `@Vector` operations; the loops do

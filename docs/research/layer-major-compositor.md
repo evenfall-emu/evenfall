@@ -15,26 +15,31 @@ reference and draw every line with raster history.
 
 1. **Background rows.** Each enabled background of the display mode writes
    240 colors; bit 15 marks a transparent pixel (palette colors are 15-bit).
-   - Text rows write whole 8-pixel tiles into a 256-entry buffer at
-     `8 - (hofs & 7) + 8k`, so the partly scrolled first tile needs no
-     special case. A 4bpp tile row decodes one byte into two colors through a
-     per-bank table built on first use after a palette change
+   - Text rows write 31 whole 8-pixel tiles into a 256-entry buffer, tile
+     `k` at `8k`, and the kernel reads the line from offset `hofs & 7`, so
+     the partly scrolled first tile needs no special case. The line's map
+     entries are copied first. A 4bpp tile row decodes one byte into two
+     colors through per-bank tables built once after a palette change
      ([`tile-row-cache.md`](tile-row-cache.md)); a horizontal flip reverses
      the row's nibbles before decoding. Vertical mosaic selects the source
      line and horizontal mosaic repeats each block's first pixel.
    - Affine rows step the reference point by PA and PC per pixel. A map that
      lies wholly in BG VRAM is read through power-of-two masks with the map
-     size and wrap mode as const parameters; maps that run past BG VRAM, and
-     mosaic, use a checked per-sample form that reads tile zero there, like
-     the per-dot renderer.
+     size and wrap mode as const parameters; with PA 1.0 and PC 0 the row
+     reads one map row and is rendered a tile at a time like a text row. Maps
+     that run past BG VRAM, and mosaic, use a checked per-sample form that
+     reads tile zero there, like the per-dot renderer.
    - Bitmap rows copy one (possibly translated) source row when PA is 1.0,
      PC is 0 and mosaic is off; otherwise they sample like affine rows.
 2. **Object rows.** Objects are visited in descending OAM order, as in
    ZiGBA. Every opaque pixel overwrites the _front_ row, so it ends holding
    the lowest-indexed object, and replaces the _minimum_ row when its
    priority is at or below the stored one, so that row ends holding the
-   smallest priority, ties to the lower index. Regular, affine, mosaic and
-   8bpp objects all use the reference traversal; only the pixel sink differs.
+   smallest priority, ties to the lower index. The line's object list comes
+   from the compacted OAM, which records per line the objects that cover it.
+   Regular objects decode whole tile rows, non-mosaic affine objects step
+   their matrix per pixel, and mosaic objects use the reference per-pixel
+   loop with a row sink.
 3. **Kernel.** For each group of eight pixels, `compose_line` keeps the top
    and second surfaces (color and a meta word: layer, blend flags, priority)
    in registers. It starts from the backdrop and paints the enabled
@@ -110,9 +115,9 @@ and after this design:
 
 | Workload   | ZiGBA            | Before           | After            |
 | ---------- | ---------------- | ---------------- | ---------------- |
-| tiles      | 11.91 G / 3.00 G | 19.98 G / 4.67 G | 8.31 G / 1.34 G  |
-| affine     | 13.04 G / 2.58 G | 18.59 G / 3.10 G | 15.30 G / 2.52 G |
-| bitmap-dma | 21.64 G / 4.00 G | 27.20 G / 4.50 G | 18.19 G / 2.80 G |
+| tiles      | 11.91 G / 3.00 G | 19.98 G / 4.65 G | 8.17 G / 1.30 G  |
+| affine     | 13.04 G / 2.59 G | 18.59 G / 3.08 G | 14.16 G / 2.36 G |
+| bitmap-dma | 21.64 G / 4.00 G | 27.20 G / 4.49 G | 18.15 G / 2.75 G |
 | idle       | 0.19 G / 0.08 G  | 0.38 G / 0.08 G  | 0.26 G / 0.04 G  |
 
 Loop-time ratios from the benchmark runner are in
@@ -145,8 +150,7 @@ What did not pay:
 
 - The `simd128` lanes are checked only through whole-frame agreement with the
   scalar build; no unit test runs inside WebAssembly.
-- Affine rows still cost about 23 host instructions per pixel; a rotation
-  that keeps within one tile column could reuse tile lookups.
+- Rotated affine rows still cost about 23 host instructions per pixel.
 - Lines with other raster histories could be split into segments at their
   recorded dots instead of using the reference passes, if a workload shows
   them to matter.
