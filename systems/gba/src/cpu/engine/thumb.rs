@@ -1547,7 +1547,13 @@ fn jump<const N: usize, T: Timing>(
         h.idx = slot;
         return Flow::Next;
     }
-    far_jump(h, c, t, target, extra)
+    match far_jump(*h, c, t, target, extra) {
+        Some(next) => {
+            *h = next;
+            Flow::Far(target)
+        }
+        None => Flow::Refused,
+    }
 }
 
 /// Charges a branch to `target` to `h` if it fits; otherwise leaves `h` as
@@ -1569,11 +1575,12 @@ fn branch<T: Timing>(h: &mut Hot, c: &Ctx<'_>, t: T, target: u32, extra: i64) ->
     fits
 }
 
-/// A branch out of the page, if the target is code the engine may run in
-/// the same region and Game Pak window.
+/// The state after a branch out of the page, if the target is code the
+/// engine may run in the same region and Game Pak window. By value, so
+/// that the loop's state has no address and can live in registers.
 #[cold]
 #[inline(never)]
-fn far_jump<T: Timing>(h: &mut Hot, c: &mut Ctx<'_>, t: T, target: u32, extra: i64) -> Flow {
+fn far_jump<T: Timing>(h: Hot, c: &mut Ctx<'_>, t: T, target: u32, extra: i64) -> Option<Hot> {
     let pc = c.pc(h.idx);
     let same = match c.place {
         Place::Rom => {
@@ -1586,10 +1593,8 @@ fn far_jump<T: Timing>(h: &mut Hot, c: &mut Ctx<'_>, t: T, target: u32, extra: i
             target >> 24 == region && target & !mask != (region << 24 | (0x00ff_ffff & !mask))
         }
     };
-    if !same || !branch(h, c, t, target, extra) {
-        return Flow::Refused;
-    }
-    Flow::Far(target)
+    let mut next = h;
+    (same && branch(&mut next, c, t, target, extra)).then_some(next)
 }
 
 /// The page slot of an absolute branch target.
