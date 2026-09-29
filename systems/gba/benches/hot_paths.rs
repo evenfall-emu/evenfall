@@ -84,7 +84,7 @@ fn save_decode(bencher: divan::Bencher) {
 fn renderer_frame(bencher: divan::Bencher) {
     let mut bus = Box::new(Bus::init_with_save(&[], Type::None));
     bus.dispcnt = 3 | (1 << 10);
-    for (i, pixel) in bus.vram[..240 * 160 * 2].chunks_exact_mut(2).enumerate() {
+    for (i, pixel) in bus.vram[..240 * 160 * 2].as_chunks_mut::<2>().0.iter_mut().enumerate() {
         pixel.copy_from_slice(&((i as u16) & 0x7fff).to_le_bytes());
     }
     bencher.bench_local(|| {

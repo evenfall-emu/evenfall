@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err(usage().into());
     }
     let bios = bios_path.as_ref().map(fs::read).transpose()?.unwrap_or_default();
-    if bios.len() > 16 * 1024 {
+    if bios_path.is_some() && bios.len() != 16 * 1024 {
         return Err(usage().into());
     }
     let mut machine = Machine::new(Config {
