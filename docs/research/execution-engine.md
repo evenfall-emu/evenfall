@@ -23,19 +23,30 @@ instructions, however execution is sliced:
   budget, the cycles left before `min(yield point, device deadline − 1)`,
   and stops _before_ any instruction that would not fit. No device event
   can fall inside a run, so devices need no attention until it ends.
-- **Refusals.** A run also stops before anything it does not model: MMIO,
-  SWI, PSR writes, mode and instruction-set changes, BIOS and HLE code, a
-  pending interrupt, DMA, and stores that reach code (below). The
-  interpreter then executes that instruction. A refused run changes nothing.
-  When the cached op at the entry address is certainly refused with the
-  current registers (an op the engine never runs, BX to ARM, a transfer to
-  MMIO or, in ARM code, through a base register pointing at MMIO), the run
-  is refused before any setup: code that writes several I/O registers in a
-  row, and interrupt handlers that start by reading them, would otherwise
-  pay a run's setup for each.
-- **Exit state.** Registers live in a local 256-entry array (any byte
-  indexes it, so decoded register fields need no masks) and the CPSR or the
-  Thumb flags in host registers. r15, the two-instruction pipeline, the next
+- **Refusals.** A run also stops before anything it does not model: SWI,
+  PSR writes, mode and instruction-set changes, HLE code, MMIO accesses the
+  device batch cannot take, a pending interrupt, DMA, and stores that reach
+  code (below). The interpreter then executes that instruction. A refused
+  run changes nothing. When the cached op at the entry address is certainly
+  refused with the current registers (an op the engine never runs, BX to
+  ARM, or in ARM code a block transfer through a base register pointing at
+  MMIO), the run is refused before any setup.
+- **MMIO.** A single MMIO load or store runs at the instruction's cycle.
+  IE, IF, IME, POSTFLG, HALTCNT and the DMA source, destination and count
+  latches are read and written by the run itself, which stops only when a
+  store halts the CPU or raises an IRQ it takes. Other registers the device
+  batch can take go through the bus between passes of the same run; a store
+  that can schedule no device event keeps the run's device deadline. Code
+  that writes several I/O registers in a row, and interrupt handlers that
+  start by reading them, stay in one run.
+- **BIOS.** ARM code in the BIOS runs in the IWRAM loop with BIOS fetch
+  timing and read protection, and BX, loads of pc and data processing into
+  pc switch between the BIOS and IWRAM op arrays without leaving the run.
+- **Exit state.** Registers live in a local array and the CPSR or the Thumb
+  flags in host registers. The Thumb array has 256 entries, so any byte of
+  an op indexes it without a mask; the ARM loop, entered again after each
+  MMIO access, keeps the 16 registers alone, with register numbers typed so
+  that they need no bounds check. r15, the two-instruction pipeline, the next
   instruction address, the open-bus latch, the next fetch's access kind and
   the Game Pak prefetch buffer are materialized only when a run stops.
 - **Entry state.** A run starts only if the pipeline holds what memory holds
@@ -146,9 +157,9 @@ pinned CPU 1, the difference between 330 and 30 frames:
 
 | Loop                               | Interpreter kernels | Engine |
 | ---------------------------------- | ------------------: | -----: |
-| ARM ALU operations from IWRAM      |                 192 |   19.0 |
-| ARM IWRAM loads and stores         |                 235 |   37.8 |
-| Thumb ALU operations from Game Pak |                 479 |   37.1 |
+| ARM ALU operations from IWRAM      |                 192 |   19.8 |
+| ARM IWRAM loads and stores         |                 235 |   38.1 |
+| Thumb ALU operations from Game Pak |                 479 |   35.0 |
 
 ZiGBA's threaded kernels take 47, 103 and 184.
 
@@ -195,6 +206,7 @@ the loop worked on a local copy.
 
 Thumb code runs without blocks (see above); a design that costs nothing per
 op when no block leads, such as a separate block kind chosen at decode,
-might recover the diagnostic loop's gain without the dispatch cost. Block transfers to video memory, MMIO accesses that cannot move
-a device deadline, and BIOS code still go to the interpreter. Games with
+might recover the diagnostic loop's gain without the dispatch cost. Block
+transfers to video memory or MMIO, MMIO accesses the device batch cannot
+take, and Thumb code in the BIOS still go to the interpreter. Games with
 self-modifying code in hot loops pay for exits at each store into code.
