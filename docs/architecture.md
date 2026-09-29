@@ -42,7 +42,8 @@ compares byte-exact observations without depending on an ISA.
 implements `System`. It owns the CPU and Bus, chooses HLE, skip-BIOS or
 external-BIOS boot, runs one step or a bounded slice, latches typed faults,
 offers inspection and exposes state save/load. Construction allocates the
-large machine directly on the heap; the Bus owns its ROM and BIOS copies.
+large machine directly on the heap; Session and Bus share immutable ROM and
+BIOS handles, including during transactional scratch loads and resets.
 `run_linked_until` schedules connected machines together. No filesystem,
 audio device or wall clock belongs in `Machine`.
 

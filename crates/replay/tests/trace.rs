@@ -3,8 +3,8 @@ use evenfall_host::{
     VideoFormat,
 };
 use evenfall_replay::{
-    Assets, BootMode, Config, Cpu, HostAction, HostCommand, Input, SaveType, Scenario, Trace,
-    compare, run, run_with_host_actions,
+    Assets, BootMode, Config, Connection, Cpu, HostAction, HostCommand, Input, Link, Peer,
+    SaveType, Scenario, Trace, compare, run, run_with_host_actions,
 };
 
 struct Fake {
@@ -128,6 +128,7 @@ fn scenario() -> Scenario<u16> {
             tilt: None,
             rumble: false,
         },
+        link: None,
         inputs: vec![
             Input { at: 5, change: 3 },
             Input { at: 13, change: 7 },
@@ -140,6 +141,27 @@ fn scenario() -> Scenario<u16> {
         terminal_pc: None,
         terminal_r12: None,
     }
+}
+
+#[test]
+fn linked_scenarios_require_valid_cable_cardinality_and_no_ignored_inputs() {
+    let mut case = scenario();
+    case.inputs.clear();
+    let peer = Peer {
+        assets: case.assets.clone(),
+        config: case.config.clone(),
+        terminal_pc: Some(0x0800_0304),
+        terminal_r12: Some(0xa5),
+    };
+    case.link = Some(Link { connection: Connection::Cable2p, peers: vec![peer.clone()] });
+    assert!(case.validate().is_ok());
+    assert!(run(&mut Fake::new(), &case, 17, cpu).is_err()); // Must not run machine 0 alone.
+    case.link.as_mut().unwrap().peers.push(peer);
+    assert!(case.validate().is_err()); // 2p cannot silently omit a third machine.
+    case.link.as_mut().unwrap().connection = Connection::CableMulti;
+    assert!(case.validate().is_ok());
+    case.inputs.push(Input { at: 20, change: 1 });
+    assert!(case.validate().is_err()); // No linked input may be silently ignored.
 }
 
 fn cpu(machine: &Fake) -> Cpu {

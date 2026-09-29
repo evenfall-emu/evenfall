@@ -3,8 +3,11 @@
 
 Usage: python3 tools/parity/generate_scenarios.py target/parity/baseline-hle-direct.log
        python3 tools/parity/generate_scenarios.py --bios
+       python3 tools/parity/generate_scenarios.py --linked
 Validator cycle counts choose *duration*, not expected state bytes. The
 second form derives external/skip-BIOS variants from the existing HLE manifests.
+The third form follows the linked probe pairings and expected reports in
+refs/zigba/test/probe_cases.zig.
 The committed manifests are consumed directly; regeneration is not required to run.
 """
 
@@ -84,6 +87,36 @@ def bios_variants():
         result["config"]["boot"] = "skip_bios"
         if path.stem == "bench-idle":
             result["sliceCycles"].append("1232")
+        (OUT / (result["name"] + ".json")).write_text(json.dumps(result, indent=2) + "\n")
+
+
+def linked_variants():
+    # Cable order, connection and reports match probe_cases.zig linked(...).
+    cases = (
+        ("link", "cable_2p", ("link_parent", "link_child"), (0x5A, 0xA5), 1123584),
+        ("multi4", "cable_multi", ("multi4_parent", "multi4_child1", "multi4_child2", "multi4_child3"), (0x4444, 0x3333, 0x4444, 0x1111), 1123584),
+        ("stop-sio", "cable_multi", ("multi_parent", "stop_sio_child"), (0xABCD, 0x1234), 1123584),
+        ("uart", "cable_2p", ("uart_tx", "uart_rx"), (0, 0x3C5AA5), 1123584),
+        ("mb2slave", "cable_multi", ("multiboot_2slave_parent", "multiboot_2slave_child", "multiboot_2slave_child"), (0, 0, 0), 3000000),
+        ("mb2mhz", "cable_2p", ("multiboot_2mhz_parent", "multiboot_normal_child"), (0, 0), 1700000),
+    )
+    for case, connection, roms, reports, end in cases:
+        def peer(rom, report):
+            return {
+                "assets": {"rom": "../../../probe/build/" + rom + ".gba"},
+                "config": {"boot": "hle", "saveType": "auto"},
+                "terminalPc": 0x08000304,
+                "terminalR12": report,
+            }
+
+        first = peer(roms[0], reports[0])
+        result = {
+            "name": "probe-" + case, **first,
+            "link": {"connection": connection, "peers": [peer(rom, report) for rom, report in zip(roms[1:], reports[1:])]},
+            "inputs": [], "endCycle": str(end),
+            "checkpoints": [str(n) for n in (20000, 40000, 280896, 1123584, 2247168) if n < end] + [str(end)],
+            "sliceCycles": ["20000", "70224"],
+        }
         (OUT / (result["name"] + ".json")).write_text(json.dumps(result, indent=2) + "\n")
 
 
@@ -172,5 +205,7 @@ def main(log):
 if __name__ == "__main__":
     if sys.argv[1:] == ["--bios"]:
         bios_variants()
+    elif sys.argv[1:] == ["--linked"]:
+        linked_variants()
     else:
         main(sys.argv[1])
