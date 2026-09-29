@@ -302,7 +302,7 @@ export function ProgressDialog({
           disabled={busy || !choice}
           onClick={() => choice && onChoose(choice)}
         >
-          Use selected progress
+          Confirm
         </button>
       </DialogActions>
     </Dialog>
@@ -435,7 +435,7 @@ export function NewPlaythroughDialog({
             className={button("primary", "lg")}
             disabled={busy || !trimmed || !hash}
           >
-            Create &amp; play
+            Create
           </button>
         </DialogActions>
       </form>

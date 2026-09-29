@@ -366,10 +366,10 @@ test("Choose file stores only a ROM the game wants, then plays it", async ({
   const create = page.getByRole("dialog", { name: "New playthrough" });
   await create.getByRole("textbox", { name: "Name" }).fill("  ");
   await expect(
-    create.getByRole("button", { name: "Create & play" }),
+    create.getByRole("button", { name: "Create", exact: true }),
   ).toBeDisabled();
   await create.getByRole("textbox", { name: "Name" }).fill("Hard mode");
-  await create.getByRole("button", { name: "Create & play" }).click();
+  await create.getByRole("button", { name: "Create", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Cedar Saga", exact: true }),
   ).toBeVisible();
@@ -468,7 +468,7 @@ test("playthrough menus rename, and delete after confirmation", async ({
   await details.getByRole("button", { name: "New playthrough" }).click();
   const create = page.getByRole("dialog", { name: "New playthrough" });
   await create.getByRole("textbox", { name: "Name" }).fill("Second");
-  await create.getByRole("button", { name: "Create & play" }).click();
+  await create.getByRole("button", { name: "Create", exact: true }).click();
   await expect(page.getByLabel(/^Game screen/)).toBeVisible();
   await page.getByRole("button", { name: "Library", exact: true }).click();
   await expect(runsIn(details)).toHaveCount(2);
