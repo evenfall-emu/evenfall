@@ -1,6 +1,9 @@
 //! GBA CPU state and the scheduling seam around the ARM7TDMI core.
 
-use crate::bus::{Access, AccessKind, AccessSource, AccessWidth, Bus, InstructionFetchRegion};
+use crate::bus::{
+    Access, AccessKind, AccessSource, AccessWidth, Bus, InstructionFetchRegion, PowerState,
+    ThumbStream,
+};
 use evenfall_cpu_arm::{Core, Pipeline};
 use evenfall_state::Codec;
 use std::ops::{Deref, DerefMut};
@@ -183,6 +186,13 @@ pub enum StepOutcome {
     Executed(StepResult),
     Waiting(WaitReason),
     Faulted(FaultStep),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChunkOutcome {
+    Deadline,
+    Generic,
+    Faulted,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -799,6 +809,121 @@ impl Cpu {
             debug_assert_eq!(self.core.next_instruction_address, 0x18);
         }
         Ok(())
+    }
+
+    pub fn inside_hle_bulk_service(&self) -> bool {
+        matches!(self.hle_service, Some(HleService::Bulk(_)))
+    }
+
+    /// Ordinary instruction loop; HLE, power transitions and SWIs return to
+    /// the generic step without touching the waiting instruction.
+    pub fn run_normal_until(
+        &mut self,
+        bus: &mut Bus,
+        yield_at: u64,
+        execution_fault: &mut Option<FaultReason>,
+        fault_out: &mut Option<FaultStep>,
+    ) -> ChunkOutcome {
+        if bus.now() >= yield_at {
+            return ChunkOutcome::Deadline;
+        }
+        if self.hle_service.is_some() || self.pipeline.is_none() {
+            return ChunkOutcome::Generic;
+        }
+        let mut region = InstructionFetchRegion::default();
+        let mut stream = ThumbStream::default();
+        while bus.now() < yield_at {
+            if bus.power_state() != PowerState::Running
+                || self.core.next_instruction_address < 0x4000
+            {
+                return ChunkOutcome::Generic;
+            }
+            let set = if self.is_thumb() { InstructionSet::Thumb } else { InstructionSet::Arm };
+            let width: u32 = if set == InstructionSet::Thumb { 2 } else { 4 };
+            let pipeline = self.pipeline.as_ref().expect("checked before loop");
+            if pipeline.instruction_set != set {
+                return ChunkOutcome::Generic;
+            }
+            let address = self.core.next_instruction_address;
+            let instruction = pipeline.instructions[0];
+            if (set == InstructionSet::Thumb && instruction & 0xff00 == 0xdf00)
+                || (set == InstructionSet::Arm && instruction & 0x0f00_0000 == 0x0f00_0000)
+            {
+                return ChunkOutcome::Generic;
+            }
+            self.pipeline.as_mut().unwrap().instructions[0] = pipeline.instructions[1];
+            let fetched = if set == InstructionSet::Thumb {
+                bus.fetch_thumb_in_region(&mut region, address.wrapping_add(4), &mut stream)
+            } else {
+                bus.fetch_instruction_in_region(
+                    &mut region,
+                    address.wrapping_add(8),
+                    AccessWidth::Word,
+                )
+            };
+            self.pipeline.as_mut().unwrap().instructions[1] = fetched;
+            let execution = if set == InstructionSet::Thumb {
+                Ok(self.core.execute_thumb(bus, instruction as u16))
+            } else {
+                self.core.execute_arm(bus, instruction)
+            };
+            let execution = match execution {
+                Ok(value) => value,
+                Err(reason) => {
+                    let reason = FaultReason::Isa(reason);
+                    *execution_fault = Some(reason);
+                    *fault_out = Some(FaultStep {
+                        instruction_address: address,
+                        instruction,
+                        instruction_set: set,
+                        reason,
+                    });
+                    return ChunkOutcome::Faulted;
+                }
+            };
+            debug_assert!(execution.software_interrupt.is_none());
+            if !execution.bus_free {
+                stream.armed = false;
+            }
+            if !execution.branched {
+                self.core.next_instruction_address = address.wrapping_add(width);
+            }
+            if execution.branched {
+                self.refill_pipeline_in_region(bus, &mut region);
+                stream.armed = false;
+                if bus.now() >= yield_at {
+                    return ChunkOutcome::Deadline;
+                }
+                if self.is_thumb() != (set == InstructionSet::Thumb) {
+                    return ChunkOutcome::Generic;
+                }
+            } else if bus.irq_line && self.cpsr & (1 << 7) == 0 {
+                bus.resume_power();
+                if let Err(reason) = self.enter_irq(bus) {
+                    self.registers[15] = self
+                        .core
+                        .next_instruction_address
+                        .wrapping_add(if self.is_thumb() { 4 } else { 8 });
+                    *execution_fault = Some(reason);
+                    *fault_out = Some(FaultStep {
+                        instruction_address: address,
+                        instruction,
+                        instruction_set: set,
+                        reason,
+                    });
+                    return ChunkOutcome::Faulted;
+                }
+                self.refill_pipeline_in_region(bus, &mut region);
+                return if bus.now() >= yield_at {
+                    ChunkOutcome::Deadline
+                } else {
+                    ChunkOutcome::Generic
+                };
+            } else {
+                self.registers[15] = self.core.next_instruction_address.wrapping_add(2 * width);
+            }
+        }
+        ChunkOutcome::Deadline
     }
 }
 

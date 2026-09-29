@@ -6,6 +6,14 @@
 // module directly under its group's marker so parallel work merges cleanly.
 
 // [devices]
+pub mod cartridge;
+pub mod dma;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod host;
+pub mod multiboot;
+pub mod rom_image;
+pub mod timer;
+pub mod types;
 
 // [apu]
 
