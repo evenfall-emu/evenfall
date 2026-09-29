@@ -1170,6 +1170,163 @@ mod tests {
             ..Default::default()
         });
         expect_invalid_state(&callback, 0);
+        let mut sound = Cpu::init(0x0800_0000, 0x1f, false);
+        sound.hle_sound_driver_main = Some(HleSoundDriverMainContinuation {
+            return_address: 0x0800_0004,
+            return_cpsr: 0x1f,
+            ..Default::default()
+        });
+        expect_invalid_state(&sound, 0);
+        let mut multi_boot = Cpu::init(0x0800_0000, 0x1f, false);
+        multi_boot.hle_service = Some(HleService::MultiBoot(multi_boot_continuation()));
+        expect_invalid_state(&multi_boot, 0);
+    }
+
+    fn multi_boot_continuation() -> HleMultiBootContinuation {
+        let parameters = MultiBootParameters {
+            handshake_data: 0x9d,
+            client_data: [0x12, 0x34, 0x56],
+            palette_data: 0x91,
+            client_bit: 0x02,
+            source: 0x0800_00c0,
+            end: 0x0800_01c0,
+        };
+        HleMultiBootContinuation {
+            parameters,
+            mode: MultiBootMode::Normal256Khz,
+            encoder: MultiBootEncoder::init(
+                MultiBootMode::Normal256Khz,
+                parameters.palette_data,
+                parameters.client_data,
+            ),
+            instruction_address: 0x0800_0000,
+            instruction_set: InstructionSet::Arm,
+            ..Default::default()
+        }
+    }
+
+    /// Zig: CPU state rejects impossible HLE callback continuations.
+    #[test]
+    fn cpu_state_rejects_impossible_hle_callback_continuations() {
+        let channel = HleSoundChannelClearContinuation {
+            identifier: 0x6873_6d53,
+            channel: 1,
+            return_address: 0x0800_0004,
+            return_cpsr: 0x1f,
+            ..Default::default()
+        };
+        for bad in [
+            HleSoundChannelClearContinuation { channel: 0, ..channel.clone() },
+            HleSoundChannelClearContinuation { channel: 5, ..channel.clone() },
+            HleSoundChannelClearContinuation { identifier: 0, ..channel.clone() },
+            HleSoundChannelClearContinuation { return_cpsr: 0, ..channel },
+        ] {
+            let mut cpu = Cpu::init(0x0800_0000, 0x1f, true);
+            cpu.hle_sound_channel_clear = Some(bad);
+            expect_invalid_state(&cpu, 0);
+        }
+        let sound = HleSoundDriverMainContinuation {
+            return_address: 0x0800_0004,
+            return_cpsr: 0x1f,
+            ..Default::default()
+        };
+        for bad in [
+            HleSoundDriverMainContinuation { return_address: 0x0800_0002, ..sound.clone() },
+            HleSoundDriverMainContinuation { pending_player_count: 1, ..sound.clone() },
+            HleSoundDriverMainContinuation {
+                phase: HleSoundDriverMainPhase::AfterMp2kCallback,
+                ..sound.clone()
+            },
+            HleSoundDriverMainContinuation {
+                phase: HleSoundDriverMainPhase::AfterCgbCallback,
+                pending_player_count: 1,
+                ..sound
+            },
+        ] {
+            let mut cpu = Cpu::init(0x0800_0000, 0x1f, true);
+            cpu.hle_sound_driver_main = Some(bad);
+            expect_invalid_state(&cpu, 0);
+        }
+    }
+
+    /// Zig: CPU state rejects impossible HLE IRQ frames.
+    #[test]
+    fn cpu_state_rejects_impossible_hle_irq_frames() {
+        for frame in [
+            HleIrqFrame { return_address: 0x0800_0004, ..Default::default() },
+            HleIrqFrame { return_address: 0x0800_0002, saved_spsr_irq: 0x1f, ..Default::default() },
+        ] {
+            let mut cpu = Cpu::init(0x0000_0138, 0x92, true);
+            cpu.hle_irq_depth = 1;
+            cpu.hle_irq_stack[0] = frame;
+            expect_invalid_state(&cpu, 0);
+        }
+    }
+
+    /// Zig: CPU state rejects impossible HLE MultiBoot progress.
+    #[test]
+    fn cpu_state_rejects_impossible_hle_multi_boot_progress() {
+        let original = multi_boot_continuation();
+        let mut cases = Vec::new();
+        let mut invalid_parameters = original.clone();
+        invalid_parameters.parameters.client_bit = 0;
+        cases.push(invalid_parameters);
+        let mut past_end = original.clone();
+        past_end.source_offset = 0x104;
+        cases.push(past_end);
+        let mut unaligned_offset = original.clone();
+        unaligned_offset.source_offset = 2;
+        cases.push(unaligned_offset);
+        let mut future_wait = original.clone();
+        future_wait.wait_started_at = 101;
+        cases.push(future_wait);
+        let mut bad_instruction_alignment = original.clone();
+        bad_instruction_alignment.instruction_address = 0x0800_0002;
+        cases.push(bad_instruction_alignment);
+        let mut normal_high_half = original.clone();
+        normal_high_half.multiplayer_high_half = true;
+        cases.push(normal_high_half);
+        let mut bad_encoder = original;
+        bad_encoder.encoder.key_xor = 0;
+        cases.push(bad_encoder);
+        for continuation in cases {
+            let mut cpu = Cpu::init(0x0800_0004, 0x1f, true);
+            cpu.hle_service = Some(HleService::MultiBoot(continuation));
+            expect_invalid_state(&cpu, 100);
+        }
+    }
+
+    /// Zig: CPU state accepts reachable HLE continuation boundaries.
+    #[test]
+    fn cpu_state_accepts_reachable_hle_continuation_boundaries() {
+        let mut channel = Cpu::init(0x0800_0040, 0x1f, true);
+        channel.hle_sound_channel_clear = Some(HleSoundChannelClearContinuation {
+            identifier: 0x6873_6d53,
+            channel: 4,
+            return_address: 0x0800_0004,
+            return_cpsr: 0x1f,
+            ..Default::default()
+        });
+        let mut mp2k = Cpu::init(0x0800_0040, 0x1f, true);
+        mp2k.hle_sound_driver_main = Some(HleSoundDriverMainContinuation {
+            phase: HleSoundDriverMainPhase::AfterMp2kCallback,
+            return_address: 0x0800_0004,
+            return_cpsr: 0x1f,
+            pending_player_count: 16,
+            ..Default::default()
+        });
+        let mut irq = Cpu::init(0x0000_0138, 0x92, true);
+        irq.hle_irq_depth = 1;
+        irq.hle_irq_stack[0] =
+            HleIrqFrame { return_address: 0x0800_0006, saved_spsr_irq: 0x3f, ..Default::default() };
+        let mut multi_boot = Cpu::init(0x0800_0004, 0x1f, true);
+        multi_boot.hle_service = Some(HleService::MultiBoot(multi_boot_continuation()));
+        for cpu in [&channel, &mp2k, &irq, &multi_boot] {
+            let mut bytes = Vec::new();
+            cpu.write_state(&mut evenfall_state::Sink::new(Some(&mut bytes), None), 100).unwrap();
+            let mut decoded = Cpu::init(0x0800_0000, 0x1f, true);
+            decoded.read_state(&mut evenfall_state::Source::new(&bytes), 100).unwrap();
+        }
     }
 
     /// ZiGBA `writeState`: unused IRQ frames and pending player slots are canonical.
@@ -1203,6 +1360,112 @@ mod tests {
         assert_eq!(cpu.validate_state(0), Ok(()));
         cpu.core.next_instruction_address = 0x0800_0008;
         assert_eq!(cpu.validate_state(0), Err(evenfall_state::Error::InvalidSaveState));
+    }
+
+    fn huffman_work() -> HleBulkWork {
+        HleBulkWork::Huffman(HleHuffmanWork {
+            tree_base: 0x0300_0005,
+            bitstream_address: 0x0300_0008,
+            destination: 0x0200_0000,
+            remaining: 4,
+            node_address: 0x0300_0005,
+            symbol_bits: 8,
+            ..Default::default()
+        })
+    }
+
+    fn bulk_service(work: HleBulkWork) -> HleService {
+        HleService::Bulk(HleBulkService {
+            instruction_address: 0x0800_0000,
+            instruction: 0xef00_0000 | u32::from(work.service()) << 16,
+            instruction_set: InstructionSet::Arm,
+            work,
+        })
+    }
+
+    /// Zig: CPU state accepts a bulk HLE service at its return point.
+    #[test]
+    fn cpu_state_accepts_a_bulk_hle_service_at_its_return_point() {
+        let mut arm = Cpu::init(0x0800_0004, 0x1f, true);
+        arm.hle_service = Some(bulk_service(huffman_work()));
+        let mut thumb = Cpu::init(0x0800_0002, 0x3f, true);
+        let mut service = match bulk_service(HleBulkWork::CpuSet(HleCpuSetWork {
+            source: 0x0200_0002,
+            destination: 0x0600_0000,
+            remaining: 7,
+            ..Default::default()
+        })) {
+            HleService::Bulk(service) => service,
+            HleService::MultiBoot(_) => unreachable!(),
+        };
+        service.instruction = 0xdf0b;
+        service.instruction_set = InstructionSet::Thumb;
+        thumb.hle_service = Some(HleService::Bulk(service));
+        for cpu in [&arm, &thumb] {
+            let mut bytes = Vec::new();
+            cpu.write_state(&mut evenfall_state::Sink::new(Some(&mut bytes), None), 0).unwrap();
+        }
+    }
+
+    /// Zig: CPU state rejects impossible bulk HLE service progress.
+    #[test]
+    fn cpu_state_rejects_impossible_bulk_hle_service_progress() {
+        let mut external = Cpu::init(0x0800_0004, 0x1f, false);
+        external.hle_service = Some(bulk_service(huffman_work()));
+        expect_invalid_state(&external, 0);
+        let mut not_at_return = Cpu::init(0x0800_0008, 0x1f, true);
+        not_at_return.hle_service = Some(bulk_service(huffman_work()));
+        expect_invalid_state(&not_at_return, 0);
+
+        let mut bad = Vec::new();
+        let HleService::Bulk(original) = bulk_service(huffman_work()) else { unreachable!() };
+        let mut not_a_swi = original.clone();
+        not_a_swi.instruction = 0xe3a0_0000;
+        bad.push(not_a_swi);
+        let mut wrong_service = original.clone();
+        wrong_service.instruction = 0xef11_0000;
+        bad.push(wrong_service);
+        let mut wrong_instruction_set = original.clone();
+        wrong_instruction_set.instruction = 0xdf13;
+        wrong_instruction_set.instruction_set = InstructionSet::Thumb;
+        bad.push(wrong_instruction_set);
+        let mut skipped_symbol = original;
+        if let HleBulkWork::Huffman(work) = &mut skipped_symbol.work {
+            work.output_bits = 28;
+        }
+        bad.push(skipped_symbol);
+        for service in bad {
+            let mut cpu = Cpu::init(0x0800_0004, 0x1f, true);
+            cpu.hle_service = Some(HleService::Bulk(service));
+            expect_invalid_state(&cpu, 0);
+        }
+        let mut unaligned_words = Cpu::init(0x0800_0004, 0x1f, true);
+        unaligned_words.hle_service =
+            Some(bulk_service(HleBulkWork::CpuFastSet(HleCpuFastSetWork {
+                source: 0x0200_0000,
+                destination: 0x0400_0002,
+                remaining_blocks: 1,
+                ..Default::default()
+            })));
+        expect_invalid_state(&unaligned_words, 0);
+        let mut bad_width = Cpu::init(0x0800_0004, 0x1f, true);
+        bad_width.hle_service = Some(bulk_service(HleBulkWork::BitUnpack(HleBitUnpackWork {
+            source: 0x0200_0000,
+            destination: 0x0600_0000,
+            source_length: 1,
+            source_width: 3,
+            destination_width: 8,
+            ..Default::default()
+        })));
+        expect_invalid_state(&bad_width, 0);
+        let mut unaligned_records = Cpu::init(0x0800_0004, 0x1f, true);
+        unaligned_records.hle_service =
+            Some(bulk_service(HleBulkWork::BgAffineSet(HleBgAffineSetWork {
+                source: 0x03ff_ffed,
+                destination: 0x0200_0000,
+                remaining: 2,
+            })));
+        expect_invalid_state(&unaligned_records, 0);
     }
 
     /// ZiGBA: BgAffineSet analytic preflight matches the record-by-record loop.

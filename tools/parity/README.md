@@ -7,6 +7,8 @@ external BIOS images and initial save files locally, never in the repository.
 ```sh
 cargo run -p evenfall-parity -- oracle build
 cargo run -p evenfall-parity -- oracle run tools/parity/scenarios/probe-timer_irq.json
+cargo run -p evenfall-parity -- run tools/parity/scenarios/probe-timer_irq.json
+cargo run -p evenfall-parity -- run --all
 cargo run -p evenfall-parity -- compare target/parity/traces/probe-timer_irq/oracle.trace OTHER.trace
 ```
 
@@ -19,6 +21,17 @@ all per-schedule traces to `target/parity/traces/<name>/slice-N.trace`, checks
 that they agree on _every byte_, and writes `oracle.trace` (or an optional
 destination). It fails on a stopped/faulted machine or failed terminal PC/r12
 assertion. `compare` prints the first discrepancy per kind and exits nonzero.
+
+`run SCENARIO` first re-runs the Zig oracle, verifying its slice independence,
+then starts a fresh Rust `Machine` for **each** slice size, writes the Rust
+traces as `rust-slice-N.trace`, checks Rust slice independence and compares
+every checkpoint with the Zig oracle. A state-byte mismatch includes the
+narrowest field path from the Rust save-state codec's field tracer (or the
+header/digest name); for an earlier checkpoint, it reloads that Rust snapshot
+before tracing. `run --all` processes every JSON scenario and reports failures
+per scenario instead of stopping at the first failing ROM. Both commands exit
+nonzero on any mismatch or execution error. Keep the trace files when
+investigating a difference with `compare`.
 
 The JSON scenario uses the web developer-tool naming for `assets`, `config`,
 `inputs`, and `checkpoints`, with absolute decimal-string cycles and paths
@@ -53,10 +66,7 @@ probes use timed key changes, including START and STOP wake. The generator
 accepts a successful HLE validator log to choose durations with room beyond
 the terminal loop; it does not derive expected bytes from the emulator.
 
-To connect the Rust GBA backend, construct `evenfall_gba::Machine` from the
-manifest media/config, translate `InputChange` to its host input type, and
-call `evenfall_replay::run` with a CPU inspector for all schedules. For JoyBus,
-use `run_with_host_actions` and schedule the master command on the GBA bus
-from the callback. Serialize
-its `Trace` and compare to the Zig oracle; the shared trace codec and
-comparison code do not depend on either backend.
+The Rust backend maps the manifest to `evenfall_gba::machine::Config`, passes
+timed inputs through `evenfall_replay::run_with_host_actions`, and schedules
+JoyBus commands on the GBA bus 1000 cycles after the crossed boundary. The
+shared trace codec and comparison code do not depend on either backend.

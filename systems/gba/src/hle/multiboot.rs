@@ -133,6 +133,7 @@ impl Cpu {
             parameters,
             mode,
             encoder: Encoder::init(mode, parameters.palette_data, parameters.client_data),
+            random_data: [0xFF; 3],
             instruction_address: self.next_instruction_address,
             instruction_set: if self.is_thumb() {
                 InstructionSet::Thumb
@@ -300,5 +301,38 @@ impl Cpu {
         };
         self.registers[0] = u32::from(!success);
         step_result(&continuation)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ZiGBA `HleMultiBootContinuation.random_data` defaults to FF in all three
+    /// slots; clients absent from `client_bit` still contribute FF to the CRC.
+    #[test]
+    fn inactive_multiboot_clients_contribute_ff_to_crc() {
+        for (mode, client_bit, expected_random) in
+            [(2, 0x02, [0x42, 0xFF, 0xFF]), (1, 0x06, [0x42, 0x42, 0xFF])]
+        {
+            let mut bus = Bus::init(&[]);
+            let mut cpu = Cpu::init(0x0800_0000, 0x1F, true);
+            cpu.registers[0] = 0x0200_0000;
+            cpu.registers[1] = mode;
+            bus.ewram[0x14] = 0x11;
+            bus.ewram[0x19..0x1C].copy_from_slice(&[0x22, 0x33, 0x44]);
+            bus.ewram[0x1C] = 0x55;
+            bus.ewram[0x1E] = client_bit;
+            bus.ewram[0x20..0x24].copy_from_slice(&0x0200_0100_u32.to_le_bytes());
+            bus.ewram[0x24..0x28].copy_from_slice(&0x0200_0200_u32.to_le_bytes());
+
+            cpu.execute_hle_multi_boot(&mut bus);
+            let Some(HleService::MultiBoot(continuation)) = cpu.hle_service.as_mut() else {
+                panic!("valid MultiBoot parameters should start the service")
+            };
+            assert_eq!(continuation.random_data, [0xFF; 3]);
+            assert!(collect_random(continuation, [0x7342, 0x7342, 0xFFFF]));
+            assert_eq!(continuation.random_data, expected_random);
+        }
     }
 }
