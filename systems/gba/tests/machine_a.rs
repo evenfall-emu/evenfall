@@ -1784,3 +1784,148 @@ fn pc_wrap_at_a_device_deadline_stops_before_sub_bios_handoff() {
     assert_eq!(bounded.next_instruction_address(), 0);
     assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
 }
+
+/// Zig: `CPU multiple stores commit RAM after DMA at the store deadline`.
+#[test]
+fn cpu_multiple_stores_commit_ram_after_dma_at_the_store_deadline() {
+    const OLD_WORD: u32 = 0x1122_3344;
+    const NEW_WORD: u32 = 0xD00D_FEED;
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Store {
+        ArmStm,
+        ThumbStm,
+        ThumbPush,
+    }
+    for store in [Store::ArmStm, Store::ThumbStm, Store::ThumbPush] {
+        for ewram in [false, true] {
+            let source = if ewram { 0x0200_0000 } else { 0x0300_0000 };
+            let destination = if ewram { 0x0300_0000 } else { 0x0200_0000 };
+            let thumb = store != Store::ArmStm;
+            let instruction = match store {
+                Store::ArmStm => 0xE8A1_0001,
+                Store::ThumbStm => 0xC101,
+                Store::ThumbPush => 0xB401,
+            };
+            let mut machines = [Machine::new(Config::default()), Machine::new(Config::default())];
+            for machine in &mut machines {
+                machine.cpu = Cpu::init(0x0300_1000, if thumb { 0xBF } else { 0x9F }, true);
+                machine.cpu.pipeline = Some(Pipeline {
+                    instructions: [instruction, if thumb { 0x46C0 } else { 0xE1A0_0000 }],
+                    instruction_set: if thumb {
+                        InstructionSet::Thumb
+                    } else {
+                        InstructionSet::Arm
+                    },
+                });
+                machine.cpu.registers[0] = NEW_WORD;
+                machine.cpu.registers[1] = source;
+                machine.cpu.registers[13] = source + 4;
+                if ewram {
+                    machine.bus.ewram[..4].copy_from_slice(&OLD_WORD.to_le_bytes());
+                } else {
+                    machine.bus.iwram[..4].copy_from_slice(&OLD_WORD.to_le_bytes());
+                }
+                for (address, value) in [
+                    (0x0400_00D4, source),
+                    (0x0400_00D8, destination),
+                    (0x0400_00DC, 1 | (0xC400 << 16)),
+                ] {
+                    machine.bus.write(
+                        Access {
+                            address,
+                            width: AccessWidth::Word,
+                            kind: AccessKind::Nonsequential,
+                            source: AccessSource::CpuData,
+                        },
+                        value,
+                    );
+                }
+            }
+            let [eager, bounded] = &mut machines;
+            let start = eager.now();
+            let step = executed_step(eager);
+            let result = bounded.run_until(start + 2).unwrap();
+            let expected_cycles = 1 + if ewram { 6 } else { 1 } + 9;
+            assert_eq!(step.stopped_at - step.started_at, expected_cycles);
+            assert_eq!(result.stopped_at, start + expected_cycles);
+            assert_eq!(result.reason, StopReason::InstructionBoundaryAfterDeadline);
+            let mut bytes = [0; 4];
+            bounded.inspect_memory(destination, &mut bytes).unwrap();
+            assert_eq!(u32::from_le_bytes(bytes), OLD_WORD);
+            bounded.inspect_memory(source, &mut bytes).unwrap();
+            assert_eq!(u32::from_le_bytes(bytes), NEW_WORD);
+            bounded.inspect_memory(0x0400_0202, &mut bytes[..2]).unwrap();
+            assert_eq!(u16::from_le_bytes(bytes[..2].try_into().unwrap()), 1 << 11);
+            assert_eq!(
+                bounded.read_register(if store == Store::ThumbPush { 13 } else { 1 }),
+                source + if store == Store::ThumbPush { 0 } else { 4 }
+            );
+            assert_eq!(bounded.next_instruction_address(), 0x0300_1000 + if thumb { 2 } else { 4 });
+            assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+        }
+    }
+}
+
+/// Zig: `CPU multiple stores price each beat across RAM mirrors and MMIO`.
+#[test]
+fn cpu_multiple_stores_price_each_beat_across_ram_mirrors_and_mmio() {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Store {
+        ArmStm,
+        ThumbStm,
+        ThumbPush,
+    }
+    let first_word = 0x1122_3344;
+    let second_word = 0x0000_1003;
+    for store in [Store::ArmStm, Store::ThumbStm, Store::ThumbPush] {
+        for (base, cycles) in
+            [(0x0203_FFFD_u32, 13), (0x0300_7FFD, 3), (0x02FF_FFFD, 8), (0x03FF_FFFD, 3)]
+        {
+            let thumb = store != Store::ArmStm;
+            let instruction = match store {
+                Store::ArmStm => 0xE8A2_0003,
+                Store::ThumbStm => 0xC203,
+                Store::ThumbPush => 0xB501,
+            };
+            let mut machines = [Machine::new(Config::default()), Machine::new(Config::default())];
+            for machine in &mut machines {
+                machine.cpu = Cpu::init(0x0300_1000, if thumb { 0xBF } else { 0x9F }, true);
+                machine.cpu.pipeline = Some(Pipeline {
+                    instructions: [instruction, if thumb { 0x46C0 } else { 0xE1A0_0000 }],
+                    instruction_set: if thumb {
+                        InstructionSet::Thumb
+                    } else {
+                        InstructionSet::Arm
+                    },
+                });
+                machine.cpu.registers[0] = first_word;
+                machine.cpu.registers[1] = second_word;
+                machine.cpu.registers[2] = base;
+                machine.cpu.registers[13] = base + 8;
+                machine.cpu.registers[14] = second_word;
+            }
+            let [eager, bounded] = &mut machines;
+            executed_step(eager);
+            let result = bounded.run_until(1).unwrap();
+            assert_eq!(result.stopped_at, cycles);
+            let mut bytes = [0; 4];
+            bounded.inspect_memory(base & !3, &mut bytes).unwrap();
+            assert_eq!(u32::from_le_bytes(bytes), first_word);
+            bounded.inspect_memory(base.wrapping_add(4) & !3, &mut bytes).unwrap();
+            assert_eq!(u32::from_le_bytes(bytes), second_word);
+            assert_eq!(
+                bounded.read_register(if store == Store::ThumbPush { 13 } else { 2 }),
+                base + if store == Store::ThumbPush { 0 } else { 8 }
+            );
+            assert_eq!(
+                bounded.bus.fetch_kind,
+                if base == 0x03FF_FFFD {
+                    AccessKind::Sequential
+                } else {
+                    AccessKind::Nonsequential
+                }
+            );
+            assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+        }
+    }
+}
