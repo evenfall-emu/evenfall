@@ -1,8 +1,9 @@
-//! ZiGBA's scanline compositor. Background passes fill top, then second
-//! surfaces front to back; objects are evaluated in reverse OAM order.
+//! Scanline dispatch: lines without raster history use the layer-major
+//! compositor in `compose.rs`; lines with history use ZiGBA's front-to-back
+//! passes, which are also the reference for the layer-major compositor.
 
 use super::history::{BlendState, VideoHistoryView};
-use super::scanline_memo::{self, Memory};
+use super::scanline_memo::{self, Memory, PAGE_SIZE};
 use crate::bus::{Bus, LineScan, SCREEN_HEIGHT, SCREEN_WIDTH, ScanlineRegisters, WindowSegment};
 
 const WINDOW_KEY_INVALID: u64 = 1 << 63;
@@ -22,47 +23,52 @@ impl Bus {
         );
         if self.has_raster_history(line) {
             self.scanline_memo.forget(line);
-            self.compose_scanline(line);
+            self.compose_history_scanline(line);
         } else if self.scanline_memo.holds(line) {
             self.scanline_memo.kept += 1;
             if scanline_memo::CHECK {
                 self.check_kept_scanline(line);
             }
         } else {
-            self.compose_scanline(line);
+            self.compose_scanline_fast(line);
             self.scanline_memo.store(line);
         }
+    }
+
+    /// Mid-line VRAM writes that touch no page the line reads cannot change
+    /// it (a page-flipped bitmap drawn during HDraw, for example), so those
+    /// lines keep the layer-major compositor. Other histories use the
+    /// reference passes.
+    fn compose_history_scanline(&mut self, line: usize) {
+        let history = self.video_history_view(line);
+        let at = line as u16;
+        let vram_only = history.palette_records == 0
+            && self.scroll_segment_line != at
+            && self.win_segment_line != at
+            && self.blend_segment_line != at
+            && self.affine_segment_line != at
+            && self.mosaic_segment_line != at;
+        if vram_only {
+            let pages = self.compose_scanline_fast(line);
+            let boundary = self.vram_obj_boundary();
+            let touched = self
+                .vram_history_indices(&history)
+                .any(|index| index < boundary && pages >> (index / PAGE_SIZE).min(127) & 1 != 0);
+            if !touched {
+                return;
+            }
+        }
+        self.compose_scanline_reference(line);
     }
 
     fn check_kept_scanline(&mut self, line: usize) {
         let first = line * SCREEN_WIDTH;
         let pixels: [u16; SCREEN_WIDTH] =
             self.frame_pixels[first..first + SCREEN_WIDTH].try_into().unwrap();
-        let priorities: [u8; SCREEN_WIDTH] =
-            self.frame_priorities[first..first + SCREEN_WIDTH].try_into().unwrap();
-        let layers: [u8; SCREEN_WIDTH] =
-            self.frame_layers[first..first + SCREEN_WIDTH].try_into().unwrap();
-        let semi: [bool; SCREEN_WIDTH] =
-            self.frame_semitransparent[first..first + SCREEN_WIDTH].try_into().unwrap();
-        let obj_window: [bool; SCREEN_WIDTH] =
-            self.frame_obj_window[first..first + SCREEN_WIDTH].try_into().unwrap();
-        self.compose_scanline(line);
-        for x in 0..SCREEN_WIDTH {
-            let i = first + x;
-            let mismatch = if pixels[x] != self.frame_pixels[i] {
-                "color"
-            } else if priorities[x] != self.frame_priorities[i] {
-                "priority"
-            } else if layers[x] != self.frame_layers[i] {
-                "layer"
-            } else if semi[x] != self.frame_semitransparent[i] {
-                "semi-transparency"
-            } else if obj_window[x] != self.frame_obj_window[i] {
-                "OBJ window"
-            } else {
-                continue;
-            };
-            panic!("scanline memo: kept line {line} differs in {mismatch} at x={x}");
+        self.compose_scanline_fast(line);
+        let composed = &self.frame_pixels[first..first + SCREEN_WIDTH];
+        if let Some(x) = pixels.iter().zip(composed).position(|(kept, fresh)| kept != fresh) {
+            panic!("scanline memo: kept line {line} differs in color at x={x}");
         }
     }
 
@@ -91,7 +97,9 @@ impl Bus {
         }
     }
 
-    fn compose_scanline(&mut self, line: usize) {
+    /// ZiGBA's front-to-back compositor, which also fills the auxiliary
+    /// surfaces (priorities, layers, second surface, semi-transparency).
+    pub(super) fn compose_scanline_reference(&mut self, line: usize) {
         let first = line * SCREEN_WIDTH;
         if self.dispcnt & 0x80 != 0 && !self.has_forced_blank_history(line) {
             self.frame_pixels[first..first + SCREEN_WIDTH].fill(0x7FFF);
@@ -132,12 +140,11 @@ impl Bus {
         self.frame_semitransparent[first..first + SCREEN_WIDTH].fill(false);
         self.frame_obj_window[first..first + SCREEN_WIDTH].fill(false);
         if self.dispcnt & 0x9000 == 0x9000 {
-            self.render_objects(line, true, &history);
+            self.render_objects::<false>(line, true, &history);
         }
         self.resolve_window_masks(line);
         if mode <= 1 && history.palette_records == 0 {
-            let palette: &[u8; 512] = self.palette[..512].try_into().unwrap();
-            self.tile_row_cache.prepare_palette(palette);
+            self.tile_row_cache.prepare_palette(&self.palette);
         }
         if (3..=5).contains(&mode) && self.dispcnt & (1 << 10) == 0 {
             self.finish_scanline(line, &history);
@@ -172,7 +179,7 @@ impl Bus {
         self.finish_scanline(line, &history);
     }
 
-    fn needs_second_surface(&mut self, line: usize) -> bool {
+    pub(super) fn needs_second_surface(&mut self, line: usize) -> bool {
         if self.blend_segment_line == line as u16 && self.blend_segment_count > 0 {
             return true;
         }
@@ -204,7 +211,7 @@ impl Bus {
         present
     }
 
-    fn color_effects_inert(&mut self, line: usize) -> bool {
+    pub(super) fn color_effects_inert(&mut self, line: usize) -> bool {
         if self.blend_segment_line == line as u16 && self.blend_segment_count > 0 {
             return false;
         }
@@ -241,7 +248,7 @@ impl Bus {
 
     fn finish_scanline(&mut self, line: usize, history: &VideoHistoryView) {
         if self.dispcnt & (1 << 12) != 0 {
-            self.render_objects(line, false, history);
+            self.render_objects::<false>(line, false, history);
         }
         if self.line_has_color_effects {
             self.apply_color_effects(line);
@@ -266,7 +273,7 @@ impl Bus {
         }
     }
 
-    fn apply_green_swap(&mut self, line: usize) {
+    pub(super) fn apply_green_swap(&mut self, line: usize) {
         let first = line * SCREEN_WIDTH;
         for x in (0..SCREEN_WIDTH).step_by(2) {
             let left = self.frame_pixels[first + x];

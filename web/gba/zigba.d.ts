@@ -114,7 +114,11 @@ export interface EmulatorOptions {
    * emit automatically. Must be same-origin with the page.
    */
   workerUrl?: URL | string;
-  /** WebAssembly binary fetched by the worker. Default: the package's `evenfall-gba.wasm`. */
+  /**
+   * WebAssembly binary fetched by the worker. Default: the package's
+   * `evenfall-gba.wasm`, or `evenfall-gba-scalar.wasm` on an engine without
+   * WebAssembly SIMD.
+   */
   wasmUrl?: URL | string;
 }
 /** An isolated emulator session; each owns one Worker and one WASM instance. */

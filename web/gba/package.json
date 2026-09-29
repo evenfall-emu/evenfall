@@ -48,6 +48,7 @@
       "default": "./bridge/react.js"
     },
     "./evenfall-gba.wasm": "./evenfall-gba.wasm",
+    "./evenfall-gba-scalar.wasm": "./evenfall-gba-scalar.wasm",
     "./package.json": "./package.json"
   },
   "files": [
@@ -63,7 +64,8 @@
     "devtools/*.d.ts",
     "bridge/*.js",
     "bridge/*.d.ts",
-    "evenfall-gba.wasm"
+    "evenfall-gba.wasm",
+    "evenfall-gba-scalar.wasm"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

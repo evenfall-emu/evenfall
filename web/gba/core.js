@@ -62,9 +62,30 @@ async function readWasm(source) {
   return response.arrayBuffer();
 }
 
+/**
+ * Whether this engine supports WebAssembly SIMD (simd128), checked once with a
+ * minimal module that returns `i8x16.popcnt(i8x16.splat(0))`. The package's
+ * default core uses SIMD; engines without it get the scalar build.
+ */
+export const wasmSimd = (() => {
+  try {
+    return WebAssembly.validate(
+      new Uint8Array([
+        0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10,
+        1, 8, 0, 65, 0, 253, 15, 253, 98, 11,
+      ]),
+    );
+  } catch {
+    return false;
+  }
+})();
+
 export class WasmCore {
+  // Keep both literal `new URL(...)` forms so bundlers emit both modules.
   static async create(
-    source = new URL("./evenfall-gba.wasm", import.meta.url),
+    source = wasmSimd
+      ? new URL("./evenfall-gba.wasm", import.meta.url)
+      : new URL("./evenfall-gba-scalar.wasm", import.meta.url),
   ) {
     const data =
       source instanceof Uint8Array || source instanceof ArrayBuffer

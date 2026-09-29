@@ -261,6 +261,23 @@ impl Bus {
         historical.unwrap_or(self.vram[index])
     }
 
+    /// VRAM indices written during the line's visible dots.
+    pub(super) fn vram_history_indices(
+        &self,
+        history: &VideoHistoryView,
+    ) -> impl Iterator<Item = usize> + '_ {
+        let mut records = history.vram_records;
+        std::iter::from_fn(move || {
+            if records == 0 {
+                return None;
+            }
+            let offset = records.trailing_zeros() as usize;
+            records &= records - 1;
+            let payload = self.backdrop_segments[offset + 1];
+            Some(usize::from(payload.start_x) | (usize::from(payload.color & 1) << 16))
+        })
+    }
+
     pub(super) fn video_history_view(&self, line: usize) -> VideoHistoryView {
         let mut view = VideoHistoryView::default();
         if self.backdrop_segment_line != line as u16 {

@@ -28,6 +28,11 @@ Other entry points: `@evenfall/gba/core`, `@evenfall/gba/devtools/scenario`,
 - The default WASM asset and exported asset path are `evenfall-gba.wasm` rather
   than `zigba.wasm`, because this binary is built by the Rust core. Explicit
   `wasmUrl` and `WasmCore.create(source)` overrides still work as before.
+- The package ships two builds of the core: `evenfall-gba.wasm` uses
+  WebAssembly SIMD (simd128), and `evenfall-gba-scalar.wasm` serves engines
+  without it (Chrome before 91, Firefox before 89, Safari before 16.4). The
+  default URL of `Emulator.create()` and `WasmCore.create()` picks one with
+  `WebAssembly.validate`; `core.js` exports the result as `wasmSimd`.
 - The package is private and is not published. For now it is consumed from the
   `web/*` npm workspace. The JS API, entry points, events, options, errors and
   TypeScript interfaces retain their ZiGBA names and behavior; `zigba.js` and

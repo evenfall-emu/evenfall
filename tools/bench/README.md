@@ -62,3 +62,27 @@ perf record --call-graph dwarf -- target/profiling/evenfall-harness \
   target/bench/runs/<run>/build/roms/audio.gba 600
 perf report
 ```
+
+## WebAssembly
+
+[`wasm.mjs`](wasm.mjs) times WebAssembly modules that export the
+`@evenfall/gba` ABI, Evenfall's and ZiGBA's alike, on the same ROMs and frame
+counts in Node. Each observation is a fresh Node process pinned with
+`taskset`; module order rotates per round and workload, and ratios are the
+geometric mean of matched-round loop-time ratios against the first module.
+A process loads the ROM with HLE boot, disables audio output (emulation
+continues), runs `--warm` untimed frames (default 60, counted in the total)
+and times the rest one `zb_run_until` per frame. The final framebuffer hash
+is the native harnesses' FNV-1a, so wasm and native images can be compared.
+
+```sh
+web/gba/scripts/build-wasm.sh
+node tools/bench/wasm.mjs --module zigba=path/to/zigba.wasm \
+  --module evenfall=web/gba/evenfall-gba.wasm --cpu 3 --rounds 5 --warmups 1
+```
+
+`--workloads`, `--frames`, `--rounds`, `--warmups`, `--warm` and `--cpu`
+control the plan; results are in `target/bench/wasm-runs/<run>/result.json`.
+ZiGBA's module comes from `zig build web-sdk` in a copy of the pinned
+checkout (the step writes into its source tree). The driver does not handle
+STOP or linked sessions.

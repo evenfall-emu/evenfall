@@ -29,7 +29,9 @@ interface (see [Versioning](#versioning)).
 
 From the repository root, run `npm ci` and build the Rust WASM core with
 `npm run build:wasm -w @evenfall/gba`. The private workspace package includes
-ES modules, TypeScript declarations and `evenfall-gba.wasm` (gitignored).
+ES modules, TypeScript declarations and two builds of the core (gitignored):
+`evenfall-gba.wasm`, which uses WebAssembly SIMD, and `evenfall-gba-scalar.wasm`
+for engines without it.
 Browsers need module Workers and WebAssembly with BigInt integration; serve
 pages over HTTPS or `localhost`. Cross-origin isolation is not required.
 Headless use needs Node 24 or later.
@@ -46,16 +48,17 @@ other licensing terms, contact
 
 ### Entry points
 
-| Import                            | Contents                                                                                                                                              |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@evenfall/gba`                   | `Emulator` (asynchronous, one Worker per session), `KEYS`, `CYCLES_PER_FRAME`, `SAVE_TYPES`, and the shared types                                     |
-| `@evenfall/gba/core`              | `WasmCore`: the synchronous single-instance adapter for Node and Workers                                                                              |
-| `@evenfall/gba/devtools/scenario` | `runScenario`, `validateScenario`, `sha1`, `sha256`, `jsonSafe`                                                                                       |
-| `@evenfall/gba/devtools/capture`  | `FailureRecorder`, `validateFailureBundle`, `replayFailureBundle`, `replayFailureBundleAsync`                                                         |
-| `@evenfall/gba/bridge`            | typed read-only game bridges: `defineFamily`, `createGame`, `defineGame`, `resolveGame`, `decodeGame`, `BridgeHost`, `createMemoryReader` and layouts |
-| `@evenfall/gba/bridge/react`      | `BridgeProvider`, `useViews`, `useBridge`, `useBridgeResources` (React 18+, an optional peer dependency)                                              |
-| `@evenfall/gba/audio-worklet`     | the `zigba-audio` AudioWorklet processor, loaded by URL                                                                                               |
-| `@evenfall/gba/evenfall-gba.wasm` | the WebAssembly binary                                                                                                                                |
+| Import                                   | Contents                                                                                                                                              |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@evenfall/gba`                          | `Emulator` (asynchronous, one Worker per session), `KEYS`, `CYCLES_PER_FRAME`, `SAVE_TYPES`, and the shared types                                     |
+| `@evenfall/gba/core`                     | `WasmCore`: the synchronous single-instance adapter for Node and Workers                                                                              |
+| `@evenfall/gba/devtools/scenario`        | `runScenario`, `validateScenario`, `sha1`, `sha256`, `jsonSafe`                                                                                       |
+| `@evenfall/gba/devtools/capture`         | `FailureRecorder`, `validateFailureBundle`, `replayFailureBundle`, `replayFailureBundleAsync`                                                         |
+| `@evenfall/gba/bridge`                   | typed read-only game bridges: `defineFamily`, `createGame`, `defineGame`, `resolveGame`, `decodeGame`, `BridgeHost`, `createMemoryReader` and layouts |
+| `@evenfall/gba/bridge/react`             | `BridgeProvider`, `useViews`, `useBridge`, `useBridgeResources` (React 18+, an optional peer dependency)                                              |
+| `@evenfall/gba/audio-worklet`            | the `zigba-audio` AudioWorklet processor, loaded by URL                                                                                               |
+| `@evenfall/gba/evenfall-gba.wasm`        | the WebAssembly binary, built with SIMD                                                                                                               |
+| `@evenfall/gba/evenfall-gba-scalar.wasm` | the WebAssembly binary without SIMD, for engines that lack it                                                                                         |
 
 Every JavaScript entry point has declarations. The sections below summarize
 the interface; [`zigba.d.ts`](../web/gba/zigba.d.ts),
@@ -81,8 +84,10 @@ await emulator.dispose();
 
 `Emulator.create()` starts the package's `worker.js` with
 `new Worker(new URL("./worker.js", import.meta.url), { type: "module" })` and
-passes it `new URL("./evenfall-gba.wasm", import.meta.url)`. Bundlers that
-understand these standard forms emit both files with your application and
+passes it `new URL("./evenfall-gba.wasm", import.meta.url)`, or
+`new URL("./evenfall-gba-scalar.wasm", import.meta.url)` when
+`WebAssembly.validate` reports no SIMD support. Bundlers that understand these
+standard forms emit the worker and both modules with your application and
 rewrite the URLs; no configuration or copying is needed.
 
 The Vite development server pre-bundles dependencies into `node_modules/.vite`,
@@ -97,7 +102,8 @@ export default defineConfig({ optimizeDeps: { exclude: ["@evenfall/gba"] } });
 Other bundlers that handle `new URL(..., import.meta.url)` and module Workers,
 such as webpack 5, should work the same way but are untested. If yours does
 not, copy `worker.js`, its imports (`core.js`, `presentation.js`, `devtools/`)
-and `evenfall-gba.wasm` to your static files and pass their URLs:
+and `evenfall-gba.wasm` (plus `evenfall-gba-scalar.wasm` if you support
+engines without WebAssembly SIMD) to your static files and pass their URLs:
 
 ```ts
 const emulator = await Emulator.create({
