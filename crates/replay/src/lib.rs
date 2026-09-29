@@ -59,6 +59,33 @@ pub struct Assets {
     pub save: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Connection {
+    #[serde(rename = "cable_2p")]
+    Cable2p,
+    CableMulti,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Peer {
+    pub assets: Assets,
+    pub config: Config,
+    #[serde(default)]
+    pub terminal_pc: Option<u32>,
+    #[serde(default)]
+    pub terminal_r12: Option<u32>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Link {
+    pub connection: Connection,
+    /// Additional machines in cable order; the top-level machine is index zero.
+    pub peers: Vec<Peer>,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InputChange {
@@ -100,6 +127,8 @@ pub struct Scenario<I> {
     pub name: String,
     pub assets: Assets,
     pub config: Config,
+    #[serde(default)]
+    pub link: Option<Link>,
     #[serde(default)]
     pub inputs: Vec<Input<I>>,
     #[serde(default)]
@@ -144,6 +173,16 @@ mod decimal_vec {
 
 impl<I> Scenario<I> {
     pub fn validate(&self) -> Result<(), &'static str> {
+        if let Some(link) = &self.link {
+            if !(1..=3).contains(&link.peers.len())
+                || (matches!(link.connection, Connection::Cable2p) && link.peers.len() != 1)
+            {
+                return Err("link requires two to four machines (cable_2p exactly two)");
+            }
+            if !self.inputs.is_empty() || !self.host_actions.is_empty() {
+                return Err("linked scenarios cannot use timed inputs or host actions");
+            }
+        }
         if self.slice_cycles.is_empty() || self.slice_cycles.contains(&0) {
             return Err("slice lengths must be nonzero");
         }
@@ -339,6 +378,9 @@ where
     S::Input: From<Timed<I>>,
 {
     scenario.validate().map_err(str::to_owned)?;
+    if scenario.link.is_some() {
+        return Err("linked scenario requires a system-specific linked runner".into());
+    }
     if slice == 0
         || S::VIDEO.width != WIDTH as u32
         || S::VIDEO.height != HEIGHT as u32

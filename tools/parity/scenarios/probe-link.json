@@ -1,0 +1,32 @@
+{
+  "name": "probe-link",
+  "assets": {
+    "rom": "../../../probe/build/link_parent.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "terminalPc": 134218500,
+  "terminalR12": 90,
+  "link": {
+    "connection": "cable_2p",
+    "peers": [
+      {
+        "assets": {
+          "rom": "../../../probe/build/link_child.gba"
+        },
+        "config": {
+          "boot": "hle",
+          "saveType": "auto"
+        },
+        "terminalPc": 134218500,
+        "terminalR12": 165
+      }
+    ]
+  },
+  "inputs": [],
+  "endCycle": "1123584",
+  "checkpoints": ["20000", "40000", "280896", "1123584"],
+  "sliceCycles": ["20000", "70224"]
+}

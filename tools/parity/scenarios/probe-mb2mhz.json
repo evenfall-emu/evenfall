@@ -1,0 +1,32 @@
+{
+  "name": "probe-mb2mhz",
+  "assets": {
+    "rom": "../../../probe/build/multiboot_2mhz_parent.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "terminalPc": 134218500,
+  "terminalR12": 0,
+  "link": {
+    "connection": "cable_2p",
+    "peers": [
+      {
+        "assets": {
+          "rom": "../../../probe/build/multiboot_normal_child.gba"
+        },
+        "config": {
+          "boot": "hle",
+          "saveType": "auto"
+        },
+        "terminalPc": 134218500,
+        "terminalR12": 0
+      }
+    ]
+  },
+  "inputs": [],
+  "endCycle": "1700000",
+  "checkpoints": ["20000", "40000", "280896", "1123584", "1700000"],
+  "sliceCycles": ["20000", "70224"]
+}

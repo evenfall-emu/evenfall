@@ -1,0 +1,43 @@
+{
+  "name": "probe-mb2slave",
+  "assets": {
+    "rom": "../../../probe/build/multiboot_2slave_parent.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "terminalPc": 134218500,
+  "terminalR12": 0,
+  "link": {
+    "connection": "cable_multi",
+    "peers": [
+      {
+        "assets": {
+          "rom": "../../../probe/build/multiboot_2slave_child.gba"
+        },
+        "config": {
+          "boot": "hle",
+          "saveType": "auto"
+        },
+        "terminalPc": 134218500,
+        "terminalR12": 0
+      },
+      {
+        "assets": {
+          "rom": "../../../probe/build/multiboot_2slave_child.gba"
+        },
+        "config": {
+          "boot": "hle",
+          "saveType": "auto"
+        },
+        "terminalPc": 134218500,
+        "terminalR12": 0
+      }
+    ]
+  },
+  "inputs": [],
+  "endCycle": "3000000",
+  "checkpoints": ["20000", "40000", "280896", "1123584", "2247168", "3000000"],
+  "sliceCycles": ["20000", "70224"]
+}
