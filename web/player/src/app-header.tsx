@@ -83,7 +83,7 @@ function Banner({ className }: { className: string }) {
 /**
  * The navigation shared by Library, Player and Manage. Home has its own
  * header; the logo returns there. Manage is a tab only for accounts that may
- * manage the catalog, or while it is open. On narrow screens a page can
+ * manage the catalog, even on its own page. On narrow screens a page can
  * replace the tabs with a Back button.
  */
 export function AppHeader({
@@ -99,9 +99,9 @@ export function AppHeader({
   onAccount: () => void;
   back?: { label: string; onBack: () => void };
   busy?: boolean;
+  /** Whether the account may manage the catalog, as `/api/me` says. */
   manage?: boolean;
 }) {
-  const showManage = manage || view === "manage";
   return (
     <header
       data-ui
@@ -123,7 +123,7 @@ export function AppHeader({
           <Tabs
             view={view}
             busy={busy}
-            manage={showManage}
+            manage={manage}
             onNavigate={onNavigate}
           />
         </div>
@@ -158,7 +158,7 @@ export function AppHeader({
           <Tabs
             view={view}
             busy={busy}
-            manage={showManage}
+            manage={manage}
             compact
             onNavigate={onNavigate}
           />

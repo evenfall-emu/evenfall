@@ -163,6 +163,8 @@ test.beforeEach(async ({ page }) => {
 
 test("Manage is only offered to admin accounts", async ({ page }) => {
   const writes = await mockAdmin(page);
+  // Not on its own page either: only an admin account sees the tab.
+  const tab = page.getByRole("button", { name: "Manage", exact: true });
   let adminReads = 0;
   page.on("request", (request) => {
     if (request.url().includes("/api/admin/")) adminReads++;
@@ -174,6 +176,7 @@ test("Manage is only offered to admin accounts", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Sign in to manage the catalog" }),
   ).toBeVisible();
+  await expect(tab).toHaveCount(0);
 
   await page.unroute("**/api/me");
   await signedIn(page, false);
@@ -191,6 +194,11 @@ test("Manage is only offered to admin accounts", async ({ page }) => {
       name: "This account cannot manage the catalog",
     }),
   ).toBeVisible();
+  await expect(tab).toHaveCount(0);
+  // The phone row, where Manage is an icon, too.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("button", { name: "Account" })).toBeVisible();
+  await expect(tab).toHaveCount(0);
   expect(adminReads).toBe(0);
   expect(writes).toEqual([]);
 });
