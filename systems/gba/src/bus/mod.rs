@@ -1,6 +1,6 @@
 //! Hardware-visible memory seam shared by CPU and DMA masters.
 
-use crate::apu::Apu;
+use crate::apu::{Apu, StereoSample};
 use crate::cartridge::{
     gpio::Gpio as CartridgeGpio,
     save::{self, Device as SaveDevice},
@@ -9,7 +9,7 @@ use crate::cartridge::{
 use crate::dma::Channel as DmaChannel;
 use crate::timer::Timer;
 use crate::types::Cycle;
-use crate::video::{scanline_memo, tile_row_cache, timing::PpuTiming};
+use crate::video::{AffineTransition, scanline_memo, tile_row_cache, timing::PpuTiming};
 use evenfall_state::Codec;
 
 pub const SCREEN_WIDTH: usize = 240;
@@ -24,11 +24,8 @@ const MAX_SCROLL_SEGMENTS: usize = 64;
 const EWRAM_BASE: u32 = 0x0200_0000;
 const IWRAM_BASE: u32 = 0x0300_0000;
 const MMIO_BASE: u32 = 0x0400_0000;
-const PALETTE_BASE: u32 = 0x0500_0000;
 const VRAM_BASE: u32 = 0x0600_0000;
-const OAM_BASE: u32 = 0x0700_0000;
 const GAME_PAK_BASE: u32 = 0x0800_0000;
-const GAME_PAK_END: u32 = 0x0e00_0000;
 const GAME_PAK_WINDOW_SIZE: u32 = 32 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -209,20 +206,20 @@ pub struct GamePakPrefetch {
 /// The video implementation owns raster history operations; the records are
 /// declared here because their order and names are part of Bus's state schema.
 #[derive(Clone, Copy, Debug, Default, Codec)]
-pub(crate) struct ScrollSegment {
+pub struct ScrollSegment {
     pub start_x: u16,
     pub hofs: u16,
     pub vofs: u16,
 }
 
 #[derive(Clone, Copy, Debug, Default, Codec)]
-pub(crate) struct BackdropSegment {
+pub struct BackdropSegment {
     pub start_x: u16,
     pub color: u16,
 }
 
 #[derive(Clone, Copy, Debug, Default, Codec)]
-pub(crate) struct WindowSegment {
+pub struct WindowSegment {
     pub start_x: u16,
     pub win0h: u16,
     pub win0v: u16,
@@ -233,7 +230,7 @@ pub(crate) struct WindowSegment {
 }
 
 #[derive(Clone, Copy, Debug, Default, Codec)]
-pub(crate) struct BlendSegment {
+pub struct BlendSegment {
     pub start_x: u16,
     pub bldcnt: u16,
     pub bldalpha: u16,
@@ -241,7 +238,7 @@ pub(crate) struct BlendSegment {
 }
 
 #[derive(Clone, Copy, Debug, Default, Codec)]
-pub(crate) struct AffineSegment {
+pub struct AffineSegment {
     pub start_x: u16,
     pub pa: i16,
     pub pc: i16,
@@ -250,13 +247,13 @@ pub(crate) struct AffineSegment {
 }
 
 #[derive(Clone, Copy, Debug, Default, Codec)]
-pub(crate) struct MosaicSegment {
+pub struct MosaicSegment {
     pub start_x: u16,
     pub mosaic: u16,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) enum LineScan {
+pub enum LineScan {
     #[default]
     Unknown,
     Absent,
@@ -264,7 +261,7 @@ pub(crate) enum LineScan {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct CompactObject {
+pub struct CompactObject {
     pub attr0: u16,
     pub attr1: u16,
     pub attr2: u16,
@@ -278,7 +275,7 @@ pub(crate) struct CompactObject {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct ObjectLineData {
+pub struct ObjectLineData {
     pub attr0: u16,
     pub attr1: u16,
     pub attr2: u16,
@@ -295,7 +292,7 @@ pub(crate) struct ObjectLineData {
 /// Complete live register key for memoized scanline composition.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct ScanlineRegisters {
+pub struct ScanlineRegisters {
     pub dispcnt: u16,
     pub green_swap: u16,
     pub bg_controls: [u16; 4],
@@ -738,6 +735,28 @@ impl Bus {
         bus
     }
 
+    /// Initialize a Bus in caller-provided uninitialized storage.
+    ///
+    /// # Safety
+    /// `ptr` must be aligned, writable storage for one Bus, with no live Bus
+    /// value at that address. The caller owns and drops the initialized value.
+    pub unsafe fn init_in_place(
+        ptr: *mut Self,
+        rom: &[u8],
+        bios: &[u8],
+        save_type: save::Type,
+        save_data: Option<&[u8]>,
+    ) {
+        let bus = if let Some(data) = save_data {
+            Self::init_with_bios_and_save_data(rom, bios, save_type, data)
+        } else {
+            Self::init_with_bios_and_save(rom, bios, save_type)
+        };
+        // SAFETY: guaranteed by the caller; the constructor owns its ROM,
+        // BIOS and boxed large arrays, and does not borrow the input slices.
+        unsafe { ptr.write(bus) };
+    }
+
     pub fn write_state(&self, sink: &mut evenfall_state::Sink<'_>) -> evenfall_state::Result<()> {
         use evenfall_state::Error;
         if self.servicing_dma
@@ -939,7 +958,7 @@ impl Bus {
             14..=15 => {
                 let started_at = self.current_cycle;
                 self.stop_game_pak_prefetch(true);
-                let offset = address as u32 & 0x00ff_ffff;
+                let offset = address & 0x00ff_ffff;
                 let byte = if let Some(tilt) = &self.cartridge_tilt {
                     if tilt::Tilt::accepts_read(offset) {
                         tilt.read(offset)
@@ -1190,11 +1209,56 @@ impl Bus {
 
     pub fn fetch_instruction_in_region(
         &mut self,
-        _region: &mut InstructionFetchRegion,
+        region: &mut InstructionFetchRegion,
         address: u32,
         width: AccessWidth,
     ) -> u32 {
+        if address.wrapping_sub(region.address) >= region.valid_starts {
+            *region = self.instruction_fetch_region(address);
+        }
+        // read() remains the reference fetch path, including prefetch, DMA,
+        // and open-bus completion. The view also admits guarded fused refills.
         self.fetch_instruction(address, width)
+    }
+
+    fn instruction_fetch_region(&self, address: u32) -> InstructionFetchRegion {
+        if address >> 24 == 3 {
+            return InstructionFetchRegion {
+                address: address & 0xff00_0000,
+                valid_starts: 0x0100_0000,
+                region_class: InstructionFetchClass::Iwram,
+                ..InstructionFetchRegion::default()
+            };
+        }
+        if !(8..=13).contains(&(address >> 24)) {
+            return InstructionFetchRegion {
+                address: address & 0xff00_0000,
+                valid_starts: 0x0100_0000,
+                ..InstructionFetchRegion::default()
+            };
+        }
+        let offset = (address - GAME_PAK_BASE) & (GAME_PAK_WINDOW_SIZE - 1);
+        let window_base = address - offset;
+        let mut first = 0;
+        let mut end = self.rom.len().min(GAME_PAK_WINDOW_SIZE as usize) as u32;
+        if offset < 0xc4 {
+            end = end.min(0xc4);
+        } else {
+            first = 0xca;
+        }
+        if window_base == 0x0c00_0000 {
+            end =
+                end.min(if self.rom.len() <= 16 * 1024 * 1024 { 0x0100_0000 } else { 0x01ff_ff00 });
+        }
+        if offset < first || end < first + 4 || offset > end - 4 {
+            return InstructionFetchRegion::default();
+        }
+        InstructionFetchRegion {
+            bytes: Some(self.rom.as_ptr().wrapping_add(first as usize)),
+            address: window_base + first,
+            valid_starts: end - first - 3,
+            region_class: InstructionFetchClass::Rom,
+        }
     }
 
     pub fn fetch_thumb_in_region(
@@ -1223,13 +1287,54 @@ impl Bus {
         [first, second]
     }
 
-    /// No fused shortcut is admitted yet; the caller uses two ordinary fetches.
     pub fn fused_thumb_game_pak_refill(
         &mut self,
-        _region: &mut InstructionFetchRegion,
-        _address: u32,
+        region: &mut InstructionFetchRegion,
+        address: u32,
     ) -> Option<[u32; 2]> {
-        None
+        if address & 1 != 0 {
+            return None;
+        }
+        if address.wrapping_sub(region.address) >= region.valid_starts {
+            *region = self.instruction_fetch_region(address);
+        }
+        let offset = address.wrapping_sub(region.address);
+        if region.bytes.is_none() || offset + 2 >= region.valid_starts {
+            return None;
+        }
+        if self.waitcnt & (1 << 14) == 0 || self.game_pak_timing_key != self.waitcnt {
+            return None;
+        }
+        let prefetch = &self.game_pak_prefetch;
+        if prefetch.active
+            && prefetch.opcode_bytes == 2
+            && ((prefetch.count != 0 && address == prefetch.head_address)
+                || (prefetch.countdown != 0 && address == prefetch.last_address))
+        {
+            return None;
+        }
+        let next = address + 2;
+        let miss_cycles = self.game_pak_half_cycles(address, AccessKind::Nonsequential);
+        let duty = self.prefetch_duty(next, 2);
+        let end = self.current_cycle + miss_cycles + duty;
+        if !self.batch_active || end >= self.batch_deadline || self.pending_dma != 0 {
+            return None;
+        }
+        let index = ((address - GAME_PAK_BASE) & (GAME_PAK_WINDOW_SIZE - 1)) as usize;
+        let first = u32::from(u16::from_le_bytes(self.rom[index..index + 2].try_into().unwrap()));
+        let second =
+            u32::from(u16::from_le_bytes(self.rom[index + 2..index + 4].try_into().unwrap()));
+        self.fetch_kind = AccessKind::Sequential;
+        self.game_pak_code_active = true;
+        self.prefetch_disabled_bug_pending = false;
+        self.prefetch_buffer_was_disabled = false;
+        self.start_game_pak_prefetch(address, 2);
+        debug_assert_eq!(self.game_pak_prefetch.countdown, duty);
+        self.continue_game_pak_prefetch(2);
+        self.game_pak_prefetch.head_address = next + 2;
+        self.open_bus_value = second;
+        self.current_cycle = end;
+        Some([first, second])
     }
 
     pub fn begin_device_batch(&mut self) {
@@ -1260,18 +1365,246 @@ impl Bus {
         self.power_state = PowerState::Stopped;
     }
 
+    pub fn idle_halt_until(&mut self, deadline: Cycle) -> bool {
+        debug_assert_eq!(self.power_state, PowerState::Halted);
+        debug_assert!(deadline >= self.current_cycle);
+        self.apply_due_external_inputs();
+        while !self.halt_wake_pending()
+            && self.current_cycle < deadline
+            && self.dma_livelock.is_none()
+        {
+            let limit = deadline - self.current_cycle;
+            let step = if self.batch_active && self.batch_deadline > self.current_cycle {
+                limit.min(self.batch_deadline - self.current_cycle)
+            } else {
+                limit.min(self.next_device_boundary() - self.current_cycle)
+            };
+            self.elapse(step);
+        }
+        self.halt_wake_pending()
+    }
+
+    pub fn idle_stop_until(&mut self, deadline: Cycle) -> bool {
+        debug_assert_eq!(self.power_state, PowerState::Stopped);
+        debug_assert!(deadline >= self.current_cycle);
+        self.apply_due_external_inputs();
+        while !self.stop_wake_pending() && self.current_cycle < deadline {
+            let Some(serial_at) = [
+                self.sio_completion_cycle,
+                self.uart_tx_completion_cycle,
+                self.uart_rx_arrival_cycle,
+                self.joy_completion_cycle,
+            ]
+            .into_iter()
+            .flatten()
+            .min() else {
+                return false;
+            };
+            let stop_at = serial_at.min(deadline);
+            if self
+                .next_external_input_cycle()
+                .is_some_and(|at| at > self.current_cycle && at <= stop_at)
+            {
+                return false;
+            }
+            if stop_at > self.current_cycle {
+                let device_point =
+                    if self.batch_active { self.batch_device_cycle } else { self.current_cycle };
+                if device_point > self.apu_cycle {
+                    self.sync_apu_to(device_point);
+                }
+                if device_point > self.timer_cycle {
+                    self.sync_timers_to(device_point);
+                }
+                self.prescaler_origin =
+                    self.prescaler_origin.wrapping_add((stop_at - self.timer_cycle) as u16) & 1023;
+                self.current_cycle = stop_at;
+                if self.batch_active {
+                    self.batch_device_cycle = stop_at;
+                }
+                self.apu_cycle = stop_at;
+                self.timer_cycle = stop_at;
+            }
+            if self.sio_completion_cycle.is_some_and(|at| at <= stop_at) {
+                self.complete_sio_transfer();
+            }
+            if self.uart_tx_completion_cycle.is_some_and(|at| at <= stop_at) {
+                self.complete_uart_transmit();
+            }
+            if self.uart_rx_arrival_cycle.is_some_and(|at| at <= stop_at) {
+                self.complete_uart_receive();
+            }
+            if self.joy_completion_cycle.is_some_and(|at| at <= stop_at) {
+                self.complete_joy_bus_command();
+            }
+        }
+        self.stop_wake_pending()
+    }
+
+    pub fn schedule_joy_bus(
+        &mut self,
+        command: JoyBusCommand,
+        completion_cycle: Cycle,
+    ) -> Result<(), JoyBusError> {
+        if self.rcnt & 0xc000 != 0xc000 {
+            return Err(JoyBusError::NotInJoyBusMode);
+        }
+        if completion_cycle < self.current_cycle {
+            return Err(JoyBusError::CompletionBeforeCurrentCycle);
+        }
+        if self.joy_pending_command.is_some() || self.joy_response.is_some() {
+            return Err(JoyBusError::TransactionPending);
+        }
+        self.joy_pending_command = Some(command);
+        self.joy_completion_cycle = Some(completion_cycle);
+        if completion_cycle == self.current_cycle {
+            self.complete_joy_bus_command();
+        }
+        Ok(())
+    }
+
+    pub fn take_joy_bus_response(&mut self) -> Option<JoyBusResponse> {
+        self.joy_response.take()
+    }
+
     pub fn soft_reset_entry_address(&mut self) -> u32 {
         let reenter_ewram = self.iwram[0x7ffa] != 0;
         self.iwram[0x7e00..].fill(0);
         if reenter_ewram { EWRAM_BASE } else { GAME_PAK_BASE }
     }
 
-    pub fn register_ram_reset(&mut self, _flags: u8) {
-        todo!("synchronize devices and reset selected hardware groups")
+    pub fn register_ram_reset(&mut self, flags: u8) {
+        self.synchronize_devices();
+        self.batch_deadline = 0;
+        self.dispcnt = 0x0080;
+        self.sio_data[0] = 0;
+        self.scanline_memo.mark_registers();
+
+        if flags & 1 != 0 {
+            self.ewram.fill(0);
+        }
+        if flags & 2 != 0 {
+            self.iwram[..0x7e00].fill(0);
+        }
+        if flags & 4 != 0 {
+            self.palette.fill(0);
+            self.scanline_memo.mark_palette();
+        }
+        if flags & 0x0c != 0 {
+            self.backdrop_segment_line = 0xffff;
+        }
+        if flags & 8 != 0 {
+            self.vram.fill(0);
+            self.scanline_memo.mark_all_vram();
+        }
+        if flags & 0x10 != 0 {
+            self.oam.fill(0);
+            self.scanline_memo.mark_oam();
+            self.oam_compact_valid = false;
+            self.object_line_index = 0xffff;
+        }
+        if flags & 0x20 != 0 {
+            self.sio_control = 0;
+            self.rcnt = 0x8000;
+            self.sio_send = 0;
+            self.sio_start_cycle = None;
+            self.sio_completion_cycle = None;
+            self.sio_receive_value = u32::MAX;
+            self.sio_multiplayer_receive = [0xffff; 4];
+            self.sio_multiplayer_id = 0;
+            self.clear_uart_state();
+            self.joy_control = 0;
+            self.joy_receive = 0;
+            self.joy_transmit = 0;
+            self.joy_status = 0;
+            self.joy_pending_command = None;
+            self.joy_completion_cycle = None;
+            self.joy_response = None;
+        }
+        if flags & 0x40 != 0 {
+            self.apu.reset_registers();
+        }
+        if flags & 0x80 != 0 {
+            self.reset_general_registers();
+        }
     }
 
     pub fn hard_reset(&mut self) {
-        todo!("BIOS register reset and console power-on state")
+        self.register_ram_reset(0xff);
+        self.iwram[0x7e00..].fill(0);
+        self.frame_pixels.fill(0);
+        self.frame_second_pixels.fill(0);
+        self.frame_priorities.fill(4);
+        self.frame_layers.fill(5);
+        self.frame_second_priorities.fill(4);
+        self.frame_second_layers.fill(5);
+        self.frame_semitransparent.fill(false);
+        self.frame_obj_window.fill(false);
+        self.scanline_memo.invalidate();
+        self.ppu_timing = PpuTiming::default();
+        self.green_swap_enabled = false;
+        let sample_output_enabled = self.apu.sample_output_enabled;
+        let high_speed_audio_enabled = self.apu.high_speed_audio_enabled;
+        self.apu = Apu::default();
+        self.apu.sample_output_enabled = sample_output_enabled;
+        self.apu.high_speed_audio_enabled = high_speed_audio_enabled;
+        self.apu.write_half(MMIO_BASE + 0x82, 0x880e);
+        self.keypad_control = 0;
+        self.keypad_condition_met = false;
+        self.sio_data = [0; 4];
+        self.post_boot = 1;
+        self.power_state = PowerState::Running;
+        self.game_pak_prefetch = GamePakPrefetch::default();
+        self.duty_valid_until = 0;
+        self.game_pak_code_active = false;
+        self.prefetch_disabled_bug_pending = false;
+        self.prefetch_buffer_was_disabled = false;
+        self.open_bus_value = 0;
+        self.reset_video_policy(self.video_requested_interval);
+    }
+
+    fn reset_general_registers(&mut self) {
+        self.ppu_timing.write_dispstat(0);
+        self.bg_controls = [0; 4];
+        self.bg_horizontal_offsets = [0; 4];
+        self.bg_vertical_offsets = [0; 4];
+        self.scroll_segment_line = 0xffff;
+        self.scroll_segment_counts = [0; 4];
+        self.backdrop_segment_line = 0xffff;
+        self.backdrop_segment_count = 0;
+        self.bg_affine_parameters = [[0x100, 0, 0, 0x100]; 2];
+        self.bg_reference_points = [[0; 2]; 2];
+        self.bg_affine_current = [[0; 2]; 2];
+        self.win0h = 0;
+        self.win1h = 0;
+        self.win0v = 0;
+        self.win1v = 0;
+        self.winin = 0;
+        self.winout = 0;
+        self.win_segment_line = 0xffff;
+        self.win_segment_count = 0;
+        self.mosaic = 0;
+        self.mosaic_segment_line = 0xffff;
+        self.mosaic_segment_count = 0;
+        self.bldcnt = 0;
+        self.bldalpha = 0;
+        self.bldy = 0;
+        self.blend_segment_line = 0xffff;
+        self.blend_segment_count = 0;
+        self.affine_segment_line = 0xffff;
+        self.affine_segment_counts = [0; 2];
+        self.dma_channels = std::array::from_fn(|_| DmaChannel::default());
+        self.timers = std::array::from_fn(|_| Timer::default());
+        self.dma_start_cycles = [None; 4];
+        self.pending_dma = 0;
+        self.servicing_dma = false;
+        self.active_dma_channel = None;
+        self.dma_transfer_latch = 0;
+        self.interrupt_enable_mask = 0;
+        self.interrupt_request_flags = 0;
+        self.interrupt_master_enabled = false;
+        self.update_irq_line();
+        self.write_waitcnt(0);
     }
 
     pub fn inspect_byte(&self, address: u32) -> u8 {
@@ -1279,12 +1612,28 @@ impl Bus {
             0 if address < BIOS_SIZE as u32 => self.read_bios(address, AccessWidth::Byte) as u8,
             2 => self.read_ewram(address, AccessWidth::Byte) as u8,
             3 => self.read_iwram(address, AccessWidth::Byte) as u8,
-            4 => todo!("side-effect-free MMIO peek"),
+            4 => {
+                let aligned = address & !1;
+                if aligned == MMIO_BASE + 0x12a && self.is_uart_mode() && address & 1 != 0 {
+                    return 0;
+                }
+                (self.peek_mmio_half(aligned).unwrap_or_else(|| self.unused_mmio_half(aligned))
+                    >> ((address & 1) * 8)) as u8
+            }
             5 => self.palette[(address as usize) & (PALETTE_SIZE - 1)],
             6 => vram_index(address, self.dispcnt).map_or(0, |index| self.vram[index]),
             7 => self.oam[(address as usize) & (OAM_SIZE - 1)],
             8..=13 => self.read_game_pak_rom(address, AccessWidth::Byte) as u8,
-            14..=15 => self.save.peek_byte(address as u16, self.current_cycle),
+            14..=15 => {
+                let offset = address & 0x00ff_ffff;
+                if let Some(tilt) = &self.cartridge_tilt
+                    && tilt::Tilt::accepts_read(offset)
+                {
+                    tilt.read(offset)
+                } else {
+                    self.save.peek_byte(address as u16, self.current_cycle)
+                }
+            }
             _ => (self.open_bus_value >> ((address & 3) * 8)) as u8,
         }
     }
@@ -1352,6 +1701,68 @@ impl Bus {
     pub fn set_keys(&mut self, keys: KeyState) {
         self.keys = keys;
         self.update_keypad_condition();
+    }
+
+    /// Install caller-owned inputs for one synchronous run. The caller must
+    /// keep the slice alive and immobile until `end_external_inputs`.
+    ///
+    /// # Safety
+    /// `inputs` must remain allocated and immutable through that call.
+    pub unsafe fn begin_external_inputs(&mut self, inputs: &[TimedInput]) {
+        debug_assert!(self.external_input_pointer.is_none());
+        if inputs.is_empty() {
+            return;
+        }
+        self.external_input_pointer = Some(inputs.as_ptr());
+        self.external_input_count = inputs.len();
+        self.external_input_index = 0;
+        self.apply_due_external_inputs();
+        if self.batch_active {
+            self.flush_device_batch();
+            self.batch_deadline = self.next_device_boundary();
+        }
+    }
+
+    pub fn external_inputs_consumed(&self) -> usize {
+        self.external_input_index
+    }
+
+    pub fn end_external_inputs(&mut self) {
+        self.external_input_pointer = None;
+        self.external_input_count = 0;
+        self.external_input_index = 0;
+        if self.batch_active {
+            self.flush_device_batch();
+            self.batch_deadline = self.next_device_boundary();
+        }
+    }
+
+    fn next_external_input_cycle(&self) -> Option<Cycle> {
+        if self.external_input_index == self.external_input_count {
+            return None;
+        }
+        // SAFETY: begin_external_inputs requires this slice to remain alive
+        // and immutable until end_external_inputs; index is strictly in range.
+        Some(unsafe { (*self.external_input_pointer.unwrap().add(self.external_input_index)).at })
+    }
+
+    fn apply_due_external_inputs(&mut self) {
+        while self.external_input_index < self.external_input_count {
+            // SAFETY: the synchronous run holds the input slice alive, and
+            // the loop bounds the index by the supplied slice length.
+            let input =
+                unsafe { *self.external_input_pointer.unwrap().add(self.external_input_index) };
+            if input.at > self.current_cycle {
+                break;
+            }
+            match input.change {
+                TimedInputChange::Keys(keys) => self.set_keys(keys),
+                TimedInputChange::SolarLevel(level) => self.set_solar_level(level),
+                TimedInputChange::GyroSample(sample) => self.set_gyro_sample(sample),
+                TimedInputChange::Tilt(sample) => self.set_tilt(sample),
+            }
+            self.external_input_index += 1;
+        }
     }
 
     fn pressed_keys(&self) -> u16 {
@@ -1425,6 +1836,42 @@ impl Bus {
 
     pub fn framebuffer(&self) -> &[u16] {
         &self.frame_pixels[..]
+    }
+
+    pub fn set_video_interval(&mut self, interval: u16) {
+        debug_assert!((1..=16).contains(&interval));
+        self.synchronize_devices();
+        if interval == self.video_requested_interval {
+            return;
+        }
+        if interval != 1 && !self.video_publication_active {
+            self.video_published_pixels.copy_from_slice(&self.frame_pixels[..]);
+            self.video_publication_active = true;
+        }
+        self.video_requested_interval = interval;
+    }
+
+    pub fn current_audio_sample(&self) -> StereoSample {
+        self.apu.current_sample()
+    }
+
+    pub fn drain_audio_samples(&mut self, output: &mut [StereoSample]) -> usize {
+        self.sync_apu_to(self.current_cycle);
+        self.apu.drain_samples(output)
+    }
+
+    pub fn set_audio_output(&mut self, enabled: bool) {
+        self.synchronize_devices();
+        self.apu.set_sample_output(enabled);
+    }
+
+    pub fn set_high_speed_audio(&mut self, enabled: bool) {
+        self.synchronize_devices();
+        self.apu.set_high_speed_audio(enabled);
+    }
+
+    pub fn audio_sample_rate(&self) -> u32 {
+        self.apu.sample_rate()
     }
 
     pub fn published_framebuffer(&self) -> &[u16] {
@@ -1724,18 +2171,16 @@ impl Bus {
             return Some(if offset & 2 != 0 { timer.read_control() } else { timer.read_counter() });
         }
         let offset = address.wrapping_sub(MMIO_BASE);
-        if (0x08..=0x0e).contains(&offset) && offset & 1 == 0 {
-            return Some(self.bg_controls[((offset - 8) / 2) as usize]);
+        if let Some(index) = Self::background_control_index(address) {
+            return Some(self.bg_controls[index]);
         }
-        if (0x10..0x20).contains(&offset) && offset & 1 == 0 {
+        if Self::background_offset_register(address).is_some() {
             return Some(0);
         }
-        if (0x20..0x40).contains(&offset) && offset & 1 == 0 {
-            let bg = ((offset - 0x20) / 0x10) as usize;
-            let reg = (offset - 0x20) % 0x10;
-            if reg < 8 {
-                return Some(self.bg_affine_parameters[bg][(reg / 2) as usize] as u16);
-            }
+        if let Some((bg, parameter)) = Self::affine_parameter_register(address) {
+            return Some(self.bg_affine_parameters[bg][parameter] as u16);
+        }
+        if Self::affine_reference_register(address).is_some() {
             return Some(0);
         }
         if let Some(value) = self.apu.read_half(address) {
@@ -1858,19 +2303,16 @@ impl Bus {
             let timer = &self.timers[((offset - 0x100) / 4) as usize];
             return Some(if offset & 2 == 0 { timer.reload } else { timer.control });
         }
-        if (0x10..0x20).contains(&offset) {
-            let bg = ((offset - 0x10) / 4) as usize;
-            return Some(if offset & 2 == 0 {
-                self.bg_horizontal_offsets[bg]
-            } else {
+        if let Some((bg, vertical)) = Self::background_offset_register(address) {
+            return Some(if vertical {
                 self.bg_vertical_offsets[bg]
+            } else {
+                self.bg_horizontal_offsets[bg]
             });
         }
-        if (0x28..0x40).contains(&offset) && (offset - 0x20) % 0x10 >= 8 {
-            let bg = ((offset - 0x20) / 0x10) as usize;
-            let coord = (((offset - 0x20) % 0x10 - 8) / 4) as usize;
+        if let Some((bg, coord, high)) = Self::affine_reference_register(address) {
             let raw = self.bg_reference_points[bg][coord] as u32;
-            return Some(if offset & 2 != 0 { (raw >> 16) as u16 } else { raw as u16 });
+            return Some(if high { (raw >> 16) as u16 } else { raw as u16 });
         }
         if offset == 0x154 {
             return Some(self.joy_transmit as u16);
@@ -1932,8 +2374,7 @@ impl Bus {
             }
             return;
         }
-        if (0x08..=0x0e).contains(&offset) && offset & 1 == 0 {
-            let index = ((offset - 8) / 2) as usize;
+        if let Some(index) = Self::background_control_index(address) {
             let priority_changed = (self.bg_controls[index] ^ value) & 3 != 0;
             if priority_changed {
                 self.begin_scroll_segment(index);
@@ -1944,10 +2385,9 @@ impl Bus {
             }
             return;
         }
-        if (0x10..0x20).contains(&offset) && offset & 1 == 0 {
-            let index = ((offset - 0x10) / 4) as usize;
+        if let Some((index, vertical)) = Self::background_offset_register(address) {
             self.begin_scroll_segment(index);
-            if offset & 2 != 0 {
+            if vertical {
                 self.bg_vertical_offsets[index] = value & 0x1ff;
             } else {
                 self.bg_horizontal_offsets[index] = value & 0x1ff;
@@ -1955,8 +2395,25 @@ impl Bus {
             self.end_scroll_segment(index);
             return;
         }
-        if (0x20..0x40).contains(&offset) && offset & 1 == 0 {
-            todo!("affine MMIO raster history");
+        if let Some((background, parameter)) = Self::affine_parameter_register(address) {
+            self.begin_affine_segment();
+            self.bg_affine_parameters[background][parameter] = value as i16;
+            self.end_affine_segment(background, AffineTransition::PreserveAccumulator);
+            return;
+        }
+        if let Some((background, coordinate, high)) = Self::affine_reference_register(address) {
+            self.begin_affine_segment();
+            let old = self.bg_reference_points[background][coordinate] as u32;
+            let raw = if high {
+                (old & 0xffff) | (u32::from(value & 0x0fff) << 16)
+            } else {
+                (old & 0x0fff_0000) | u32::from(value)
+            };
+            let point = ((raw << 4) as i32) >> 4;
+            self.bg_reference_points[background][coordinate] = point;
+            self.bg_affine_current[background][coordinate] = point;
+            self.end_affine_segment(background, AffineTransition::ReloadReferenceOrigin);
+            return;
         }
         if (0x60..0xa0).contains(&offset) {
             self.sync_apu_to(self.current_cycle);
@@ -1965,7 +2422,7 @@ impl Bus {
             return;
         }
         if (0x120..=0x126).contains(&offset) && offset & 1 == 0 {
-            if self.sio_control >> 12 == 1 && offset < 0x124 {
+            if (self.sio_control >> 12) & 3 == 1 && offset < 0x124 {
                 self.sio_data[((offset - 0x120) / 2) as usize] = value;
             }
             return;
@@ -2038,7 +2495,7 @@ impl Bus {
             0x12a => {
                 if self.is_uart_mode() {
                     self.write_uart_data(value as u8);
-                } else if self.sio_control >> 12 != 3 {
+                } else if (self.sio_control >> 12) & 3 != 3 {
                     self.sio_send = value;
                 }
             }
@@ -2062,7 +2519,7 @@ impl Bus {
     }
 
     fn read_sio_data(&self, index: usize) -> u16 {
-        match self.sio_control >> 12 {
+        match (self.sio_control >> 12) & 3 {
             1 if index < 2 => self.sio_data[index],
             2 => self.sio_data[index],
             _ => 0,
@@ -2070,11 +2527,11 @@ impl Bus {
     }
 
     fn is_uart_mode(&self) -> bool {
-        self.rcnt & 0x8000 == 0 && self.sio_control >> 12 == 3
+        self.rcnt & 0x8000 == 0 && (self.sio_control >> 12) & 3 == 3
     }
 
     fn read_sio_control(&self) -> u16 {
-        if self.sio_control >> 12 == 3 {
+        if (self.sio_control >> 12) & 3 == 3 {
             self.sio_control | self.uart_status()
         } else {
             self.sio_control
@@ -2137,18 +2594,170 @@ impl Bus {
             let bits = 1 + data_bits + if self.sio_control & 0x200 != 0 { 1 } else { 0 } + 1;
             let rate = rates[(self.sio_control & 3) as usize];
             self.uart_tx_completion_cycle =
-                Some(self.current_cycle + (bits * 16_777_216 + rate - 1) / rate);
+                Some(self.current_cycle + (bits * 16_777_216).div_ceil(rate));
         }
     }
 
-    fn write_sio_control(&mut self, _value: u16) {
-        todo!("SIO start and UART mode transitions")
+    fn write_sio_control(&mut self, value: u16) {
+        let old_submode = (self.sio_control >> 12) & 3;
+        let old_uart = self.is_uart_mode();
+        let old_fifo = self.sio_control & 0x100 != 0;
+        let new_submode = (value >> 12) & 3;
+        self.sio_control = match new_submode {
+            0 | 1 => (value & 0x7f8b) | 4,
+            2 => (value & 0x7f83) | if old_submode == 2 { self.sio_control & 0x7c } else { 0x0c },
+            3 => value & 0x7f8f,
+            _ => unreachable!(),
+        };
+        self.sio_start_cycle = None;
+        self.sio_completion_cycle = None;
+        let uart = self.is_uart_mode();
+        if old_uart != uart {
+            self.clear_uart_state();
+        }
+        if uart {
+            if old_uart && old_fifo && self.sio_control & 0x100 == 0 {
+                self.uart_tx_fifo.clear();
+                self.uart_rx_fifo.clear();
+            }
+            self.maybe_start_uart_transmit();
+            return;
+        }
+        if self.rcnt & 0x8000 == 0 && new_submode <= 2 && self.sio_control & 0x80 != 0 {
+            self.sio_start_cycle = Some(self.current_cycle);
+            if new_submode <= 1 {
+                self.sio_receive_value = u32::MAX;
+                if self.sio_control & 1 != 0 {
+                    let bits: Cycle = if new_submode == 0 { 8 } else { 32 };
+                    let cycles_per_bit = if self.sio_control & 2 != 0 { 8 } else { 64 };
+                    self.sio_completion_cycle = Some(self.current_cycle + bits * cycles_per_bit);
+                }
+            }
+        }
     }
-    fn write_rcnt(&mut self, _value: u16) {
-        todo!("RCNT transitions")
+
+    fn write_rcnt(&mut self, value: u16) {
+        let old_uart = self.is_uart_mode();
+        let old_joy_bus = self.rcnt & 0xc000 == 0xc000;
+        self.rcnt = if value & 0xc000 == 0x8000 { value & 0xc1ff } else { value & 0xc1f0 };
+        if old_uart != self.is_uart_mode() {
+            self.clear_uart_state();
+        }
+        if old_joy_bus != (self.rcnt & 0xc000 == 0xc000) {
+            self.joy_pending_command = None;
+            self.joy_completion_cycle = None;
+            self.joy_response = None;
+        }
+        if self.rcnt & 0x8000 != 0 {
+            self.sio_start_cycle = None;
+            self.sio_completion_cycle = None;
+            self.sio_receive_value = u32::MAX;
+        }
+    }
+
+    fn clear_uart_state(&mut self) {
+        self.uart_tx_fifo.clear();
+        self.uart_rx_fifo.clear();
+        self.uart_tx_active = None;
+        self.uart_tx_completion_cycle = None;
+        self.uart_tx_peer_scheduled = false;
+        self.uart_rx_arrival_cycle = None;
+        self.uart_rx_arrival_value = 0;
+        self.uart_error = false;
+        self.uart_cts_ready = false;
+    }
+
+    fn complete_sio_transfer(&mut self) {
+        self.sio_start_cycle = None;
+        self.sio_completion_cycle = None;
+        self.sio_control &= !0x80;
+        match (self.sio_control >> 12) & 3 {
+            0 => self.sio_send = (self.sio_send & 0xff00) | (self.sio_receive_value as u8 as u16),
+            1 => {
+                self.sio_data[0] = self.sio_receive_value as u16;
+                self.sio_data[1] = (self.sio_receive_value >> 16) as u16;
+            }
+            2 => {
+                self.sio_data = self.sio_multiplayer_receive;
+                self.sio_control =
+                    (self.sio_control & !0x30) | (u16::from(self.sio_multiplayer_id) << 4);
+            }
+            _ => return,
+        }
+        if self.sio_control & 0x4000 != 0 {
+            self.interrupt_request_flags |= 1 << 7;
+            self.update_irq_line();
+        }
+    }
+
+    fn complete_uart_transmit(&mut self) {
+        let old = self.uart_status();
+        self.uart_tx_active = None;
+        self.uart_tx_completion_cycle = None;
+        self.uart_tx_peer_scheduled = false;
+        self.uart_cts_ready = false;
+        self.maybe_start_uart_transmit();
+        self.raise_uart_status_edges(old);
+    }
+
+    fn complete_uart_receive(&mut self) {
+        let old = self.uart_status();
+        self.uart_rx_arrival_cycle = None;
+        if self.is_uart_mode()
+            && self.sio_control & 0x800 != 0
+            && !self
+                .uart_rx_fifo
+                .push(self.uart_rx_arrival_value, if self.sio_control & 0x100 != 0 { 4 } else { 1 })
+        {
+            self.uart_error = true;
+        }
+        self.raise_uart_status_edges(old);
+    }
+
+    fn complete_joy_bus_command(&mut self) {
+        let Some(command) = self.joy_pending_command.take() else {
+            return;
+        };
+        self.joy_completion_cycle = None;
+        let mut response = JoyBusResponse::default();
+        let reset = matches!(command, JoyBusCommand::Reset);
+        match command {
+            JoyBusCommand::Status | JoyBusCommand::Reset => {
+                if reset {
+                    self.joy_control |= 1;
+                    self.raise_joy_bus_irq();
+                }
+                response.data[..3].copy_from_slice(&[0, 4, self.joy_status as u8]);
+                response.len = 3;
+            }
+            JoyBusCommand::WriteToGba(value) => {
+                self.joy_receive = value;
+                self.joy_control |= 1 << 1;
+                self.joy_status |= 1 << 1;
+                response.data[0] = self.joy_status as u8;
+                response.len = 1;
+                self.raise_joy_bus_irq();
+            }
+            JoyBusCommand::ReadFromGba => {
+                response.data[..4].copy_from_slice(&self.joy_transmit.to_le_bytes());
+                response.data[4] = self.joy_status as u8;
+                response.len = 5;
+                self.joy_control |= 1 << 2;
+                self.joy_status &= !(1 << 3);
+                self.raise_joy_bus_irq();
+            }
+        }
+        self.joy_response = Some(response);
+    }
+
+    fn raise_joy_bus_irq(&mut self) {
+        if self.joy_control & 0x40 != 0 {
+            self.interrupt_request_flags |= 1 << 7;
+            self.update_irq_line();
+        }
     }
     fn read_rcnt(&self) -> u16 {
-        let serial_lines = if self.sio_control >> 12 <= 1 { 5 } else { 15 };
+        let serial_lines = if (self.sio_control >> 12) & 3 <= 1 { 5 } else { 15 };
         match self.rcnt & 0xc000 {
             0 | 0x4000 => (self.rcnt & 0xc1f0) | serial_lines,
             0x8000 => self.rcnt & 0xc1ff,
@@ -2187,10 +2796,8 @@ impl Bus {
         let cycles = target - self.timer_cycle;
         self.timer_cycle = target;
         for (index, timer) in self.timers.iter_mut().enumerate() {
-            if index == 0 || !timer.count_up_enabled() {
-                if cycles != 0 {
-                    timer.elapse_before_overflow(cycles);
-                }
+            if (index == 0 || !timer.count_up_enabled()) && cycles != 0 {
+                timer.elapse_before_overflow(cycles);
             }
         }
     }
@@ -2221,18 +2828,17 @@ impl Bus {
             self.uart_tx_completion_cycle,
             self.uart_rx_arrival_cycle,
             self.joy_completion_cycle,
-        ] {
-            if let Some(at) = at {
-                boundary = boundary.min(at);
-            }
+        ]
+        .into_iter()
+        .flatten()
+        {
+            boundary = boundary.min(at);
         }
-        for &at in &self.dma_start_cycles {
-            if let Some(at) = at {
-                boundary = boundary.min(at);
-            }
+        for at in self.dma_start_cycles.into_iter().flatten() {
+            boundary = boundary.min(at);
         }
-        if self.external_input_index < self.external_input_count {
-            todo!("external input deadline");
+        if let Some(at) = self.next_external_input_cycle() {
+            boundary = boundary.min(at);
         }
         boundary
     }
@@ -2309,26 +2915,24 @@ impl Bus {
         }
         self.update_irq_line();
         self.current_cycle += cycles;
-        if self.external_input_index < self.external_input_count {
-            todo!("deliver timed external inputs");
-        }
+        self.apply_due_external_inputs();
         for (index, at) in self.dma_start_cycles.iter_mut().enumerate() {
             if *at == Some(self.current_cycle) {
                 *at = None;
                 self.pending_dma |= 1 << index;
             }
         }
-        if [
-            self.sio_completion_cycle,
-            self.uart_tx_completion_cycle,
-            self.uart_rx_arrival_cycle,
-            self.joy_completion_cycle,
-        ]
-        .into_iter()
-        .flatten()
-        .any(|at| at == self.current_cycle)
-        {
-            todo!("deliver serial completion");
+        if self.sio_completion_cycle == Some(self.current_cycle) {
+            self.complete_sio_transfer();
+        }
+        if self.uart_tx_completion_cycle == Some(self.current_cycle) {
+            self.complete_uart_transmit();
+        }
+        if self.uart_rx_arrival_cycle == Some(self.current_cycle) {
+            self.complete_uart_receive();
+        }
+        if self.joy_completion_cycle == Some(self.current_cycle) {
+            self.complete_joy_bus_command();
         }
         if events.hblank_any
             || events.frames_completed != 0
@@ -2398,8 +3002,196 @@ impl Bus {
     }
 
     fn service_pending_dma(&mut self) {
-        if self.pending_dma != 0 && !self.servicing_dma {
-            todo!("DMA arbitration and beat dispatch");
+        if self.pending_dma == 0 || self.servicing_dma {
+            return;
+        }
+        if self.dma_livelock.is_some() {
+            self.pending_dma = 0;
+            return;
+        }
+        self.servicing_dma = true;
+        self.dma_burst_start = self.current_cycle;
+        let sub_batch = !self.batch_active;
+        if sub_batch {
+            self.begin_device_batch();
+        }
+        while self.pending_dma != 0 {
+            let index = self.pending_dma.trailing_zeros() as usize;
+            self.pending_dma &= !(1 << index);
+            if self.dma_channels[index].enabled() {
+                if self.dma_burst_exhausted(index) {
+                    break;
+                }
+                self.run_dma(index);
+            }
+        }
+        if sub_batch {
+            self.end_device_batch();
+        }
+        self.servicing_dma = false;
+    }
+
+    pub const MAX_DMA_BURST_CYCLES: Cycle = 1 << 24;
+
+    fn dma_burst_exhausted(&mut self, index: usize) -> bool {
+        if self.current_cycle - self.dma_burst_start < Self::MAX_DMA_BURST_CYCLES {
+            return false;
+        }
+        self.dma_livelock =
+            Some(DmaLivelock { started_at: self.dma_burst_start, channel: index as u8 });
+        self.pending_dma = 0;
+        true
+    }
+
+    pub fn dma_livelock(&self) -> Option<DmaLivelock> {
+        self.dma_livelock
+    }
+
+    fn run_dma(&mut self, index: usize) {
+        let previous_active = self.active_dma_channel;
+        self.active_dma_channel = Some(index as u8);
+        self.dma_epoch = self.dma_epoch.wrapping_add(1);
+        let mut source = self.dma_channels[index].latched_source;
+        let mut destination = self.dma_channels[index].latched_destination;
+        let control = self.dma_channels[index].control;
+        let is_audio_fifo = (1..=2).contains(&index)
+            && (control >> 12) & 3 == 3
+            && Apu::fifo_for_address(destination).is_some();
+        let width = if is_audio_fifo || control & (1 << 10) != 0 {
+            AccessWidth::Word
+        } else {
+            AccessWidth::Half
+        };
+        let unit_bytes = width.bytes() as u32;
+        let transfer_words =
+            if is_audio_fifo { 4 } else { self.dma_channels[index].transfer_words(index) };
+        if index == 3
+            && width == AccessWidth::Half
+            && self.is_eeprom_address(destination)
+            && self.save.is_auto()
+        {
+            self.save.resolve_eeprom_transfer(transfer_words);
+        }
+        let mut did_access_rom = false;
+        for transferred in 0..transfer_words {
+            let mut source_kind = AccessKind::Sequential;
+            let mut dest_kind = AccessKind::Sequential;
+            if !did_access_rom {
+                if (8..=13).contains(&(source >> 24)) {
+                    source_kind = AccessKind::Nonsequential;
+                    did_access_rom = true;
+                } else if (8..=13).contains(&(destination >> 24)) {
+                    dest_kind = AccessKind::Nonsequential;
+                    did_access_rom = true;
+                }
+            }
+            let value = if source == 0 {
+                self.advance(1);
+                self.open_bus_value = self.dma_transfer_latch;
+                self.dma_transfer_latch
+            } else {
+                let value = self.read_dma_source(source, width, source_kind);
+                self.dma_transfer_latch =
+                    if width == AccessWidth::Half { (value & 0xffff) * 0x0001_0001 } else { value };
+                value
+            };
+            self.write_dma_destination(destination, width, dest_kind, value);
+            let source_control = ((control >> 7) & 3) as u8;
+            source = if source == 0 {
+                0
+            } else if (8..=13).contains(&(source >> 24)) && source_control < 3 {
+                source.wrapping_add(unit_bytes)
+            } else {
+                adjusted_dma_address(source, unit_bytes, source_control)
+            };
+            if !is_audio_fifo {
+                destination =
+                    adjusted_dma_address(destination, unit_bytes, ((control >> 5) & 3) as u8);
+            }
+            if transferred + 1 < transfer_words {
+                self.service_higher_priority_dma(index);
+                if self.dma_livelock.is_some() {
+                    self.active_dma_channel = previous_active;
+                    return;
+                }
+            }
+        }
+        self.advance(2);
+        self.dma_channels[index].latched_source = source;
+        let repeat = control & (1 << 9) != 0 && (control >> 12) & 3 != 0;
+        if repeat && (control >> 5) & 3 == 3 {
+            self.dma_channels[index].reload_latched_destination();
+        } else {
+            self.dma_channels[index].latched_destination = destination;
+        }
+        if !repeat {
+            self.dma_channels[index].control &= !(1 << 15);
+        }
+        if control & (1 << 14) != 0 {
+            self.interrupt_request_flags |= 1 << (index + 8);
+            self.update_irq_line();
+        }
+        self.active_dma_channel = previous_active;
+    }
+
+    fn read_dma_source(&mut self, address: u32, width: AccessWidth, kind: AccessKind) -> u32 {
+        let access = Access { address, width, kind, source: AccessSource::Dma };
+        match address >> 24 {
+            2 => self.complete_read(self.read_ewram(address, width), ewram_cycles(width)).value,
+            3 => self.complete_read(self.read_iwram(address, width), 1).value,
+            8..=13
+                if !(width == AccessWidth::Half
+                    && self.save.is_eeprom()
+                    && self.is_eeprom_address(address)) =>
+            {
+                self.read_game_pak(access).value
+            }
+            _ => self.read(access).value,
+        }
+    }
+
+    fn write_dma_destination(
+        &mut self,
+        address: u32,
+        width: AccessWidth,
+        kind: AccessKind,
+        value: u32,
+    ) {
+        match address >> 24 {
+            2 => {
+                self.advance(ewram_cycles(width));
+                self.write_ewram(address, width, value);
+            }
+            3 => {
+                self.advance(1);
+                self.write_iwram(address, width, value);
+            }
+            _ if Apu::accepts_fifo_write(address, width.bytes() as u8) => {
+                self.advance(1);
+                self.apu.write_fifo(address, value, width.bytes() as u8);
+            }
+            _ => {
+                self.write(Access { address, width, kind, source: AccessSource::Dma }, value);
+                return;
+            }
+        }
+        self.service_pending_dma();
+    }
+
+    fn service_higher_priority_dma(&mut self, current_index: usize) {
+        if current_index == 0 {
+            return;
+        }
+        let higher_mask = (1u8 << current_index) - 1;
+        while self.pending_dma & higher_mask != 0 {
+            let index = (self.pending_dma & higher_mask).trailing_zeros() as usize;
+            self.pending_dma &= !(1 << index);
+            if self.dma_channels[index].enabled() {
+                if self.dma_burst_exhausted(index) {
+                    return;
+                }
+                self.run_dma(index);
+            }
         }
     }
 
@@ -2423,10 +3215,10 @@ impl Bus {
             {
                 continue;
             }
-            if let Some(fifo) = Apu::fifo_for_address(channel.latched_destination) {
-                if requests & (1 << fifo as u8) != 0 {
-                    self.pending_dma |= 1 << index;
-                }
+            if let Some(fifo) = Apu::fifo_for_address(channel.latched_destination)
+                && requests & (1 << fifo as u8) != 0
+            {
+                self.pending_dma |= 1 << index;
             }
         }
     }
@@ -2449,7 +3241,8 @@ impl Bus {
     }
 
     fn write_palette(&mut self, address: u32, width: AccessWidth, value: u32) {
-        let address = address as usize & (PALETTE_SIZE - 1);
+        let address = (if width == AccessWidth::Byte { address & !1 } else { address }) as usize
+            & (PALETTE_SIZE - 1);
         let mut changed = false;
         for offset in 0..width.bytes().max(2) {
             let byte = if width == AccessWidth::Byte {
@@ -2479,7 +3272,7 @@ impl Bus {
             let Some(index) = vram_index(address & !1, self.dispcnt) else {
                 return;
             };
-            if index >= if self.dispcnt & 7 >= 3 { 0x14000 } else { 0x10000 } {
+            if index >= vram_obj_boundary(self.dispcnt) {
                 return;
             }
             for index in index..index + 2 {
@@ -2679,6 +3472,177 @@ impl Bus {
     }
 }
 
+/// Couple ready serial endpoints in cable order. All peers share one cycle origin.
+pub fn synchronize_sio(
+    peers: &mut [&mut Bus],
+    connection: SioConnection,
+) -> Result<bool, SioLinkError> {
+    if !(2..=4).contains(&peers.len()) || (connection == SioConnection::Cable2p && peers.len() != 2)
+    {
+        return Err(SioLinkError::UnsupportedPeerCount);
+    }
+    let mode = (peers[0].sio_control >> 12) & 3;
+    if peers.iter().any(|peer| peer.rcnt & 0x8000 != 0 || (peer.sio_control >> 12) & 3 != mode) {
+        return Ok(false);
+    }
+    match mode {
+        0 | 1 => {
+            let mut outgoing = [0u32; 4];
+            let mut internal = [false; 4];
+            for (index, peer) in peers.iter().enumerate() {
+                if peer.sio_control & 0x80 == 0 {
+                    return Ok(false);
+                }
+                internal[index] = peer.sio_control & 1 != 0;
+                outgoing[index] = if mode == 0 {
+                    u32::from(peer.sio_send as u8)
+                } else {
+                    u32::from(peer.sio_data[0]) | (u32::from(peer.sio_data[1]) << 16)
+                };
+            }
+            let master = match connection {
+                SioConnection::Cable2p => {
+                    if internal[0] == internal[1] {
+                        return if internal[0] {
+                            Err(SioLinkError::ClockConflict)
+                        } else {
+                            Ok(false)
+                        };
+                    }
+                    usize::from(!internal[0])
+                }
+                SioConnection::CableMulti => {
+                    if !internal[0] {
+                        if internal[1..peers.len()].contains(&true) {
+                            return Err(SioLinkError::ClockConflict);
+                        }
+                        return Ok(false);
+                    }
+                    if internal[1..peers.len()].contains(&true) {
+                        return Err(SioLinkError::ClockConflict);
+                    }
+                    0
+                }
+            };
+            let deadline =
+                peers[master].sio_completion_cycle.expect("internal SIO clock has a deadline");
+            if peers.iter().any(|peer| peer.current_cycle > deadline) {
+                return Err(SioLinkError::MissedDeadline);
+            }
+            match connection {
+                SioConnection::Cable2p => {
+                    peers[0].sio_receive_value = outgoing[1];
+                    peers[1].sio_receive_value = outgoing[0];
+                    arm_sio_completion(peers[1 - master], deadline);
+                }
+                SioConnection::CableMulti => {
+                    peers[0].sio_receive_value = 0;
+                    for index in 1..peers.len() {
+                        peers[index].sio_receive_value = outgoing[index - 1];
+                        arm_sio_completion(peers[index], deadline);
+                    }
+                }
+            }
+            Ok(true)
+        }
+        2 => {
+            if connection != SioConnection::CableMulti {
+                return Err(SioLinkError::UnsupportedMode);
+            }
+            let parent_started = peers[0].sio_control & 0x80 != 0;
+            for (index, peer) in peers.iter_mut().enumerate() {
+                peer.sio_control =
+                    (peer.sio_control & !0x000c) | 0x0008 | if index == 0 { 0 } else { 0x0004 };
+                if index != 0 && !parent_started {
+                    peer.sio_control &= !0x80;
+                }
+            }
+            if !parent_started {
+                return Ok(false);
+            }
+            if peers[0].sio_completion_cycle.is_some() {
+                return Ok(true);
+            }
+            let mut received = [0xffff; 4];
+            for (index, peer) in peers.iter().enumerate() {
+                received[index] = peer.sio_send;
+            }
+            const DURATIONS: [[Cycle; 3]; 4] = [
+                [73_003, 107_680, 142_356],
+                [18_251, 26_920, 35_589],
+                [12_167, 17_947, 23_726],
+                [6_075, 8_973, 11_863],
+            ];
+            let Some(started_at) = peers[0].sio_start_cycle else { return Ok(false) };
+            let deadline =
+                started_at + DURATIONS[(peers[0].sio_control & 3) as usize][peers.len() - 2];
+            if peers.iter().any(|peer| peer.current_cycle > deadline) {
+                return Err(SioLinkError::MissedDeadline);
+            }
+            for (index, peer) in peers.iter_mut().enumerate() {
+                peer.sio_data = [0xffff; 4];
+                peer.sio_multiplayer_receive = received;
+                peer.sio_multiplayer_id = index as u8;
+                peer.sio_control |= 0x80;
+                arm_sio_completion(peer, deadline);
+            }
+            Ok(true)
+        }
+        3 => {
+            if connection != SioConnection::Cable2p {
+                return Err(SioLinkError::UnsupportedMode);
+            }
+            let mut progressed = false;
+            for index in 0..2 {
+                let (sender, receiver) = if index == 0 {
+                    let (left, right) = peers.split_at_mut(1);
+                    (&mut *left[0], &mut *right[0])
+                } else {
+                    let (left, right) = peers.split_at_mut(1);
+                    (&mut *right[0], &mut *left[0])
+                };
+                let receiver_ready = receiver.sio_control & 0x800 != 0
+                    && receiver.uart_rx_fifo.count
+                        < if receiver.sio_control & 0x100 != 0 { 4 } else { 1 }
+                    && receiver.uart_rx_arrival_cycle.is_none();
+                sender.uart_cts_ready = receiver_ready;
+                let was_active = sender.uart_tx_active.is_some();
+                sender.maybe_start_uart_transmit();
+                if !was_active && sender.uart_tx_active.is_some() {
+                    progressed = true;
+                }
+                let Some(value) = sender.uart_tx_active else { continue };
+                if sender.uart_tx_peer_scheduled {
+                    continue;
+                }
+                let deadline =
+                    sender.uart_tx_completion_cycle.expect("active UART transmit has a deadline");
+                if receiver.current_cycle > deadline {
+                    return Err(SioLinkError::MissedDeadline);
+                }
+                if receiver.sio_control & 0x800 != 0 {
+                    receiver.uart_rx_arrival_value = value;
+                    receiver.uart_rx_arrival_cycle = Some(deadline);
+                    if receiver.current_cycle == deadline {
+                        receiver.complete_uart_receive();
+                    }
+                }
+                sender.uart_tx_peer_scheduled = true;
+                progressed = true;
+            }
+            Ok(progressed)
+        }
+        _ => unreachable!(),
+    }
+}
+
+fn arm_sio_completion(peer: &mut Bus, deadline: Cycle) {
+    peer.sio_completion_cycle = Some(deadline);
+    if peer.current_cycle == deadline {
+        peer.complete_sio_transfer();
+    }
+}
+
 fn prefetch_duty_valid_until(address: u32, opcode_bytes: u8) -> u32 {
     if address & 0x1ffff == 0 {
         address.wrapping_add(u32::from(opcode_bytes))
@@ -2693,6 +3657,15 @@ fn ewram_cycles(width: AccessWidth) -> Cycle {
 
 fn video_cycles(width: AccessWidth) -> Cycle {
     if width == AccessWidth::Word { 2 } else { 1 }
+}
+
+fn adjusted_dma_address(address: u32, unit_bytes: u32, control: u8) -> u32 {
+    match control {
+        0 | 3 => address.wrapping_add(unit_bytes),
+        1 => address.wrapping_sub(unit_bytes),
+        2 => address,
+        _ => unreachable!(),
+    }
 }
 
 impl AccessWidth {
@@ -2806,6 +3779,184 @@ fn encode_mosaic_segments(
 mod tests {
     use super::*;
 
+    fn dma_half(bus: &mut Bus, address: u32, value: u16) -> Cycle {
+        bus.write(
+            Access {
+                address,
+                width: AccessWidth::Half,
+                kind: AccessKind::Nonsequential,
+                source: AccessSource::CpuData,
+            },
+            u32::from(value),
+        )
+        .cycles
+    }
+
+    /// Zig: "DMA3 immediate starts two cycles after its enabling write, copies halfwords, clears enable, and requests IRQ".
+    #[test]
+    fn dma3_immediate_starts_two_cycles_after_enabling_write() {
+        let mut bus = Bus::init(&[]);
+        dma_half(&mut bus, 0x0200_0000, 0x1122);
+        dma_half(&mut bus, 0x0200_0002, 0x3344);
+        for (address, value) in [
+            (0x0400_00d4, 0),
+            (0x0400_00d6, 0x0200),
+            (0x0400_00d8, 0),
+            (0x0400_00da, 0x0300),
+            (0x0400_00dc, 2),
+        ] {
+            dma_half(&mut bus, address, value);
+        }
+        assert_eq!(dma_half(&mut bus, 0x0400_00de, 0xc000), 1);
+        assert_eq!(&bus.iwram[..4], &[0; 4]);
+        bus.elapse(1);
+        assert_eq!(&bus.iwram[..4], &[0; 4]);
+        let before_start = bus.now();
+        bus.elapse(1);
+        assert_eq!(bus.now() - before_start, 11);
+        assert_eq!(&bus.iwram[..4], &[0x22, 0x11, 0x44, 0x33]);
+        assert!(!bus.dma_channels[3].enabled());
+        assert_eq!(bus.interrupt_request_flags & (1 << 11), 1 << 11);
+    }
+
+    /// Zig: "DMA source zero reuses the shared transfer latch without advancing".
+    #[test]
+    fn dma_source_zero_reuses_shared_transfer_latch() {
+        let mut bus = Bus::init(&[]);
+        dma_half(&mut bus, 0x0300_0100, 0xbeef);
+        for (address, value) in [
+            (0x0400_00bc, 0x0100),
+            (0x0400_00be, 0x0300),
+            (0x0400_00c0, 0x0200),
+            (0x0400_00c2, 0x0300),
+            (0x0400_00c4, 1),
+            (0x0400_00c6, 0x8000),
+        ] {
+            dma_half(&mut bus, address, value);
+        }
+        bus.elapse(3);
+        assert_eq!(bus.dma_transfer_latch, 0xbeef_beef);
+        for (address, value) in [
+            (0x0400_00d4, 0),
+            (0x0400_00d6, 0),
+            (0x0400_00d8, 0x0300),
+            (0x0400_00da, 0x0300),
+            (0x0400_00dc, 2),
+            (0x0400_00de, 0x8400),
+        ] {
+            dma_half(&mut bus, address, value);
+        }
+        bus.elapse(3);
+        assert_eq!(&bus.iwram[0x300..0x308], &[0xef, 0xbe, 0xef, 0xbe, 0xef, 0xbe, 0xef, 0xbe]);
+        assert_eq!(bus.dma_channels[3].latched_source, 0);
+    }
+
+    /// Zig: "SIO synchronization waits for both normal peers and rejects one past the deadline".
+    #[test]
+    fn sio_peer_arriving_after_master_deadline_is_rejected() {
+        let mut master = Bus::init(&[]);
+        let mut slave = Bus::init(&[]);
+        dma_half(&mut master, MMIO_BASE + 0x134, 0);
+        dma_half(&mut slave, MMIO_BASE + 0x134, 0);
+        dma_half(&mut master, MMIO_BASE + 0x128, 0x0083);
+        assert_eq!(
+            synchronize_sio(&mut [&mut master, &mut slave], SioConnection::Cable2p),
+            Ok(false)
+        );
+        dma_half(&mut slave, MMIO_BASE + 0x128, 0x0080);
+        slave.elapse(65);
+        assert_eq!(
+            synchronize_sio(&mut [&mut master, &mut slave], SioConnection::Cable2p),
+            Err(SioLinkError::MissedDeadline)
+        );
+    }
+
+    /// Zig: "four-player SIO exchanges every multiplayer word at the parent baud deadline".
+    #[test]
+    fn multiplayer_sio_delivers_all_four_words_at_parent_deadline() {
+        let mut buses = std::array::from_fn::<Bus, 4, _>(|_| Bus::init(&[]));
+        let sent = [0x0123, 0x4567, 0x89ab, 0xcdef];
+        for (index, bus) in buses.iter_mut().enumerate() {
+            dma_half(bus, MMIO_BASE + 0x134, 0);
+            dma_half(bus, MMIO_BASE + 0x128, 0x2003);
+            dma_half(bus, MMIO_BASE + 0x12a, sent[index]);
+            dma_half(bus, MMIO_BASE + 0x128, if index == 0 { 0x6083 } else { 0x6003 });
+        }
+        let [a, b, c, d] = &mut buses;
+        assert_eq!(synchronize_sio(&mut [a, b, c, d], SioConnection::CableMulti), Ok(true));
+        for bus in &mut buses {
+            assert_eq!(bus.sio_completion_cycle, Some(bus.now() + 11_863));
+            bus.elapse(11_862);
+            assert_ne!(bus.sio_control & 0x80, 0);
+            bus.elapse(1);
+        }
+        for (index, bus) in buses.iter().enumerate() {
+            assert_eq!(bus.sio_data, sent);
+            assert_eq!(bus.sio_control & 0x80, 0);
+            assert_eq!(bus.sio_control & 0x30, (index as u16) << 4);
+            assert_ne!(bus.interrupt_request_flags & (1 << 7), 0);
+        }
+    }
+
+    /// Zig: "UART CTS waits until the peer receiver has capacity".
+    #[test]
+    fn uart_cts_waits_for_receiver_capacity() {
+        let mut sender = Bus::init(&[]);
+        let mut receiver = Bus::init(&[]);
+        dma_half(&mut sender, MMIO_BASE + 0x134, 0);
+        dma_half(&mut receiver, MMIO_BASE + 0x134, 0);
+        dma_half(&mut sender, MMIO_BASE + 0x128, 0x3487);
+        dma_half(&mut receiver, MMIO_BASE + 0x128, 0x3083);
+        dma_half(&mut sender, MMIO_BASE + 0x12a, 0x3c);
+        assert_eq!(sender.uart_tx_completion_cycle, None);
+        assert_eq!(
+            synchronize_sio(&mut [&mut sender, &mut receiver], SioConnection::Cable2p),
+            Ok(false)
+        );
+        dma_half(&mut receiver, MMIO_BASE + 0x128, 0x3883);
+        assert_eq!(
+            synchronize_sio(&mut [&mut sender, &mut receiver], SioConnection::Cable2p),
+            Ok(true)
+        );
+        assert!(sender.uart_tx_completion_cycle.is_some());
+    }
+
+    /// Zig: "BIOS hard reset preserves host audio suppression".
+    #[test]
+    fn bios_hard_reset_preserves_host_audio_suppression() {
+        let mut bus = Bus::init(&[]);
+        let mut samples = [StereoSample::default(); 16];
+        bus.set_audio_output(false);
+        bus.hard_reset();
+        bus.elapse_cpu_internal(1024);
+        assert_eq!(bus.drain_audio_samples(&mut samples), 0);
+        bus.set_audio_output(true);
+        bus.elapse_cpu_internal(1024);
+        assert_eq!(bus.drain_audio_samples(&mut samples), 2);
+    }
+
+    /// Zig: "no-event materialization precedes register reset and hard reset clock changes".
+    #[test]
+    fn deferred_clock_materializes_before_register_and_hard_reset() {
+        let mut bus = Bus::init(&[]);
+        bus.timers[0].control = 0x80;
+        bus.begin_device_batch();
+        bus.elapse(7);
+        bus.register_ram_reset(0);
+        assert_eq!(bus.now(), 7);
+        assert_eq!(bus.ppu_timing.cycle_in_line, 7);
+        assert_eq!(bus.timers[0].counter, 7);
+        bus.elapse(5);
+        bus.hard_reset();
+        assert_eq!(bus.now(), 12);
+        assert_eq!(bus.ppu_timing.cycle_in_line, 0);
+        bus.elapse(1);
+        assert_eq!(bus.now(), 13);
+        assert_eq!(bus.ppu_timing.cycle_in_line, 1);
+        assert_eq!(bus.timers[0].counter, 0);
+        bus.end_device_batch();
+    }
+
     /// FIFO ring-buffer unit check; full UART integration belongs to the serial bus tests.
     #[test]
     fn uart_fifo_capacity_and_wraparound() {
@@ -2852,5 +4003,264 @@ mod tests {
         assert_eq!(vram_index(0x0603_c000, 3), Some(0x1_4000));
         assert_eq!(vram_obj_boundary(2), 0x1_0000);
         assert_eq!(vram_obj_boundary(4), 0x1_4000);
+    }
+
+    /// Zig: "Game Pak prefetch batching matches single-cycle advancement through capacity".
+    #[test]
+    fn game_pak_prefetch_batching_matches_single_cycle_advancement_through_capacity() {
+        let mut batched = Bus::init(&[0; 64]);
+        let mut scalar = Bus::init(&[0; 64]);
+        for bus in [&mut batched, &mut scalar] {
+            bus.waitcnt = 1 << 14;
+            bus.fetch_kind = AccessKind::Nonsequential;
+            bus.fetch_instruction(GAME_PAK_BASE, AccessWidth::Half);
+        }
+        batched.elapse(24);
+        for _ in 0..24 {
+            scalar.elapse(1);
+        }
+        assert_eq!(scalar.now(), batched.now());
+        assert_eq!(scalar.game_pak_prefetch.active, batched.game_pak_prefetch.active);
+        assert_eq!(scalar.game_pak_prefetch.head_address, batched.game_pak_prefetch.head_address);
+        assert_eq!(scalar.game_pak_prefetch.last_address, batched.game_pak_prefetch.last_address);
+        assert_eq!(scalar.game_pak_prefetch.countdown, batched.game_pak_prefetch.countdown);
+        assert_eq!(scalar.game_pak_prefetch.count, batched.game_pak_prefetch.count);
+        assert_eq!(batched.game_pak_prefetch.count, 8);
+        assert_eq!(batched.game_pak_prefetch.countdown, 0);
+    }
+
+    /// Zig: "fused Thumb Game Pak refill matches two ordinary fetches".
+    #[test]
+    fn fused_thumb_refill_matches_two_scalar_fetches() {
+        let rom = std::array::from_fn::<u8, 256, _>(|i| (i as u8).wrapping_mul(53));
+        for wait in [0x4000, 0x4014, 0x43a8] {
+            for target in [0x0800_0020, 0x0a00_0042, 0x0c00_00d0] {
+                let mut fused = Bus::init(&rom);
+                let mut scalar = Bus::init(&rom);
+                for bus in [&mut fused, &mut scalar] {
+                    bus.write_waitcnt(wait);
+                    bus.refresh_game_pak_timing();
+                    bus.begin_device_batch();
+                }
+                let mut fused_region = InstructionFetchRegion::default();
+                let actual = fused
+                    .fused_thumb_game_pak_refill(&mut fused_region, target)
+                    .expect("ordinary ROM miss should admit a fused refill");
+                let mut scalar_region = InstructionFetchRegion::default();
+                scalar.fetch_kind = AccessKind::Nonsequential;
+                let first = scalar.fetch_instruction_in_region(
+                    &mut scalar_region,
+                    target,
+                    AccessWidth::Half,
+                );
+                scalar.fetch_kind = AccessKind::Sequential;
+                let second = scalar.fetch_instruction_in_region(
+                    &mut scalar_region,
+                    target + 2,
+                    AccessWidth::Half,
+                );
+                assert_eq!(actual, [first, second], "wait {wait:x}, target {target:x}");
+                assert_eq!(fused.now(), scalar.now(), "wait {wait:x}, target {target:x}");
+                assert_eq!(fused.open_bus_value, scalar.open_bus_value);
+                assert_eq!(fused.fetch_kind, scalar.fetch_kind);
+                assert_eq!(
+                    (
+                        fused.game_pak_prefetch.head_address,
+                        fused.game_pak_prefetch.last_address,
+                        fused.game_pak_prefetch.count,
+                        fused.game_pak_prefetch.countdown,
+                        fused.game_pak_prefetch.duty,
+                        fused.duty_valid_until
+                    ),
+                    (
+                        scalar.game_pak_prefetch.head_address,
+                        scalar.game_pak_prefetch.last_address,
+                        scalar.game_pak_prefetch.count,
+                        scalar.game_pak_prefetch.countdown,
+                        scalar.game_pak_prefetch.duty,
+                        scalar.duty_valid_until
+                    ),
+                    "wait {wait:x}, target {target:x}",
+                );
+                fused.end_device_batch();
+                scalar.end_device_batch();
+            }
+        }
+    }
+
+    /// A straddling GPIO fetch or a refill reaching an event must fall back.
+    #[test]
+    fn fused_thumb_refill_rejects_gpio_aperture_and_event_boundary() {
+        let mut bus = Bus::init(&[0; 256]);
+        bus.write_waitcnt(0x4000);
+        bus.refresh_game_pak_timing();
+        bus.begin_device_batch();
+        let mut region = InstructionFetchRegion::default();
+        assert_eq!(bus.fused_thumb_game_pak_refill(&mut region, 0x0800_00c2), None);
+        assert_eq!(region.region_class, InstructionFetchClass::Other);
+        bus.batch_deadline = bus.now() + 6;
+        let before = bus.now();
+        assert_eq!(bus.fused_thumb_game_pak_refill(&mut region, 0x0800_00d0), None);
+        assert_eq!(bus.now(), before);
+        assert_eq!(bus.game_pak_prefetch.count, 0);
+        bus.end_device_batch();
+    }
+
+    /// Zig: "cached IRQ line follows IE IF IME writes and keypad edges".
+    #[test]
+    fn cached_irq_line_follows_ie_if_ime_writes_and_keypad_edges() {
+        let mut bus = Bus::init(&[]);
+        let half = |address| Access {
+            address,
+            width: AccessWidth::Half,
+            kind: AccessKind::Nonsequential,
+            source: AccessSource::CpuData,
+        };
+        bus.write(half(MMIO_BASE + 0x132), 0x4001);
+        bus.write(half(MMIO_BASE + 0x200), 1 << 12);
+        bus.write(half(MMIO_BASE + 0x208), 1);
+        assert!(!bus.irq_line);
+        bus.set_keys(KeyState { a: true, ..KeyState::default() });
+        assert!(bus.irq_line);
+        let byte = Access {
+            address: MMIO_BASE + 0x203,
+            width: AccessWidth::Byte,
+            kind: AccessKind::Nonsequential,
+            source: AccessSource::CpuData,
+        };
+        bus.write(byte, 1 << 4);
+        assert!(!bus.irq_line);
+        bus.set_keys(KeyState::default());
+        bus.set_keys(KeyState { a: true, ..KeyState::default() });
+        assert!(bus.irq_line);
+        bus.write(half(MMIO_BASE + 0x200), 0);
+        assert!(!bus.irq_line);
+        bus.write(half(MMIO_BASE + 0x200), 1 << 12);
+        assert!(bus.irq_line);
+        bus.write(half(MMIO_BASE + 0x208), 0);
+        assert!(!bus.irq_line);
+        bus.write(half(MMIO_BASE + 0x208), 1);
+        assert!(bus.irq_line);
+        bus.write(half(MMIO_BASE + 0x202), 1 << 12);
+        assert!(!bus.irq_line);
+    }
+
+    /// Zig: "stable bus state retains only strictly future explicit deadlines".
+    #[test]
+    fn stable_bus_state_retains_only_strictly_future_explicit_deadlines() {
+        let mut bus = Bus::init(&[]);
+        assert!(bus.validate_state().is_ok());
+        bus.sio_completion_cycle = Some(bus.current_cycle);
+        assert!(bus.validate_state().is_err());
+        bus.sio_completion_cycle = None;
+        bus.dma_start_cycles[0] = Some(bus.current_cycle);
+        assert!(bus.validate_state().is_err());
+        bus.dma_start_cycles[0] = Some(bus.current_cycle + 1);
+        assert!(bus.validate_state().is_ok());
+    }
+
+    /// Zig: "normal-mode internal-clock SIO transfers complete at their bit-clock deadline".
+    #[test]
+    fn normal_mode_internal_clock_sio_transfers_complete_at_bit_clock_deadline() {
+        for (control, cycles, normal32) in [(0x4083, 8 * 8, false), (0x5081, 32 * 64, true)] {
+            let mut bus = Bus::init(&[]);
+            let half = |address| Access {
+                address,
+                width: AccessWidth::Half,
+                kind: AccessKind::Nonsequential,
+                source: AccessSource::CpuData,
+            };
+            bus.write(half(MMIO_BASE + 0x134), 0);
+            bus.write(half(MMIO_BASE + 0x128), control & !0x80);
+            if normal32 {
+                bus.write(
+                    Access {
+                        address: MMIO_BASE + 0x120,
+                        width: AccessWidth::Word,
+                        kind: AccessKind::Nonsequential,
+                        source: AccessSource::CpuData,
+                    },
+                    0x1234_5678,
+                );
+            } else {
+                bus.write(half(MMIO_BASE + 0x12a), 0x1200);
+            }
+            bus.write(half(MMIO_BASE + 0x128), control);
+            bus.elapse(cycles - 2);
+            assert_ne!(bus.read(half(MMIO_BASE + 0x128)).value & 0x80, 0);
+            assert_eq!(bus.interrupt_request_flags & (1 << 7), 0);
+            bus.elapse(1);
+            assert_eq!(bus.read(half(MMIO_BASE + 0x128)).value & 0x80, 0);
+            assert_eq!(bus.interrupt_request_flags & (1 << 7), 1 << 7);
+            if normal32 {
+                assert_eq!(
+                    bus.read(Access {
+                        address: MMIO_BASE + 0x120,
+                        width: AccessWidth::Word,
+                        kind: AccessKind::Nonsequential,
+                        source: AccessSource::CpuData
+                    })
+                    .value,
+                    u32::MAX
+                );
+            } else {
+                assert_eq!(bus.read(half(MMIO_BASE + 0x12a)).value, 0x12ff);
+            }
+        }
+    }
+
+    /// Zig: "JoyBus status and reset commands return the GBA type and raise reset IRQ".
+    #[test]
+    fn joy_bus_status_and_reset_commands_return_gba_type_and_raise_reset_irq() {
+        let mut bus = Bus::init(&[]);
+        assert_eq!(
+            bus.schedule_joy_bus(JoyBusCommand::Status, bus.now()),
+            Err(JoyBusError::NotInJoyBusMode)
+        );
+        let half = |address| Access {
+            address,
+            width: AccessWidth::Half,
+            kind: AccessKind::Nonsequential,
+            source: AccessSource::CpuData,
+        };
+        bus.write(half(MMIO_BASE + 0x134), 0xc000);
+        bus.write(half(MMIO_BASE + 0x140), 0x40);
+        bus.schedule_joy_bus(JoyBusCommand::Status, bus.now()).unwrap();
+        let status = bus.take_joy_bus_response().unwrap();
+        assert_eq!(&status.data[..usize::from(status.len)], &[0, 4, 0]);
+        assert_eq!(bus.interrupt_request_flags & (1 << 7), 0);
+        bus.write(half(MMIO_BASE + 0x200), 1 << 7);
+        let deadline = bus.now() + 37;
+        bus.schedule_joy_bus(JoyBusCommand::Reset, deadline).unwrap();
+        assert_eq!(bus.take_joy_bus_response(), None);
+        bus.enter_halt();
+        assert!(bus.idle_halt_until(deadline));
+        assert_eq!(bus.now(), deadline);
+        assert_eq!(bus.take_joy_bus_response().unwrap().data[..3], [0, 4, 0]);
+        assert_eq!(bus.read(half(MMIO_BASE + 0x140)).value, 0x41);
+        assert_eq!(bus.interrupt_request_flags & (1 << 7), 1 << 7);
+    }
+
+    /// Zig: timed key changes apply at their exact cycle, before serial and LCD events.
+    #[test]
+    fn timed_key_changes_apply_at_their_exact_cycle() {
+        let mut bus = Bus::init(&[]);
+        bus.keypad_control = 0x4001;
+        let inputs = [TimedInput {
+            at: 73,
+            change: TimedInputChange::Keys(KeyState { a: true, ..KeyState::default() }),
+        }];
+        // SAFETY: `inputs` stays alive and immutable until end_external_inputs.
+        unsafe {
+            bus.begin_external_inputs(&inputs);
+        }
+        bus.begin_device_batch();
+        bus.elapse(72);
+        assert_eq!(bus.interrupt_request_flags & (1 << 12), 0);
+        bus.elapse(1);
+        assert_eq!(bus.interrupt_request_flags & (1 << 12), 1 << 12);
+        assert_eq!(bus.external_inputs_consumed(), 1);
+        bus.end_device_batch();
+        bus.end_external_inputs();
     }
 }
