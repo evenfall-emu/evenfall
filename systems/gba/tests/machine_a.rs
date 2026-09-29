@@ -1,13 +1,16 @@
 //! ZiGBA `test/machine_test.zig`, first-half machine integration oracles.
 
-use evenfall_cpu_arm::Pipeline;
-use evenfall_gba::bus::{
-    Access, AccessKind, AccessSource, AccessWidth, KeyState, PowerState, TimedInput,
-    TimedInputChange,
+use evenfall_cpu_arm::{
+    ArmInstructionClass, FaultReason as IsaFaultReason, InvalidPsrStateKind, Pipeline,
+    ProcessorMode, PsrStateOperation, SpsrOperation,
 };
-use evenfall_gba::cpu::{Cpu, InstructionSet, WaitReason};
+use evenfall_gba::bus::{
+    Access, AccessKind, AccessSource, AccessWidth, GamePakPrefetch, KeyState, PowerState,
+    TimedInput, TimedInputChange,
+};
+use evenfall_gba::cpu::{ChunkOutcome, Cpu, FaultReason, InstructionSet, WaitReason};
 use evenfall_gba::machine::{
-    BootMode, Config, Machine, RunError, StepOutcome, StepResult, StopReason,
+    BootMode, Config, Fault, Machine, RunError, StepOutcome, StepResult, StopReason,
 };
 
 fn executed_step(machine: &mut Machine) -> StepResult {
@@ -1927,5 +1930,1328 @@ fn cpu_multiple_stores_price_each_beat_across_ram_mirrors_and_mmio() {
             );
             assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
         }
+    }
+}
+
+/// Zig: `ARM execution region preserves conditional arithmetic and PC at host horizons`.
+#[test]
+fn arm_execution_region_preserves_conditional_arithmetic_and_pc_at_host_horizons() {
+    let words = [
+        0xE3A0_0005,
+        0xE290_0007,
+        0xE350_000C,
+        0x1281_1009,
+        0x0281_1003,
+        0xE1A0_200F,
+        0xE594_3000,
+        0xE280_0001,
+        0xEAFF_FFFE,
+    ];
+    for deadline in [1, 2, 3, 4, 5, 6, 7, 9, 12, 20] {
+        let mut machines = [Machine::new(Config::default()), Machine::new(Config::default())];
+        for machine in &mut machines {
+            write_words(&mut machine.bus.iwram[..], 0, &words);
+            write_words(&mut machine.bus.ewram[..], 0, &[0x7654_3210]);
+            machine.cpu = Cpu::init(0x0300_0000, 0x1F, true);
+            machine.cpu.pipeline = Some(Pipeline {
+                instructions: [words[0], words[1]],
+                instruction_set: InstructionSet::Arm,
+            });
+            machine.cpu.registers[1] = 20;
+            machine.cpu.registers[4] = 0x0200_0000;
+        }
+        let [eager, bounded] = &mut machines;
+        while eager.now() < deadline {
+            executed_step(eager);
+        }
+        bounded.run_until(deadline).unwrap();
+        assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+        if deadline == 6 {
+            assert_eq!(bounded.now(), 6);
+            assert_eq!(
+                (bounded.read_register(0), bounded.read_register(1), bounded.read_register(2)),
+                (12, 23, 0x0300_001C)
+            );
+            assert_eq!(bounded.bus.open_bus_value, 0xE280_0001);
+        }
+    }
+}
+
+/// Zig: `ARM execution region multiply matches eager steps around a timer boundary`.
+#[test]
+fn arm_execution_region_multiply_matches_eager_steps_around_a_timer_boundary() {
+    let words = [0xE1A0_0000, 0xE022_3291, 0xE280_0003, 0xEAFF_FFFE];
+    for boundary in [7_u16, 8] {
+        for offset in [7, 8, 15] {
+            let mut machines = [Machine::new(Config::default()), Machine::new(Config::default())];
+            for machine in &mut machines {
+                write_words(&mut machine.bus.iwram[..], 0, &words);
+                machine.cpu = Cpu::init(0x0300_0000, 0x1F, true);
+                machine.cpu.pipeline = Some(Pipeline {
+                    instructions: [words[0], words[1]],
+                    instruction_set: InstructionSet::Arm,
+                });
+                machine.cpu.registers[1] = 2;
+                machine.cpu.registers[2] = 0x0100_0000;
+                machine.cpu.registers[3] = 11;
+                write_machine_half(machine, 0x0400_0100, 0_u16.wrapping_sub(boundary));
+                write_machine_half(machine, 0x0400_0102, 0xC0);
+            }
+            let [eager, bounded] = &mut machines;
+            let start = eager.now();
+            while eager.now() < start + offset {
+                executed_step(eager);
+            }
+            bounded.run_until(start + offset).unwrap();
+            assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+            if offset == 7 {
+                assert_eq!(bounded.now(), start + 7);
+                assert_eq!(bounded.read_register(2), 0x0200_000B);
+                assert_eq!(bounded.read_register(0), 0);
+            }
+        }
+    }
+}
+
+/// Zig: `ARM execution region signed load matches eager steps around timer delivery`.
+#[test]
+fn arm_execution_region_signed_load_matches_eager_steps_around_timer_delivery() {
+    let words = [0xE1A0_0000, 0xE1D1_20F1, 0xE280_0003, 0xEAFF_FFFE];
+    for boundary in [4_u16, 5] {
+        for offset in [3, 4, 5, 10] {
+            let mut machines = [Machine::new(Config::default()), Machine::new(Config::default())];
+            for machine in &mut machines {
+                write_words(&mut machine.bus.iwram[..], 0, &words);
+                machine.bus.iwram[0x100..0x102].copy_from_slice(&[0x23, 0x81]);
+                machine.cpu = Cpu::init(0x0300_0000, 0x1F, true);
+                machine.cpu.pipeline = Some(Pipeline {
+                    instructions: [words[0], words[1]],
+                    instruction_set: InstructionSet::Arm,
+                });
+                machine.cpu.registers[1] = 0x0300_0100;
+                write_machine_half(machine, 0x0400_0100, 0_u16.wrapping_sub(boundary));
+                write_machine_half(machine, 0x0400_0102, 0xC0);
+            }
+            let [eager, bounded] = &mut machines;
+            let start = eager.now();
+            while eager.now() < start + offset {
+                executed_step(eager);
+            }
+            bounded.run_until(start + offset).unwrap();
+            assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+            assert_eq!(bounded.read_register(2), 0xFFFF_FF81);
+            if offset == 4 {
+                assert_eq!(bounded.now(), start + 4);
+                assert_eq!(bounded.bus.open_bus_value, 0x8123);
+            }
+        }
+    }
+}
+
+/// Zig: `ARM execution region leaves timer equality and IRQ entry to ordinary completion`.
+#[test]
+fn arm_execution_region_leaves_timer_equality_and_irq_entry_to_ordinary_completion() {
+    for offset in [3, 4, 5, 8, 12] {
+        let mut machines = [Machine::new(Config::default()), Machine::new(Config::default())];
+        for machine in &mut machines {
+            write_words(&mut machine.bus.iwram[..], 0, &[0xE280_0003; 32]);
+            machine.cpu = Cpu::init(0x0300_0000, 0x1F, true);
+            machine.cpu.pipeline = Some(Pipeline {
+                instructions: [0xE280_0003; 2],
+                instruction_set: InstructionSet::Arm,
+            });
+            write_machine_half(machine, 0x0400_0200, 1 << 3);
+            write_machine_half(machine, 0x0400_0208, 1);
+            write_machine_half(machine, 0x0400_0100, 0xFFFC);
+            write_machine_half(machine, 0x0400_0102, 0xC0);
+        }
+        let [eager, bounded] = &mut machines;
+        let deadline = eager.now() + offset;
+        while eager.now() < deadline {
+            executed_step(eager);
+        }
+        bounded.run_until(deadline).unwrap();
+        assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+        if offset == 3 {
+            assert_eq!(bounded.read_register(0), 9);
+            assert_eq!(bounded.bus.interrupt_request_flags & (1 << 3), 0);
+        }
+        if offset == 4 {
+            assert_eq!(bounded.read_register(0), 12);
+            assert_ne!(bounded.bus.interrupt_request_flags & (1 << 3), 0);
+        }
+    }
+}
+
+/// Zig: `ARM execution region signed load keeps latched data across exact read boundary DMA`.
+#[test]
+fn arm_execution_region_signed_load_keeps_latched_data_across_exact_read_boundary_dma() {
+    let words = [0xE1D1_20F0, 0xE1D1_30F0, 0xEAFF_FFFE, 0xEAFF_FFFE];
+    let mut machines = [Machine::new(Config::default()), Machine::new(Config::default())];
+    for machine in &mut machines {
+        write_words(&mut machine.bus.iwram[..], 0, &words);
+        machine.cpu = Cpu::init(0x0300_0000, 0x1F, true);
+        machine.cpu.pipeline = Some(Pipeline {
+            instructions: [words[0], words[1]],
+            instruction_set: InstructionSet::Arm,
+        });
+        machine.cpu.registers[1] = 0x0300_0100;
+        machine.bus.iwram[0x100..0x102].copy_from_slice(&0x8123_u16.to_le_bytes());
+        machine.bus.ewram[0..2].copy_from_slice(&0x4567_u16.to_le_bytes());
+        for (address, value) in [
+            (0x0400_00D4, 0),
+            (0x0400_00D6, 0x0200),
+            (0x0400_00D8, 0x100),
+            (0x0400_00DA, 0x0300),
+            (0x0400_00DC, 1),
+            (0x0400_00DE, 1 << 15),
+        ] {
+            write_machine_half(machine, address, value);
+        }
+    }
+    let [eager, bounded] = &mut machines;
+    let start = eager.now();
+    while eager.now() < start + 12 {
+        executed_step(eager);
+    }
+    bounded.run_until(start + 12).unwrap();
+    assert_eq!(bounded.read_register(2), 0xFFFF_8123);
+    assert_eq!(bounded.read_register(3), 0x4567);
+    assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+}
+
+/// Zig: `unified kernel register stores preserve DMA before write at each horizon`.
+#[test]
+fn unified_kernel_register_stores_preserve_dma_before_write_at_each_horizon() {
+    let words = [0xE1A0_0000, 0xE881_0005, 0xE591_3000, 0xEAFF_FFFE];
+    for horizon in 1..20 {
+        let mut machines = [Machine::new(Config::default()), Machine::new(Config::default())];
+        for machine in &mut machines {
+            write_words(&mut machine.bus.iwram[..], 0, &words);
+            machine.cpu = Cpu::init(0x0300_0000, 0x1F, true);
+            machine.cpu.pipeline = Some(Pipeline {
+                instructions: [words[0], words[1]],
+                instruction_set: InstructionSet::Arm,
+            });
+            machine.cpu.registers[0] = 0x1234_5678;
+            machine.cpu.registers[1] = 0x0300_0100;
+            machine.cpu.registers[2] = 0xABCD_9876;
+            write_words(&mut machine.bus.ewram[..], 0, &[0x4567_89AB]);
+            for (address, value) in [
+                (0x0400_00D4, 0),
+                (0x0400_00D6, 0x0200),
+                (0x0400_00D8, 0x100),
+                (0x0400_00DA, 0x0300),
+                (0x0400_00DC, 1),
+                (0x0400_00DE, (1 << 10) | (1 << 15)),
+            ] {
+                write_machine_half(machine, address, value);
+            }
+        }
+        let [eager, bounded] = &mut machines;
+        let start = eager.now();
+        while eager.now() < start + horizon {
+            executed_step(eager);
+        }
+        bounded.run_until(start + horizon).unwrap();
+        if horizon >= 2 {
+            assert_eq!(
+                u32::from_le_bytes(bounded.bus.iwram[0x100..0x104].try_into().unwrap()),
+                0x1234_5678
+            );
+            assert_eq!(
+                u32::from_le_bytes(bounded.bus.iwram[0x104..0x108].try_into().unwrap()),
+                0xABCD_9876
+            );
+        }
+        assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+    }
+}
+
+/// Zig: `ARM execution region publishes before DMA replaces a future opcode`.
+#[test]
+fn arm_execution_region_publishes_before_dma_replaces_a_future_opcode() {
+    let mut machines = [Machine::new(Config::default()), Machine::new(Config::default())];
+    for machine in &mut machines {
+        machine.cpu = Cpu::init(0x0300_0000, 0x1F, true);
+        machine.cpu.pipeline =
+            Some(Pipeline { instructions: [0xE1A0_0000; 2], instruction_set: InstructionSet::Arm });
+        write_words(&mut machine.bus.iwram[..], 8, &[0xE1A0_0000, 0xE3A0_2011, 0xE3A0_3022]);
+        write_words(&mut machine.bus.ewram[..], 0, &[0xE3A0_2033, 0xE3A0_3044]);
+        for (address, value) in [
+            (0x0400_00D4, 0),
+            (0x0400_00D6, 0x0200),
+            (0x0400_00D8, 12),
+            (0x0400_00DA, 0x0300),
+            (0x0400_00DC, 4),
+            (0x0400_00DE, (1 << 14) | (1 << 15)),
+        ] {
+            write_machine_half(machine, address, value);
+        }
+    }
+    let [eager, bounded] = &mut machines;
+    let start = bounded.now();
+    bounded.run_until(start + 20).unwrap();
+    while eager.now() < start + 20 {
+        executed_step(eager);
+    }
+    assert_eq!(bounded.now(), start + 20);
+    assert_eq!(bounded.cpu.pipeline.unwrap().instructions[1], 0xE3A0_2011);
+    bounded.run_until(start + 23).unwrap();
+    while eager.now() < start + 23 {
+        executed_step(eager);
+    }
+    assert_eq!((bounded.read_register(2), bounded.read_register(3)), (0x11, 0x44));
+    assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+}
+
+/// Zig: `ARM IWRAM slice rejects admission before changing prefetch state`.
+#[test]
+fn arm_iwram_slice_rejects_admission_before_changing_prefetch_state() {
+    for rejection in 0..4 {
+        let mut machine = Machine::new(Config::default());
+        machine.cpu = Cpu::init(0x0300_0000, 0x1F, true);
+        machine.cpu.pipeline =
+            Some(Pipeline { instructions: [0xE1A0_0000; 2], instruction_set: InstructionSet::Arm });
+        machine.bus.game_pak_prefetch = GamePakPrefetch {
+            head_address: 0x0800_0010,
+            last_address: 0x0800_000C,
+            count: 2,
+            capacity: 4,
+            opcode_bytes: 4,
+            countdown: 2,
+            duty: 4,
+            ..GamePakPrefetch::default()
+        };
+        machine.bus.game_pak_code_active = true;
+        match rejection {
+            0 => (),
+            1 => machine.cpu.pipeline.as_mut().unwrap().instructions[0] = 0xEF08_0000,
+            2 => machine.bus.enter_halt(),
+            3 => machine.cpu.pipeline.as_mut().unwrap().instruction_set = InstructionSet::Thumb,
+            _ => unreachable!(),
+        }
+        let before_cpu = format!("{:?}", machine.cpu);
+        let before_prefetch = machine.bus.game_pak_prefetch;
+        let mut fault = None;
+        let mut reason = None;
+        let outcome = machine.cpu.run_normal_until(
+            &mut machine.bus,
+            if rejection == 0 { 0 } else { 1 },
+            &mut reason,
+            &mut fault,
+        );
+        assert_eq!(
+            outcome,
+            if rejection == 0 { ChunkOutcome::Deadline } else { ChunkOutcome::Generic }
+        );
+        assert_eq!(machine.now(), 0);
+        assert_eq!(format!("{:?}", machine.cpu), before_cpu);
+        assert_eq!(machine.bus.game_pak_prefetch, before_prefetch);
+        assert!(machine.bus.game_pak_code_active);
+    }
+}
+
+/// Zig: `ARM IWRAM slice clears complete restored residuals on its first admitted fetch`.
+#[test]
+fn arm_iwram_slice_clears_complete_restored_residuals_on_its_first_admitted_fetch() {
+    let mut eager = Machine::new(Config::default());
+    eager.cpu = Cpu::init(0x0300_0000, 0x1F, true);
+    eager.cpu.pipeline =
+        Some(Pipeline { instructions: [0xE1A0_0000; 2], instruction_set: InstructionSet::Arm });
+    write_words(&mut eager.bus.iwram[..], 8, &[0xE3A0_2007]);
+    eager.bus.game_pak_prefetch = GamePakPrefetch {
+        head_address: 0x0800_0010,
+        last_address: 0x0800_000C,
+        count: 2,
+        capacity: 4,
+        opcode_bytes: 4,
+        countdown: 2,
+        duty: 4,
+        ..GamePakPrefetch::default()
+    };
+    eager.bus.game_pak_code_active = true;
+    let saved = eager.write_state_alloc().unwrap();
+    let mut bounded = Machine::new(Config::default());
+    bounded.load_state(&saved).unwrap();
+    executed_step(&mut eager);
+    assert_eq!(bounded.run_until(1).unwrap().reason, StopReason::Deadline);
+    assert_eq!(bounded.now(), 1);
+    assert_eq!(bounded.next_instruction_address(), 0x0300_0004);
+    assert_eq!(bounded.cpu.pipeline.unwrap().instructions, [0xE1A0_0000, 0xE3A0_2007]);
+    assert_eq!(bounded.bus.game_pak_prefetch, GamePakPrefetch::default());
+    assert!(!bounded.bus.game_pak_code_active);
+    assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+}
+
+/// Zig: `ARM IWRAM slice preserves pipeline straddles and exact domain-exit deadlines`.
+#[test]
+fn arm_iwram_slice_preserves_pipeline_straddles_and_exact_domain_exit_deadlines() {
+    for address in [0x02FF_FFF8_u32, 0x0300_7FF8, 0x03FF_FFF4] {
+        let mut machines = [
+            Machine::new(Config::default()),
+            Machine::new(Config::default()),
+            Machine::new(Config::default()),
+        ];
+        for machine in &mut machines {
+            machine.cpu = Cpu::init(address, 0x1F, true);
+            machine.cpu.pipeline = Some(Pipeline {
+                instructions: [0xE1A0_0000; 2],
+                instruction_set: InstructionSet::Arm,
+            });
+            write_words(
+                &mut machine.bus.iwram[..],
+                ((address + 8) & 0x7FFF) as usize,
+                &[0xE3A0_2007],
+            );
+        }
+        let [eager, sliced, uninterrupted] = &mut machines;
+        for deadline in 1..4 {
+            executed_step(eager);
+            assert_eq!(sliced.run_until(deadline).unwrap().reason, StopReason::Deadline);
+            assert_eq!(sliced.now(), deadline);
+            assert_eq!(eager.write_state_alloc().unwrap(), sliced.write_state_alloc().unwrap());
+        }
+        uninterrupted.run_until(3).unwrap();
+        assert_eq!(uninterrupted.now(), 3);
+        assert_eq!(uninterrupted.next_instruction_address(), address + 12);
+        assert_eq!(uninterrupted.read_register(2), 7);
+        assert_eq!(eager.write_state_alloc().unwrap(), uninterrupted.write_state_alloc().unwrap());
+    }
+}
+
+/// Zig: `ARM IWRAM slice latches an opcode before deadline DMA replaces instruction memory`.
+#[test]
+fn arm_iwram_slice_latches_an_opcode_before_deadline_dma_replaces_instruction_memory() {
+    for bounded in [false, true] {
+        let mut machine = Machine::new(Config::default());
+        machine.cpu = Cpu::init(0x0300_0000, 0x1F, true);
+        machine.cpu.pipeline =
+            Some(Pipeline { instructions: [0xE1A0_0000; 2], instruction_set: InstructionSet::Arm });
+        write_words(&mut machine.bus.iwram[..], 8, &[0xE3A0_2011, 0xE3A0_3022]);
+        write_words(&mut machine.bus.ewram[..], 0, &[0xE3A0_2033, 0xE3A0_3044]);
+        for (address, value) in [
+            (0x0400_00D4, 0),
+            (0x0400_00D6, 0x0200),
+            (0x0400_00D8, 8),
+            (0x0400_00DA, 0x0300),
+            (0x0400_00DC, 4),
+            (0x0400_00DE, (1 << 14) | (1 << 15)),
+        ] {
+            write_machine_half(&mut machine, address, value);
+        }
+        machine.bus.elapse(1);
+        let start = machine.now();
+        if bounded {
+            assert_eq!(machine.run_until(start + 19).unwrap().reason, StopReason::Deadline);
+        } else {
+            executed_step(&mut machine);
+        }
+        assert_eq!(machine.now(), start + 19);
+        assert_eq!(machine.cpu.pipeline.unwrap().instructions, [0xE1A0_0000, 0xE3A0_2011]);
+        assert_eq!(u32::from_le_bytes(machine.bus.iwram[8..12].try_into().unwrap()), 0xE3A0_2033);
+        if bounded {
+            machine.run_until(start + 22).unwrap();
+        } else {
+            for _ in 0..3 {
+                executed_step(&mut machine);
+            }
+        }
+        assert_eq!(machine.now(), start + 22);
+        assert_eq!(machine.read_register(2), 0x11);
+        assert_eq!(machine.read_register(3), 0x44);
+        assert_ne!(machine.bus.interrupt_request_flags & (1 << 11), 0);
+    }
+}
+
+/// Zig: `ARM IWRAM slice preserves ROM data and WAITCNT effects within an uninterrupted run`.
+#[test]
+fn arm_iwram_slice_preserves_rom_data_and_waitcnt_effects_within_an_uninterrupted_run() {
+    let mut rom = [0; 0x104];
+    write_words(&mut rom, 0x100, &[0xCAFE_BABE]);
+    let config = || Config { rom: &rom, ..Config::default() };
+    let mut machines = [Machine::new(config()), Machine::new(config())];
+    let words = [0xE1A0_0000, 0xE591_2000, 0xE1C3_40B0, 0xE005_0796, 0xE280_0001, 0xEAFF_FFFA];
+    for machine in &mut machines {
+        write_words(&mut machine.bus.iwram[..], 0, &words);
+        machine.cpu = Cpu::init(0x0300_0000, 0x1F, true);
+        machine.cpu.registers[1] = 0x0800_0100;
+        machine.cpu.registers[3] = 0x0400_0204;
+        machine.cpu.registers[4] = 0x4014;
+        machine.cpu.registers[6] = 6;
+        machine.cpu.registers[7] = 7;
+        executed_step(machine);
+    }
+    let [eager, bounded] = &mut machines;
+    let start = eager.now();
+    for offset in [1, 12, 31, 64, 128] {
+        let deadline = start + offset;
+        while eager.now() < deadline {
+            executed_step(eager);
+        }
+        let result = bounded.run_until(deadline).unwrap();
+        assert_eq!(eager.now(), result.stopped_at);
+        assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+    }
+    assert_eq!(bounded.read_register(2), 0xCAFE_BABE);
+    assert_eq!(bounded.read_register(5), 42);
+    assert!(bounded.read_register(0) > 1);
+    assert_eq!(bounded.bus.waitcnt, 0x4014);
+    assert_eq!(bounded.bus.game_pak_prefetch, GamePakPrefetch::default());
+}
+
+/// Zig: `ordinary Thumb deadline handoff executes an HLE SWI exactly once`.
+#[test]
+fn ordinary_thumb_deadline_handoff_executes_an_hle_swi_exactly_once() {
+    let mut machines = [Machine::new(Config::default()), Machine::new(Config::default())];
+    for machine in &mut machines {
+        machine.cpu = Cpu::init(0x0300_0000, 0x3F, true);
+        machine.cpu.pipeline = Some(Pipeline {
+            instructions: [0x46C0, 0xDF08],
+            instruction_set: InstructionSet::Thumb,
+        });
+        machine.cpu.registers[0] = 81;
+        machine.bus.iwram[4..6].copy_from_slice(&0x3001_u16.to_le_bytes());
+        machine.bus.iwram[6..8].copy_from_slice(&0x46C0_u16.to_le_bytes());
+    }
+    let [eager, bounded] = &mut machines;
+    for (cycle, pc, r0) in [(1, 0x0300_0002, 81), (55, 0x0300_0004, 9), (56, 0x0300_0006, 10)] {
+        executed_step(eager);
+        assert_eq!(bounded.run_until(cycle).unwrap().reason, StopReason::Deadline);
+        assert_eq!(
+            (bounded.now(), bounded.next_instruction_address(), bounded.read_register(0)),
+            (cycle, pc, r0)
+        );
+        assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+    }
+    assert_eq!(bounded.read_cpsr() & 0x3F, 0x3F);
+}
+
+/// Zig: `ordinary Thumb preserves external SWI and Undefined vector deadline returns`.
+#[test]
+fn ordinary_thumb_preserves_external_swi_and_undefined_vector_deadline_returns() {
+    for (instruction, vector, mode) in [(0xDF7F_u16, 8_usize, 0x13), (0xDE00, 4, 0x1B)] {
+        let mut bios = [0; 0x4000];
+        write_words(&mut bios, vector, &[0xE1B0_F00E]);
+        let mut machines = [
+            Machine::new(Config { bios: &bios, boot: BootMode::SkipBios, ..Config::default() }),
+            Machine::new(Config { bios: &bios, boot: BootMode::SkipBios, ..Config::default() }),
+        ];
+        for machine in &mut machines {
+            machine.cpu = Cpu::init(0x0300_0000, 0xA000_003F, false);
+            machine.cpu.pipeline = Some(Pipeline {
+                instructions: [u32::from(instruction), 0x2307],
+                instruction_set: InstructionSet::Thumb,
+            });
+            machine.bus.iwram[2..4].copy_from_slice(&0x2307_u16.to_le_bytes());
+            machine.bus.iwram[4..6].copy_from_slice(&0x46C0_u16.to_le_bytes());
+        }
+        let [eager, bounded] = &mut machines;
+        for deadline in [3, 6, 7] {
+            executed_step(eager);
+            assert_eq!(bounded.run_until(deadline).unwrap().reason, StopReason::Deadline);
+            assert_eq!(bounded.now(), deadline);
+            match deadline {
+                3 => {
+                    assert_eq!(
+                        (
+                            bounded.next_instruction_address(),
+                            bounded.read_cpsr(),
+                            bounded.read_register(14),
+                            bounded.read_register(3)
+                        ),
+                        (vector as u32, 0xA000_0080 | mode, 0x0300_0002, 0)
+                    );
+                }
+                6 => assert_eq!(
+                    (
+                        bounded.next_instruction_address(),
+                        bounded.read_cpsr(),
+                        bounded.read_register(3)
+                    ),
+                    (0x0300_0002, 0xA000_003F, 0)
+                ),
+                _ => assert_eq!(
+                    (bounded.next_instruction_address(), bounded.read_register(3)),
+                    (0x0300_0004, 7)
+                ),
+            }
+            assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+        }
+    }
+}
+
+/// Zig: `ordinary Thumb IRQ faults retain the executed opcode across ROM and IWRAM fetches`.
+#[test]
+fn ordinary_thumb_irq_faults_retain_the_executed_opcode_across_rom_and_iwram_fetches() {
+    for address in [0x0300_0000, 0x0800_0000] {
+        let mut rom = [0; 8];
+        rom[4..6].copy_from_slice(&0x2307_u16.to_le_bytes());
+        let mut machines = [
+            Machine::new(Config { rom: &rom, ..Config::default() }),
+            Machine::new(Config { rom: &rom, ..Config::default() }),
+        ];
+        let instruction = if address == 0x0800_0000 { 0xA5A5_3001 } else { 0x3001 };
+        for machine in &mut machines {
+            machine.cpu = Cpu::init(address, 0x3F, true);
+            machine.cpu.pipeline = Some(Pipeline {
+                instructions: [instruction, 0x2209],
+                instruction_set: InstructionSet::Thumb,
+            });
+            machine.cpu.registers[0] = 40;
+            machine.cpu.hle_irq_depth = 8;
+            machine.cpu.irq_r14 = 0x1111_2222;
+            machine.cpu.spsr_irq = 0x3333_4444;
+            machine.bus.iwram[4..6].copy_from_slice(&0x2307_u16.to_le_bytes());
+            machine.bus.interrupt_enable_mask = 1;
+            machine.bus.interrupt_request_flags = 1;
+            machine.bus.interrupt_master_enabled = true;
+            machine.bus.update_irq_line();
+        }
+        let [eager, bounded] = &mut machines;
+        let eager_fault = match eager.step() {
+            StepOutcome::Faulted(value) => value,
+            value => panic!("expected fault, got {value:?}"),
+        };
+        let mut fault = None;
+        let mut reason = None;
+        assert_eq!(
+            bounded.cpu.run_normal_until(&mut bounded.bus, 100, &mut reason, &mut fault),
+            ChunkOutcome::Faulted
+        );
+        let fault = fault.unwrap();
+        assert_eq!(
+            (fault.instruction_address, fault.instruction, fault.instruction_set),
+            (address, instruction, InstructionSet::Thumb)
+        );
+        assert_eq!(fault.reason, evenfall_gba::cpu::FaultReason::HleIrqNestingLimit { depth: 8 });
+        assert_eq!(fault.reason, eager_fault.reason);
+        assert_eq!(
+            (bounded.read_register(0), bounded.read_register(2), bounded.read_register(3)),
+            (41, 0, 0)
+        );
+        assert_eq!(eager.now(), bounded.now());
+        assert_eq!(format!("{:?}", eager.cpu), format!("{:?}", bounded.cpu));
+        assert_eq!((bounded.cpu.irq_r14, bounded.cpu.spsr_irq), (0x1111_2222, 0x3333_4444));
+    }
+}
+
+/// Zig: `bounded normal execution matches eager ARM Thumb and SWI transitions`.
+#[test]
+fn bounded_normal_execution_matches_eager_arm_thumb_and_swi_transitions() {
+    let mut machines = [Machine::new(Config::default()), Machine::new(Config::default())];
+    for machine in &mut machines {
+        write_words(
+            &mut machine.bus.iwram[..],
+            0,
+            &[0xEAFF_FFFF, 0xE280_0001, 0xEF08_0000, 0xE12F_FF11],
+        );
+        for (index, half) in [0x3001_u16, 0xDF08, 0x3001, 0x4710].into_iter().enumerate() {
+            machine.bus.iwram[0x20 + index * 2..0x22 + index * 2]
+                .copy_from_slice(&half.to_le_bytes());
+        }
+        write_words(&mut machine.bus.iwram[..], 0x30, &[0xE280_0001, 0xEAFF_FFFD]);
+        machine.cpu = Cpu::init(0x0300_0000, 0x1F, true);
+        machine.cpu.registers[0] = 8;
+        machine.cpu.registers[1] = 0x0300_0021;
+        machine.cpu.registers[2] = 0x0300_0030;
+    }
+    let [eager, bounded] = &mut machines;
+    for target in [1, 64, 128, 256] {
+        while eager.now() < target {
+            executed_step(eager);
+        }
+        assert_eq!(bounded.run_until(target).unwrap().stopped_at, eager.now());
+        assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+    }
+    assert_eq!(bounded.read_cpsr() & (1 << 5), 0);
+    assert!(bounded.read_register(0) > 3);
+}
+
+/// Zig: `bounded ARM dispatch preserves mixed ALU transfer and conditional exception paths`.
+#[test]
+fn bounded_arm_dispatch_preserves_mixed_alu_transfer_and_conditional_exception_paths() {
+    let words = [
+        0xEAFF_FFFF,
+        0xE3A0_0003,
+        0xE280_1004,
+        0xE002_0190,
+        0xE092_3001,
+        0xE1D4_50B0,
+        0xE080_6015,
+        0x014F_7000,
+        0xE350_0003,
+        0x112F_FF1F,
+        0xE284_4002,
+        0xE584_6000,
+        0xE12F_FF19,
+    ];
+    let mut machine = Machine::new(Config::default());
+    write_words(&mut machine.bus.iwram[..], 0, &words);
+    machine.bus.iwram[0x7000..0x7002].copy_from_slice(&[1, 0x80]);
+    machine.cpu = Cpu::init(0x0300_0000, 0x1F, true);
+    machine.cpu.registers[4] = 0x0300_7000;
+    machine.cpu.registers[7] = 0xA5A5_5A5A;
+    machine.cpu.registers[9] = 0x0300_0061;
+    executed_step(&mut machine);
+    let started = machine.now();
+    assert_eq!(machine.run_until(started + 19).unwrap().reason, StopReason::Deadline);
+    assert_eq!(machine.now(), started + 19);
+    for (index, value) in [
+        (0, 3),
+        (1, 7),
+        (2, 21),
+        (3, 28),
+        (4, 0x0300_7002),
+        (5, 0x8001),
+        (6, 0x0004_000B),
+        (7, 0xA5A5_5A5A),
+        (15, 0x0300_0064),
+    ] {
+        assert_eq!(machine.read_register(index), value, "r{index}");
+    }
+    assert_eq!(machine.read_cpsr(), 0x6000_003F);
+    assert_eq!(machine.next_instruction_address(), 0x0300_0060);
+    assert_eq!(&machine.bus.iwram[0x7000..0x7004], &[0x0B, 0, 4, 0]);
+}
+
+/// Zig: `bounded normal execution reports the same prefetched ARM fault as eager steps`.
+#[test]
+fn bounded_normal_execution_reports_the_same_prefetched_arm_fault_as_eager_steps() {
+    let mut machines = [Machine::new(Config::default()), Machine::new(Config::default())];
+    for machine in &mut machines {
+        write_words(
+            &mut machine.bus.iwram[..],
+            0,
+            &[0xEAFF_FFFF, 0xE1A0_0000, 0xE10F_F000, 0xE1A0_0000, 0xE1A0_0000],
+        );
+        machine.cpu = Cpu::init(0x0300_0000, 0x1F, true);
+    }
+    let [eager, bounded] = &mut machines;
+    executed_step(eager);
+    executed_step(eager);
+    let expected = match eager.step() {
+        StepOutcome::Faulted(fault) => fault,
+        value => panic!("expected fault, got {value:?}"),
+    };
+    let result = bounded.run_until(100).unwrap();
+    let actual = match result.reason {
+        StopReason::Faulted(fault) => fault,
+        value => panic!("expected fault, got {value:?}"),
+    };
+    assert_eq!(expected, actual);
+    assert_eq!(actual.instruction_address, 0x0300_0008);
+    assert_eq!(eager.inspect_cpu(), bounded.inspect_cpu());
+    assert_eq!(eager.cpu.pipeline, bounded.cpu.pipeline);
+    assert_eq!(eager.bus.open_bus_value, bounded.bus.open_bus_value);
+    let repeated = bounded.run_until(100).unwrap();
+    assert_eq!((repeated.stopped_at, repeated.inputs_consumed), (result.stopped_at, 0));
+}
+
+/// Zig: `bounded ROM execution matches eager steps across mirrors ISA and self modifying RAM`.
+#[test]
+fn bounded_rom_execution_matches_eager_steps_across_mirrors_isa_and_self_modifying_ram() {
+    let mut rom = [0; 0x140];
+    write_words(&mut rom, 0, &[0xEA00_003E]);
+    write_words(
+        &mut rom,
+        0x100,
+        &[
+            0xE280_0001,
+            0xE12F_FF11,
+            0xE1A0_0000,
+            0xE1A0_0000,
+            0xE583_4000,
+            0xE1CA_90B0,
+            0xE12F_FF12,
+            0xE1A0_0000,
+        ],
+    );
+    rom[0x120..0x122].copy_from_slice(&0x3701_u16.to_le_bytes());
+    rom[0x122..0x124].copy_from_slice(&0x4740_u16.to_le_bytes());
+    let mut machines = [
+        Machine::new(Config { rom: &rom, ..Config::default() }),
+        Machine::new(Config { rom: &rom, ..Config::default() }),
+    ];
+    for machine in &mut machines {
+        write_words(&mut machine.bus.iwram[..], 0, &[0xE3A0_5000, 0xE12F_FF16]);
+        for (register, value) in [
+            (1, 0x0A00_0110),
+            (2, 0x0300_0000),
+            (3, 0x0300_0000),
+            (4, 0xE285_5001),
+            (6, 0x0800_0121),
+            (8, 0x0800_0100),
+            (9, 0x4014),
+            (10, 0x0400_0204),
+        ] {
+            machine.cpu.registers[register] = value;
+        }
+    }
+    let [eager, bounded] = &mut machines;
+    for target in [1, 128, 511, 960, 1232, 4096] {
+        while eager.now() < target {
+            executed_step(eager);
+        }
+        assert_eq!(bounded.run_until(target).unwrap().stopped_at, eager.now());
+        assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+    }
+    assert!(bounded.read_register(5) > 1);
+    assert!(bounded.read_register(7) > 1);
+}
+
+/// Zig: `branch refill latches its first word before DMA and reads its second word afterwards`.
+#[test]
+fn branch_refill_latches_its_first_word_before_dma_and_reads_its_second_word_afterwards() {
+    for bounded in [false, true] {
+        let mut machine = Machine::new(Config::default());
+        write_words(&mut machine.bus.iwram[..], 0, &[0xE1A0_0000, 0xEA00_0005]);
+        write_words(
+            &mut machine.bus.iwram[..],
+            0x20,
+            &[0xE3A0_2011, 0xE3A0_3022, 0xE1A0_0000, 0xE1A0_0000],
+        );
+        write_words(&mut machine.bus.ewram[..], 0, &[0xE3A0_2033, 0xE3A0_3044]);
+        machine.cpu = Cpu::init(0x0300_0000, 0x1F, true);
+        executed_step(&mut machine);
+        for (address, value) in [
+            (0x0400_00D4, 0),
+            (0x0400_00D6, 0x0200),
+            (0x0400_00D8, 0x20),
+            (0x0400_00DA, 0x0300),
+            (0x0400_00DC, 4),
+            (0x0400_00DE, (1 << 14) | (1 << 15)),
+        ] {
+            write_machine_half(&mut machine, address, value);
+        }
+        let started = machine.now();
+        if bounded {
+            assert_eq!(machine.run_until(started + 21).unwrap().reason, StopReason::Deadline);
+        } else {
+            executed_step(&mut machine);
+        }
+        assert_eq!(machine.now(), started + 21);
+        assert_eq!(machine.next_instruction_address(), 0x0300_0020);
+        assert_eq!(machine.cpu.pipeline.unwrap().instructions, [0xE3A0_2011, 0xE3A0_3044]);
+        assert_eq!(
+            u32::from_le_bytes(machine.bus.iwram[0x20..0x24].try_into().unwrap()),
+            0xE3A0_2033
+        );
+        assert_ne!(machine.bus.interrupt_request_flags & (1 << 11), 0);
+        assert_eq!((machine.read_register(2), machine.read_register(3)), (0, 0));
+        executed_step(&mut machine);
+        executed_step(&mut machine);
+        assert_eq!((machine.read_register(2), machine.read_register(3)), (0x11, 0x44));
+    }
+}
+
+/// Zig: `code branched to after an immediate DMA copy runs the copied opcodes`.
+#[test]
+fn code_branched_to_after_an_immediate_dma_copy_runs_the_copied_opcodes() {
+    let mut rom = [0; 0x200];
+    write_words(
+        &mut rom,
+        0,
+        &[0xE59F_D178, 0xE59F_0178, 0xE59F_1178, 0xE1C0_10B0, 0xE28F_2001, 0xE12F_FF12],
+    );
+    for (index, half) in
+        [0xA103_u16, 0xC916, 0xB0D0, 0x466B, 0xC11C, 0x46EE, 0xF800, 0xE7FE].into_iter().enumerate()
+    {
+        rom[0x18 + index * 2..0x1A + index * 2].copy_from_slice(&half.to_le_bytes());
+    }
+    write_words(&mut rom, 0x28, &[0x0400_00D4, 0x0800_0034, 0x8400_0050]);
+    rom[0x34..0x36].copy_from_slice(&0x4778_u16.to_le_bytes());
+    rom[0x36..0x38].copy_from_slice(&0x46C0_u16.to_le_bytes());
+    write_words(&mut rom, 0x38, &[0xE3A0_705A, 0xEAFF_FFFE]);
+    write_words(&mut rom, 0x180, &[0x0300_7F00, 0x0400_0204, 0x4014]);
+    let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
+    machine.run_until(2000).unwrap();
+    assert_eq!(machine.read_register(7), 0x5A);
+    assert_eq!(machine.next_instruction_address(), 0x0300_7DC8);
+}
+
+/// Zig: `bounded Thumb block transfers match eager beats across RAM images and deadlines`.
+#[test]
+fn bounded_thumb_block_transfers_match_eager_beats_across_ram_images_and_deadlines() {
+    let mut rom = [0; 0x40];
+    for (index, half) in
+        [0xB50F_u16, 0xBC0F, 0xBC10, 0xC561, 0xCE47, 0x4645, 0x464E, 0xB081, 0xB500, 0xBD00, 0xE7F4]
+            .into_iter()
+            .enumerate()
+    {
+        rom[index * 2..index * 2 + 2].copy_from_slice(&half.to_le_bytes());
+    }
+    for pointers in [
+        [0x0300_0018, 0x0203_FFF8, 0x0300_7FF8],
+        [0x0300_8010, 0x0300_7FFC, 0x0203_FFFC],
+        [0x0200_0100, 0x02FF_FFFC, 0x0300_0000],
+    ] {
+        let mut machines = [
+            Machine::new(Config { rom: &rom, ..Config::default() }),
+            Machine::new(Config { rom: &rom, ..Config::default() }),
+        ];
+        for machine in &mut machines {
+            machine.cpu = Cpu::init(0x0800_0000, 0x3F, true);
+            for (register, value) in [
+                (13, pointers[0]),
+                (8, pointers[1]),
+                (9, pointers[2]),
+                (5, pointers[1]),
+                (6, pointers[2]),
+                (14, 0x0800_0015),
+            ] {
+                machine.cpu.registers[register] = value;
+            }
+            for register in 0..4 {
+                machine.cpu.registers[register] = 0x1111_1111 * (register as u32 + 1);
+            }
+            for (address, value) in
+                [(0x0400_0204, 0x4317), (0x0400_0100, 0xFFF9), (0x0400_0102, 0x0080)]
+            {
+                write_machine_half(machine, address, value);
+            }
+            executed_step(machine);
+        }
+        let [eager, bounded] = &mut machines;
+        let started = eager.now();
+        let mut target = started;
+        while target < started + 1500 {
+            while eager.now() < target {
+                executed_step(eager);
+            }
+            assert_eq!(bounded.run_until(target).unwrap().stopped_at, eager.now());
+            assert_eq!(eager.cpu.registers, bounded.cpu.registers);
+            assert_eq!(eager.cpu.cpsr, bounded.cpu.cpsr);
+            assert_eq!(eager.next_instruction_address(), bounded.next_instruction_address());
+            assert_eq!(eager.bus.game_pak_prefetch, bounded.bus.game_pak_prefetch);
+            assert_eq!(eager.bus.open_bus_value, bounded.bus.open_bus_value);
+            assert_eq!(eager.bus.fetch_kind, bounded.bus.fetch_kind);
+            target = (target + 13).max(eager.now() + 1);
+        }
+        assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+        assert!(bounded.read_register(13) < pointers[0] - 32);
+    }
+}
+
+/// Zig: `bounded Thumb ROM streams match eager fetches across duty boundaries and deadlines`.
+#[test]
+fn bounded_thumb_rom_streams_match_eager_fetches_across_duty_boundaries_and_deadlines() {
+    let mut rom = vec![0; 0x20100];
+    let loop_base = 0x1FFE0;
+    for (index, half) in [
+        0x4C01_u16, 0x4351, 0x40D8, 0x3001, 0x0081, 0x180A, 0x4643, 0x4290, 0xD000, 0x2507, 0x196D,
+        0x1E6E, 0x4048, 0xA701, 0xB001, 0x4281, 0x1C40, 0x4643, 0xF000, 0xF801, 0x3301, 0x2F00,
+        0xD1E8,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        rom[loop_base + index * 2..loop_base + index * 2 + 2].copy_from_slice(&half.to_le_bytes());
+    }
+    for waitcnt in [0x4317, 0x4014, 0x47FC] {
+        let mut machines = [
+            Machine::new(Config { rom: &rom, ..Config::default() }),
+            Machine::new(Config { rom: &rom, ..Config::default() }),
+        ];
+        for machine in &mut machines {
+            machine.cpu = Cpu::init(0x0800_0000 + loop_base as u32, 0x3F, true);
+            machine.cpu.registers[8] = 0x1234_5678;
+            for (address, value) in
+                [(0x0400_0204, waitcnt), (0x0400_0100, 0xFFF9), (0x0400_0102, 0x0080)]
+            {
+                write_machine_half(machine, address, value);
+            }
+            executed_step(machine);
+        }
+        let [eager, bounded] = &mut machines;
+        let started = eager.now();
+        let mut target = started;
+        while target < started + 2000 {
+            while eager.now() < target {
+                executed_step(eager);
+            }
+            assert_eq!(bounded.run_until(target).unwrap().stopped_at, eager.now());
+            assert_eq!(eager.cpu.registers, bounded.cpu.registers);
+            assert_eq!(eager.cpu.cpsr, bounded.cpu.cpsr);
+            assert_eq!(eager.next_instruction_address(), bounded.next_instruction_address());
+            assert_eq!(eager.bus.game_pak_prefetch, bounded.bus.game_pak_prefetch);
+            assert_eq!(eager.bus.open_bus_value, bounded.bus.open_bus_value);
+            target = (target + 11).max(eager.now() + 1);
+        }
+        assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
+        assert!(bounded.read_register(13) >= 0x0300_7F00 + 40);
+    }
+}
+
+/// Zig: `nested HLE IRQs preserve the outer exception return state`.
+#[test]
+fn nested_hle_irqs_preserve_the_outer_exception_return_state() {
+    let mut rom = [0; 28];
+    write_words(
+        &mut rom,
+        0,
+        &[
+            0xE1A0_2002,
+            0xEAFF_FFFE,
+            0xE1A0_0000,
+            0xE1A0_0000,
+            0xE3A0_0001,
+            0xE1A0_1001,
+            0xE1A0_F00E,
+        ],
+    );
+    let mut machine = Machine::new(Config { rom: &rom, boot: BootMode::Hle, ..Config::default() });
+    machine.cpu.registers[0] = 0xA5A5_5A5A;
+    machine.cpu.registers[1] = 0x1357_2468;
+    machine.cpu.cpsr = 0xA000_001F;
+    machine.bus.write(
+        Access {
+            address: 0x0300_7FFC,
+            width: AccessWidth::Word,
+            kind: AccessKind::Nonsequential,
+            source: AccessSource::CpuData,
+        },
+        0x0800_0010,
+    );
+    machine.bus.interrupt_enable_mask = 1;
+    machine.bus.interrupt_request_flags = 1;
+    machine.bus.interrupt_master_enabled = true;
+    machine.bus.update_irq_line();
+    executed_step(&mut machine);
+    executed_step(&mut machine);
+    machine.cpu.cpsr &= !(1 << 7);
+    executed_step(&mut machine);
+    machine.bus.interrupt_request_flags = 0;
+    machine.bus.update_irq_line();
+    for _ in 0..4 {
+        executed_step(&mut machine);
+    }
+    assert_eq!(machine.next_instruction_address(), 0x0800_0018);
+    assert_eq!(machine.read_cpsr() & 0x1F, 0x12);
+    executed_step(&mut machine);
+    executed_step(&mut machine);
+    assert_eq!(machine.next_instruction_address(), 0x0800_0004);
+    assert_eq!(
+        (machine.read_register(0), machine.read_register(1), machine.read_cpsr()),
+        (0xA5A5_5A5A, 0x1357_2468, 0xA000_001F)
+    );
+}
+
+fn checked_arm_fault(
+    machine: &mut Machine,
+    instruction: u32,
+    reason: IsaFaultReason,
+    diagnostic: &str,
+) -> Fault {
+    let fault = match machine.step() {
+        StepOutcome::Faulted(value) => value,
+        value => panic!("expected fault, got {value:?}"),
+    };
+    assert_eq!(
+        (fault.cycle, fault.instruction_address, fault.instruction, fault.instruction_set),
+        (8, 0x0800_0000, instruction, InstructionSet::Arm)
+    );
+    assert_eq!(fault.reason, FaultReason::Isa(reason));
+    let mut written = Vec::new();
+    fault.write_diagnostic(&mut written).unwrap();
+    assert!(String::from_utf8(written).unwrap().contains(diagnostic));
+    fault
+}
+
+/// Zig: `invalid MSR CPSR mode and state transitions fault before CPU mutation`.
+#[test]
+fn invalid_msr_cpsr_mode_and_state_transitions_fault_before_cpu_mutation() {
+    for (instruction, kind, value, diagnostic) in [
+        (
+            0xE329_F000_u32,
+            InvalidPsrStateKind::InvalidMode,
+            0xA000_0000,
+            "reason=invalid_psr_state operation=msr_cpsr kind=invalid_mode value=a0000000\n",
+        ),
+        (
+            0xE329_F03F,
+            InvalidPsrStateKind::IllegalTBitChange,
+            0xA000_003F,
+            "reason=invalid_psr_state operation=msr_cpsr kind=illegal_t_bit_change value=a000003f\n",
+        ),
+    ] {
+        let rom = instruction.to_le_bytes();
+        let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
+        machine.cpu.cpsr = 0xA000_001F;
+        machine.cpu.registers[13] = 0x1111_1111;
+        machine.cpu.registers[14] = 0x2222_2222;
+        machine.cpu.user_r13 = 0x3333_3333;
+        machine.cpu.user_r14 = 0x4444_4444;
+        machine.bus.ewram[0..4].copy_from_slice(&[0x12, 0x34, 0x56, 0x78]);
+        let fault = checked_arm_fault(
+            &mut machine,
+            instruction,
+            IsaFaultReason::InvalidPsrState { operation: PsrStateOperation::MsrCpsr, kind, value },
+            diagnostic,
+        );
+        assert_eq!(
+            (
+                machine.read_cpsr(),
+                machine.read_register(13),
+                machine.read_register(14),
+                machine.cpu.user_r13,
+                machine.cpu.user_r14,
+                machine.next_instruction_address()
+            ),
+            (0xA000_001F, 0x1111_1111, 0x2222_2222, 0x3333_3333, 0x4444_4444, 0x0800_0000)
+        );
+        assert_eq!(&machine.bus.ewram[0..4], &[0x12, 0x34, 0x56, 0x78]);
+        let cycle = machine.now();
+        assert_eq!(machine.step(), StepOutcome::Faulted(fault));
+        assert_eq!(machine.now(), cycle);
+    }
+}
+
+fn check_ldm_exception_return_fault(missing_spsr: bool) {
+    let instruction = 0xE8F0_8002_u32;
+    let rom = instruction.to_le_bytes();
+    let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
+    machine.cpu.cpsr = if missing_spsr { 0xA000_001F } else { 0xA000_0012 };
+    machine.cpu.spsr_irq = 0;
+    for (register, value) in
+        [(0, 0x0200_0000), (1, 0x1111_1111), (13, 0x1313_1313), (14, 0x1414_1414)]
+    {
+        machine.cpu.registers[register] = value;
+    }
+    machine.cpu.user_r13 = 0x3131_3131;
+    machine.cpu.user_r14 = 0x4141_4141;
+    if !missing_spsr {
+        machine.cpu.irq_r13 = 0x5151_5151;
+        machine.cpu.irq_r14 = 0x6161_6161;
+    }
+    write_words(&mut machine.bus.ewram[..], 0, &[0xDEAD_BEEF, 0x0800_0100]);
+    let (reason, diagnostic) = if missing_spsr {
+        (
+            IsaFaultReason::MissingSpsr {
+                operation: SpsrOperation::BlockTransferExceptionReturn,
+                mode: ProcessorMode::System,
+            },
+            "reason=missing_spsr operation=block_transfer_exception_return mode=system\n",
+        )
+    } else {
+        (
+            IsaFaultReason::InvalidPsrState {
+                operation: PsrStateOperation::BlockTransferExceptionReturn,
+                kind: InvalidPsrStateKind::InvalidMode,
+                value: 0,
+            },
+            "reason=invalid_psr_state operation=block_transfer_exception_return kind=invalid_mode value=00000000\n",
+        )
+    };
+    let fault = checked_arm_fault(&mut machine, instruction, reason, diagnostic);
+    assert_eq!(
+        (
+            machine.read_cpsr(),
+            machine.read_register(0),
+            machine.read_register(1),
+            machine.read_register(13),
+            machine.read_register(14)
+        ),
+        (
+            if missing_spsr { 0xA000_001F } else { 0xA000_0012 },
+            0x0200_0000,
+            0x1111_1111,
+            0x1313_1313,
+            0x1414_1414
+        )
+    );
+    assert_eq!((machine.cpu.user_r13, machine.cpu.user_r14), (0x3131_3131, 0x4141_4141));
+    if !missing_spsr {
+        assert_eq!((machine.cpu.irq_r13, machine.cpu.irq_r14), (0x5151_5151, 0x6161_6161));
+    }
+    assert_eq!(machine.next_instruction_address(), 0x0800_0000);
+    assert!(machine.cpu.pipeline.is_none());
+    assert_eq!(&machine.bus.ewram[0..8], &[0xEF, 0xBE, 0xAD, 0xDE, 0, 1, 0, 8]);
+    if !missing_spsr {
+        let cycle = machine.now();
+        assert_eq!(machine.step(), StepOutcome::Faulted(fault));
+        assert_eq!(machine.now(), cycle);
+    }
+}
+
+/// Zig: `invalid LDM exception-return PSR faults before transfers or writeback`.
+#[test]
+fn invalid_ldm_exception_return_psr_faults_before_transfers_or_writeback() {
+    check_ldm_exception_return_fault(false);
+}
+
+/// Zig: `LDM exception return without an SPSR faults before transfer side effects`.
+#[test]
+fn ldm_exception_return_without_an_spsr_faults_before_transfer_side_effects() {
+    check_ldm_exception_return_fault(true);
+}
+
+/// Zig: `invalid data-processing exception-return PSR faults before CPU mutation`.
+#[test]
+fn invalid_data_processing_exception_return_psr_faults_before_cpu_mutation() {
+    let instruction = 0xE25E_F004_u32;
+    let rom = instruction.to_le_bytes();
+    let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
+    machine.cpu.cpsr = 0xA000_0012;
+    machine.cpu.spsr_irq = 0;
+    machine.cpu.registers[13] = 0x1313_1313;
+    machine.cpu.registers[14] = 0x0800_0104;
+    machine.cpu.user_r13 = 0x3131_3131;
+    machine.cpu.user_r14 = 0x4141_4141;
+    machine.cpu.irq_r13 = 0x5151_5151;
+    machine.cpu.irq_r14 = 0x6161_6161;
+    let fault = match machine.step() {
+        StepOutcome::Faulted(value) => value,
+        value => panic!("expected fault, got {value:?}"),
+    };
+    assert_eq!(
+        (fault.cycle, fault.instruction_address, fault.instruction),
+        (8, 0x0800_0000, instruction)
+    );
+    assert_eq!(
+        fault.reason,
+        FaultReason::Isa(IsaFaultReason::InvalidPsrState {
+            operation: PsrStateOperation::DataProcessingExceptionReturn,
+            kind: InvalidPsrStateKind::InvalidMode,
+            value: 0,
+        })
+    );
+    assert_eq!(
+        (
+            machine.read_cpsr(),
+            machine.read_register(13),
+            machine.read_register(14),
+            machine.cpu.user_r13,
+            machine.cpu.user_r14,
+            machine.cpu.irq_r13,
+            machine.cpu.irq_r14,
+            machine.next_instruction_address()
+        ),
+        (
+            0xA000_0012,
+            0x1313_1313,
+            0x0800_0104,
+            0x3131_3131,
+            0x4141_4141,
+            0x5151_5151,
+            0x6161_6161,
+            0x0800_0000
+        )
+    );
+    assert!(machine.cpu.pipeline.is_none());
+}
+
+/// Zig: `MRS and MSR SPSR without a bank are typed pre-mutation faults`.
+#[test]
+fn mrs_and_msr_spsr_without_a_bank_are_typed_pre_mutation_faults() {
+    for (instruction, operation, mode_bits, mode, mode_name, operation_name) in [
+        (0xE14F_1000_u32, SpsrOperation::Mrs, 0x1F, ProcessorMode::System, "system", "mrs"),
+        (0xE369_F03F, SpsrOperation::Msr, 0x10, ProcessorMode::User, "user", "msr"),
+        (0xE168_F000, SpsrOperation::Msr, 0x1F, ProcessorMode::System, "system", "msr"),
+    ] {
+        let rom = instruction.to_le_bytes();
+        let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
+        machine.cpu.cpsr = 0xA000_0000 | mode_bits;
+        machine.cpu.registers[0] = 0xDEAD_BEEF;
+        machine.cpu.registers[1] = 0x1111_1111;
+        machine.cpu.registers[13] = 0x1313_1313;
+        machine.cpu.registers[14] = 0x1414_1414;
+        machine.cpu.user_r13 = 0x3131_3131;
+        machine.cpu.user_r14 = 0x4141_4141;
+        machine.cpu.spsr_irq = 0x5151_5151;
+        let diagnostic =
+            format!("reason=missing_spsr operation={operation_name} mode={mode_name}\n");
+        checked_arm_fault(
+            &mut machine,
+            instruction,
+            IsaFaultReason::MissingSpsr { operation, mode },
+            &diagnostic,
+        );
+        assert_eq!(
+            (
+                machine.read_cpsr(),
+                machine.read_register(0),
+                machine.read_register(1),
+                machine.read_register(13),
+                machine.read_register(14),
+                machine.cpu.user_r13,
+                machine.cpu.user_r14,
+                machine.cpu.spsr_irq,
+                machine.next_instruction_address()
+            ),
+            (
+                0xA000_0000 | mode_bits,
+                0xDEAD_BEEF,
+                0x1111_1111,
+                0x1313_1313,
+                0x1414_1414,
+                0x3131_3131,
+                0x4141_4141,
+                0x5151_5151,
+                0x0800_0000
+            )
+        );
+        assert!(machine.cpu.pipeline.is_none());
+    }
+}
+
+/// Zig: `unpredictable ARM register encodings fault before architectural side effects`.
+#[test]
+fn unpredictable_arm_register_encodings_fault_before_architectural_side_effects() {
+    let cases = [
+        (0xE10F_F000_u32, ArmInstructionClass::Mrs, "mrs", 0x8000),
+        (0xE00F_0291, ArmInstructionClass::Multiply, "multiply", 0x8000),
+        (0xE000_0F91, ArmInstructionClass::Multiply, "multiply", 0x8000),
+        (0xE000_029F, ArmInstructionClass::Multiply, "multiply", 0x8000),
+        (0xE020_F291, ArmInstructionClass::Multiply, "multiply", 0x8000),
+        (0xE10F_1090, ArmInstructionClass::Swap, "swap", 0x8000),
+        (0xE102_F090, ArmInstructionClass::Swap, "swap", 0x8000),
+        (0xE102_109F, ArmInstructionClass::Swap, "swap", 0x8000),
+        (0xE08F_0293, ArmInstructionClass::MultiplyLong, "multiply_long", 0x8000),
+        (0xE081_F293, ArmInstructionClass::MultiplyLong, "multiply_long", 0x8000),
+        (0xE081_0F93, ArmInstructionClass::MultiplyLong, "multiply_long", 0x8000),
+        (0xE081_029F, ArmInstructionClass::MultiplyLong, "multiply_long", 0x8000),
+        (0xE081_1293, ArmInstructionClass::MultiplyLong, "multiply_long", 0x0002),
+        (0xE1D0_F0B0, ArmInstructionClass::HalfwordTransfer, "halfword_transfer", 0x8000),
+        (0xE0DF_00B0, ArmInstructionClass::HalfwordTransfer, "halfword_transfer", 0x8000),
+        (0xE1FF_00B0, ArmInstructionClass::HalfwordTransfer, "halfword_transfer", 0x8000),
+        (0xE180_10BF, ArmInstructionClass::HalfwordTransfer, "halfword_transfer", 0x8000),
+        (0xE49F_0004, ArmInstructionClass::SingleTransfer, "single_transfer", 0x8000),
+        (0xE5BF_0004, ArmInstructionClass::SingleTransfer, "single_transfer", 0x8000),
+        (0xE5D0_F000, ArmInstructionClass::SingleTransfer, "single_transfer", 0x8000),
+        (0xE5C0_F000, ArmInstructionClass::SingleTransfer, "single_transfer", 0x8000),
+    ];
+    for (instruction, instruction_class, class_name, offending_registers) in cases {
+        let rom = instruction.to_le_bytes();
+        let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
+        for register in 0..15 {
+            machine.cpu.registers[register] = 0x0200_0000 + register as u32 * 4;
+        }
+        machine.bus.ewram[..16].copy_from_slice(&[
+            0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB,
+            0xCD, 0xEF,
+        ]);
+        let cpu_before = machine.inspect_cpu();
+        let mut memory_before = [0; 16];
+        machine.inspect_memory(0x0200_0000, &mut memory_before).unwrap();
+        let diagnostic = format!(
+            "reason=unpredictable_arm_encoding class={class_name} offending_registers={offending_registers:04x}\n"
+        );
+        let fault = checked_arm_fault(
+            &mut machine,
+            instruction,
+            IsaFaultReason::UnpredictableArmEncoding { instruction_class, offending_registers },
+            &diagnostic,
+        );
+        let cpu_after = machine.inspect_cpu();
+        assert_eq!(cpu_before.registers, cpu_after.registers);
+        assert_eq!(cpu_before.cpsr, cpu_after.cpsr);
+        assert_eq!(cpu_before.next_instruction_address, cpu_after.next_instruction_address);
+        assert!(machine.cpu.pipeline.is_none());
+        let mut memory_after = [0; 16];
+        machine.inspect_memory(0x0200_0000, &mut memory_after).unwrap();
+        assert_eq!(memory_before, memory_after);
+        assert_eq!(machine.step(), StepOutcome::Faulted(fault));
+        assert_eq!(machine.now(), 8);
     }
 }
