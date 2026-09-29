@@ -14,11 +14,12 @@ pub struct Entry {
 pub struct Cache {
     entries: [Entry; 1024],
     palette: [u8; 512],
+    palette_words: [u16; 256],
 }
 
 impl Default for Cache {
     fn default() -> Self {
-        Self { entries: [Entry::default(); 1024], palette: [0; 512] }
+        Self { entries: [Entry::default(); 1024], palette: [0; 512], palette_words: [0; 256] }
     }
 }
 
@@ -30,6 +31,9 @@ impl Cache {
             return;
         }
         self.palette = *palette;
+        for (index, color) in self.palette_words.iter_mut().enumerate() {
+            *color = u16::from_le_bytes([palette[index * 2], palette[index * 2 + 1]]) & 0x7FFF;
+        }
         for entry in &mut self.entries {
             entry.palette_bank_tag = 0;
         }
@@ -52,11 +56,9 @@ impl Cache {
         }
         let bank_tag = palette_bank + 1;
         if entry.palette_bank_tag != bank_tag {
-            let bank_start = usize::from(palette_bank) * 32;
+            let bank_start = usize::from(palette_bank) * 16;
             for (pixel, color) in entry.colors.iter_mut().enumerate() {
-                let offset = bank_start + usize::from(entry.indices[pixel]) * 2;
-                *color =
-                    u16::from_le_bytes([self.palette[offset], self.palette[offset + 1]]) & 0x7FFF;
+                *color = self.palette_words[bank_start + usize::from(entry.indices[pixel])];
             }
             entry.palette_bank_tag = bank_tag;
         }
