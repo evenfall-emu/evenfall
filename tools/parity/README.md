@@ -16,7 +16,7 @@ schema-export hook there, builds a Zig 0.16 ReleaseFast native executable in
 `fixtures/schema-v6.bin` (its BLAKE3 digest is `fixtures/schema-v6.blake3`).
 `refs/zigba` is never modified. `oracle run` writes
 all per-schedule traces to `target/parity/traces/<name>/slice-N.trace`, checks
-that they agree on *every byte*, and writes `oracle.trace` (or an optional
+that they agree on _every byte_, and writes `oracle.trace` (or an optional
 destination). It fails on a stopped/faulted machine or failed terminal PC/r12
 assertion. `compare` prints the first discrepancy per kind and exits nonzero.
 
@@ -26,7 +26,7 @@ relative to the scenario file. Each input has `{ "at": "...", "change":
 { "keys": 8 } }` (Start pressed); changes may instead specify `solar_level`,
 `gyro_sample`, or `tilt: [x,y]`. `endCycle` must equal the final checkpoint;
 `sliceCycles` holds positive cycle lengths (a quarter frame is 70224). Native
-DAC audio is drained after *every* slice. Configuration selects `hle`,
+DAC audio is drained after _every_ slice. Configuration selects `hle`,
 `skip_bios`, or `external_bios`, save type (`auto`, `none`, `sram`,
 `flash64k`, `flash128k`, `eeprom512`, `eeprom8k`, or
 `flash64k_atmel`), optional save asset, `rtcEpoch`, sensor levels and rumble.
