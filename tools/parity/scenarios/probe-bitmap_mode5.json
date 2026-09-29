@@ -1,0 +1,22 @@
+{
+  "name": "probe-bitmap_mode5",
+  "assets": {
+    "rom": "../../../probe/build/bitmap_mode5.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "inputs": [],
+  "endCycle": "2808960",
+  "checkpoints": [
+    "1123584",
+    "2247168",
+    "2808960"
+  ],
+  "sliceCycles": [
+    "70224",
+    "280896"
+  ],
+  "terminalPc": 134218500
+}

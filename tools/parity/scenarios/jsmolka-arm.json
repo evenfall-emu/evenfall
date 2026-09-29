@@ -1,0 +1,20 @@
+{
+  "name": "jsmolka-arm",
+  "assets": {
+    "rom": "../../../refs/gba-tests/arm/arm.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "inputs": [],
+  "endCycle": "1123584",
+  "checkpoints": [
+    "1123584"
+  ],
+  "sliceCycles": [
+    "70224",
+    "280896"
+  ],
+  "terminalPc": 134225604
+}

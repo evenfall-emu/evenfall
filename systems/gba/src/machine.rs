@@ -9,6 +9,12 @@ use std::io::Write;
 
 pub use cpu::FaultReason;
 
+impl From<evenfall_host::Timed<bus::TimedInputChange>> for TimedInput {
+    fn from(input: evenfall_host::Timed<bus::TimedInputChange>) -> Self {
+        Self { at: input.at, change: input.input }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Fault {
     pub cycle: Cycle,

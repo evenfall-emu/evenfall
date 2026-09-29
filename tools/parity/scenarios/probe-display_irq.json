@@ -1,0 +1,22 @@
+{
+  "name": "probe-display_irq",
+  "assets": {
+    "rom": "../../../probe/build/display_irq.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "inputs": [],
+  "endCycle": "1404480",
+  "checkpoints": [
+    "1123584",
+    "1404480"
+  ],
+  "sliceCycles": [
+    "70224",
+    "280896"
+  ],
+  "terminalPc": 134218500,
+  "terminalR12": 29884930
+}
