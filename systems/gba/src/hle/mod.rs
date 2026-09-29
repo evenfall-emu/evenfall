@@ -1,6 +1,19 @@
 //! HLE BIOS services ported from ZiGBA's `cpu.zig`.
 
-use crate::cpu::{Cpu, HleBulkWork};
+mod bulk;
+mod utility;
+
+use crate::bus::AccessWidth;
+use crate::cpu::{Cpu, FaultReason, HleBulkWork, HleMemoryOperation};
+
+fn invalid_hle_mmio_word_access(
+    service: u8,
+    operation: HleMemoryOperation,
+    address: u32,
+) -> Option<FaultReason> {
+    if address >> 24 != 4 || address & 3 == 0 { return None; }
+    Some(FaultReason::InvalidHleMemoryAccess { service, operation, address, width: AccessWidth::Word })
+}
 
 fn first_unaligned_mmio_record(base: u32, stride: u32, count: u32) -> Option<u32> {
     debug_assert!(stride != 0 && stride.is_multiple_of(4) && stride <= 0x0100_0000);
@@ -35,6 +48,30 @@ fn bg_affine_set_mmio_fault(source: u32, destination: u32, count: u32) -> Option
     let (record, index) = first?;
     let (base, stride, write) = streams[index];
     Some((base.wrapping_add(stride.wrapping_mul(record)), write))
+}
+
+impl Cpu {
+    /// Rejects direct guest word pointers before any register or bus changes.
+    pub fn preflight_hle_software_interrupt(&self, service: u8) -> Option<FaultReason> {
+        let r = &self.registers;
+        match service {
+            0x0E => bg_affine_set_mmio_fault(r[0], r[1], r[2]).and_then(|(address, write)| {
+                invalid_hle_mmio_word_access(service,
+                    if write { HleMemoryOperation::Write } else { HleMemoryOperation::Read }, address)
+            }),
+            0x10 => invalid_hle_mmio_word_access(service, HleMemoryOperation::Read, r[2].wrapping_add(4)),
+            0x11 | 0x12 => invalid_hle_mmio_word_access(service, HleMemoryOperation::Read, r[0]),
+            0x1A => invalid_hle_mmio_word_access(service, HleMemoryOperation::Write, r[13])
+                .or_else(|| invalid_hle_mmio_word_access(service, HleMemoryOperation::Write, r[0].wrapping_add(0x10))),
+            0x1F => invalid_hle_mmio_word_access(service, HleMemoryOperation::Read, r[0].wrapping_add(4)),
+            0x20 if (r[2] as i32) > 0 => invalid_hle_mmio_word_access(service, HleMemoryOperation::Write, r[0]),
+            0x21..=0x24 => invalid_hle_mmio_word_access(service, HleMemoryOperation::Read, r[0].wrapping_add(0x34)),
+            0x25 if r[1] <= 2 => invalid_hle_mmio_word_access(service, HleMemoryOperation::Read, r[0].wrapping_add(0x20))
+                .or_else(|| invalid_hle_mmio_word_access(service, HleMemoryOperation::Read, r[0].wrapping_add(0x24))),
+            0x2A => invalid_hle_mmio_word_access(service, HleMemoryOperation::Write, r[0]),
+            _ => None,
+        }
+    }
 }
 
 impl HleBulkWork {

@@ -6,9 +6,12 @@
 
 use crate::bus::{Access, AccessKind, AccessSource, AccessWidth, Bus};
 use crate::cpu::{
-    Cpu, HleBgAffineSetWork, HleBitUnpackWork, HleBulkWork, HleCpuFastSetWork, HleCpuSetWork,
-    HleDifferentialFilterWork, HleHuffmanWork, HleLz77Work, HleObjAffineSetWork, HleRunLengthWork,
+    Cpu, FaultReason, HleBgAffineSetWork, HleBitUnpackWork, HleBulkWork, HleCpuFastSetWork,
+    HleCpuSetWork, HleDifferentialFilterWork, HleHuffmanWork, HleLz77Work,
+    HleMemoryOperation, HleObjAffineSetWork, HleRunLengthWork,
 };
+
+use super::invalid_hle_mmio_word_access;
 
 fn access(address: u32, width: AccessWidth, kind: AccessKind) -> Access {
     Access { address, width, kind, source: AccessSource::CpuData }
@@ -324,26 +327,22 @@ fn resume_hle_obj_affine_set(bus: &mut Bus, work: &mut HleObjAffineSetWork, stop
 }
 
 impl Cpu {
-    /// `Ok(false)` suspends at a guest-cycle boundary; `Err` gives the first
-    /// faulting word (service number, address), before its MMIO write.
+    /// `Ok(false)` suspends at a guest-cycle boundary; `Err` faults before
+    /// the first bad MMIO write, after any earlier service accesses.
     pub fn resume_hle_bulk_work(
         &mut self,
         bus: &mut Bus,
         work: &mut HleBulkWork,
         stop_at: u64,
-    ) -> Result<bool, (u8, u32)> {
+    ) -> Result<bool, FaultReason> {
         match work {
             HleBulkWork::CpuSet(state) => Ok(self.resume_hle_cpu_set(bus, state, stop_at)),
             HleBulkWork::CpuFastSet(state) => Ok(self.resume_hle_cpu_fast_set(bus, state, stop_at)),
             HleBulkWork::BgAffineSet(state) => Ok(resume_hle_bg_affine_set(bus, state, stop_at)),
             HleBulkWork::ObjAffineSet(state) => Ok(resume_hle_obj_affine_set(bus, state, stop_at)),
-            HleBulkWork::BitUnpack(state) => {
-                self.resume_hle_bit_unpack(bus, state, stop_at).map_err(|address| (0x10, address))
-            }
+            HleBulkWork::BitUnpack(state) => self.resume_hle_bit_unpack(bus, state, stop_at),
             HleBulkWork::Lz77(state) => Ok(self.resume_hle_lz77(bus, state, stop_at)),
-            HleBulkWork::Huffman(state) => {
-                self.resume_hle_huffman(bus, state, stop_at).map_err(|address| (0x13, address))
-            }
+            HleBulkWork::Huffman(state) => self.resume_hle_huffman(bus, state, stop_at),
             HleBulkWork::RunLength(state) => Ok(self.resume_hle_run_length(bus, state, stop_at)),
             HleBulkWork::DifferentialFilter(state) => {
                 Ok(self.resume_hle_differential_filter(bus, state, stop_at))
@@ -385,7 +384,7 @@ impl Cpu {
         bus: &mut Bus,
         work: &mut HleBitUnpackWork,
         stop_at: u64,
-    ) -> Result<bool, u32> {
+    ) -> Result<bool, FaultReason> {
         let source_mask = (1_u32 << work.source_width) - 1;
         while work.source_length > 0 || work.input_bits_remaining != 0 {
             if bus.now() >= stop_at {
@@ -407,8 +406,8 @@ impl Cpu {
             work.output |= scaled << work.output_bits;
             work.output_bits += work.destination_width;
             if work.output_bits == 32 {
-                if work.destination >> 24 == 4 && work.destination & 3 != 0 {
-                    return Err(work.destination);
+                if let Some(fault) = invalid_hle_mmio_word_access(0x10, HleMemoryOperation::Write, work.destination) {
+                    return Err(fault);
                 }
                 hle_write_u32(bus, work.destination, work.output);
                 work.output_bits = 0;
@@ -531,7 +530,7 @@ impl Cpu {
         bus: &mut Bus,
         work: &mut HleHuffmanWork,
         stop_at: u64,
-    ) -> Result<bool, u32> {
+    ) -> Result<bool, FaultReason> {
         let symbol_mask = (1_u32 << work.symbol_bits) - 1;
         while work.remaining != 0 {
             if bus.now() >= stop_at {
@@ -568,8 +567,8 @@ impl Cpu {
                 work.node_address = work.tree_base;
                 work.node = hle_read_u8(bus, work.tree_base);
                 if work.output_bits == 32 {
-                    if work.destination >> 24 == 4 && work.destination & 3 != 0 {
-                        return Err(work.destination);
+                    if let Some(fault) = invalid_hle_mmio_word_access(0x13, HleMemoryOperation::Write, work.destination) {
+                        return Err(fault);
                     }
                     hle_write_u32(bus, work.destination, work.output);
                     work.destination = work.destination.wrapping_add(4);
