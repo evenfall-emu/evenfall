@@ -1,0 +1,90 @@
+{
+  "name": "@evenfall/gba",
+  "version": "0.1.1",
+  "private": true,
+  "description": "Deterministic, cycle-aware Game Boy Advance emulator as WebAssembly, with a worker-based browser SDK and a synchronous core for Node",
+  "keywords": [
+    "gba",
+    "game-boy-advance",
+    "emulator",
+    "webassembly",
+    "wasm",
+    "deterministic",
+    "rust"
+  ],
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "./zigba.js",
+  "types": "./zigba.d.ts",
+  "exports": {
+    ".": {
+      "types": "./zigba.d.ts",
+      "default": "./zigba.js"
+    },
+    "./core": {
+      "types": "./core.d.ts",
+      "default": "./core.js"
+    },
+    "./devtools/scenario": {
+      "types": "./devtools/scenario.d.ts",
+      "default": "./devtools/scenario.js"
+    },
+    "./devtools/capture": {
+      "types": "./devtools/capture.d.ts",
+      "default": "./devtools/capture.js"
+    },
+    "./audio-worklet": {
+      "types": "./audio-worklet.d.ts",
+      "default": "./audio-worklet.js"
+    },
+    "./bridge": {
+      "zigba-source": "./src/bridge/index.ts",
+      "types": "./bridge/index.d.ts",
+      "default": "./bridge/index.js"
+    },
+    "./bridge/react": {
+      "zigba-source": "./src/bridge/react.ts",
+      "types": "./bridge/react.d.ts",
+      "default": "./bridge/react.js"
+    },
+    "./evenfall-gba.wasm": "./evenfall-gba.wasm",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "zigba.js",
+    "zigba.d.ts",
+    "core.js",
+    "core.d.ts",
+    "worker.js",
+    "presentation.js",
+    "audio-worklet.js",
+    "audio-worklet.d.ts",
+    "devtools/*.js",
+    "devtools/*.d.ts",
+    "bridge/*.js",
+    "bridge/*.d.ts",
+    "evenfall-gba.wasm"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "prepack": "npm run build && node scripts/check-package.mjs",
+    "test": "node --test core.test.mjs presentation.test.mjs worker.test.mjs devtools/*.test.mjs"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/react": "19.1.12",
+    "react": "19.1.1",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

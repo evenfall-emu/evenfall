@@ -10,6 +10,8 @@ publish.workspace = true
 [dependencies]
 blake3.workspace = true
 evenfall-state-derive.workspace = true
+libm = "0.2"
+miniz_oxide = { version = "0.9", default-features = false, features = ["with-alloc"] }
 
 [lints]
 workspace = true

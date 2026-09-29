@@ -1,0 +1,14 @@
+{
+  "name": "jsmolka-ppu-hello",
+  "assets": {
+    "rom": "../../../refs/gba-tests/ppu/hello.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "inputs": [],
+  "endCycle": "1404480",
+  "checkpoints": ["1123584", "1404480"],
+  "sliceCycles": ["70224", "280896"]
+}

@@ -1,0 +1,7 @@
+--- a/src/root.zig
++++ b/src/root.zig
+@@ -3,3 +3,4 @@
+ pub const Machine = @import("machine.zig").Machine;
++pub const parity_schema = @import("parity_schema.zig");
+ pub const BootMode = @import("machine.zig").BootMode;
+ pub const Fault = @import("machine.zig").Fault;

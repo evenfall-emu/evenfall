@@ -1,0 +1,15 @@
+{
+  "name": "jsmolka-thumb",
+  "assets": {
+    "rom": "../../../refs/gba-tests/thumb/thumb.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "inputs": [],
+  "endCycle": "1123584",
+  "checkpoints": ["1123584"],
+  "sliceCycles": ["70224", "280896"],
+  "terminalPc": 134220460
+}

@@ -323,7 +323,12 @@ impl Bus {
         }
     }
 
-    pub(super) fn render_bitmap_background(&mut self, line: usize, mode: u8, history: &VideoHistoryView) {
+    pub(super) fn render_bitmap_background(
+        &mut self,
+        line: usize,
+        mode: u8,
+        history: &VideoHistoryView,
+    ) {
         self.scanline_memo.reads.vram_pages = ALL_VRAM_PAGES;
         let control = self.bg_controls[2];
         let width = if mode == 5 { 160 } else { 240 };
