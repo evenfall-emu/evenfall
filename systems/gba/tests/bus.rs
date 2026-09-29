@@ -6,6 +6,9 @@ use evenfall_gba::bus::{
 };
 use evenfall_gba::cartridge::save::Type as SaveType;
 
+#[path = "bus/video.rs"]
+mod video;
+
 const FLASH_SECTOR_ERASE_CYCLES: u64 = 30_000;
 
 fn access(address: u32, width: AccessWidth, kind: AccessKind, source: AccessSource) -> Access {
@@ -1721,6 +1724,7 @@ fn timer_zeros_unused_count_up_bit_does_not_exempt_a_prescaler_change() {
         }
     }
     assert_eq!(eager.now(), batched.now());
+    eager.write_state(&mut evenfall_state::Sink::new(None, None)).unwrap();
 }
 
 /// ZiGBA: "STOP freezes the prescaler counter with the timers"
@@ -1743,6 +1747,7 @@ fn stop_freezes_the_prescaler_counter_with_the_timers() {
         bus.resume_power();
         assert_eq!(4183, bus.now());
         assert_eq!(50, bus.prescaler_counter());
+        bus.write_state(&mut evenfall_state::Sink::new(None, None)).unwrap();
         write_word(&mut bus, 0x0400_0104, 0x00c1_ffff);
         expect_timer_irqs_at(&mut bus, woken_at + 14, 0b11 << 3);
         expect_timer_irqs_at(&mut bus, woken_at + 78, 0b11 << 3);
@@ -2007,4 +2012,87 @@ fn waitcnt_changes_preserve_the_in_flight_fetch_and_reprice_the_next_unit() {
             }
         }
     }
+}
+
+/// ZiGBA: "repeating DMA reloads a misaligned MMIO destination to the first unit"
+#[test]
+fn repeating_dma_reloads_a_misaligned_mmio_destination_to_the_first_unit() {
+    for (word, destination, latched, first, reloaded) in [
+        (true, 0x0400_0012, 0x0400_0010, [0x045, 0x123], [0x067, 0x155]),
+        (false, 0x0400_0013, 0x0400_0012, [0, 0x045], [0, 0x123]),
+    ] {
+        let mut bus = Bus::init(&[]);
+        write_word(&mut bus, 0x0300_4000, 0x0123_0045);
+        write_word(&mut bus, 0x0300_4004, 0x0155_0067);
+        start_reloading_hblank_dma0(&mut bus, 0x0300_4000, destination, word);
+        finish_hblank_dma(&mut bus, 0);
+        assert_eq!(first, [bus.bg_horizontal_offsets[0], bus.bg_vertical_offsets[0]]);
+        finish_hblank_dma(&mut bus, 1);
+        assert_eq!(reloaded, [bus.bg_horizontal_offsets[0], bus.bg_vertical_offsets[0]]);
+        assert_eq!(latched, bus.dma_channels[0].latched_destination);
+        assert_eq!(destination, bus.dma_channels[0].destination);
+    }
+}
+
+/// ZiGBA: "repeating DMA reloads a misaligned RAM destination to the first unit"
+#[test]
+fn repeating_dma_reloads_a_misaligned_ram_destination_to_the_first_unit() {
+    for (word, destination, first, reloaded) in [
+        (true, 0x0300_0201, 0xa1b2_c3d4, 0x1122_3344),
+        (true, 0x0300_0202, 0xa1b2_c3d4, 0x1122_3344),
+        (true, 0x0300_0203, 0xa1b2_c3d4, 0x1122_3344),
+        (false, 0x0300_0201, 0xeeee_c3d4, 0xeeee_a1b2),
+    ] {
+        let mut bus = Bus::init(&[]);
+        write_word(&mut bus, 0x0300_0100, 0xa1b2_c3d4);
+        write_word(&mut bus, 0x0300_0104, 0x1122_3344);
+        for addr in [0x0300_01fc, 0x0300_0200, 0x0300_0204] {
+            write_word(&mut bus, addr, 0xeeee_eeee);
+        }
+        start_reloading_hblank_dma0(&mut bus, 0x0300_0100, destination, word);
+        finish_hblank_dma(&mut bus, 0);
+        assert_eq!(first, read_word(&mut bus, 0x0300_0200));
+        finish_hblank_dma(&mut bus, 1);
+        assert_eq!(reloaded, read_word(&mut bus, 0x0300_0200));
+        assert_eq!(0xeeee_eeee, read_word(&mut bus, 0x0300_01fc));
+        assert_eq!(0xeeee_eeee, read_word(&mut bus, 0x0300_0204));
+        assert_eq!(0x0300_0200, bus.dma_channels[0].latched_destination);
+        assert_eq!(destination, bus.dma_channels[0].destination);
+    }
+}
+
+fn start_reloading_hblank_dma0(bus: &mut Bus, source: u32, destination: u32, word: bool) {
+    write_half(bus, 0x0400_00b0, source as u16);
+    write_half(bus, 0x0400_00b2, (source >> 16) as u16);
+    write_half(bus, 0x0400_00b4, destination as u16);
+    write_half(bus, 0x0400_00b6, (destination >> 16) as u16);
+    write_half(bus, 0x0400_00b8, 1);
+    let width = if word { 1 << 10 } else { 0 };
+    write_half(bus, 0x0400_00ba, (3 << 5) | (1 << 9) | width | (2 << 12) | (1 << 15));
+}
+
+fn finish_hblank_dma(bus: &mut Bus, line: u64) {
+    bus.elapse(line * 1232 + 960 - bus.now());
+    bus.elapse(3);
+}
+
+/// ZiGBA: "timer zero unused count-up bit cannot bypass state phase validation"
+#[test]
+fn timer_zero_unused_count_up_bit_cannot_bypass_state_phase_validation() {
+    let mut bus = Bus::init(&[]);
+    bus.timers[0].control = 0x0085;
+    bus.timers[0].prescaler_phase = 64;
+    assert_eq!(
+        Err(evenfall_state::Error::InvalidSaveState),
+        bus.write_state(&mut evenfall_state::Sink::new(None, None))
+    );
+    bus.timers[0].prescaler_phase = 63;
+    assert_eq!(
+        Err(evenfall_state::Error::InvalidSaveState),
+        bus.write_state(&mut evenfall_state::Sink::new(None, None))
+    );
+    bus.timers[0].prescaler_phase = 0;
+    bus.timers[1].control = 0x0084;
+    bus.timers[1].prescaler_phase = 63;
+    bus.write_state(&mut evenfall_state::Sink::new(None, None)).unwrap();
 }
