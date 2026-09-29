@@ -97,6 +97,9 @@ version = "0.1.0"
 [[package]]
 name = "evenfall-cpu-arm"
 version = "0.1.0"
+dependencies = [
+ "evenfall-state",
+]
 
 [[package]]
 name = "evenfall-gba"
