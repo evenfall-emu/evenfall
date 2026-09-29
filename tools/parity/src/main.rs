@@ -76,6 +76,13 @@ fn trace(path: &Path) -> io::Result<Trace> {
     Trace::read(fs::File::open(path)?)
 }
 
+fn machine_path(base: &Path, index: usize) -> PathBuf {
+    base.with_file_name(format!(
+        "{}-machine-{index}.trace",
+        base.file_stem().unwrap().to_string_lossy()
+    ))
+}
+
 fn run(path: &Path, dest: Option<&Path>) -> Result<(), Box<dyn Error>> {
     let scenario: Scenario<InputChange> = serde_json::from_slice(&fs::read(path)?)?;
     scenario.validate()?;
@@ -86,6 +93,52 @@ fn run(path: &Path, dest: Option<&Path>) -> Result<(), Box<dyn Error>> {
     let name = path.file_stem().ok_or("scenario filename missing")?.to_string_lossy();
     let dir = output().join("traces").join(name.as_ref());
     fs::create_dir_all(&dir)?;
+    if let Some(link) = &scenario.link {
+        let count = link.peers.len() + 1;
+        let mut references: Vec<Option<Trace>> = vec![None; count];
+        for (schedule, &slice) in scenario.slice_cycles.iter().enumerate() {
+            let base = dir.join(format!("slice-{schedule}.trace"));
+            command(
+                binary().to_str().ok_or("non-UTF8 binary path")?,
+                &[path.as_os_str(), schedule.to_string().as_ref(), base.as_os_str()],
+                &root(),
+            )?;
+            for (machine, reference) in references.iter_mut().enumerate() {
+                let actual = trace(&machine_path(&base, machine))?;
+                if let Some(reference) = reference {
+                    let differences = compare(reference, &actual);
+                    if !differences.is_empty() {
+                        for diff in differences {
+                            eprintln!(
+                                "{}: machine {machine}, checkpoint {} {}: {}",
+                                scenario.name, diff.checkpoint, diff.kind, diff.detail
+                            );
+                        }
+                        return Err(format!(
+                            "oracle linked slice independence failed at {slice} cycles"
+                        )
+                        .into());
+                    }
+                } else {
+                    *reference = Some(actual);
+                }
+            }
+        }
+        let base = dest.map(Path::to_path_buf).unwrap_or_else(|| dir.join("oracle.trace"));
+        for machine in 0..count {
+            let source = machine_path(&dir.join("slice-0.trace"), machine);
+            let target = machine_path(&base, machine);
+            fs::copy(source, &target)?;
+            println!(
+                "{}: machine {machine}, {} checkpoints, {} schedules; {}",
+                scenario.name,
+                scenario.checkpoints.len(),
+                scenario.slice_cycles.len(),
+                target.display()
+            );
+        }
+        return Ok(());
+    }
     let mut reference: Option<Trace> = None;
     for (index, &slice) in scenario.slice_cycles.iter().enumerate() {
         let output = dir.join(format!("slice-{index}.trace"));
@@ -159,6 +212,9 @@ fn run_parity(path: &Path) -> Result<(), Box<dyn Error>> {
     let path = fs::canonicalize(path)?;
     let name = path.file_stem().ok_or("scenario filename missing")?.to_string_lossy();
     let dir = output().join("traces").join(name.as_ref());
+    if scenario.link.is_some() {
+        return run_linked_parity(&path, &scenario, &dir);
+    }
     let reference = trace(&dir.join("oracle.trace"))?;
     let mut first: Option<Trace> = None;
     let mut failed = false;
@@ -189,6 +245,52 @@ fn run_parity(path: &Path) -> Result<(), Box<dyn Error>> {
         println!("{}: Rust schedule {index} ({slice} cycles): {}", scenario.name, output.display());
     }
     if failed { Err(format!("{}: parity differs", scenario.name).into()) } else { Ok(()) }
+}
+
+fn run_linked_parity(
+    path: &Path,
+    scenario: &Scenario<InputChange>,
+    dir: &Path,
+) -> Result<(), Box<dyn Error>> {
+    let count = scenario.link.as_ref().unwrap().peers.len() + 1;
+    let references = (0..count)
+        .map(|index| trace(&machine_path(&dir.join("oracle.trace"), index)))
+        .collect::<io::Result<Vec<_>>>()?;
+    let mut first: Vec<Option<Trace>> = vec![None; count];
+    let mut failed = false;
+    for (schedule, &slice) in scenario.slice_cycles.iter().enumerate() {
+        let mut results = match rust_backend::run_linked(path, scenario, slice) {
+            Ok(results) => results,
+            Err(error) => {
+                eprintln!(
+                    "{}: Rust linked schedule {schedule} ({slice} cycles): {error}",
+                    scenario.name
+                );
+                failed = true;
+                continue;
+            }
+        };
+        for (index, (actual, machine)) in results.iter_mut().enumerate() {
+            let output = machine_path(&dir.join(format!("rust-slice-{schedule}.trace")), index);
+            actual.write(fs::File::create(&output)?)?;
+            let label = format!("{} machine {index}", scenario.name);
+            let differences = compare(&references[index], actual);
+            report(&label, schedule, &differences, actual, machine);
+            failed |= !differences.is_empty();
+            if let Some(first) = &first[index] {
+                let differences = compare(first, actual);
+                if !differences.is_empty() {
+                    eprintln!("{label}: Rust linked slice independence failed at {slice} cycles");
+                    report(&label, schedule, &differences, actual, machine);
+                    failed = true;
+                }
+            } else {
+                first[index] = Some(actual.clone());
+            }
+            println!("{label}: Rust schedule {schedule} ({slice} cycles): {}", output.display());
+        }
+    }
+    if failed { Err(format!("{}: linked parity differs", scenario.name).into()) } else { Ok(()) }
 }
 
 fn run_all() -> Result<(), Box<dyn Error>> {

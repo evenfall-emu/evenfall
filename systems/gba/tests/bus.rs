@@ -6,6 +6,8 @@ use evenfall_gba::bus::{
 };
 use evenfall_gba::cartridge::save::Type as SaveType;
 
+#[path = "bus/fetch.rs"]
+mod fetch;
 #[path = "bus/peripherals.rs"]
 mod peripherals;
 #[path = "bus/video.rs"]

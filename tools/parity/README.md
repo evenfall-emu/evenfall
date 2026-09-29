@@ -49,6 +49,13 @@ Optional `terminalPc` and `terminalR12` enforce known self-loop endpoints.
 For the JoyBus probes, `hostActions` contains a cycle and a `command` with
 `joybus_write` (u32) or `joybus_read: true`; the master command is scheduled
 1000 cycles after the first instruction boundary at or after that cycle.
+For linked probes the top-level machine is cable index 0. `link` contains
+`connection` (`cable_2p` or `cable_multi`) and `peers`, an ordered array of one
+to three other machines, each with `assets`, `config`, and optional terminal
+guards. These scenarios use no timed inputs or host actions. The linked
+schedulers drain audio for each machine after every slice; traces are stored
+as `oracle-machine-I.trace`, `slice-N-machine-I.trace`, and
+`rust-slice-N-machine-I.trace`. The existing `EFPAR01` format is unchanged.
 
 The binary trace format `EFPAR01\0` is little-endian: 32-bit checkpoint
 count, then per checkpoint three u64 values (requested cycle, actual stopped
@@ -60,13 +67,14 @@ is i16 LE interleaved left/right since the previous checkpoint. State bytes
 contain the complete `ZIGBAST1` envelope, not just its payload. The format
 rejects corrupt, truncated and trailing data; ROM and BIOS are not embedded.
 
-The manifests cover the single-machine validator ROMs and continuous bench
-workloads; bench ROMs have no terminal self-loop. The link-cable probes
-require simultaneous machines and are intentionally excluded. JoyBus probes
-use explicit host actions, not timed cartridge inputs. Other input-dependent
-probes use timed key changes, including START and STOP wake. The generator
-accepts a successful HLE validator log to choose durations with room beyond
-the terminal loop; it does not derive expected bytes from the emulator.
+The manifests cover single- and linked-machine validator probes, jsmolka ROMs,
+and continuous bench workloads; bench ROMs have no terminal self-loop. JoyBus
+probes use explicit host actions, not timed cartridge inputs. Other
+input-dependent probes use timed key changes, including START and STOP wake.
+The generator accepts a successful HLE validator log to choose durations with
+room beyond the terminal loop; `--linked` regenerates the linked manifests
+from the validator's cable order and report expectations. Neither derives
+expected trace bytes from the emulator.
 
 The Rust backend maps the manifest to `evenfall_gba::machine::Config`, passes
 timed inputs through `evenfall_replay::run_with_host_actions`, and schedules
