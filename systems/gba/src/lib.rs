@@ -8,6 +8,7 @@
 // [devices]
 
 // [apu]
+pub mod apu;
 
 // [video]
 pub mod video;
