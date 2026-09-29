@@ -3427,6 +3427,7 @@ impl Bus {
         palette_read(&self.palette, address, width)
     }
 
+    #[inline]
     pub(crate) fn write_palette(&mut self, address: u32, width: AccessWidth, value: u32) {
         self.video_memory().write_palette(address, width, value);
     }
@@ -3465,6 +3466,7 @@ impl Bus {
         self.record_vram_write(snapshot);
     }
 
+    #[inline]
     pub(crate) fn write_vram(&mut self, address: u32, width: AccessWidth, value: u32) {
         self.video_memory().write_vram(address, width, value);
     }
@@ -3473,11 +3475,13 @@ impl Bus {
         oam_read(&self.oam, address, width)
     }
 
+    #[inline]
     pub(crate) fn write_oam(&mut self, address: u32, width: AccessWidth, value: u32) {
         self.video_memory().write_oam(address, width, value);
     }
 
     /// Video memory and the render caches its writes invalidate.
+    #[inline(always)]
     pub(crate) fn video_memory(&mut self) -> VideoMemory<'_> {
         VideoMemory {
             palette: &mut self.palette,

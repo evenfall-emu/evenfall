@@ -12,7 +12,7 @@
 //! the run's budget.
 
 use super::mem::{Mem, Running};
-use super::{Op, PAGE_SHIFT, ROM_PAGE_SLOTS, fresh_ops, split_memory};
+use super::{CodeCache, Op, PAGE_SHIFT, ROM_PAGE_SLOTS, fresh_ops, split_memory};
 use crate::bus::{
     AccessKind, AccessWidth, Bus, EWRAM_SIZE, IWRAM_SIZE, PrefetchClock, RomData, read_ram,
 };
@@ -488,12 +488,47 @@ enum Stop {
 /// [`crate::cpu::Cpu::run_engine`].
 pub(super) fn run(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
     let pc = core.next_instruction_address;
+    if cached_op(&bus.code, pc).is_some_and(|op| refused_at_once(&op, &core.registers)) {
+        return false;
+    }
     match pc >> 24 {
         2 => run_ram::<true>(core, bus, limit),
         3 => run_ram::<false>(core, bus, limit),
         8..=13 => run_rom(core, bus, limit),
         _ => false,
     }
+}
+
+/// The decoded op at `pc`, if its slot exists and is decoded.
+#[inline(always)]
+fn cached_op(code: &CodeCache, pc: u32) -> Option<Op> {
+    let op = match pc >> 24 {
+        2 => *code.ram[0][1].as_ref()?.get((pc as usize & (EWRAM_SIZE - 1)) >> 1)?,
+        3 => *code.ram[1][1].as_ref()?.get((pc as usize & (IWRAM_SIZE - 1)) >> 1)?,
+        8..=13 => {
+            let page = code.rom_thumb.get(page_of(pc))?.as_ref()?;
+            page[(pc & (PAGE_BYTES - 1)) as usize >> 1]
+        }
+        _ => return None,
+    };
+    (op.kind != k::UNDECODED).then_some(op)
+}
+
+/// Whether a run would refuse `op` as its first instruction with these
+/// registers, in the frequent cases that cost less to see than a run's
+/// setup: an instruction the engine never runs, BX to ARM, and a transfer
+/// to MMIO.
+#[inline(always)]
+fn refused_at_once(op: &Op, registers: &[u32; 16]) -> bool {
+    let r = |index: u32| registers[index as usize & 15];
+    let address = match op.kind {
+        k::EXIT => return true,
+        k::BX => return r(u32::from(op.rn)) & 1 == 0,
+        k::REG..k::IMM => r(u32::from(op.rn)).wrapping_add(r(op.x)),
+        k::IMM..k::BCOND => r(u32::from(op.rn)).wrapping_add(op.x),
+        _ => return false,
+    };
+    address >> 24 == 4
 }
 
 fn run_ram<const EW: bool>(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {

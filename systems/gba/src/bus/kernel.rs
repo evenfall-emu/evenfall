@@ -31,7 +31,7 @@ pub(crate) struct VideoMemory<'a> {
 
 impl VideoMemory<'_> {
     /// A read of palette RAM, VRAM or OAM (regions 5 to 7).
-    #[inline]
+    #[inline(always)]
     pub(crate) fn read(&self, address: u32, width: AccessWidth) -> u32 {
         match address >> 24 {
             5 => palette_read(self.palette, address, width),
@@ -41,6 +41,7 @@ impl VideoMemory<'_> {
     }
 
     /// A palette write: a byte lands in both bytes of its halfword.
+    #[inline(always)]
     pub(crate) fn write_palette(&mut self, address: u32, width: AccessWidth, value: u32) {
         let address = (if width == AccessWidth::Byte { address & !1 } else { address }) as usize
             & (PALETTE_SIZE - 1);
@@ -62,6 +63,7 @@ impl VideoMemory<'_> {
 
     /// A VRAM write: a byte lands in both bytes of its halfword, and not at
     /// all in object tiles.
+    #[inline(always)]
     pub(crate) fn write_vram(&mut self, address: u32, width: AccessWidth, value: u32) {
         if width == AccessWidth::Byte {
             let Some(index) = vram_index(address & !1, self.dispcnt) else {
@@ -82,6 +84,7 @@ impl VideoMemory<'_> {
         }
     }
 
+    #[inline(always)]
     fn write_vram_byte(&mut self, index: usize, value: u8) {
         if self.vram[index] != value {
             self.memo.mark_vram(index);
@@ -90,6 +93,7 @@ impl VideoMemory<'_> {
     }
 
     /// An OAM write; byte writes are ignored.
+    #[inline(always)]
     pub(crate) fn write_oam(&mut self, address: u32, width: AccessWidth, value: u32) {
         if width == AccessWidth::Byte {
             return;
