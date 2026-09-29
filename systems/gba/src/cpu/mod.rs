@@ -4,6 +4,9 @@ use crate::bus::{
     Access, AccessKind, AccessSource, AccessWidth, Bus, InstructionFetchRegion, PowerState,
     ThumbStream,
 };
+pub use crate::multiboot::{
+    Encoder as MultiBootEncoder, Mode as MultiBootMode, Parameters as MultiBootParameters,
+};
 use evenfall_cpu_arm::{Core, Pipeline};
 use evenfall_state::Codec;
 use std::ops::{Deref, DerefMut};
@@ -275,38 +278,6 @@ pub struct HleMultiBootContinuation {
     pub wait_started_at: u64,
     pub instruction_address: u32,
     pub instruction_set: InstructionSet,
-}
-
-// These nested protocol layouts are ZiGBA multiboot.Parameters/Mode/Encoder.
-// Once the devices crate is merged, they are replaced by its canonical types.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Codec)]
-pub struct MultiBootParameters {
-    pub handshake_data: u8,
-    pub client_data: [u8; 3],
-    pub palette_data: u8,
-    pub client_bit: u8,
-    pub source: u32,
-    pub end: u32,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
-#[codec(tag_bits = 2)]
-pub enum MultiBootMode {
-    #[default]
-    #[codec(rename = "normal_256_khz")]
-    Normal256Khz,
-    #[codec(rename = "multiplayer_115_khz")]
-    Multiplayer115Khz,
-    #[codec(rename = "normal_2_mhz")]
-    Normal2Mhz,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Codec)]
-pub struct MultiBootEncoder {
-    pub checksum: u32,
-    pub key_state: u32,
-    pub checksum_polynomial: u32,
-    pub key_xor: u32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Codec)]
@@ -638,24 +609,20 @@ impl Cpu {
         match &self.hle_service {
             Some(HleService::MultiBoot(continuation)) => {
                 let p = &continuation.parameters;
-                let length = p.end.checked_sub(p.source).ok_or(Invalid)?;
-                if p.client_bit & 0x0e == 0
-                    || p.client_bit & !0x0e != 0
-                    || !(0x100..=0x3ff40).contains(&length)
-                    || length & 15 != 0
-                    || continuation.source_offset > length
+                p.validate().map_err(|_| Invalid)?;
+                let length = p.payload_length();
+                if continuation.source_offset > length
                     || continuation.source_offset & 3 != 0
                     || continuation.wait_started_at > current_cycle
                     || !instruction_address_aligned(
                         continuation.instruction_address,
                         continuation.instruction_set,
                     )
-                    || (continuation.multiplayer_high_half
-                        && continuation.mode != MultiBootMode::Multiplayer115Khz)
+                    || (continuation.multiplayer_high_half && !continuation.mode.is_multiplayer())
                 {
                     return Err(Invalid);
                 }
-                let multiplayer = continuation.mode == MultiBootMode::Multiplayer115Khz;
+                let multiplayer = continuation.mode.is_multiplayer();
                 if continuation.encoder.checksum_polynomial
                     != if multiplayer { 0xa517 } else { 0xc37b }
                     || continuation.encoder.key_xor
@@ -937,5 +904,36 @@ impl Deref for Cpu {
 impl DerefMut for Cpu {
     fn deref_mut(&mut self) -> &mut Core {
         &mut self.core
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ZiGBA `state_codec.writeSchemaName("zigba.cpu.state.v6"); writeSchema(Cpu)`.
+    #[test]
+    fn cpu_schema_matches_zigba_v6() {
+        let mut hash = blake3::Hasher::new();
+        Cpu::write_state_schema(&mut evenfall_state::Sink::new(None, Some(&mut hash))).unwrap();
+        assert_eq!(
+            hash.finalize().to_hex().as_str(),
+            "75595acc72ede48e7c4c08b601062ccd2da112163cc71959695a2d85ce93e3c0"
+        );
+    }
+
+    /// ZiGBA `validateState`: reject a stale resumed SWI whose PC has moved.
+    #[test]
+    fn bulk_state_requires_return_point() {
+        let mut cpu = Cpu::init(0x0800_0004, 0x1f, true);
+        cpu.hle_service = Some(HleService::Bulk(HleBulkService {
+            instruction_address: 0x0800_0000,
+            instruction: 0xef0b_0000,
+            instruction_set: InstructionSet::Arm,
+            work: HleBulkWork::CpuSet(HleCpuSetWork::default()),
+        }));
+        assert_eq!(cpu.validate_state(0), Ok(()));
+        cpu.core.next_instruction_address = 0x0800_0008;
+        assert_eq!(cpu.validate_state(0), Err(evenfall_state::Error::InvalidSaveState));
     }
 }
