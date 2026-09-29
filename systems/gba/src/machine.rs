@@ -590,7 +590,7 @@ impl Machine {
     }
 
     pub fn inspect_memory(&self, address: u32, output: &mut [u8]) -> Result<(), AddressOverflow> {
-        if output.len as u64 > u64::from(u32::MAX) - u64::from(address) + 1 {
+        if output.len() as u64 > u64::from(u32::MAX) - u64::from(address) + 1 {
             return Err(AddressOverflow);
         }
         for (offset, byte) in output.iter_mut().enumerate() {
@@ -930,7 +930,7 @@ impl Machine {
         {
             return Err(evenfall_state::Error::InvalidSaveState.into());
         }
-        *self = *scratch;
+        std::mem::swap(self, &mut scratch);
         Ok(())
     }
 }

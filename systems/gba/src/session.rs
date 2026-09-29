@@ -121,17 +121,26 @@ impl From<video_recovery::Error> for Error {
 
 impl Session {
     pub fn create(config: Config<'_>) -> Result<Self, Error> {
-        Self::create_impl(config, None)
+        Self::create_impl(config)
     }
 
-    /// Adopts the raw uploaded ROM on success; a ZIP is extracted then dropped.
-    pub fn create_from_owned_buffer(config: Config<'_>, buffer: Vec<u8>) -> Result<Self, Error> {
-        assert_eq!(config.image.as_ptr(), buffer.as_ptr());
-        assert!(config.image.len() <= buffer.len());
-        Self::create_impl(config, Some(buffer))
+    /// Uses the complete uploaded buffer as the image. Ownership transfers
+    /// only on success; a failed construction returns the original buffer.
+    pub fn create_from_owned_buffer(
+        config: Config<'_>,
+        buffer: Vec<u8>,
+    ) -> Result<Self, (Error, Vec<u8>)> {
+        let mut session = match Self::create_impl(Config { image: &buffer, ..config }) {
+            Ok(session) => session,
+            Err(error) => return Err((error, buffer)),
+        };
+        if !config.zipped {
+            session.rom = buffer;
+        }
+        Ok(session)
     }
 
-    fn create_impl(config: Config<'_>, owned: Option<Vec<u8>>) -> Result<Self, Error> {
+    fn create_impl(config: Config<'_>) -> Result<Self, Error> {
         if config.image.is_empty() || config.image.len() > 40 * 1024 * 1024 {
             return Err(Error::InvalidRomSize);
         }
@@ -144,12 +153,8 @@ impl Session {
         if config.rtc_epoch > 253_402_300_799 {
             return Err(Error::InvalidRtcEpoch);
         }
-        let image_len = config.image.len();
         let rom = if config.zipped {
             rom_image::extract_single_gba(config.image)?
-        } else if let Some(mut owned) = owned {
-            owned.truncate(image_len);
-            owned
         } else {
             config.image.to_vec()
         };
@@ -543,6 +548,29 @@ mod tests {
             Session::create(Config { image: &[1], save: Some(&[1]), ..Config::default() }),
             Err(Error::Image(rom_image::Error::InvalidSaveFileSize))
         ));
+    }
+
+    /// Zig: "owned buffer creation consumes exactly the uploaded allocation"
+    /// and "upload ownership transfers only on successful construction".
+    #[test]
+    fn owned_buffer_transfers_only_after_successful_construction() {
+        let buffer = LOOP_ROM.to_vec();
+        let address = buffer.as_ptr();
+        let session = Session::create_from_owned_buffer(Config::default(), buffer).unwrap();
+        assert_eq!(session.rom.as_ptr(), address);
+        assert_eq!(session.rom, LOOP_ROM);
+
+        let buffer = LOOP_ROM.to_vec();
+        let address = buffer.as_ptr();
+        let (error, returned) = Session::create_from_owned_buffer(
+            Config { output_rate: 0, ..Config::default() },
+            buffer,
+        )
+        .err()
+        .unwrap();
+        assert!(matches!(error, Error::InvalidSampleRate));
+        assert_eq!(returned.as_ptr(), address);
+        assert_eq!(returned, LOOP_ROM);
     }
 
     /// Zig: "buffered snapshots match streamed state bytes for owned and borrowed media"
