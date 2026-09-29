@@ -376,6 +376,8 @@ pub struct ThumbStream {
 pub struct Bus {
     pub ewram: Box<[u8; EWRAM_SIZE]>,
     pub iwram: Box<[u8; IWRAM_SIZE]>,
+    #[codec(skip)]
+    pub(crate) arm_iwram_ops: Box<[crate::cpu::engine::ArmOp; IWRAM_SIZE / 4]>,
     pub palette: [u8; PALETTE_SIZE],
     pub vram: Box<[u8; VRAM_SIZE]>,
     pub oam: [u8; OAM_SIZE],
@@ -619,6 +621,7 @@ impl Bus {
         Self {
             ewram: boxed_array(0),
             iwram: boxed_array(0),
+            arm_iwram_ops: boxed_array(crate::cpu::engine::ArmOp::default()),
             palette: [0; PALETTE_SIZE],
             vram: boxed_array(0),
             oam: [0; OAM_SIZE],

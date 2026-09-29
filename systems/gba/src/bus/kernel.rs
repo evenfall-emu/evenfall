@@ -1,6 +1,7 @@
 //! CPU execution kernels whose local clocks are strictly inside a device horizon.
 
 use super::*;
+use crate::cpu::engine::ArmOp;
 
 pub fn begin_arm_iwram_slice(bus: &mut Bus) {
     bus.game_pak_code_active = false;
@@ -32,6 +33,11 @@ pub struct ArmIwramExecutionRegion<'a> {
 }
 
 impl<'a> ArmIwramExecutionRegion<'a> {
+    #[inline]
+    pub(crate) fn arm_op(&mut self, address: u32, word: u32) -> ArmOp {
+        ArmOp::get(&mut self.bus.arm_iwram_ops[((address as usize) & (IWRAM_SIZE - 1)) / 4], word)
+    }
+
     pub fn begin(bus: &'a mut Bus, yield_at: Cycle) -> Option<Self> {
         if !bus.batch_active
             || bus.pending_dma != 0

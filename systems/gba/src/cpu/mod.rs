@@ -1,5 +1,7 @@
 //! GBA CPU state and the scheduling seam around the ARM7TDMI core.
 
+pub(crate) mod engine;
+
 use crate::bus::{
     Access, AccessKind, AccessSource, AccessWidth, ArmIwramExecutionRegion, Bus,
     InstructionFetchRegion, PowerState, ThumbRomRun, ThumbStream, begin_arm_iwram_slice,
@@ -1335,10 +1337,16 @@ impl Cpu {
             state.bound();
             loop {
                 let instruction = state.current;
-                let condition_passed = self.core.condition_passed(instruction >> 28);
-                let Some(required) =
+                let decoded = state.region.arm_op(state.pc8.wrapping_sub(8), instruction);
+                let condition_passed = instruction >> 28 == 14
+                    || self.core.condition_passed(instruction >> 28);
+                let fast = decoded.admitted() && condition_passed;
+                let Some(required) = (if fast {
+                    Some(1)
+                } else {
+                    self.registers[15] = state.pc8;
                     self.arm_kernel_cycles(&mut state, instruction, condition_passed)
-                else {
+                }) else {
                     break;
                 };
                 if !state.fits(required) {
@@ -1359,10 +1367,18 @@ impl Cpu {
                     state.advance(self, fetched);
                     continue;
                 }
+                if fast {
+                    decoded.execute(&mut self.core, state.pc8);
+                    state.current = state.next;
+                    state.next = fetched;
+                    state.pc8 = state.pc8.wrapping_add(4);
+                    continue;
+                }
                 // The ordinary step exposes the waiting instruction address
                 // throughout execution. In particular BL derives LR from it;
                 // after a fall-through the kernel's Core otherwise still held
                 // the address from the prior instruction.
+                self.registers[15] = state.pc8;
                 self.core.next_instruction_address = state.pc8.wrapping_sub(8);
                 #[cfg(not(feature = "kernel-stage-profile"))]
                 let execution = if let Some(handler) = ArmAluHandler::decode(instruction) {
@@ -1399,6 +1415,7 @@ impl Cpu {
             }
         }
         self.core.next_instruction_address = state.pc8.wrapping_sub(8);
+        self.registers[15] = state.pc8;
         self.pipeline = Some(Pipeline {
             instructions: [state.current, state.next],
             instruction_set: InstructionSet::Arm,
