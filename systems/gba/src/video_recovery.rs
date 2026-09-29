@@ -118,8 +118,8 @@ impl VideoRecovery {
         }
         self.reserve(machine, inputs.len())?;
         let input_start = self.inputs.len();
-        self.inputs.extend_from_slice(inputs);
         let result = machine.run_slice(slice, inputs)?;
+        self.inputs.extend_from_slice(inputs);
         self.finish(machine, Call::Run { slice, input_start, input_count: inputs.len() })?;
         Ok(result)
     }
@@ -175,5 +175,29 @@ impl VideoRecovery {
         }
         machine.bus.accept_canonical_framebuffer(self.scratch.framebuffer());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bus::TimedInputChange;
+
+    #[test]
+    fn rejected_run_does_not_append_inputs_to_replay_history() {
+        let mut machine =
+            Machine::new(Config { rom: &[0xfe, 0xff, 0xff, 0xea], ..Config::default() });
+        let mut recovery = VideoRecovery::create(&machine).unwrap();
+        let inputs = [TimedInput { at: 1, change: TimedInputChange::Keys(KeyState::default()) }];
+        assert!(matches!(
+            recovery.run(
+                &mut machine,
+                Slice { yield_at: 0, input_deadline: 0, stop_at: Some(1) },
+                &inputs,
+            ),
+            Err(Error::Run(RunError::TargetBeforeCurrentCycle))
+        ));
+        assert!(recovery.inputs.is_empty());
+        assert!(recovery.operations.is_empty());
     }
 }
