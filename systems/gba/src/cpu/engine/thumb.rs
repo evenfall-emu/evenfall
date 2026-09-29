@@ -705,11 +705,14 @@ fn complete_local<T: Timing>(
 ) -> Resume {
     let store = access.store.is_some();
     let before = h.budget;
+    let fetch = t.fetch(&h);
     let mut next = h;
-    if !next.charge(t.fetch(&h) + if store { 1 } else { 2 }) {
+    if !next.charge(fetch + if store { 1 } else { 2 }) {
         return Resume::Out(h);
     }
-    let value = access.perform_local(&mut c.mem.registers, &mut core.registers);
+    // The data cycle follows the fetch, as in [`serve`].
+    let elapsed = (c.mem.start - (before - fetch)) as u64;
+    let value = access.perform_local(&mut c.mem.registers, &mut core.registers, elapsed);
     next.idx += 1;
     t.after(&mut next, before, !store);
     c.mmio_mark = next.budget;

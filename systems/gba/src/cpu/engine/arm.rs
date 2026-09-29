@@ -728,7 +728,9 @@ fn complete_local<const EW: bool>(c: &mut Ctx<'_, EW>, h: Hot, access: &Mmio) ->
     if !next.charge(Ctx::<EW>::FETCH + if store { 1 } else { 2 }) {
         return Resume::Out(h);
     }
-    let value = access.perform_local(&mut c.mem.registers, &mut c.core.registers);
+    // The data cycle follows the fetch, as in [`serve`].
+    let elapsed = (c.mem.start - (h.budget - Ctx::<EW>::FETCH)) as u64;
+    let value = access.perform_local(&mut c.mem.registers, &mut c.core.registers, elapsed);
     next.next();
     c.mmio_mark = next.budget;
     if !store {

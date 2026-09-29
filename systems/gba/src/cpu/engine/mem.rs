@@ -24,6 +24,8 @@ pub(super) struct Mem<'a> {
     /// A VRAM or palette store may run only if it ends with more budget
     /// left than this: before the next visible dot.
     pub(super) video_floor: i64,
+    /// The run's budget when it took this view, where `registers.ppu` is.
+    pub(super) start: i64,
 }
 
 /// The code a run executes: its op array, RAM region (2 or 3, else ROM),

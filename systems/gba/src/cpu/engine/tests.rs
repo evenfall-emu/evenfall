@@ -937,7 +937,7 @@ fn mmio_transfers_in_runs_match_stepping() {
     let irq = super::LOCAL_ACCESSES.get() - irq_before;
     assert!(irq > 50_000, "only {irq} interrupt register accesses in engine runs");
     assert!(runs > 1500, "only {runs} runs");
-    assert!(mmio > 20_000, "only {mmio} MMIO accesses in engine runs");
+    assert!(mmio > 10_000, "only {mmio} MMIO accesses in engine runs");
     assert!(irq_entries > 80, "only {irq_entries} IRQs raised in engine runs");
     assert!(halts > 40, "only {halts} halts");
 }

@@ -191,11 +191,13 @@ impl Mmio {
     }
 
     /// Makes an access [`Self::local`] admits on the run's own view of the
-    /// registers, and writes the CPU registers. Returns the bus value.
+    /// registers, its data cycle `elapsed` cycles after the view was taken,
+    /// and writes the CPU registers. Returns the bus value.
     pub(super) fn perform_local(
         &self,
         local: &mut RunRegisters<'_>,
         registers: &mut [u32; 16],
+        elapsed: u64,
     ) -> u32 {
         #[cfg(test)]
         LOCAL_ACCESSES.with(|count| count.set(count.get() + 1));
@@ -206,7 +208,7 @@ impl Mmio {
                 value
             }
             (_, Some((rd, load))) => {
-                let value = local.load(address, width);
+                let value = local.load(address, width, elapsed);
                 registers[usize::from(rd)] = load.extend(value, self.address);
                 value
             }
@@ -354,6 +356,7 @@ fn split_memory(memory: EngineMemory<'_>, budget: i64) -> (Mem<'_>, &mut Vec<Opt
         video: memory.video,
         registers: memory.registers,
         video_floor: budget.saturating_sub(i64::try_from(memory.quiet).unwrap_or(i64::MAX)),
+        start: budget,
     };
     (mem, rom_thumb)
 }
