@@ -166,6 +166,7 @@ fn bundle_round_trip_and_corrupt_history_rejection() {
         }
         let live = [10u8; 2048];
         let serialized = history.write_bundle(&live).unwrap();
+        assert_eq!(serialized.capacity(), serialized.len(), "bundle export must allocate once");
         let validate = |bytes: &[u8]| Ok((u64::from(bytes[0]), u64::from(bytes[0]) * 10));
         let (loaded_live, mut loaded) = RewindBuffer::read_bundle(&serialized, validate).unwrap();
         assert_eq!(loaded_live, live);
