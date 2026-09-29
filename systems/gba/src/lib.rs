@@ -13,6 +13,7 @@
 pub mod video;
 
 // [bus]
+pub mod bus;
 
 // [cpu]
 

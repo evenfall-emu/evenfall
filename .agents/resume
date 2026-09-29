@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Nothing to reconnect: the toolchains and references installed by setup are
+# local files. Kept so a later service can add fast, idempotent repairs here.
+set -euo pipefail
