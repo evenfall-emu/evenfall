@@ -2,8 +2,14 @@
 
 mod bulk;
 mod callback;
+mod dispatch;
+mod multiboot;
 mod sound;
+mod sound_engine;
 mod sound_events;
+mod sound_main;
+mod sound_mix;
+mod sound_note;
 mod sound_player;
 mod utility;
 

@@ -7,8 +7,8 @@
 use crate::bus::{Access, AccessKind, AccessSource, AccessWidth, Bus};
 use crate::cpu::{
     Cpu, FaultReason, HleBgAffineSetWork, HleBitUnpackWork, HleBulkWork, HleCpuFastSetWork,
-    HleCpuSetWork, HleDifferentialFilterWork, HleHuffmanWork, HleLz77Work,
-    HleMemoryOperation, HleObjAffineSetWork, HleRunLengthWork,
+    HleCpuSetWork, HleDifferentialFilterWork, HleHuffmanWork, HleLz77Work, HleMemoryOperation,
+    HleObjAffineSetWork, HleRunLengthWork,
 };
 
 use super::invalid_hle_mmio_word_access;
@@ -159,7 +159,7 @@ impl Cpu {
         Some(HleBulkWork::CpuFastSet(HleCpuFastSetWork {
             source,
             destination: self.registers[1] & !3,
-            remaining_blocks: (requested_words + 7) / 8,
+            remaining_blocks: requested_words.div_ceil(8),
             last_word: if fill {
                 bus.read(access(source, AccessWidth::Word, AccessKind::Nonsequential)).value
             } else {
@@ -406,7 +406,9 @@ impl Cpu {
             work.output |= scaled << work.output_bits;
             work.output_bits += work.destination_width;
             if work.output_bits == 32 {
-                if let Some(fault) = invalid_hle_mmio_word_access(0x10, HleMemoryOperation::Write, work.destination) {
+                if let Some(fault) =
+                    invalid_hle_mmio_word_access(0x10, HleMemoryOperation::Write, work.destination)
+                {
                     return Err(fault);
                 }
                 hle_write_u32(bus, work.destination, work.output);
@@ -567,7 +569,11 @@ impl Cpu {
                 work.node_address = work.tree_base;
                 work.node = hle_read_u8(bus, work.tree_base);
                 if work.output_bits == 32 {
-                    if let Some(fault) = invalid_hle_mmio_word_access(0x13, HleMemoryOperation::Write, work.destination) {
+                    if let Some(fault) = invalid_hle_mmio_word_access(
+                        0x13,
+                        HleMemoryOperation::Write,
+                        work.destination,
+                    ) {
                         return Err(fault);
                     }
                     hle_write_u32(bus, work.destination, work.output);
@@ -769,4 +775,52 @@ fn write_decompression_byte(
         access(address ^ 1, AccessWidth::Half, AccessKind::Nonsequential),
         u32::from(*pending_halfword),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ZiGBA machine_test: "HLE HuffUnComp traverses nested 8-bit nodes from the bitstream MSB".
+    #[test]
+    fn hle_huff_un_comp_traverses_nested_8_bit_nodes_from_the_bitstream_msb() {
+        let rom =
+            [0, 0, 0x13, 0xEF, 0x28, 4, 0, 0, 3, 0x80, b'f', 0xC0, b'H', b'u', 0, 0, 0, 0, 0, 0xB0];
+        let mut bus = Bus::init(&rom);
+        let mut cpu = Cpu::init(0x0800_0000, 0x1F, true);
+        cpu.registers[0] = 0x0800_0004;
+        cpu.registers[1] = 0x0200_0000;
+        cpu.registers[2] = 0xCAFE_BABE;
+        cpu.registers[3] = 0xDEAD_BEEF;
+        let Some(HleBulkWork::Huffman(mut work)) = cpu.begin_hle_huffman(&mut bus) else {
+            panic!("Huffman header")
+        };
+        assert!(cpu.resume_hle_huffman(&mut bus, &mut work, u64::MAX).unwrap());
+        assert_eq!(&bus.ewram[0..4], b"Huff");
+        assert_eq!(cpu.registers[..4], [0x0800_0014, 0x0200_0004, 0xCAFE_BABE, 0xDEAD_BEEF]);
+    }
+
+    /// ZiGBA machine_test: "HLE BitUnPack extracts low bits first and applies its conditional bias".
+    #[test]
+    fn hle_bit_un_pack_extracts_low_bits_first_and_applies_its_conditional_bias() {
+        for (bias, expected) in [
+            (0x8000_0010_u32, [16, 17, 18, 19, 19, 18, 17, 16]),
+            (0x0000_0010, [0, 17, 18, 19, 19, 18, 17, 0]),
+        ] {
+            let mut rom = [0, 0, 0x10, 0xEF, 0xE4, 0x1B, 0, 0, 2, 0, 2, 8, 0, 0, 0, 0];
+            rom[12..16].copy_from_slice(&bias.to_le_bytes());
+            let mut bus = Bus::init(&rom);
+            let mut cpu = Cpu::init(0x0800_0000, 0x1F, true);
+            cpu.registers[0] = 0x0800_0004;
+            cpu.registers[1] = 0x0200_0000;
+            cpu.registers[2] = 0x0800_0008;
+            cpu.registers[3] = 0xDEAD_BEEF;
+            let Some(HleBulkWork::BitUnpack(mut work)) = cpu.begin_hle_bit_unpack(&mut bus) else {
+                panic!("BitUnPack header")
+            };
+            assert!(cpu.resume_hle_bit_unpack(&mut bus, &mut work, u64::MAX).unwrap());
+            assert_eq!(&bus.ewram[0..8], &expected);
+            assert_eq!(cpu.registers[..4], [0x0800_0006, 0x0200_0008, 0x0800_0008, 0xDEAD_BEEF]);
+        }
+    }
 }

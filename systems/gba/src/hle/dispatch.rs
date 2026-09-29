@@ -10,10 +10,6 @@ const HLE_BULK_STEP_CYCLES: u64 = 1 << 20;
 const HLE_SWI_RETURN_LATCH: u32 = 0xE3A0_2004;
 
 impl Cpu {
-    pub fn inside_hle_bulk_service(&self) -> bool {
-        matches!(self.hle_service, Some(HleService::Bulk(_)))
-    }
-
     /// A typed fault replaces ZiGBA's separate fault_out and faulted bit.
     pub fn execute_hle_software_interrupt(
         &mut self,

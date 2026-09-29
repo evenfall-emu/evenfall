@@ -206,7 +206,7 @@ impl Cpu {
         sound_write(bus, sound_area.wrapping_add(0x0B), AccessWidth::Byte, dma_count);
         let frequency = (0x0009_1D1B_u32.wrapping_mul(sample_count).wrapping_add(0x1388)) / 0x2710;
         sound_write(bus, sound_area.wrapping_add(0x14), AccessWidth::Word, frequency);
-        let phase_step = (((1_u32 << 24) / frequency) + 1) / 2;
+        let phase_step = ((1_u32 << 24) / frequency).div_ceil(2);
         sound_write(bus, sound_area.wrapping_add(0x18), AccessWidth::Word, phase_step);
         sound_write(bus, 0x0400_0102, AccessWidth::Half, 0);
         sound_write(bus, 0x0400_0100, AccessWidth::Half, 0x1_0000 - (0x0004_4940 / sample_count));

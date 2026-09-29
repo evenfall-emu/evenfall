@@ -20,7 +20,7 @@ fn hle_set_track_byte_and_flags(bus: &mut Bus, track: u32, offset: u32, flags: u
     sound_write(bus, track, AccessWidth::Byte, status | u32::from(flags));
 }
 
-fn clear_hle_track_modulation(bus: &mut Bus, track: u32) {
+pub(super) fn clear_hle_track_modulation(bus: &mut Bus, track: u32) {
     sound_write(bus, track.wrapping_add(0x1A), AccessWidth::Byte, 0);
     sound_write(bus, track.wrapping_add(0x16), AccessWidth::Byte, 0);
     let flags =
