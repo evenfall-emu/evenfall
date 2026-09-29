@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    name: Rust tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      # The ROM validator is run with real inputs in its dedicated Linux job.
+      - run: cargo test --workspace --exclude evenfall-gba --locked
+      - run: cargo test -p evenfall-gba --locked --lib --bins --test mgba_suite_source --test mgba_suite_timing
+
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --exclude evenfall-gba --release --locked
+      - run: cargo test -p evenfall-gba --release --locked --lib --bins --test mgba_suite_source --test mgba_suite_timing
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm32
+      - run: cargo build --locked -p evenfall-gba --lib --target wasm32-unknown-unknown
+
+  npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.0
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run fmt:check
+      - run: npm run check
+      - run: npm run test
+
+  validators:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: ~/.local/share/evenfall-toolchains/arm-gnu-toolchain-15.2.Rel1
+          key: linux-x64-arm-gnu-15.2.Rel1
+      - name: Install pinned Arm GNU toolchain
+        run: |
+          set -euo pipefail
+          toolchain="$HOME/.local/share/evenfall-toolchains/arm-gnu-toolchain-15.2.Rel1"
+          if [ ! -x "$toolchain/bin/arm-none-eabi-gcc" ]; then
+            mkdir -p "$toolchain"
+            curl -fLsS https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/binrel/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz -o "$RUNNER_TEMP/arm.tar.xz"
+            echo "597893282ac8c6ab1a4073977f2362990184599643b4c5ee34870a8215783a16  $RUNNER_TEMP/arm.tar.xz" | sha256sum -c -
+            tar -xJf "$RUNNER_TEMP/arm.tar.xz" -C "$toolchain" --strip-components=1
+          fi
+          echo "$toolchain/bin" >> "$GITHUB_PATH"
+      - run: tools/setup-refs.sh gba-tests
+      - run: make -C probe -j2
+      - run: cargo test --locked -p evenfall-gba --test validator -- --require-roms
+
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.local/share/evenfall-toolchains
+          key: linux-x64-zig-0.16.0-node-24.11.0-arm-gnu-15.2.Rel1
+      - uses: actions/cache@v4
+        with:
+          path: target/parity/zig-cache
+          key: oracle-zig-0.16-${{ hashFiles('tools/parity/oracle/**', 'tools/parity/patches/**', 'refs/README.md') }}
+          restore-keys: oracle-zig-0.16-
+      - uses: Swatinem/rust-cache@v2
+      - name: Install pinned toolchains, refs, and build ROMs
+        run: |
+          .agents/setup
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Build ZiGBA oracle
+        run: cargo run --locked -p evenfall-parity -- oracle build
+      - name: Compare all scenarios and slicing schedules
+        run: cargo run --locked -p evenfall-parity -- run --all

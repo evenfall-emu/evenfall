@@ -1255,6 +1255,22 @@ mod tests {
         assert_eq!(bus.internal, 1);
     }
 
+    /// ZiGBA `executeSingleDataTransfer`: bit 25 selects a register offset, not a rotated immediate.
+    #[test]
+    fn arm_str_register_offset_uses_shifted_register_value() {
+        let mut cpu = Core::new(0x0800_0040, 0x1f);
+        cpu.registers[0] = 0x1111_1111;
+        cpu.registers[1] = 0x0600_4000;
+        cpu.registers[2] = 7;
+        let mut bus = TraceBus::default();
+        // STR r0, [r1, r2, LSL #2]: the target is the last word of a 32-byte tile.
+        cpu.execute_arm(&mut bus, 0xe781_0102).unwrap();
+        assert_eq!(
+            bus.writes,
+            [(0x0600_401c, AccessWidth::Word, AccessKind::Nonsequential, 0x1111_1111)]
+        );
+    }
+
     /// ZiGBA `executeBlockDataTransfer`: empty STM transfers one aligned PC beat and steps by 64.
     #[test]
     fn empty_stm_preserves_low_base_bits() {

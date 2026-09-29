@@ -781,6 +781,61 @@ fn write_decompression_byte(
 mod tests {
     use super::*;
 
+    /// ZiGBA machine_test: "HLE CpuSet copies halfwords or words and writes back only word address registers".
+    /// The split case also checks that suspension leaves result registers alone until completion.
+    #[test]
+    fn hle_cpu_set_writeback_and_suspension() {
+        for (word, count) in [(false, 3_u32), (true, 2)] {
+            let mut uninterrupted_bus = Bus::init(&[]);
+            let mut interrupted_bus = Bus::init(&[]);
+            let mut uninterrupted_cpu = Cpu::init(0x0800_0000, 0x1F, true);
+            uninterrupted_cpu.registers[..4].copy_from_slice(&[
+                0x0200_0000,
+                0x0300_0000,
+                count | (u32::from(word) << 26),
+                0xDEAD_BEEF,
+            ]);
+            let mut interrupted_cpu = uninterrupted_cpu.clone();
+            let input = [0x11, 0, 0x22, 0, 0x33, 0, 0x44, 0];
+            uninterrupted_bus.ewram[..8].copy_from_slice(&input);
+            interrupted_bus.ewram[..8].copy_from_slice(&input);
+            let Some(HleBulkWork::CpuSet(mut all)) =
+                uninterrupted_cpu.begin_hle_cpu_set(&mut uninterrupted_bus)
+            else {
+                panic!("CpuSet work")
+            };
+            let Some(HleBulkWork::CpuSet(mut split)) =
+                interrupted_cpu.begin_hle_cpu_set(&mut interrupted_bus)
+            else {
+                panic!("CpuSet work")
+            };
+            assert!(uninterrupted_cpu.resume_hle_cpu_set(
+                &mut uninterrupted_bus,
+                &mut all,
+                u64::MAX
+            ));
+            let first_stop = interrupted_bus.now() + 1;
+            assert!(!interrupted_cpu.resume_hle_cpu_set(
+                &mut interrupted_bus,
+                &mut split,
+                first_stop
+            ));
+            assert_eq!(split.remaining, count - 1);
+            assert_eq!(interrupted_cpu.registers[3], 0xDEAD_BEEF);
+            assert!(interrupted_cpu.resume_hle_cpu_set(&mut interrupted_bus, &mut split, u64::MAX));
+            assert_eq!(
+                &interrupted_bus.iwram[..8],
+                if word { &input } else { &[0x11, 0, 0x22, 0, 0x33, 0, 0, 0] }
+            );
+            assert_eq!(&interrupted_bus.iwram[..8], &uninterrupted_bus.iwram[..8]);
+            assert_eq!(interrupted_bus.now(), uninterrupted_bus.now());
+            assert_eq!(interrupted_cpu.registers[..4], uninterrupted_cpu.registers[..4]);
+            assert_eq!(interrupted_cpu.registers[0], 0x0200_0000 + if word { 8 } else { 0 });
+            assert_eq!(interrupted_cpu.registers[1], 0x0300_0000 + if word { 8 } else { 0 });
+            assert_eq!(interrupted_cpu.registers[3], 0x170);
+        }
+    }
+
     /// ZiGBA machine_test: "HLE HuffUnComp traverses nested 8-bit nodes from the bitstream MSB".
     #[test]
     fn hle_huff_un_comp_traverses_nested_8_bit_nodes_from_the_bitstream_msb() {

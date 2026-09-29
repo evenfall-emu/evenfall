@@ -1,4 +1,6 @@
-use evenfall_replay::{InputChange, Scenario, Trace, compare};
+mod rust_backend;
+
+use evenfall_replay::{Difference, InputChange, Scenario, Trace, compare};
 use std::{
     env,
     error::Error,
@@ -120,6 +122,102 @@ fn run(path: &Path, dest: Option<&Path>) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn report(
+    scenario: &str,
+    schedule: usize,
+    differences: &[Difference],
+    actual: &Trace,
+    machine: &mut evenfall_gba::machine::Machine,
+) {
+    for diff in differences {
+        let field = if diff.kind == "state" {
+            diff.detail
+                .strip_prefix("byte ")
+                .and_then(|s| s.split(':').next())
+                .and_then(|s| s.parse::<usize>().ok())
+                .and_then(|offset| actual.0.get(diff.checkpoint).map(|obs| (offset, obs)))
+                .map(|(offset, obs)| {
+                    format!(" ({})", rust_backend::state_field(machine, &obs.state, offset))
+                })
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        eprintln!(
+            "{scenario}: schedule {schedule}, checkpoint {} {}{field}: {}",
+            diff.checkpoint, diff.kind, diff.detail
+        );
+    }
+}
+
+fn run_parity(path: &Path) -> Result<(), Box<dyn Error>> {
+    let scenario: Scenario<InputChange> = serde_json::from_slice(&fs::read(path)?)?;
+    scenario.validate()?;
+    // Oracle run also verifies all oracle slicing schedules and writes the
+    // reference trace. Never compare against a stale trace from a prior run.
+    run(path, None)?;
+    let path = fs::canonicalize(path)?;
+    let name = path.file_stem().ok_or("scenario filename missing")?.to_string_lossy();
+    let dir = output().join("traces").join(name.as_ref());
+    let reference = trace(&dir.join("oracle.trace"))?;
+    let mut first: Option<Trace> = None;
+    let mut failed = false;
+    for (index, &slice) in scenario.slice_cycles.iter().enumerate() {
+        let (actual, mut machine) = match rust_backend::run(&path, &scenario, slice) {
+            Ok(result) => result,
+            Err(error) => {
+                eprintln!("{}: Rust schedule {index} ({slice} cycles): {error}", scenario.name);
+                failed = true;
+                continue;
+            }
+        };
+        let output = dir.join(format!("rust-slice-{index}.trace"));
+        actual.write(fs::File::create(&output)?)?;
+        let differences = compare(&reference, &actual);
+        report(&scenario.name, index, &differences, &actual, &mut machine);
+        failed |= !differences.is_empty();
+        if let Some(ref first) = first {
+            let differences = compare(first, &actual);
+            if !differences.is_empty() {
+                eprintln!("{}: Rust slice independence failed at {slice} cycles", scenario.name);
+                report(&scenario.name, index, &differences, &actual, &mut machine);
+                failed = true;
+            }
+        } else {
+            first = Some(actual);
+        }
+        println!("{}: Rust schedule {index} ({slice} cycles): {}", scenario.name, output.display());
+    }
+    if failed { Err(format!("{}: parity differs", scenario.name).into()) } else { Ok(()) }
+}
+
+fn run_all() -> Result<(), Box<dyn Error>> {
+    let mut paths = fs::read_dir(root().join("tools/parity/scenarios"))?
+        .map(|entry| entry.map(|e| e.path()))
+        .collect::<io::Result<Vec<_>>>()?;
+    paths.retain(|p| p.extension().is_some_and(|ext| ext == "json"));
+    paths.sort();
+    if paths.is_empty() {
+        return Err("no scenarios found".into());
+    }
+    let mut failures = 0;
+    for path in &paths {
+        match std::panic::catch_unwind(|| run_parity(path)) {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                eprintln!("{}: {error}", path.display());
+                failures += 1;
+            }
+            Err(_) => {
+                eprintln!("{}: Rust backend panicked (see panic location above)", path.display());
+                failures += 1;
+            }
+        }
+    }
+    println!("{} scenarios: {} passed, {failures} failed", paths.len(), paths.len() - failures);
+    if failures > 0 { Err("parity run failed".into()) } else { Ok(()) }
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = env::args_os().collect();
     match args.get(1).and_then(|v| v.to_str()) {
@@ -130,6 +228,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             _ => Err("usage: evenfall-parity oracle build | oracle run SCENARIO [OUTPUT]".into()),
         },
+        Some("run") if args.len() == 3 && args[2] == "--all" => run_all(),
+        Some("run") if args.len() == 3 => run_parity(Path::new(&args[2])),
         Some("compare") if args.len() == 4 => {
             let differences = compare(&trace(Path::new(&args[2]))?, &trace(Path::new(&args[3]))?);
             if differences.is_empty() {
@@ -143,7 +243,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         _ => {
-            Err("usage: evenfall-parity oracle build | oracle run SCENARIO [OUTPUT] | compare A B"
+            Err("usage: evenfall-parity oracle build | oracle run SCENARIO [OUTPUT] | run SCENARIO | run --all | compare A B"
                 .into())
         }
     }

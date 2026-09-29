@@ -193,7 +193,7 @@ impl UartFifo {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Codec)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
 pub struct GamePakPrefetch {
     pub active: bool,
     pub head_address: u32,
@@ -2939,7 +2939,8 @@ impl Bus {
         if self.joy_completion_cycle == Some(self.current_cycle) {
             self.complete_joy_bus_command();
         }
-        if events.hblank_any
+        if events.entered_vblank
+            || events.hblank_any
             || events.frames_completed != 0
             || events.vblank_irq
             || events.hblank_irq
@@ -3822,6 +3823,35 @@ mod tests {
         assert_eq!(&bus.iwram[..4], &[0x22, 0x11, 0x44, 0x33]);
         assert!(!bus.dma_channels[3].enabled());
         assert_eq!(bus.interrupt_request_flags & (1 << 11), 1 << 11);
+    }
+
+    /// ZiGBA probe-vdma: VBlank DMA3 uploads a solid tile without enabling VBlank IRQ.
+    #[test]
+    fn vblank_dma_starts_without_vblank_irq_enable() {
+        let mut bus = Bus::init(&[]);
+        bus.ppu_timing.line = 159;
+        bus.ppu_timing.cycle_in_line = 1231;
+        bus.current_cycle = 159 * 1232 + 1231;
+        bus.apu_cycle = bus.current_cycle;
+        bus.timer_cycle = bus.current_cycle;
+        bus.ewram[..2].copy_from_slice(&0x3333_u16.to_le_bytes());
+        bus.dma_channels[3] = DmaChannel {
+            source: EWRAM_BASE,
+            destination: VRAM_BASE + 0xa0,
+            word_count: 1,
+            control: 0x9000,
+            latched_source: EWRAM_BASE,
+            latched_destination: VRAM_BASE + 0xa0,
+        };
+
+        bus.elapse(1);
+        assert_eq!(bus.ppu_timing.line, 160);
+        assert_eq!(bus.dma_start_cycles[3], Some(bus.now() + 3));
+        bus.elapse(2);
+        assert_eq!(&bus.vram[0xa0..0xa2], &[0, 0]);
+        bus.elapse(1);
+        assert_eq!(&bus.vram[0xa0..0xa2], &[0x33, 0x33]);
+        assert!(!bus.dma_channels[3].enabled());
     }
 
     /// Zig: "DMA source zero reuses the shared transfer latch without advancing".
