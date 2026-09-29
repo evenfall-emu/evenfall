@@ -6,7 +6,7 @@ use evenfall_gba::host::host_save;
 use evenfall_gba::machine::{BootMode, Config, Machine, StepOutcome};
 use std::io::{self, Write};
 
-const USAGE: &str = "usage: zigba run --steps <count> [--bios <path>] [--save-type <type>] [--save-file <path>] [--state-in <path>] [--state-out <path>] [--trace <path>] [--trace-from <steps>] [--input <movie>] [--quiet] [--frame-hash] [--no-rtc | --rtc-epoch <seconds>] [--no-solar | --solar-level <0..255>] [--no-gyro | --gyro-sample <0..4095>] [--rumble | --no-rumble] [--no-tilt | --tilt <x> <y>] <rom.gba|rom.zip>\n";
+const USAGE: &str = "usage: evenfall-gba run --steps <count> [--bios <path>] [--save-type <type>] [--save-file <path>] [--state-in <path>] [--state-out <path>] [--trace <path>] [--trace-from <steps>] [--input <movie>] [--quiet] [--frame-hash] [--no-rtc | --rtc-epoch <seconds>] [--no-solar | --solar-level <0..255>] [--no-gyro | --gyro-sample <0..4095>] [--rumble | --no-rumble] [--no-tilt | --tilt <x> <y>] <rom.gba|rom.zip>\n";
 
 fn main() {
     let stdout = io::stdout();

@@ -52,15 +52,15 @@ fn zigba_build_cli_fixtures() {
         let path = directory.join(format!("{name}.gba"));
         std::fs::write(&path, rom).unwrap();
         let output =
-            Command::new(env!("CARGO_BIN_EXE_zigba")).args(args).arg(&path).output().unwrap();
+            Command::new(env!("CARGO_BIN_EXE_evenfall-gba")).args(args).arg(&path).output().unwrap();
         assert!(output.status.success(), "{name}: {output:?}");
         assert_eq!(output.stdout, expected.as_bytes(), "{name}");
         assert!(output.stderr.is_empty(), "{name}: {output:?}");
     }
 
-    let usage = Command::new(env!("CARGO_BIN_EXE_zigba")).output().unwrap();
+    let usage = Command::new(env!("CARGO_BIN_EXE_evenfall-gba")).output().unwrap();
     assert!(usage.status.success());
-    assert!(usage.stdout.starts_with(b"usage: zigba run --steps <count>"));
+    assert!(usage.stdout.starts_with(b"usage: evenfall-gba run --steps <count>"));
     assert!(usage.stderr.is_empty());
     std::fs::remove_dir_all(directory).unwrap();
 }

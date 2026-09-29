@@ -1,12 +1,14 @@
 # Command-line runner
 
-`zigba` is Evenfall's headless GBA binary. It executes a user-supplied ROM for
+`evenfall-gba` is Evenfall's headless GBA binary. It executes a user-supplied ROM for
 a fixed number of instructions and prints cycles, instructions, faults and an
 optional framebuffer hash. It uses the HLE BIOS unless given an external BIOS.
-The runner lives in [`systems/gba/src/bin/zigba.rs`](../systems/gba/src/bin/zigba.rs).
+The runner lives in [`systems/gba/src/bin/evenfall-gba.rs`](../systems/gba/src/bin/evenfall-gba.rs).
+Its flags and output are ZiGBA's `zigba` CLI's; only the program name
+differs.
 
 ```sh
-cargo run -p evenfall-gba --bin zigba -- run --steps 100 path/to/homebrew.gba
+cargo run -p evenfall-gba --bin evenfall-gba -- run --steps 100 path/to/homebrew.gba
 ```
 
 Everything after `--` belongs to the runner. No ROM, BIOS or save image is
@@ -15,7 +17,7 @@ distributed with Evenfall.
 ## Invocation
 
 ```text
-zigba run --steps <count> [--bios <path>] [--save-type <type>]
+evenfall-gba run --steps <count> [--bios <path>] [--save-type <type>]
           [--save-file <path>] [--state-in <path>] [--state-out <path>]
           [--trace <path>] [--trace-from <steps>] [--input <movie>] [--quiet]
           [--frame-hash] [--no-rtc | --rtc-epoch <seconds>]
@@ -86,7 +88,7 @@ address (`u32`), opcode (`u32`, Thumb in the low half), CPSR after execution
 `--input` takes comma-separated `key:first-last` ranges of inclusive frames:
 
 ```sh
-cargo run -p evenfall-gba --bin zigba -- run --steps 5000000 --quiet \
+cargo run -p evenfall-gba --bin evenfall-gba -- run --steps 5000000 --quiet \
   --frame-hash --input start:250-255,a:400-405 game.gba
 ```
 
@@ -141,7 +143,7 @@ advances with emulated time. Set `--rtc-epoch` for reproducible runs. Battery
 saves do not include RTC state; portable states do.
 
 ```sh
-cargo run -p evenfall-gba --bin zigba -- run --steps 100 --no-rtc game.gba
-cargo run -p evenfall-gba --bin zigba -- run --steps 100 \
+cargo run -p evenfall-gba --bin evenfall-gba -- run --steps 100 --no-rtc game.gba
+cargo run -p evenfall-gba --bin evenfall-gba -- run --steps 100 \
   --save-type eeprom8k --save-file game.sav game.gba
 ```

@@ -17,14 +17,14 @@ as they are extracted from concrete uses.
 
 ## What is here
 
-| Path          | Contents                                                                                    |
-| ------------- | ------------------------------------------------------------------------------------------- |
-| `crates/`     | shared crates: the `System` interface, state codec, ARM7TDMI interpreter, audio, replay     |
-| `systems/gba` | the Game Boy Advance core and its headless runner                                           |
-| `web/gba`     | the WebAssembly module and the `@evenfall/gba` JavaScript SDK                               |
-| `tools/`      | the ZiGBA parity harness and the benchmark runner                                           |
-| `probe/`      | bare-metal probe ROM sources                                                                |
-| `docs/`       | [documentation](docs/README.md), starting with [status](docs/status.md)                     |
+| Path          | Contents                                                                                |
+| ------------- | --------------------------------------------------------------------------------------- |
+| `crates/`     | shared crates: the `System` interface, state codec, ARM7TDMI interpreter, audio, replay |
+| `systems/gba` | the Game Boy Advance core and its headless runner                                       |
+| `web/gba`     | the WebAssembly module and the `@evenfall/gba` JavaScript SDK                           |
+| `tools/`      | the ZiGBA parity harness and the benchmark runner                                       |
+| `probe/`      | bare-metal probe ROM sources                                                            |
+| `docs/`       | [documentation](docs/README.md), starting with [status](docs/status.md)                 |
 
 ## Build and test
 
@@ -33,7 +33,7 @@ installs it on first use).
 
 ```sh
 cargo test --workspace                    # every Rust test
-cargo run --release -p evenfall-gba -- run --help
+cargo run --release -p evenfall-gba -- run --steps 5000000 --frame-hash rom.gba
 npm ci && npm run build:wasm -w @evenfall/gba && npm test
 ```
 
