@@ -1,0 +1,23 @@
+{
+  "name": "jsmolka-unsafe-external_bios",
+  "assets": {
+    "rom": "../../../refs/gba-tests/unsafe/unsafe.gba",
+    "bios": "../../../refs/cult-gba-bios/bios.bin"
+  },
+  "config": {
+    "boot": "external_bios",
+    "saveType": "sram"
+  },
+  "inputs": [],
+  "endCycle": "19943616",
+  "checkpoints": [
+    "1123584",
+    "4494336",
+    "8988672",
+    "13483008",
+    "17977344",
+    "19100928",
+    "19943616"
+  ],
+  "sliceCycles": ["70224", "280896"]
+}

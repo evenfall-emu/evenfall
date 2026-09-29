@@ -5,6 +5,7 @@ resolver = "3"
 members = [
     "crates/*",
     "systems/gba",
+    "tools/bench",
     "tools/parity",
 ]
 
