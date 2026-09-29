@@ -52,76 +52,57 @@ guest correctness or which individual optimization to retain.
 
 ## Results
 
-Native x86-64, HLE boot, pinned CPU 3, five measured rounds and one warmup;
-ZiGBA `ReleaseFast` versus Evenfall `release-lto` (fat LTO, one codegen unit,
-the native equivalent of the shipped WebAssembly build and of Zig's
-whole-program ReleaseFast). Both render fully and emulate exact audio. Each
-row's final image agrees and is deterministic across observations, and the
-parity harness finds every state byte identical to ZiGBA's on its scenarios.
-ZiGBA is the pinned reference commit; each figure belongs to the binaries it
-was measured on, and the runner's `result.json` records both source revisions
-and binary hashes.
+Native x86-64, pinned CPU 3 (a performance core), five measured rounds and
+one warmup, full frame counts. Each emulator renders fully and emulates exact
+audio; every final image agrees across emulators and observations, and the
+parity harness finds every Evenfall state byte identical to ZiGBA's on its
+scenarios. The comparison runs ZiGBA's own cross-emulator runner
+(`tools/emu-bench` in the pinned checkout) with Evenfall's `release-lto`
+harness added through its `--harness` option: ZiGBA builds at `ReleaseFast`,
+and mGBA 0.10.5 is its headless CMake `Release` library with idle-loop
+detection at its default. Ratios are loop time relative to ZiGBA, the
+geometric mean of matched-round ratios; below one is faster. Each figure
+belongs to the binaries it was measured on, and the runner's `result.json`
+records their source revisions and hashes.
 
-| Workload                                               | Frames | Evenfall/ZiGBA loop time |
-| ------------------------------------------------------ | -----: | -----------------------: |
-| Idle / HALT and empty mode-0 frame                     |  3,600 |                    0.59× |
-| ARM mixer / IWRAM code                                 |    600 |                    0.42× |
-| Thumb logic / Game Pak ROM                             |    600 |                    0.56× |
-| Tiles / text backgrounds, sprites, effects and windows |    600 |                    0.33× |
-| Affine / backgrounds, sprites and HBlank DMA           |    600 |                    0.80× |
-| Bitmap DMA / page flips and small transfers            |    600 |                    0.70× |
-| Audio / Direct Sound FIFO DMA and PSG                  |    600 |                    0.43× |
-| **Geometric mean of workload ratios**                  |      — |                **0.53×** |
+| Workload                                               | Frames | mGBA, HLE | Evenfall, HLE | mGBA, skip-BIOS | Evenfall, skip-BIOS |
+| ------------------------------------------------------ | -----: | --------: | ------------: | --------------: | ------------------: |
+| Idle / HALT and empty mode-0 frame                     |  3,600 |     1.12× |         0.48× |           1.05× |               0.49× |
+| ARM mixer / IWRAM code                                 |    600 |     1.00× |         0.42× |           0.99× |               0.42× |
+| Thumb logic / Game Pak ROM                             |    600 |     0.89× |         0.57× |           0.89× |               0.58× |
+| Tiles / text backgrounds, sprites, effects and windows |    600 |     0.85× |         0.33× |           0.86× |               0.34× |
+| Affine / backgrounds, sprites and HBlank DMA           |    600 |     0.78× |         0.74× |           0.66× |               0.73× |
+| Bitmap DMA / page flips and small transfers            |    600 |     0.54× |         0.57× |           0.55× |               0.57× |
+| Audio / Direct Sound FIFO DMA and PSG                  |    600 |     0.86× |         0.43× |           0.84× |               0.44× |
+| **Geometric mean of workload ratios**                  |      — | **0.85×** |     **0.49×** |       **0.82×** |           **0.50×** |
 
-Ratios below one mean Evenfall takes less time. In WebAssembly, measured with
-[`wasm.mjs`](../tools/bench/wasm.mjs) in Node 24 on the same CPU (five rounds,
-one warmup, HLE boot), loop time relative to ZiGBA's shipped module
-(`ReleaseSafe`) is:
+Skip-BIOS boot maps the open Cult-of-GBA replacement BIOS and runs its
+interrupt dispatcher; HLE boot services interrupts without BIOS code.
+Relative to mGBA directly (same method, matched rounds), Evenfall takes 0.58×
+its loop time under HLE boot and 0.61× under skip-BIOS boot. It is faster on
+every workload except bitmap DMA (1.04× and 1.05×) and affine under skip-BIOS
+boot (1.10×; 0.95× under HLE). Evenfall's affine time rises under skip-BIOS
+boot because the replacement BIOS's interrupt dispatcher runs on the
+interpreter, outside the execution engine; mGBA's does not change.
+
+In WebAssembly, measured with [`wasm.mjs`](../tools/bench/wasm.mjs) in
+Node 24 on the same CPU (five rounds, one warmup, HLE boot), loop time
+relative to ZiGBA's shipped module (`ReleaseSafe`) is:
 
 | Workload    | ZiGBA `ReleaseFast` | Evenfall scalar | Evenfall SIMD (shipped) |
 | ----------- | ------------------: | --------------: | ----------------------: |
-| idle        |               0.96× |           0.60× |                   0.48× |
-| arm-mixer   |               0.86× |           0.27× |                   0.27× |
-| thumb-logic |               0.87× |           0.34× |                   0.34× |
-| tiles       |               0.94× |           0.43× |                   0.23× |
-| affine      |               0.81× |           0.56× |                   0.51× |
-| bitmap-DMA  |               0.82× |           0.63× |                   0.58× |
-| audio       |               0.87× |           0.28× |                   0.28× |
-| geomean     |               0.87× |           0.42× |                   0.36× |
+| idle        |               0.98× |           0.51× |                   0.44× |
+| arm-mixer   |               0.87× |           0.27× |                   0.28× |
+| thumb-logic |               0.87× |           0.35× |                   0.34× |
+| tiles       |               0.94× |           0.43× |                   0.24× |
+| affine      |               0.81× |           0.52× |                   0.47× |
+| bitmap-DMA  |               0.87× |           0.50× |                   0.45× |
+| audio       |               0.88× |           0.28× |                   0.28× |
+| geomean     |               0.89× |           0.40× |                   0.35× |
 
 Every image agrees across all modules and with the native harnesses. The
 benchmark ROMs weight each path equally, so neither table predicts a game's
 ratio.
-
-### DMA, interrupt handlers and empty lines
-
-Three further changes shorten the workloads the CPU engine left furthest
-from ZiGBA: DMA beats run in bulk when nothing can observe them one at a
-time (see the fast-path table), an engine run refuses at once an entry whose
-first op it would refuse (interrupt handlers begin by reading I/O
-registers, and each such entry used to pay a whole run's setup), and a line
-showing only the backdrop skips the decoded palette's validation and the
-surface fills. On pinned CPU 1 with release-LTO, HLE boot, five matched
-rounds and one warmup in one run, Evenfall/ZiGBA loop time before and after
-them:
-
-| Workload    | Before | After |
-| ----------- | -----: | ----: |
-| idle        |  0.59× | 0.49× |
-| arm-mixer   |  0.43× | 0.43× |
-| thumb-logic |  0.56× | 0.57× |
-| tiles       |  0.34× | 0.34× |
-| affine      |  0.79× | 0.73× |
-| bitmap-DMA  |  0.70× | 0.57× |
-| audio       |  0.43× | 0.43× |
-| geomean     |  0.53× | 0.49× |
-
-Every final image agrees; build times and the WebAssembly module's size are
-unchanged within noise (0.3% larger). The largest remaining costs are affine
-rendering, the per-line HBlank interrupt handler, whose I/O accesses the
-engine leaves to the interpreter (on affine the ARM engine runs 820,000
-times for about nine guest cycles each), and the device batch's per-event
-work when the CPU halts.
 
 ### Execution engine
 

@@ -53,11 +53,13 @@ mean is defined in [`methodology.md`](methodology.md#goals).
 ## Performance
 
 On the benchmark workloads the core takes about half of ZiGBA's loop time
-natively and about a third of it in WebAssembly, with every frame and state
-byte still identical to ZiGBA's. A pre-decoded execution engine runs ARM and
-Thumb code, and a layer-major compositor renders lines with SIMD lanes (SSE2
-natively, `simd128` in the default WebAssembly build). Results, method and
-the remaining gaps are in [`performance.md`](performance.md).
+natively (0.6× mGBA 0.10.5's) and about a third of it in WebAssembly, with
+every frame and state byte still identical to ZiGBA's. A pre-decoded
+execution engine runs ARM and Thumb code, and a layer-major compositor
+renders lines with SIMD lanes (SSE2 natively, `simd128` in the default
+WebAssembly build). mGBA stays slightly faster on the bitmap-DMA workload.
+Results, method and the remaining gaps are in
+[`performance.md`](performance.md).
 
 ## Deliberate differences from ZiGBA
 
