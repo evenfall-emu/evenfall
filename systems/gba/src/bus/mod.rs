@@ -1123,20 +1123,7 @@ impl Bus {
                     self.end_palette_segments(address, width);
                 }
             }
-            6 => {
-                if width == AccessWidth::Word {
-                    for beat in 0..2 {
-                        let at = address.wrapping_add(beat * 2);
-                        self.advance(1);
-                        self.flush_device_batch();
-                        self.write_vram_at_current_dot(at, AccessWidth::Half, value >> (beat * 16));
-                    }
-                } else {
-                    self.advance(video_cycles(width));
-                    self.flush_device_batch();
-                    self.write_vram_at_current_dot(address, width, value);
-                }
-            }
+            6 => self.write_vram_timed(address, width, value),
             7 => {
                 self.advance(1);
                 self.write_oam(address, width, value);
@@ -3367,6 +3354,7 @@ impl Bus {
                 self.advance(1);
                 self.write_iwram(address, width, value);
             }
+            6 => self.write_vram_timed(address, width, value),
             _ if Apu::accepts_fifo_write(address, width.bytes() as u8) => {
                 self.advance(1);
                 self.write_fifo(address, value, width.bytes() as u8);
@@ -3466,6 +3454,22 @@ impl Bus {
                 .map_or(0, |index| self.vram[index]);
             value | (u32::from(byte) << (offset * 8))
         })
+    }
+
+    #[inline(always)]
+    fn write_vram_timed(&mut self, address: u32, width: AccessWidth, value: u32) {
+        if width == AccessWidth::Word {
+            for beat in 0..2 {
+                let at = address.wrapping_add(beat * 2);
+                self.advance(1);
+                self.flush_device_batch();
+                self.write_vram_at_current_dot(at, AccessWidth::Half, value >> (beat * 16));
+            }
+        } else {
+            self.advance(video_cycles(width));
+            self.flush_device_batch();
+            self.write_vram_at_current_dot(address, width, value);
+        }
     }
 
     fn write_vram_at_current_dot(&mut self, address: u32, width: AccessWidth, value: u32) {
