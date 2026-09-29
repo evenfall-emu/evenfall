@@ -67,6 +67,7 @@ dependencies = [
  "evenfall-audio",
  "evenfall-cpu-arm",
  "evenfall-host",
+ "evenfall-state",
 ]
 
 [[package]]
