@@ -277,16 +277,21 @@ mod tests {
         mut source: u32,
         mut destination: u32,
         count: u32,
-    ) -> Option<(u32, bool)> {
+    ) -> Option<FaultReason> {
         for _ in 0..count {
-            for (address, write) in [
-                (source, false),
-                (source.wrapping_add(4), false),
-                (destination.wrapping_add(8), true),
-                (destination.wrapping_add(12), true),
+            for (address, operation) in [
+                (source, HleMemoryOperation::Read),
+                (source.wrapping_add(4), HleMemoryOperation::Read),
+                (destination.wrapping_add(8), HleMemoryOperation::Write),
+                (destination.wrapping_add(12), HleMemoryOperation::Write),
             ] {
                 if address >> 24 == 4 && address & 3 != 0 {
-                    return Some((address, write));
+                    return Some(FaultReason::InvalidHleMemoryAccess {
+                        service: 0x0E,
+                        operation,
+                        address,
+                        width: AccessWidth::Word,
+                    });
                 }
             }
             source = source.wrapping_add(20);
@@ -298,6 +303,13 @@ mod tests {
     /// ZiGBA: "BgAffineSet analytic preflight matches the record-by-record loop".
     #[test]
     fn bg_affine_set_analytic_preflight_matches_the_record_by_record_loop() {
+        let mut cpu = Cpu::init(0x0800_0000, 0x1F, true);
+        let mut preflight = |source, destination, count| {
+            cpu.registers[0] = source;
+            cpu.registers[1] = destination;
+            cpu.registers[2] = count;
+            cpu.preflight_hle_software_interrupt(0x0E)
+        };
         for (source, destination, count) in [
             (0x0400_0000, 0x0400_0000, 32),
             (0x0400_0001, 0x0400_0002, 0),
@@ -317,19 +329,81 @@ mod tests {
             (0x0200_0000, 0xFFFF_FFF2, 32),
         ] {
             assert_eq!(
-                bg_affine_set_mmio_fault(source, destination, count),
-                reference_bg_affine_set_mmio_fault(source, destination, count)
+                preflight(source, destination, count),
+                reference_bg_affine_set_mmio_fault(source, destination, count),
+                "source={source:08x} destination={destination:08x} count={count}"
             );
         }
-        assert_eq!(bg_affine_set_mmio_fault(0x0400_0000, 0x0400_0000, u32::MAX), None);
-        for (source, destination, index, fault) in [
-            (0xFFFF_FFF1, 0x0200_0000, 3_355_444, (0x0400_0001, false)),
-            (0x0200_0000, 0xFFFF_FFF2, 4_194_305, (0x0400_000A, true)),
-            (0x0500_0002, 0x0200_0000, 213_909_504, (0x0400_0002, false)),
+
+        // ZiGBA's seeded cases scatter both streams near MMIO boundaries and wraparound.
+        let mut seed = 0x0E0E_AFF1_u32;
+        let mut random = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let anchors = [0x0400_0000_u32, 0x0500_0000, 0x0000_0000, 0x0200_0000];
+        for _ in 0..4000 {
+            let source =
+                anchors[(random() % anchors.len() as u32) as usize].wrapping_sub(random() % 0x2000);
+            let destination =
+                anchors[(random() % anchors.len() as u32) as usize].wrapping_sub(random() % 0x2000);
+            let count = random() % 0x800;
+            assert_eq!(
+                preflight(source, destination, count),
+                reference_bg_affine_set_mmio_fault(source, destination, count),
+                "source={source:08x} destination={destination:08x} count={count}"
+            );
+        }
+
+        // Word-aligned streams never fault, even across arbitrarily many wraps.
+        assert_eq!(preflight(0x0400_0000, 0x0400_0000, u32::MAX), None);
+
+        // Independent first-fault record indices, plus four-record reference
+        // walks across the same page boundaries (walking billions is unnecessary).
+        for (source, destination, index, address, operation, near_source, near_destination) in [
+            (
+                0xFFFF_FFF1,
+                0x0200_0000,
+                3_355_444,
+                0x0400_0001,
+                HleMemoryOperation::Read,
+                0x03FF_FFC5,
+                0x0200_0000,
+            ),
+            (
+                0x0200_0000,
+                0xFFFF_FFF2,
+                4_194_305,
+                0x0400_000A,
+                HleMemoryOperation::Write,
+                0x0200_0000,
+                0x03FF_FFD2,
+            ),
+            (
+                0x0500_0002,
+                0x0200_0000,
+                213_909_504,
+                0x0400_0002,
+                HleMemoryOperation::Read,
+                0x03FF_FFC6,
+                0x0200_0000,
+            ),
         ] {
-            assert_eq!(bg_affine_set_mmio_fault(source, destination, index), None);
-            assert_eq!(bg_affine_set_mmio_fault(source, destination, index + 1), Some(fault));
-            assert_eq!(bg_affine_set_mmio_fault(source, destination, u32::MAX), Some(fault));
+            let expected = Some(FaultReason::InvalidHleMemoryAccess {
+                service: 0x0E,
+                operation,
+                address,
+                width: AccessWidth::Word,
+            });
+            assert_eq!(preflight(source, destination, index), None);
+            assert_eq!(preflight(source, destination, index + 1), expected);
+            assert_eq!(preflight(source, destination, u32::MAX), expected);
+            assert_eq!(
+                reference_bg_affine_set_mmio_fault(near_source, near_destination, 4),
+                expected
+            );
         }
     }
 
