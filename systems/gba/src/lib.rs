@@ -14,14 +14,15 @@ pub mod multiboot;
 pub mod rom_image;
 pub mod timer;
 pub mod types;
-pub mod video;
 
 // [apu]
 pub mod apu;
 
 // [video]
+pub mod video;
 
 // [bus]
+pub mod bus;
 
 // [cpu]
 
