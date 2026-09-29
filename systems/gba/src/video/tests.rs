@@ -280,40 +280,9 @@ fn window_spans_preserve_complete_scanline_rendering_state_against_the_pixel_pat
 #[test]
 fn text_tile_rows_match_the_per_dot_text_renderer() {
     let mut seed = 0x7E47_0B6A;
-    for _ in 0..90 {
+    for _ in 0..400 {
         let mut rows = Bus::init(&[]);
-        for color in &mut rows.palette {
-            *color = next(&mut seed) as u8;
-        }
-        for chunk in rows.vram.as_chunks_mut::<4>().0 {
-            let value = match next(&mut seed) & 3 {
-                0 => 0,
-                1 => next(&mut seed) | 0x1111_1111,
-                2 => next(&mut seed) & 0x0F0F_00F0,
-                _ => next(&mut seed),
-            };
-            chunk.copy_from_slice(&value.to_le_bytes());
-        }
-        rows.dispcnt =
-            ((next(&mut seed) as u16) & 0x0F00) | (1 << 8) | ((next(&mut seed) as u16 & 3) << 13);
-        for background in 0..4 {
-            let mut control = (next(&mut seed) as u16) & !(1 << 6);
-            if control & (1 << 7) != 0 && (control >> 2) & 3 == 3 {
-                control &= !(1 << 2);
-            }
-            rows.bg_controls[background] = control;
-            rows.bg_horizontal_offsets[background] = next(&mut seed) as u16 & 0x1FF;
-            rows.bg_vertical_offsets[background] = next(&mut seed) as u16 & 0x1FF;
-        }
-        rows.win0h = next(&mut seed) as u16;
-        rows.win1h = next(&mut seed) as u16;
-        rows.win0v = 0x00A0;
-        rows.win1v = next(&mut seed) as u16;
-        rows.winin = next(&mut seed) as u16;
-        rows.winout = next(&mut seed) as u16;
-        rows.bldcnt = next(&mut seed) as u16;
-        rows.bldalpha = next(&mut seed) as u16;
-        rows.bldy = next(&mut seed) as u16;
+        randomize_video(&mut rows, &mut seed);
         let line = (next(&mut seed) as usize) % 160;
         let mut dots = twin(&rows);
         dots.scroll_segment_line = line as u16;
@@ -391,7 +360,7 @@ fn ordinary_and_effects_aware_text_spans_agree_across_map_wraps_flips_and_transp
                     bus.vram[offset..offset + 2].copy_from_slice(&entry.to_le_bytes());
                 }
             }
-            for y in [0, 1, 8, 159] {
+            for y in 0..SCREEN_HEIGHT {
                 bus.render_scanline(y);
                 for x in 0..SCREEN_WIDTH {
                     let world_x = (x + 507) % 512;
@@ -429,40 +398,37 @@ fn ordinary_and_effects_aware_text_spans_agree_across_map_wraps_flips_and_transp
 #[test]
 fn regular_object_rows_match_the_per_pixel_object_renderer() {
     let mut seed = 0x0B1E_C7A5;
-    for _ in 0..100 {
+    for _ in 0..600 {
         let mut rows = Bus::init(&[]);
-        let line = (next(&mut seed) as usize) % 160;
-        rows.dispcnt = 0x1000 | (next(&mut seed) as u16 & 0x40) | if seed & 3 == 0 { 3 } else { 0 };
+        randomize_video(&mut rows, &mut seed);
+        let mode =
+            if next(&mut seed).is_multiple_of(4) { 3 + next(&mut seed) as u16 % 3 } else { 0 };
+        rows.dispcnt = (rows.dispcnt & !7) | mode | (1 << 12);
         rows.mosaic = next(&mut seed) as u16;
-        rows.bldcnt = 0x1150;
-        rows.bldalpha = 0x0A06;
-        for byte in &mut rows.palette {
-            *byte = next(&mut seed) as u8;
-        }
-        for byte in rows.vram.iter_mut() {
-            *byte = next(&mut seed) as u8;
-        }
         for object in 0..128 {
             let offset = object * 8;
-            let mut attr0 = next(&mut seed) as u16 & !((1 << 8) | (1 << 12));
-            if object < 12 {
-                attr0 &= !(1 << 9);
-                attr0 = (attr0 & !0xFF) | ((seed as usize + object) % 160) as u16;
+            let mut attr0 = next(&mut seed) as u16;
+            if !next(&mut seed).is_multiple_of(8) {
+                attr0 &= !(1 << 8);
             }
-            let mut attr1 = next(&mut seed) as u16;
-            if object < 12 {
-                attr1 = (attr1 & !0x1FF) | ((object * 27 + 220) % 512) as u16;
+            if !next(&mut seed).is_multiple_of(8) {
+                attr0 &= !(1 << 12);
+            }
+            if attr0 & (1 << 8) == 0 && next(&mut seed) & 1 != 0 {
+                attr0 &= !(1 << 9);
             }
             rows.oam[offset..offset + 2].copy_from_slice(&attr0.to_le_bytes());
+            let mut attr1 = next(&mut seed) as u16;
+            match next(&mut seed) % 4 {
+                0 => attr1 = (attr1 & !0x1FF) | (512 - 64 + (attr1 & 63)),
+                1 => attr1 = (attr1 & !0x1FF) | (SCREEN_WIDTH as u16 - 64 + (attr1 & 63)),
+                _ => {}
+            }
             rows.oam[offset + 2..offset + 4].copy_from_slice(&attr1.to_le_bytes());
             rows.oam[offset + 4..offset + 6]
                 .copy_from_slice(&(next(&mut seed) as u16).to_le_bytes());
         }
-        // A known-active regular OBJ exercises the optimized row path even
-        // when the random OAM entries happen to miss the scanline.
-        rows.oam[..2].copy_from_slice(&(line as u16).to_le_bytes());
-        rows.oam[2..4].copy_from_slice(&34u16.to_le_bytes());
-        rows.oam[4..6].copy_from_slice(&512u16.to_le_bytes());
+        let line = (next(&mut seed) as usize) % 160;
         let mut dots = twin(&rows);
         // Entry one is unchanged, but its history forces the per-pixel path.
         dots.backdrop_segment_line = line as u16;
@@ -481,13 +447,19 @@ fn vector_color_effects_match_the_per_dot_effects_unit() {
     let mut dots = Bus::init(&[]);
     let mut seed = 0xB1E4_D0C5;
     let first = 77 * SCREEN_WIDTH;
-    for _ in 0..500 {
+    for _ in 0..2000 {
         vector.bldcnt = next(&mut seed) as u16;
         vector.bldalpha = next(&mut seed) as u16;
         vector.bldy = next(&mut seed) as u16;
         vector.line_needs_second_surface = next(&mut seed) & 1 != 0;
+        let window_density = next(&mut seed) % 3;
         for x in 0..SCREEN_WIDTH {
-            vector.line_window_masks[x] = next(&mut seed) as u8 & 0x3F;
+            vector.line_window_masks[x] =
+                if window_density == 0 || !next(&mut seed).is_multiple_of(2 * window_density) {
+                    next(&mut seed) as u8 & 0x3F | 0x20
+                } else {
+                    next(&mut seed) as u8 & 0x1F
+                };
             vector.frame_pixels[first + x] = next(&mut seed) as u16 & 0x7FFF;
             vector.frame_second_pixels[first + x] = next(&mut seed) as u16 & 0x7FFF;
             vector.frame_layers[first + x] = next(&mut seed) as u8 % 6;
@@ -592,6 +564,94 @@ fn memoized_scanline_invalidates_on_a_changed_bitmap_page() {
     let mut fresh = twin(&bus);
     fresh.render_scanline(0);
     assert_line(&bus, &fresh, 0);
+}
+
+/// ZiGBA: "memoized scanlines notice every change to the memory they read"
+#[test]
+fn memoized_scanlines_notice_every_change_to_the_memory_they_read() {
+    const PALETTE_BASE: u32 = 0x0500_0000;
+    const VRAM_BASE: u32 = 0x0600_0000;
+    const OAM_BASE: u32 = 0x0700_0000;
+    let mut memoized = Bus::init(&[]);
+    let mut seed = 0x3E30_11E5;
+    for byte in &mut memoized.palette {
+        *byte = next(&mut seed) as u8;
+    }
+    // BG tile 1, affine OBJ tiles 0-3, and regular OBJ tile 64.
+    for (start, len) in [(0x20, 64), (0x40, 32), (0x10000, 128), (0x10800, 32)] {
+        for byte in &mut memoized.vram[start..start + len] {
+            *byte = 0x11 | next(&mut seed) as u8;
+        }
+    }
+    memoized.dispcnt = (1 << 6) | (1 << 8) | (1 << 12);
+    memoized.bg_controls[0] = 1 | (31 << 8);
+    for entry in 0..1024 {
+        memoized.vram[0xF800 + entry * 2..0xF800 + entry * 2 + 2]
+            .copy_from_slice(&1u16.to_le_bytes());
+    }
+    for object in 0..128 {
+        memoized.oam[object * 8..object * 8 + 2].copy_from_slice(&(1u16 << 9).to_le_bytes());
+    }
+    let objects =
+        [40 | (1 << 8), 40 | (1 << 14), 0, 0x100, 100, 100, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0x100];
+    for (index, half) in objects.into_iter().enumerate() {
+        memoized.oam[index * 2..index * 2 + 2].copy_from_slice(&(half as u16).to_le_bytes());
+    }
+    let toggles: [(u32, usize, u16); 9] = [
+        (VRAM_BASE, 40 * 1024, 0xFFFF),    // Unread page.
+        (VRAM_BASE, 0xF800 + 64 + 4, 3),   // BG map entry on line 8.
+        (VRAM_BASE, 0x20, 0x3333),         // BG tile 1, row 0.
+        (VRAM_BASE, 0x10000 + 16, 0x3333), // Affine OBJ tile.
+        (VRAM_BASE, 0x10800 + 12, 0x3333), // Regular OBJ tile.
+        (OAM_BASE, 6, 0x180),              // Affine matrix PA.
+        (OAM_BASE, 8, 100 ^ 120),          // Regular OBJ Y.
+        (PALETTE_BASE, 2, 0x1F),
+        (VRAM_BASE, 40 * 1024, 0xFFFF), // Unread page after memo priming.
+    ];
+    for mid_frame in [false, true] {
+        for (index, &(base, offset, mask)) in toggles.iter().enumerate() {
+            let unread_page = index == toggles.len() - 1;
+            if unread_page {
+                for line in 0..SCREEN_HEIGHT {
+                    memoized.render_scanline(line);
+                }
+            }
+            let mut fresh = twin(&memoized);
+            fresh.scanline_memo.invalidate();
+            let kept = memoized.scanline_memo.kept;
+            for line in 0..SCREEN_HEIGHT {
+                if line == usize::from(mid_frame) {
+                    for bus in [&mut memoized, &mut fresh] {
+                        let memory = if base == VRAM_BASE {
+                            bus.vram.as_ref()
+                        } else if base == OAM_BASE {
+                            &bus.oam[..]
+                        } else {
+                            &bus.palette[..]
+                        };
+                        let value = u16::from_le_bytes([memory[offset], memory[offset + 1]]) ^ mask;
+                        // Zig calls the memory write method directly, without
+                        // recording a raster segment. Write in VBlank here so
+                        // the public bus path preserves that same condition.
+                        let timing = bus.ppu_timing;
+                        bus.ppu_timing.line = SCREEN_HEIGHT as u16;
+                        write_half(bus, base + offset as u32, value);
+                        bus.ppu_timing = timing;
+                    }
+                }
+                memoized.render_scanline(line);
+                fresh.render_scanline(line);
+            }
+            if unread_page {
+                assert_eq!(
+                    memoized.scanline_memo.kept,
+                    kept + SCREEN_HEIGHT as u64 - 16,
+                    "mid_frame={mid_frame}, toggle={index}"
+                );
+            }
+            assert_surfaces(&fresh, &memoized);
+        }
+    }
 }
 
 /// ZiGBA: "the frame reload of affine reference points reaches the scanline memo key"
@@ -836,4 +896,86 @@ fn front_to_back_passes_preserve_priority_and_the_next_visible_bg() {
     assert_eq!(bus.frame_second_layers[0], 1);
     assert_eq!(bus.frame_second_pixels[0], 0x03E0);
     assert_eq!(bus.frame_pixels[0], 0x01EF);
+}
+
+/// ZiGBA: "front-to-back BG passes keep the two front-most BG pixels"
+#[test]
+fn front_to_back_bg_passes_match_independently_rendered_layers() {
+    let mut seed = 0xF20B_ACC5;
+    for _ in 0..300 {
+        let mut full = Bus::init(&[]);
+        randomize_video(&mut full, &mut seed);
+        full.dispcnt = (full.dispcnt & 0xEF40) | (next(&mut seed) as u16 % 3) | (1 << 13);
+        full.winin &= !0x2020;
+        full.winout &= !0x2020;
+        if next(&mut seed) & 1 != 0 {
+            full.bldcnt = (full.bldcnt & 0x3F00) | (1 << 6) | 1;
+        }
+        for background in 0..2 {
+            for reference in &mut full.bg_affine_current[background] {
+                *reference = (next(&mut seed) % 0x18001) as i32 - 0x8000;
+            }
+            for parameter in &mut full.bg_affine_parameters[background] {
+                *parameter = (next(&mut seed) % 0x401) as i16 - 0x200;
+            }
+        }
+        let line = next(&mut seed) as usize % SCREEN_HEIGHT;
+        let first = line * SCREEN_WIDTH;
+        let mut drawn = [[false; SCREEN_WIDTH]; 4];
+        let mut colors = [[0u16; SCREEN_WIDTH]; 4];
+        for background in 0..4 {
+            let mut single = twin(&full);
+            single.dispcnt &= !0xF00 | (1 << (background + 8));
+            single.render_scanline(line);
+            for x in 0..SCREEN_WIDTH {
+                drawn[background][x] = single.frame_layers[first + x] == background as u8;
+                colors[background][x] = single.frame_pixels[first + x];
+            }
+        }
+        full.render_scanline(line);
+        for x in 0..SCREEN_WIDTH {
+            let mut surfaces = [None; 2];
+            for priority in 0..4 {
+                for (background, admitted) in drawn.iter().enumerate() {
+                    if !admitted[x] || full.bg_controls[background] & 3 != priority {
+                        continue;
+                    }
+                    if surfaces[0].is_none() {
+                        surfaces[0] = Some(background);
+                    } else if surfaces[1].is_none() {
+                        surfaces[1] = Some(background);
+                    }
+                }
+            }
+            let index = first + x;
+            for (depth, surface) in surfaces
+                .into_iter()
+                .take(if full.line_needs_second_surface { 2 } else { 1 })
+                .enumerate()
+            {
+                let (pixel, priority, layer) = if depth == 0 {
+                    (
+                        full.frame_pixels[index],
+                        full.frame_priorities[index],
+                        full.frame_layers[index],
+                    )
+                } else {
+                    (
+                        full.frame_second_pixels[index],
+                        full.frame_second_priorities[index],
+                        full.frame_second_layers[index],
+                    )
+                };
+                if let Some(background) = surface {
+                    assert_eq!(layer, background as u8, "x={x}, line={line}, depth={depth}");
+                    assert_eq!(priority, (full.bg_controls[background] & 3) as u8);
+                    assert_eq!(pixel, colors[background][x]);
+                } else {
+                    assert_eq!(layer, 5);
+                    assert_eq!(priority, 4);
+                    assert_eq!(pixel, full.backdrop_color());
+                }
+            }
+        }
+    }
 }
