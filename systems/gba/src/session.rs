@@ -705,6 +705,33 @@ mod tests {
         assert!(matches!(session.rewind(1), Err(Error::RewindEmpty)));
     }
 
+    /// Zig: "rewind escapes a faulted machine with the last good state"
+    #[test]
+    fn rewind_escapes_a_faulted_machine_with_the_last_good_state() {
+        let rom = video_recovery_rom(true);
+        let mut session = Session::create(Config {
+            image: &rom,
+            rewind: RewindConfig { interval_frames: 1, ..RewindConfig::default() },
+            ..Config::default()
+        })
+        .unwrap();
+        for _ in 0..3 {
+            session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        }
+        let healthy_depth = session.rewind_depth();
+        assert!(healthy_depth > 0);
+        session.set_keys(KeyState { a: true, ..KeyState::default() }).unwrap();
+        let result = session.advance(session.machine.now() + 100).unwrap();
+        assert!(matches!(result.reason, StopReason::Faulted(_)));
+        assert!(session.machine.fault().is_some());
+        assert_eq!(session.rewind_depth(), healthy_depth);
+        let restored = session.rewind(1).unwrap();
+        assert!(session.machine.fault().is_none());
+        assert_eq!(restored.frame, session.machine.completed_frames());
+        session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        assert!(session.machine.fault().is_none());
+    }
+
     /// Zig: "explicit loads and resets start a new rewind timeline"
     #[test]
     fn explicit_loads_and_resets_start_a_new_rewind_timeline() {
@@ -941,6 +968,48 @@ mod tests {
             other.load_rewind_bundle(&bundle),
             Err(Error::Rewind(evenfall_state::Error::SaveStateRomMismatch))
         ));
+    }
+
+    /// Zig: "bundle restores empty tiny-budget and evicted multi-anchor histories after branching"
+    #[test]
+    fn bundle_restores_empty_tiny_budget_and_evicted_histories_after_branching() {
+        for budget in [0, 1, 400_000, rewind::DEFAULT_BUDGET_BYTES] {
+            let mut session = Session::create(Config {
+                image: LOOP_ROM,
+                rewind: RewindConfig {
+                    interval_frames: 1,
+                    budget_bytes: budget,
+                    ..RewindConfig::default()
+                },
+                ..Config::default()
+            })
+            .unwrap();
+            let mut random = 71_u32;
+            for frame in 0..9_u8 {
+                if frame % 3 == 0 {
+                    for byte in session.machine.bus.ewram.iter_mut() {
+                        random ^= random << 13;
+                        random ^= random >> 17;
+                        random ^= random << 5;
+                        *byte = random as u8;
+                    }
+                }
+                session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+            }
+            let bundle = session.write_rewind_bundle().unwrap();
+            if session.rewind_depth() > 1 {
+                session.rewind(1).unwrap();
+            }
+            session.set_keys(KeyState { a: true, ..KeyState::default() }).unwrap();
+            session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+            session.load_rewind_bundle(&bundle).unwrap();
+            assert_eq!(session.write_rewind_bundle().unwrap(), bundle);
+            if session.rewind_depth() > 1 {
+                let oldest_frame = session.rewind_info(0).unwrap().frame;
+                session.rewind(session.rewind_depth() - 1).unwrap();
+                assert_eq!(session.machine.completed_frames(), oldest_frame);
+            }
+        }
     }
 
     fn video_recovery_rom(fault_on_a: bool) -> [u8; 32] {
