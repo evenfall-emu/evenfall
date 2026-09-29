@@ -19,6 +19,38 @@ const game = (id: string) => games.find((item) => item.id === id)!;
 const sha = (byte: number) => byte.toString(16).padStart(2, "0").repeat(20);
 
 describe("buildLibrary", () => {
+  it.each([
+    ["Pokémon Elite Redux", "Pokémon", "Elite Redux"],
+    ["Pokemon Unbound", "Pokémon", "Unbound"],
+    ["Fire Emblem: Vision Quest", "Fire Emblem", "Vision Quest"],
+    ["Golden Sun — Reloaded", "Golden Sun", "Reloaded"],
+    ["Pokémon", "Pokémon", "Pokémon"],
+    ["Pokémon: ", "Pokémon", "Pokémon: "],
+    ["Pokémonish Adventure", "Pokémon", "Pokémonish Adventure"],
+    ["Return to Pokémon", "Pokémon", "Return to Pokémon"],
+    ["Pokémon Emerald", null, "Pokémon Emerald"],
+  ] as const)(
+    "shortens %s only at a franchise boundary",
+    (displayName, franchise, title) => {
+      const catalog = {
+        ...previewCatalog,
+        games: previewCatalog.games.map((entry) =>
+          entry.id === "elite-redux"
+            ? { ...entry, displayName, franchise }
+            : entry,
+        ),
+      };
+      const library = buildLibrary(catalog, device);
+      const entry = library.find((item) => item.id === "elite-redux")!;
+      expect(entry.title).toBe(title);
+      expect(entry.fullTitle).toBe(displayName);
+      expect(entry.wantedFiles[0].title).toBe(displayName);
+      expect(
+        filterGames(library, { ...noFilters, query: displayName }),
+      ).toContain(entry);
+    },
+  );
+
   it("keeps a short hook separate from the optional full description", () => {
     expect(game("vision-quest")).toMatchObject({
       summary:
@@ -335,11 +367,11 @@ describe("filterGames", () => {
         .map((item) => item.title),
     ).toEqual([
       "Fire Emblem (US)",
-      "Fire Emblem: Vision Quest",
-      "Golden Sun: Reloaded",
       "Pokémon Emerald (US)",
       "Pokémon FireRed (US 1.0)",
-      "Pokémon Unbound",
+      "Reloaded",
+      "Unbound",
+      "Vision Quest",
     ]);
   });
 
@@ -347,9 +379,9 @@ describe("filterGames", () => {
     expect(ids({})).toEqual([
       "elite-redux",
       "emerald-seaglass",
-      "vision-quest",
       "golden-sun-reloaded",
       "unbound",
+      "vision-quest",
     ]);
   });
 
@@ -376,7 +408,7 @@ describe("filterGames", () => {
       "elite-redux",
       "emerald-seaglass",
     ]);
-    expect(ids({ show: "ready" })).toEqual(["vision-quest", "unbound"]);
+    expect(ids({ show: "ready" })).toEqual(["unbound", "vision-quest"]);
     expect(ids({ show: "ready", franchise: "Pokémon" })).toEqual(["unbound"]);
     expect(ids({ tags: ["Difficulty Hack"] })).toEqual([
       "elite-redux",

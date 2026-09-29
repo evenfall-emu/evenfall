@@ -145,9 +145,18 @@ test("Library joins the catalog with this device's ROMs and filters it", async (
   // A catalog base shows under the catalog's name, not its file name.
   const order = ["Maple (US)", "Birch Quest", "Cedar Saga", "Maple Remix"];
   await expect.poll(() => titles(page)).toEqual(order);
-  await expect(page.getByText("On this device", { exact: true })).toHaveCount(
-    2,
+  const gameList = page.getByRole("list", { name: "Games", exact: true });
+  await expect(gameList.getByRole("button", { name: /^Play / })).toHaveCount(2);
+  await expect(gameList.getByRole("button", { name: /^Install / })).toHaveCount(
+    1,
   );
+  for (const row of await gameList.getByRole("listitem").all()) {
+    // One details button and exactly one availability-dependent action.
+    await expect(row.getByRole("button")).toHaveCount(2);
+  }
+  await expect(
+    gameList.getByText("On this device", { exact: true }),
+  ).toHaveCount(0);
   await expect(
     page.getByRole("button", {
       name: "Add the Shared Source ROM for Cedar Saga",
@@ -264,6 +273,13 @@ test("Install patches the base ROM and plays the verified release", async ({
 }) => {
   await mockCatalog(page);
   await importRoms(page, [[40, "Maple base"]]);
+  await expect(
+    page.getByRole("button", { name: "Play Maple Remix" }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Install Maple Remix" }).click();
+  await expect(
+    page.getByRole("button", { name: "Install Maple Remix" }),
+  ).toHaveCount(0);
   await page.getByRole("button", { name: "Play Maple Remix" }).click();
   await expect(
     page.getByRole("heading", { name: "Maple Remix", exact: true }),

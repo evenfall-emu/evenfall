@@ -4,6 +4,7 @@ import type {
   LibraryCatalog,
   LibraryDevice,
 } from "./catalog";
+import { formatTitle } from "./format";
 
 /**
  * - `installed`: a release ROM is on this device.
@@ -65,6 +66,7 @@ export type LibraryGame = {
   /** The catalog ID, or the ROM SHA-1 for a game the catalog does not know. */
   id: string;
   title: string;
+  fullTitle: string;
   visibility: CatalogVersion["visibility"] | null;
   summary: string | null;
   description: string | null;
@@ -248,7 +250,8 @@ export function buildLibrary(
     return [
       {
         id: game.id,
-        title: game.displayName,
+        title: formatTitle(game.displayName, game.franchise),
+        fullTitle: game.displayName,
         visibility: newest.visibility ?? "experimental",
         summary: game.summary,
         description: game.description ?? null,
@@ -308,6 +311,7 @@ export function buildLibrary(
     return {
       id: hash,
       title,
+      fullTitle: title,
       visibility: null,
       summary: null,
       description: null,
@@ -366,7 +370,7 @@ export function filterGames(
   return games
     .filter(
       (game) =>
-        game.title.toLocaleLowerCase().includes(query) &&
+        game.fullTitle.toLocaleLowerCase().includes(query) &&
         (filters.show === "all" || game.availability === filters.show) &&
         (!filters.franchise || game.franchise === filters.franchise) &&
         filters.tags.every((tag) => game.tags.includes(tag)),

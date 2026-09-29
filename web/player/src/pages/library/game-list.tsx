@@ -43,7 +43,7 @@ function TagFilter({
       onValueChange={(next) => onChange(next)}
       disabled={disabled}
     >
-      <div className="flex min-h-14 items-center gap-4 rounded-control border border-mint/40 py-2 pr-2 pl-4 focus-within:border-mint">
+      <div className="flex min-h-12 items-center gap-3 rounded-control border border-mint/40 px-3 py-1 text-1x5 focus-within:border-mint">
         <label htmlFor={id} className="shrink-0 text-muted">
           Tags
         </label>
@@ -70,7 +70,7 @@ function TagFilter({
             <Combobox.Input
               id={id}
               placeholder={value.length ? "" : "Find tags…"}
-              className="h-9 min-w-24 flex-1 bg-transparent text-2x outline-none placeholder:text-muted"
+              className="h-9 min-w-24 flex-1 bg-transparent text-1x5 outline-none placeholder:text-muted"
             />
           </Combobox.Chips>
         </Combobox.InputGroup>
@@ -81,7 +81,7 @@ function TagFilter({
             data-ui
             className={cx(
               popup,
-              "max-h-[min(var(--available-height),320px)] w-(--anchor-width) overflow-y-auto font-sans",
+              "max-h-[min(var(--available-height),320px)] w-(--anchor-width) overflow-y-auto font-sans text-1x5 [&_[role=option]]:text-1x5",
             )}
           >
             <Combobox.Empty className="px-4 py-2 text-muted empty:hidden">
@@ -178,12 +178,12 @@ export function GameList({
     onFiltersChange({ ...filters, ...change });
   return (
     <>
-      <div className="space-y-4 px-3 pt-4 pb-2 sm:px-6 sm:pt-6">
+      <div className="space-y-3 p-3 sm:px-6 sm:pt-6">
         <div className="@container flex gap-3">
           <label className="relative min-w-0 flex-1">
             <Icon
               name="search"
-              className="pointer-events-none absolute top-1/2 left-4 size-6 -translate-y-1/2 text-muted"
+              className="pointer-events-none absolute top-1/2 left-3 size-6 -translate-y-1/2 text-muted"
             />
             <input
               type="search"
@@ -192,17 +192,17 @@ export function GameList({
               value={filters.query}
               disabled={disabled}
               onChange={(event) => set({ query: event.target.value })}
-              className="h-12 w-full rounded-control border border-line bg-canvas pr-3 pl-13 text-2x placeholder:text-muted focus:border-mint focus:outline-none disabled:text-muted"
+              className="h-12 w-full rounded-control border border-line bg-canvas pr-3 pl-11 text-2x placeholder:text-muted focus:border-mint focus:outline-none disabled:text-muted"
             />
           </label>
           <button
-            className={button("primary", "lg")}
+            className={cx(button("primary", "lg"), "max-sm:w-12 max-sm:px-0")}
             aria-label="Add game"
             disabled={disabled}
             onClick={onAddGame}
           >
             <Icon name="plus" className="size-6" />
-            <span className="@max-[400px]:hidden">Add game</span>
+            <span className="max-sm:hidden @max-[400px]:hidden">Add game</span>
           </button>
         </div>
         <div className="@container flex gap-2 *:flex-auto sm:gap-3">
@@ -239,14 +239,14 @@ export function GameList({
           disabled={disabled}
           onChange={(next) => set({ tags: next })}
         />
-        <details className="rounded-control border border-line bg-surface px-4 py-2 text-1x5">
+        <details className="rounded-control border border-line bg-surface p-3 text-1x5">
           <summary className="cursor-pointer text-mint focus-visible:outline-2 focus-visible:outline-mint">
             Library settings
           </summary>
           <label className="mt-3 flex cursor-pointer items-start gap-3 pb-1">
             <input
               type="checkbox"
-              className="mt-1 size-5 accent-mint"
+              className="mt-1 size-5 shrink-0 accent-mint"
               checked={showExperimental}
               disabled={disabled}
               onChange={(event) =>
@@ -269,11 +269,11 @@ export function GameList({
             return (
               <li
                 key={game.id}
-                className="border-b border-line/70 py-2 last:border-b-0"
+                className="border-b border-line/70 py-1 last:border-b-0"
               >
                 <div
                   className={cx(
-                    "flex items-center gap-1 rounded-panel border-2 p-2 sm:gap-3",
+                    "flex items-center gap-2 rounded-panel border-2 p-3 sm:gap-3",
                     selected
                       ? "border-peach bg-surface"
                       : "border-transparent hover:bg-surface/60",
@@ -290,12 +290,14 @@ export function GameList({
                       focusRing,
                     )}
                   >
-                    <Cover
-                      id={game.id}
-                      title={game.title}
-                      imageUrl={game.imageUrl}
-                      size="sm"
-                    />
+                    <span className="hidden shrink-0 sm:block">
+                      <Cover
+                        id={game.id}
+                        title={game.title}
+                        imageUrl={game.imageUrl}
+                        size="sm"
+                      />
+                    </span>
                     <span className="@container min-w-0 flex-1">
                       <span className="line-clamp-2 font-bold">
                         {game.title}
@@ -308,15 +310,7 @@ export function GameList({
                       <Tags tags={game.tags} />
                     </span>
                   </button>
-                  {game.availability === "installed" ? (
-                    <span
-                      className="grid size-11 shrink-0 place-items-center text-mint"
-                      title="On this device"
-                    >
-                      <Icon name="check" className="size-8" />
-                      <span className="sr-only">On this device</span>
-                    </span>
-                  ) : game.availability === "ready" ? (
+                  {game.availability === "ready" ? (
                     <button
                       className={button("ghost", "icon")}
                       aria-label={`Install ${game.title}`}
@@ -326,7 +320,7 @@ export function GameList({
                     >
                       <Icon name="download" className="size-7" />
                     </button>
-                  ) : (
+                  ) : game.availability === "needs-file" ? (
                     <button
                       className={button("ghost", "icon")}
                       aria-label={`Add ${game.missingFile} for ${game.title}`}
@@ -336,9 +330,6 @@ export function GameList({
                     >
                       <Icon name="filePlus" className="size-7" />
                     </button>
-                  )}
-                  {game.availability === "needs-file" ? (
-                    <span className="size-11 shrink-0" />
                   ) : (
                     <button
                       className={button("ghost", "icon")}

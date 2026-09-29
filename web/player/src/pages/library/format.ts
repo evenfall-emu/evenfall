@@ -1,5 +1,19 @@
 const HOUR = 3_600_000;
 
+/** Short player-facing title; catalog names and ROM labels stay unchanged. */
+export function formatTitle(title: string, franchise: string | null) {
+  if (
+    !franchise ||
+    title.slice(0, franchise.length).localeCompare(franchise, undefined, {
+      sensitivity: "base",
+    }) !== 0
+  )
+    return title;
+  const suffix = title.slice(franchise.length);
+  if (!/^[\s:–—-]/u.test(suffix)) return title;
+  return suffix.replace(/^[\s:–—-]+/u, "").trim() || title;
+}
+
 function sameDay(a: Date, b: Date) {
   return (
     a.getFullYear() === b.getFullYear() &&

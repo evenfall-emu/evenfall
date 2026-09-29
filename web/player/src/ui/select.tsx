@@ -5,7 +5,13 @@ import { cx, focusRing, popup, popupItem } from "./styles";
 
 export type SelectOption = { value: string; label: string };
 
-function Options({ options }: { options: readonly SelectOption[] }) {
+function Options({
+  options,
+  compact = false,
+}: {
+  options: readonly SelectOption[];
+  compact?: boolean;
+}) {
   return (
     <BaseSelect.Portal>
       <BaseSelect.Positioner
@@ -18,6 +24,7 @@ function Options({ options }: { options: readonly SelectOption[] }) {
           className={cx(
             popup,
             "max-h-(--available-height) min-w-(--anchor-width) overflow-y-auto font-sans",
+            compact && "[&_[role=option]]:text-1x5",
           )}
         >
           <BaseSelect.List>
@@ -92,7 +99,7 @@ export function FilterSelect({
           <Icon name="chevronDown" className="size-5" />
         </BaseSelect.Icon>
       </BaseSelect.Trigger>
-      <Options options={options} />
+      <Options options={options} compact />
     </BaseSelect.Root>
   );
 }

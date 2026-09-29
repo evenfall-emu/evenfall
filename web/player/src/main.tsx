@@ -42,6 +42,7 @@ import { LibraryPage } from "./pages/library/library-page";
 import type { LibraryAction } from "./pages/library/actions";
 import type { LibraryDevice } from "./pages/library/catalog";
 import { patchRelease } from "./pages/library/install";
+import { formatTitle } from "./pages/library/format";
 import { useCatalog, useDumpNames } from "./pages/library/use-catalog";
 import { AppHeader, type AppView } from "./app-header";
 import { useMe } from "./me";
@@ -229,6 +230,18 @@ function App() {
     settled: catalogSettled,
     reload: reloadCatalog,
   } = useCatalog();
+  const currentVersion = state.game
+    ? catalog.versions.find(
+        (version) => version.outputSha1 === state.game!.hash,
+      )
+    : undefined;
+  const currentCatalogGame = catalog.games.find(
+    (game) => game.id === currentVersion?.gameId,
+  );
+  const gameTitle = formatTitle(
+    state.game?.title ?? "No game loaded",
+    currentCatalogGame?.franchise ?? null,
+  );
   const dumpNames = useDumpNames(library);
   const { me, checking: meChecking } = useMe(state.cloud.accountId, manage);
   const manageAccess: ManageAccess = meChecking
@@ -1132,9 +1145,7 @@ function App() {
   );
   const tools = (
     <div className="player-tools" hidden={home || library || manage}>
-      <h1 className="player-tools-title">
-        {state.game?.title ?? "No game loaded"}
-      </h1>
+      <h1 className="player-tools-title">{gameTitle}</h1>
       {state.game && state.playthrough && (
         <div className="playthrough-controls">
           <Select.Root
@@ -1198,7 +1209,7 @@ function App() {
           </Select.Root>
           <PlaythroughDialog
             mode="create"
-            gameTitle={state.game.title}
+            gameTitle={gameTitle}
             disabled={state.changing || launching}
             createOpen={createPlaythroughOpen}
             onCreateOpenChange={setCreatePlaythroughOpen}
@@ -1206,7 +1217,7 @@ function App() {
           />
           <PlaythroughDialog
             mode="rename"
-            gameTitle={state.game.title}
+            gameTitle={gameTitle}
             currentName={state.playthrough.name}
             disabled={state.changing || launching}
           />
@@ -1571,7 +1582,7 @@ function App() {
   const handheldPlayer = (hud?: HandheldHud) => (
     <HandheldPlayer
       orientation={handheld!}
-      title={state.game?.title ?? "No game loaded"}
+      title={gameTitle}
       subtitle={state.playthrough?.name}
       playing={state.playing}
       canPlay={Boolean(state.game) && !state.changing && !state.resumeFailed}
@@ -1802,7 +1813,7 @@ function App() {
           >
             <ShareLink
               progress={share}
-              title={state.game.title}
+              title={gameTitle}
               playthroughName={state.playthrough.name}
               retry={createShare}
               signIn={() => {
