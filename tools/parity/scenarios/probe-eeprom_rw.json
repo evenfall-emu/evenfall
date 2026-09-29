@@ -1,0 +1,20 @@
+{
+  "name": "probe-eeprom_rw",
+  "assets": {
+    "rom": "../../../probe/build/eeprom_rw.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "inputs": [],
+  "endCycle": "1123584",
+  "checkpoints": [
+    "1123584"
+  ],
+  "sliceCycles": [
+    "70224",
+    "280896"
+  ],
+  "terminalPc": 134218500
+}

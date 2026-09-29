@@ -1,0 +1,22 @@
+{
+  "name": "probe-wave_readback",
+  "assets": {
+    "rom": "../../../probe/build/wave_readback.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "inputs": [],
+  "endCycle": "1966272",
+  "checkpoints": [
+    "1123584",
+    "1966272"
+  ],
+  "sliceCycles": [
+    "70224",
+    "280896"
+  ],
+  "terminalPc": 134218500,
+  "terminalR12": 3883286245
+}
