@@ -17,11 +17,17 @@ fn assert_same_bus(reference: &Bus, optimized: &Bus) {
     assert_eq!(reference.game_pak_timing_key, optimized.game_pak_timing_key);
     assert_eq!(reference.game_pak_n_cycles, optimized.game_pak_n_cycles);
     assert_eq!(reference.game_pak_s_cycles, optimized.game_pak_s_cycles);
+    assert_eq!(reference.duty_valid_until, optimized.duty_valid_until);
     assert_eq!(reference.batch_active, optimized.batch_active);
     assert_eq!(reference.batch_deadline, optimized.batch_deadline);
     assert_eq!(reference.batch_device_cycle, optimized.batch_device_cycle);
     assert_eq!(reference.devices_deferred, optimized.devices_deferred);
     assert_eq!(reference.dma_epoch, optimized.dma_epoch);
+    assert_eq!(reference.external_input_pointer, optimized.external_input_pointer);
+    assert_eq!(reference.external_input_count, optimized.external_input_count);
+    assert_eq!(reference.external_input_index, optimized.external_input_index);
+    assert_eq!(reference.servicing_dma, optimized.servicing_dma);
+    assert_eq!(reference.active_dma_channel, optimized.active_dma_channel);
     assert_eq!(reference.apu_cycle, optimized.apu_cycle);
     assert_eq!(reference.timer_cycle, optimized.timer_cycle);
     assert_eq!(reference.timer_deadline, optimized.timer_deadline);
@@ -38,6 +44,17 @@ fn assert_same_bus(reference: &Bus, optimized: &Bus) {
     assert_eq!(reference.line_has_color_effects, optimized.line_has_color_effects);
     assert_eq!(reference.line_window_masks, optimized.line_window_masks);
     assert_eq!(reference.line_unmasked_layers, optimized.line_unmasked_layers);
+    assert_eq!(reference.line_window_key, optimized.line_window_key);
+    assert_eq!(
+        std::mem::discriminant(&reference.line_semitransparent_obj),
+        std::mem::discriminant(&optimized.line_semitransparent_obj)
+    );
+    assert_eq!(reference.video_active_interval, optimized.video_active_interval);
+    assert_eq!(reference.video_requested_interval, optimized.video_requested_interval);
+    assert_eq!(reference.video_skip_remaining, optimized.video_skip_remaining);
+    assert_eq!(reference.video_render_current, optimized.video_render_current);
+    assert_eq!(reference.video_framebuffer_canonical, optimized.video_framebuffer_canonical);
+    assert_eq!(reference.video_publication_active, optimized.video_publication_active);
     assert_eq!(reference.video_frame_id, optimized.video_frame_id);
     assert_eq!(reference.video_frame_cycle, optimized.video_frame_cycle);
 }
