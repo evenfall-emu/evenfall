@@ -30,7 +30,7 @@ impl Fake {
 }
 
 impl System for Fake {
-    type Input = u16;
+    type Input = Timed<u16>;
     type Fault = ();
     type StateError = ();
     type Pixel = u16;
@@ -44,7 +44,7 @@ impl System for Fake {
         &mut self,
         yield_at: u64,
         input_deadline: u64,
-        inputs: &[Timed<u16>],
+        inputs: &[Self::Input],
     ) -> Result<RunResult<()>, RunError> {
         let before = self.now;
         let end = yield_at.saturating_add(1);

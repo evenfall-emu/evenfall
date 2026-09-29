@@ -94,7 +94,9 @@ pub enum PixelFormat {
 /// observation (`now`, `framebuffer`, `save_media`, `inspect`) costs zero
 /// emulated cycles and has no side effects.
 pub trait System {
-    /// One host input change (keys, sensors, and so on).
+    /// One timestamped host input (keys, sensors, and so on). The system's
+    /// native event type includes its absolute master cycle, so a host can
+    /// pass its input slice through without allocating a converted stream.
     type Input: Copy;
     /// A typed diagnostic for guest behavior the system will not guess at.
     type Fault: Clone + core::fmt::Debug;
@@ -123,7 +125,7 @@ pub trait System {
         &mut self,
         yield_at: Cycle,
         input_deadline: Cycle,
-        inputs: &[Timed<Self::Input>],
+        inputs: &[Self::Input],
     ) -> Result<RunResult<Self::Fault>, RunError>;
 
     /// The sticky fault, if the guest reached one.

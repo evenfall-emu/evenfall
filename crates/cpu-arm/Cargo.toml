@@ -1,0 +1,15 @@
+[package]
+name = "evenfall-cpu-arm"
+description = "Cycle-aware ARM7TDMI (ARMv4T) interpreter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+evenfall-state.workspace = true
+
+[lints]
+workspace = true

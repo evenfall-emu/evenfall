@@ -25,7 +25,11 @@ pub mod video;
 pub mod bus;
 
 // [cpu]
+pub mod cpu;
 
 // [hle]
 
 // [machine]
+pub mod machine;
+pub mod session;
+pub mod video_recovery;
