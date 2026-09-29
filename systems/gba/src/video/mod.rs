@@ -10,4 +10,6 @@ pub mod tile_row_cache;
 pub mod timing;
 
 #[cfg(test)]
+mod audit_tests;
+#[cfg(test)]
 mod tests;
