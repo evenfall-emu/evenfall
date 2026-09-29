@@ -215,6 +215,24 @@ impl Device {
         self.state.decode(source)?;
         self.validate_state().map_err(|_| evenfall_state::Error::InvalidSaveState)
     }
+}
+
+/// The save medium is a `Bus` field with a module-owned encoding: the bus
+/// writes it, describes it and reads it (validation included) through these
+/// functions, as ZiGBA's `Bus.writeState` and `Bus.readState` do.
+impl Codec for Device {
+    fn encode(&self, sink: &mut Sink<'_>) -> evenfall_state::Result<()> {
+        self.write_state(sink)
+    }
+    fn decode(&mut self, source: &mut Source<'_>) -> evenfall_state::Result<()> {
+        self.read_state(source)
+    }
+    fn schema(sink: &mut Sink<'_>) -> evenfall_state::Result<()> {
+        Self::write_state_schema(sink)
+    }
+}
+
+impl Device {
     pub fn validate_state(&mut self) -> Result<(), InvalidSaveState> {
         self.tag = match &self.state {
             State::Auto(auto) if auto.pending_count > 2 => return Err(InvalidSaveState),
