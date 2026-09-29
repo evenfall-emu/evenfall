@@ -23,8 +23,8 @@ pub struct RewindPosition {
 
 pub struct Session {
     pub machine: Box<Machine>,
-    pub rom: Arc<Vec<u8>>,
-    pub bios: Arc<[u8]>,
+    rom: Arc<Vec<u8>>,
+    bios: Arc<[u8]>,
     /// Game identity, SHA-1 of the raw ROM.
     pub rom_sha1: [u8; 20],
     pub rtc_enabled: bool,
@@ -121,6 +121,14 @@ impl From<video_recovery::Error> for Error {
 }
 
 impl Session {
+    pub fn rom(&self) -> &[u8] {
+        &self.rom
+    }
+
+    pub fn bios(&self) -> &[u8] {
+        &self.bios
+    }
+
     pub fn create(config: Config<'_>) -> Result<Self, Error> {
         Self::create_impl(config, None).map_err(|(error, _)| error)
     }
