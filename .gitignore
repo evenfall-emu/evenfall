@@ -1,0 +1,23 @@
+/target/
+/artifacts/
+/refs/*
+!/refs/README.md
+/probe/build/
+/tools/bench/roms/build/
+.zig-cache/
+zig-out/
+
+# User-supplied media: never commit ROMs, BIOS images, saves or states.
+*.gba
+*.sav
+*.bin
+*.state
+/bases/
+/*.zip
+
+node_modules/
+*.tgz
+/web/gba/pkg/
+/web/gba/*.wasm
+
+/.amp/in/

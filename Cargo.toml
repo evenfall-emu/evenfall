@@ -1,0 +1,69 @@
+[workspace]
+resolver = "3"
+# Every crate under crates/ is a member; list systems, web adapters and tools
+# explicitly as they are added.
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/evenfall-emu/evenfall"
+publish = false
+
+[workspace.dependencies]
+evenfall-audio = { path = "crates/audio" }
+evenfall-cpu-arm = { path = "crates/cpu-arm" }
+evenfall-host = { path = "crates/host" }
+evenfall-replay = { path = "crates/replay" }
+evenfall-state = { path = "crates/state" }
+evenfall-state-derive = { path = "crates/state-derive" }
+evenfall-gba = { path = "systems/gba" }
+
+blake3 = { version = "1.8", default-features = false }
+divan = "0.1.21"
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "3", features = ["full"] }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "allow"
+
+[workspace.lints.clippy]
+# Hardware code converts between register widths constantly; the casts are
+# the specification, not accidents.
+cast_possible_truncation = "allow"
+too_many_arguments = "allow"
+new_without_default = "allow"
+large_enum_variant = "allow"
+
+# Day-to-day development: fast to build, fast enough to play games.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+# Optimized day-to-day builds and benchmarks: no LTO, incremental rebuilds.
+[profile.release]
+opt-level = 3
+lto = false
+incremental = true
+debug = "line-tables-only"
+
+# Symbolized builds for `perf record` and flame graphs.
+[profile.profiling]
+inherits = "release"
+debug = "full"
+
+# Shipped WebAssembly only: whole-program optimization.
+[profile.wasm-release]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+incremental = false
+debug = false
+strip = true
+panic = "abort"
