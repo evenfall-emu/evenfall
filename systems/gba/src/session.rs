@@ -1,6 +1,6 @@
 //! Owned, host-independent session translated from `session.zig`.
 
-use crate::bus::{KeyState, TimedInput};
+use crate::bus::{KeyState, Media, TimedInput};
 use crate::cartridge::{self, save::Type as SaveType};
 use crate::machine::{
     BootMode, Config as MachineConfig, Machine, RunError, RunResult, StateError, StepOutcome,
@@ -11,7 +11,6 @@ use crate::video_recovery::{self, VideoRecovery};
 use evenfall_audio::{Resampler, StereoSample};
 use evenfall_state::rewind::{self, RewindBuffer};
 use sha1::{Digest, Sha1};
-use std::sync::Arc;
 
 pub use rewind::{Compression as RewindCompression, Info as RewindInfo, RewindConfig};
 
@@ -22,9 +21,12 @@ pub struct RewindPosition {
 }
 
 pub struct Session {
+    /// The live machine is inspectable; replacing it wholesale bypasses the
+    /// session's resident-media binding. Use load_state/reset_with_save for
+    /// resident media, or construct a new Session for different media.
     pub machine: Box<Machine>,
-    pub rom: Arc<Vec<u8>>,
-    pub bios: Arc<[u8]>,
+    rom: Media,
+    bios: Media,
     /// Game identity, SHA-1 of the raw ROM.
     pub rom_sha1: [u8; 20],
     pub rtc_enabled: bool,
@@ -69,6 +71,7 @@ impl Default for Config<'_> {
 #[derive(Debug)]
 pub enum Error {
     InvalidRomSize,
+    OutOfMemory,
     InvalidBiosSize,
     InvalidSampleRate,
     InvalidRtcEpoch,
@@ -121,6 +124,14 @@ impl From<video_recovery::Error> for Error {
 }
 
 impl Session {
+    pub fn rom(&self) -> &[u8] {
+        &self.rom
+    }
+
+    pub fn bios(&self) -> &[u8] {
+        &self.bios
+    }
+
     pub fn create(config: Config<'_>) -> Result<Self, Error> {
         Self::create_impl(config, None).map_err(|(error, _)| error)
     }
@@ -175,22 +186,52 @@ impl Session {
             let rtc_enabled = config.rtc_enabled.unwrap_or(features.rtc);
             let rom_sha1 = Sha1::digest(rom).into();
             let rewind_history = RewindBuffer::new(config.rewind)?;
-            Ok((extracted, save_type, save_data, features, rtc_enabled, rom_sha1, rewind_history))
-        })();
-        let (extracted, save_type, save_data, features, rtc_enabled, rom_sha1, rewind_history) =
-            match prepared {
-                Ok(prepared) => prepared,
-                Err(error) => return Err((error, upload.map(|(buffer, _)| buffer))),
+            let copied = if upload.is_none() && extracted.is_none() {
+                let mut copy = Vec::new();
+                copy.try_reserve_exact(image.len()).map_err(|_| Error::OutOfMemory)?;
+                copy.extend_from_slice(image);
+                Some(copy)
+            } else {
+                None
             };
-        let rom = Arc::new(if let Some(rom) = extracted {
+            let mut bios_copy = Vec::new();
+            bios_copy.try_reserve_exact(config.bios.len()).map_err(|_| Error::OutOfMemory)?;
+            bios_copy.extend_from_slice(config.bios);
+            Ok((
+                extracted,
+                copied,
+                bios_copy,
+                save_type,
+                save_data,
+                features,
+                rtc_enabled,
+                rom_sha1,
+                rewind_history,
+            ))
+        })();
+        let (
+            extracted,
+            copied,
+            bios_copy,
+            save_type,
+            save_data,
+            features,
+            rtc_enabled,
+            rom_sha1,
+            rewind_history,
+        ) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => return Err((error, upload.map(|(buffer, _)| buffer))),
+        };
+        let rom = Media::from_vec(if let Some(rom) = extracted {
             rom
         } else if let Some((mut buffer, image_len)) = upload {
             buffer.truncate(image_len);
             buffer
         } else {
-            config.image.to_vec()
+            copied.expect("borrowed raw ROM was copied during preparation")
         });
-        let bios: Arc<[u8]> = Arc::from(config.bios);
+        let bios = Media::from_vec(bios_copy);
         let machine = Machine::new_with_owned_media(
             MachineConfig {
                 boot: if config.bios.is_empty() { BootMode::Hle } else { BootMode::ExternalBios },
@@ -203,8 +244,8 @@ impl Session {
                 tilt_sample: features.tilt.then_some(Default::default()),
                 ..MachineConfig::default()
             },
-            Arc::clone(&rom),
-            Arc::clone(&bios),
+            rom.clone(),
+            bios.clone(),
         );
         // The output rate is checked above and a freshly initialized APU
         // always has a nonzero sample rate.
@@ -451,9 +492,20 @@ impl Session {
         Ok(self.machine.write_state_alloc()?)
     }
 
+    /// Fallible caller-sized output for the WASM ABI; native writes keep the fast path.
+    pub fn write_state_fallible(&mut self) -> Result<Vec<u8>, Error> {
+        self.canonical_framebuffer()?;
+        Ok(self.machine.write_state_alloc_fallible()?)
+    }
+
     /// Portable live state plus the exact retained rewind policy and history.
     pub fn write_rewind_bundle(&mut self) -> Result<Vec<u8>, Error> {
         let live = self.write_state()?;
+        Ok(self.rewind_history.write_bundle(&live)?)
+    }
+
+    pub fn write_rewind_bundle_fallible(&mut self) -> Result<Vec<u8>, Error> {
+        let live = self.write_state_fallible()?;
         Ok(self.rewind_history.write_bundle(&live)?)
     }
 
@@ -601,9 +653,9 @@ mod tests {
         let address = buffer.as_ptr();
         let session =
             Session::create_from_owned_buffer(Config::default(), buffer, LOOP_ROM.len()).unwrap();
-        assert_eq!(session.rom.as_ref().as_ptr(), address);
+        assert_eq!(session.rom.as_ptr(), address);
         assert_eq!(session.rom.as_slice(), LOOP_ROM);
-        assert!(Arc::ptr_eq(&session.rom, &session.machine.bus.rom));
+        assert_eq!(session.rom.as_ptr(), session.machine.bus.rom.as_ptr());
 
         let buffer = LOOP_ROM.to_vec();
         let address = buffer.as_ptr();
@@ -661,7 +713,7 @@ mod tests {
             let mut stream = Vec::new();
             session.machine.write_state(&mut stream).unwrap();
             assert_eq!(stream, snapshot);
-            let rom = Arc::clone(&session.rom);
+            let rom = session.rom.clone();
             let mut restored = Machine::new_with_owned_media(
                 MachineConfig {
                     save_type,
@@ -669,9 +721,9 @@ mod tests {
                     ..MachineConfig::default()
                 },
                 rom,
-                Arc::clone(&session.bios),
+                session.bios.clone(),
             );
-            assert!(Arc::ptr_eq(&session.rom, &restored.bus.rom));
+            assert_eq!(session.rom.as_ptr(), restored.bus.rom.as_ptr());
             restored.load_state(&snapshot).unwrap();
             assert_eq!(restored.write_state_alloc().unwrap(), snapshot);
         }
@@ -689,7 +741,7 @@ mod tests {
         let state = session.write_state().unwrap();
         caller_bios[100] = 1;
         assert_eq!(session.write_state().unwrap(), state);
-        assert!(Arc::ptr_eq(&session.bios, &session.machine.bus.bios));
+        assert_eq!(session.bios.as_ptr(), session.machine.bus.bios.as_ptr());
 
         let mut foreign = Machine::new(MachineConfig {
             rom: LOOP_ROM,
@@ -999,7 +1051,11 @@ mod tests {
         }
     }
 
-    /// Zig: "rewind bundles reject corrupt envelopes metadata codecs and foreign media atomically"
+    /// Zig: "rewind bundles reject corrupt envelopes metadata codecs and foreign media atomically".
+    /// Also checks the owned-import rollback boundary from "rewind bundle allocation
+    /// failures preserve both live state and old history" for recoverable errors.
+    /// Zig's injected allocator-failure half is deliberately not ported: a
+    /// Rust allocation failure normally aborts instead of returning an error.
     #[test]
     fn rewind_bundles_reject_corrupt_envelopes_metadata_codecs_and_foreign_media_atomically() {
         let mut session = Session::create(Config {
@@ -1043,7 +1099,7 @@ mod tests {
             let hash = blake3::hash(&corrupt[..corrupt.len() - 32]);
             let end = corrupt.len() - 32;
             corrupt[end..].copy_from_slice(hash.as_bytes());
-            assert!(session.load_rewind_bundle(&corrupt).is_err(), "offset {offset}");
+            assert!(session.load_rewind_bundle_owned(corrupt).is_err(), "offset {offset}");
             assert_eq!(session.write_rewind_bundle().unwrap(), before, "offset {offset}");
         }
         for length in [0, 47, bundle.len() - 1] {

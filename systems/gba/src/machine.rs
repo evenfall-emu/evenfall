@@ -1,13 +1,12 @@
 //! Deterministic host-facing hardware seam, translated from `machine.zig`.
 
-use crate::bus::{self, Bus, KeyState, TimedInput};
+use crate::bus::{self, Bus, KeyState, Media, TimedInput};
 use crate::cartridge::{save::Type as SaveType, tilt::Sample as TiltSample};
 use crate::cpu::{self, Cpu};
 use evenfall_host::Cycle;
 use evenfall_state::{Codec, Sink, Source};
 use std::io::Write;
 use std::ops::Range;
-use std::sync::Arc;
 
 pub use cpu::FaultReason;
 
@@ -380,6 +379,8 @@ impl MediaIdentity {
 
 pub struct Machine {
     pub boot_mode: BootMode,
+    /// Hardware inspection is public, but replacing the entire Bus bypasses
+    /// the cached media identity. Use a new Machine for different media.
     pub bus: Bus,
     pub cpu: Cpu,
     latched_fault: Option<Fault>,
@@ -404,17 +405,17 @@ impl Machine {
     /// slices become owned immutable media; no borrowed mutable-media mode
     /// exists. The media digest is computed once and reused by scratch loads.
     pub fn new(config: Config<'_>) -> Box<Self> {
-        Self::new_with_owned_media(config, Arc::new(config.rom.to_vec()), Arc::from(config.bios))
+        Self::new_with_owned_media(
+            config,
+            Media::from_slice(config.rom),
+            Media::from_slice(config.bios),
+        )
     }
 
     /// Adopts an already-owned ROM buffer without moving its bytes. ROM and
     /// BIOS in `config` are ignored in favor of these immutable handles.
-    pub(crate) fn new_with_owned_media(
-        config: Config<'_>,
-        rom: Arc<Vec<u8>>,
-        bios: Arc<[u8]>,
-    ) -> Box<Self> {
-        let identity = MediaIdentity::new(&rom, &bios);
+    pub(crate) fn new_with_owned_media(config: Config<'_>, rom: Media, bios: Media) -> Box<Self> {
+        let identity = MediaIdentity::new(rom.as_slice(), bios.as_slice());
         Self::init_with_media(config, rom, bios, identity)
     }
 
@@ -423,16 +424,16 @@ impl Machine {
     pub(crate) fn new_with_shared_media(source: &Self, config: Config<'_>) -> Box<Self> {
         Self::init_with_media(
             config,
-            Arc::clone(&source.bus.rom),
-            Arc::clone(&source.bus.bios),
+            source.bus.rom.clone(),
+            source.bus.bios.clone(),
             source.media_identity,
         )
     }
 
     fn init_with_media(
         config: Config<'_>,
-        rom: Arc<Vec<u8>>,
-        bios: Arc<[u8]>,
+        rom: Media,
+        bios: Media,
         identity: MediaIdentity,
     ) -> Box<Self> {
         assert!(
@@ -855,6 +856,32 @@ impl Machine {
         output.extend_from_slice(digest.as_bytes());
         let mut header = Vec::with_capacity(Self::STATE_HEADER_SIZE);
         self.write_state_header(&mut header, payload_len)?;
+        output[..Self::STATE_HEADER_SIZE].copy_from_slice(&header);
+        Ok(output)
+    }
+
+    /// Count first so a caller-sized WASM export can fail without aborting the instance.
+    pub fn write_state_alloc_fallible(&self) -> Result<Vec<u8>, StateError> {
+        self.validate_state_write()?;
+        let mut count = Sink::new(None, None);
+        self.write_state_payload(&mut count)?;
+        let payload_len = usize::try_from(count.count)
+            .ok()
+            .filter(|&len| len <= Self::MAX_STATE_PAYLOAD)
+            .ok_or(evenfall_state::Error::InvalidSaveState)?;
+        let size = Self::STATE_HEADER_SIZE + payload_len + 32;
+        let mut output = Vec::new();
+        output.try_reserve_exact(size).map_err(|_| evenfall_state::Error::OutOfMemory)?;
+        output.resize(Self::STATE_HEADER_SIZE, 0);
+        let mut hasher = blake3::Hasher::new();
+        let mut sink = Sink::new(Some(&mut output), Some(&mut hasher));
+        self.write_state_payload(&mut sink)?;
+        if sink.count != count.count {
+            return Err(evenfall_state::Error::InvalidSaveState.into());
+        }
+        output.extend_from_slice(hasher.finalize().as_bytes());
+        let mut header = Vec::with_capacity(Self::STATE_HEADER_SIZE);
+        self.write_state_header(&mut header, count.count)?;
         output[..Self::STATE_HEADER_SIZE].copy_from_slice(&header);
         Ok(output)
     }

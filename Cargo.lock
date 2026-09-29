@@ -209,6 +209,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "evenfall-gba-web"
+version = "0.1.0"
+dependencies = [
+ "evenfall-audio",
+ "evenfall-gba",
+ "evenfall-state",
+]
+
+[[package]]
 name = "evenfall-host"
 version = "0.1.0"
 dependencies = [

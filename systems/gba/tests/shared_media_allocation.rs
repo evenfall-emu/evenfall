@@ -2,7 +2,6 @@
 use evenfall_gba::machine::Machine;
 use evenfall_gba::session::{Config, RewindConfig, Session};
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
 
 const ROM_BYTES: usize = 32 * 1024 * 1024;
@@ -72,8 +71,8 @@ fn large_rom_reset_and_multi_entry_bundle_import_do_not_allocate_media() {
         ROM_BYTES,
     )
     .unwrap();
-    assert_eq!(session.rom.as_ref().as_ptr(), address);
-    assert!(Arc::ptr_eq(&session.rom, &session.machine.bus.rom));
+    assert_eq!(session.rom().as_ptr(), address);
+    assert_eq!(session.rom().as_ptr(), session.machine.bus.rom().as_ptr());
 
     for _ in 0..4 {
         session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
@@ -84,15 +83,15 @@ fn large_rom_reset_and_multi_entry_bundle_import_do_not_allocate_media() {
     let bundle = session.write_rewind_bundle().unwrap();
 
     let (total, largest) = measured(|| session.reset_with_save(&[]).unwrap());
-    assert_eq!(session.rom.as_ref().as_ptr(), address);
-    assert!(Arc::ptr_eq(&session.rom, &session.machine.bus.rom));
+    assert_eq!(session.rom().as_ptr(), address);
+    assert_eq!(session.rom().as_ptr(), session.machine.bus.rom().as_ptr());
     assert!(largest < ROM_BYTES / 4, "reset allocated {largest} bytes at once");
     assert!(total < 8 * 1024 * 1024, "reset allocated {total} bytes total");
 
     let (total, largest) = measured(|| session.load_rewind_bundle_owned(bundle).unwrap());
     assert_eq!(session.machine.now(), cycle);
     assert_eq!(session.rewind_depth(), depth);
-    assert!(Arc::ptr_eq(&session.rom, &session.machine.bus.rom));
+    assert_eq!(session.rom().as_ptr(), session.machine.bus.rom().as_ptr());
     assert!(largest < ROM_BYTES / 4, "bundle import allocated {largest} bytes at once");
     assert!(total < 8 * 1024 * 1024, "bundle import allocated {total} bytes total");
 }
