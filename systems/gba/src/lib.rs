@@ -10,6 +10,7 @@
 // [apu]
 
 // [video]
+pub mod video;
 
 // [bus]
 
