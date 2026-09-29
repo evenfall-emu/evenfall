@@ -31,3 +31,6 @@ pub mod cpu;
 pub mod hle;
 
 // [machine]
+pub mod machine;
+pub mod session;
+pub mod video_recovery;
