@@ -3364,6 +3364,177 @@ impl Bus {
     }
 }
 
+/// Couple ready serial endpoints in cable order. All peers share one cycle origin.
+pub fn synchronize_sio(
+    peers: &mut [&mut Bus],
+    connection: SioConnection,
+) -> Result<bool, SioLinkError> {
+    if !(2..=4).contains(&peers.len()) || (connection == SioConnection::Cable2p && peers.len() != 2)
+    {
+        return Err(SioLinkError::UnsupportedPeerCount);
+    }
+    let mode = (peers[0].sio_control >> 12) & 3;
+    if peers.iter().any(|peer| peer.rcnt & 0x8000 != 0 || (peer.sio_control >> 12) & 3 != mode) {
+        return Ok(false);
+    }
+    match mode {
+        0 | 1 => {
+            let mut outgoing = [0u32; 4];
+            let mut internal = [false; 4];
+            for (index, peer) in peers.iter().enumerate() {
+                if peer.sio_control & 0x80 == 0 {
+                    return Ok(false);
+                }
+                internal[index] = peer.sio_control & 1 != 0;
+                outgoing[index] = if mode == 0 {
+                    u32::from(peer.sio_send as u8)
+                } else {
+                    u32::from(peer.sio_data[0]) | (u32::from(peer.sio_data[1]) << 16)
+                };
+            }
+            let master = match connection {
+                SioConnection::Cable2p => {
+                    if internal[0] == internal[1] {
+                        return if internal[0] {
+                            Err(SioLinkError::ClockConflict)
+                        } else {
+                            Ok(false)
+                        };
+                    }
+                    usize::from(!internal[0])
+                }
+                SioConnection::CableMulti => {
+                    if !internal[0] {
+                        if internal[1..peers.len()].contains(&true) {
+                            return Err(SioLinkError::ClockConflict);
+                        }
+                        return Ok(false);
+                    }
+                    if internal[1..peers.len()].contains(&true) {
+                        return Err(SioLinkError::ClockConflict);
+                    }
+                    0
+                }
+            };
+            let deadline =
+                peers[master].sio_completion_cycle.expect("internal SIO clock has a deadline");
+            if peers.iter().any(|peer| peer.current_cycle > deadline) {
+                return Err(SioLinkError::MissedDeadline);
+            }
+            match connection {
+                SioConnection::Cable2p => {
+                    peers[0].sio_receive_value = outgoing[1];
+                    peers[1].sio_receive_value = outgoing[0];
+                    arm_sio_completion(peers[1 - master], deadline);
+                }
+                SioConnection::CableMulti => {
+                    peers[0].sio_receive_value = 0;
+                    for index in 1..peers.len() {
+                        peers[index].sio_receive_value = outgoing[index - 1];
+                        arm_sio_completion(peers[index], deadline);
+                    }
+                }
+            }
+            Ok(true)
+        }
+        2 => {
+            if connection != SioConnection::CableMulti {
+                return Err(SioLinkError::UnsupportedMode);
+            }
+            let parent_started = peers[0].sio_control & 0x80 != 0;
+            for (index, peer) in peers.iter_mut().enumerate() {
+                peer.sio_control =
+                    (peer.sio_control & !0x000c) | 0x0008 | if index == 0 { 0 } else { 0x0004 };
+                if index != 0 && !parent_started {
+                    peer.sio_control &= !0x80;
+                }
+            }
+            if !parent_started {
+                return Ok(false);
+            }
+            if peers[0].sio_completion_cycle.is_some() {
+                return Ok(true);
+            }
+            let mut received = [0xffff; 4];
+            for (index, peer) in peers.iter().enumerate() {
+                received[index] = peer.sio_send;
+            }
+            const DURATIONS: [[Cycle; 3]; 4] = [
+                [73_003, 107_680, 142_356],
+                [18_251, 26_920, 35_589],
+                [12_167, 17_947, 23_726],
+                [6_075, 8_973, 11_863],
+            ];
+            let Some(started_at) = peers[0].sio_start_cycle else { return Ok(false) };
+            let deadline =
+                started_at + DURATIONS[(peers[0].sio_control & 3) as usize][peers.len() - 2];
+            if peers.iter().any(|peer| peer.current_cycle > deadline) {
+                return Err(SioLinkError::MissedDeadline);
+            }
+            for (index, peer) in peers.iter_mut().enumerate() {
+                peer.sio_data = [0xffff; 4];
+                peer.sio_multiplayer_receive = received;
+                peer.sio_multiplayer_id = index as u8;
+                peer.sio_control |= 0x80;
+                arm_sio_completion(peer, deadline);
+            }
+            Ok(true)
+        }
+        3 => {
+            if connection != SioConnection::Cable2p {
+                return Err(SioLinkError::UnsupportedMode);
+            }
+            let mut progressed = false;
+            for index in 0..2 {
+                let (sender, receiver) = if index == 0 {
+                    let (left, right) = peers.split_at_mut(1);
+                    (&mut *left[0], &mut *right[0])
+                } else {
+                    let (left, right) = peers.split_at_mut(1);
+                    (&mut *right[0], &mut *left[0])
+                };
+                let receiver_ready = receiver.sio_control & 0x800 != 0
+                    && receiver.uart_rx_fifo.count
+                        < if receiver.sio_control & 0x100 != 0 { 4 } else { 1 }
+                    && receiver.uart_rx_arrival_cycle.is_none();
+                sender.uart_cts_ready = receiver_ready;
+                let was_active = sender.uart_tx_active.is_some();
+                sender.maybe_start_uart_transmit();
+                if !was_active && sender.uart_tx_active.is_some() {
+                    progressed = true;
+                }
+                let Some(value) = sender.uart_tx_active else { continue };
+                if sender.uart_tx_peer_scheduled {
+                    continue;
+                }
+                let deadline =
+                    sender.uart_tx_completion_cycle.expect("active UART transmit has a deadline");
+                if receiver.current_cycle > deadline {
+                    return Err(SioLinkError::MissedDeadline);
+                }
+                if receiver.sio_control & 0x800 != 0 {
+                    receiver.uart_rx_arrival_value = value;
+                    receiver.uart_rx_arrival_cycle = Some(deadline);
+                    if receiver.current_cycle == deadline {
+                        receiver.complete_uart_receive();
+                    }
+                }
+                sender.uart_tx_peer_scheduled = true;
+                progressed = true;
+            }
+            Ok(progressed)
+        }
+        _ => unreachable!(),
+    }
+}
+
+fn arm_sio_completion(peer: &mut Bus, deadline: Cycle) {
+    peer.sio_completion_cycle = Some(deadline);
+    if peer.current_cycle == deadline {
+        peer.complete_sio_transfer();
+    }
+}
+
 fn prefetch_duty_valid_until(address: u32, opcode_bytes: u8) -> u32 {
     if address & 0x1ffff == 0 {
         address.wrapping_add(u32::from(opcode_bytes))
@@ -3570,6 +3741,112 @@ mod tests {
         bus.elapse(3);
         assert_eq!(&bus.iwram[0x300..0x308], &[0xef, 0xbe, 0xef, 0xbe, 0xef, 0xbe, 0xef, 0xbe]);
         assert_eq!(bus.dma_channels[3].latched_source, 0);
+    }
+
+    /// Zig: "SIO synchronization waits for both normal peers and rejects one past the deadline".
+    #[test]
+    fn sio_peer_arriving_after_master_deadline_is_rejected() {
+        let mut master = Bus::init(&[]);
+        let mut slave = Bus::init(&[]);
+        dma_half(&mut master, MMIO_BASE + 0x134, 0);
+        dma_half(&mut slave, MMIO_BASE + 0x134, 0);
+        dma_half(&mut master, MMIO_BASE + 0x128, 0x0083);
+        assert_eq!(
+            synchronize_sio(&mut [&mut master, &mut slave], SioConnection::Cable2p),
+            Ok(false)
+        );
+        dma_half(&mut slave, MMIO_BASE + 0x128, 0x0080);
+        slave.elapse(65);
+        assert_eq!(
+            synchronize_sio(&mut [&mut master, &mut slave], SioConnection::Cable2p),
+            Err(SioLinkError::MissedDeadline)
+        );
+    }
+
+    /// Zig: "four-player SIO exchanges every multiplayer word at the parent baud deadline".
+    #[test]
+    fn multiplayer_sio_delivers_all_four_words_at_parent_deadline() {
+        let mut buses = std::array::from_fn::<Bus, 4, _>(|_| Bus::init(&[]));
+        let sent = [0x0123, 0x4567, 0x89ab, 0xcdef];
+        for (index, bus) in buses.iter_mut().enumerate() {
+            dma_half(bus, MMIO_BASE + 0x134, 0);
+            dma_half(bus, MMIO_BASE + 0x128, 0x2003);
+            dma_half(bus, MMIO_BASE + 0x12a, sent[index]);
+            dma_half(bus, MMIO_BASE + 0x128, if index == 0 { 0x6083 } else { 0x6003 });
+        }
+        let [a, b, c, d] = &mut buses;
+        assert_eq!(synchronize_sio(&mut [a, b, c, d], SioConnection::CableMulti), Ok(true));
+        for bus in &mut buses {
+            assert_eq!(bus.sio_completion_cycle, Some(bus.now() + 11_863));
+            bus.elapse(11_862);
+            assert_ne!(bus.sio_control & 0x80, 0);
+            bus.elapse(1);
+        }
+        for (index, bus) in buses.iter().enumerate() {
+            assert_eq!(bus.sio_data, sent);
+            assert_eq!(bus.sio_control & 0x80, 0);
+            assert_eq!(bus.sio_control & 0x30, (index as u16) << 4);
+            assert_ne!(bus.interrupt_request_flags & (1 << 7), 0);
+        }
+    }
+
+    /// Zig: "UART CTS waits until the peer receiver has capacity".
+    #[test]
+    fn uart_cts_waits_for_receiver_capacity() {
+        let mut sender = Bus::init(&[]);
+        let mut receiver = Bus::init(&[]);
+        dma_half(&mut sender, MMIO_BASE + 0x134, 0);
+        dma_half(&mut receiver, MMIO_BASE + 0x134, 0);
+        dma_half(&mut sender, MMIO_BASE + 0x128, 0x3487);
+        dma_half(&mut receiver, MMIO_BASE + 0x128, 0x3083);
+        dma_half(&mut sender, MMIO_BASE + 0x12a, 0x3c);
+        assert_eq!(sender.uart_tx_completion_cycle, None);
+        assert_eq!(
+            synchronize_sio(&mut [&mut sender, &mut receiver], SioConnection::Cable2p),
+            Ok(false)
+        );
+        dma_half(&mut receiver, MMIO_BASE + 0x128, 0x3883);
+        assert_eq!(
+            synchronize_sio(&mut [&mut sender, &mut receiver], SioConnection::Cable2p),
+            Ok(true)
+        );
+        assert!(sender.uart_tx_completion_cycle.is_some());
+    }
+
+    /// Zig: "BIOS hard reset preserves host audio suppression".
+    #[test]
+    fn bios_hard_reset_preserves_host_audio_suppression() {
+        let mut bus = Bus::init(&[]);
+        let mut samples = [StereoSample::default(); 16];
+        bus.set_audio_output(false);
+        bus.hard_reset();
+        bus.elapse_cpu_internal(1024);
+        assert_eq!(bus.drain_audio_samples(&mut samples), 0);
+        bus.set_audio_output(true);
+        bus.elapse_cpu_internal(1024);
+        assert_eq!(bus.drain_audio_samples(&mut samples), 2);
+    }
+
+    /// Zig: "no-event materialization precedes register reset and hard reset clock changes".
+    #[test]
+    fn deferred_clock_materializes_before_register_and_hard_reset() {
+        let mut bus = Bus::init(&[]);
+        bus.timers[0].control = 0x80;
+        bus.begin_device_batch();
+        bus.elapse(7);
+        bus.register_ram_reset(0);
+        assert_eq!(bus.now(), 7);
+        assert_eq!(bus.ppu_timing.cycle_in_line, 7);
+        assert_eq!(bus.timers[0].counter, 7);
+        bus.elapse(5);
+        bus.hard_reset();
+        assert_eq!(bus.now(), 12);
+        assert_eq!(bus.ppu_timing.cycle_in_line, 0);
+        bus.elapse(1);
+        assert_eq!(bus.now(), 13);
+        assert_eq!(bus.ppu_timing.cycle_in_line, 1);
+        assert_eq!(bus.timers[0].counter, 0);
+        bus.end_device_batch();
     }
 
     /// FIFO ring-buffer unit check; full UART integration belongs to the serial bus tests.
