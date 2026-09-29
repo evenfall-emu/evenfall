@@ -14,6 +14,7 @@
 // [bus]
 
 // [cpu]
+pub mod cpu;
 
 // [hle]
 
