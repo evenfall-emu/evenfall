@@ -89,7 +89,7 @@ fn text_tile_rows_match_the_per_dot_text_renderer() {
         for color in &mut rows.palette {
             *color = next(&mut seed) as u8;
         }
-        for chunk in rows.vram.chunks_exact_mut(4) {
+        for chunk in rows.vram.as_chunks_mut::<4>().0 {
             let value = match next(&mut seed) & 3 {
                 0 => 0,
                 1 => next(&mut seed) | 0x1111_1111,
@@ -185,7 +185,7 @@ fn ordinary_and_effects_aware_text_spans_agree_across_map_wraps_flips_and_transp
             }
             for tile_y in 0..64 {
                 for tile_x in 0..64 {
-                    let entry = ((tile_x + tile_y * 3) % 16
+                    let entry = (((tile_x + tile_y * 3) % 16)
                         | ((tile_x & 1) << 10)
                         | ((tile_y & 1) << 11)
                         | ((tile_y % 16) << 12)) as u16;

@@ -227,7 +227,7 @@ impl Bus {
             }
             let mosaic = self.bg_controls[index + 2] & (1 << 6) != 0;
             let vertical = usize::from(self.mosaic >> 4 & 15) + 1;
-            if mosaic && (line + 1) % vertical != 0 && line != SCREEN_HEIGHT - 1 {
+            if mosaic && !(line + 1).is_multiple_of(vertical) && line != SCREEN_HEIGHT - 1 {
                 continue;
             }
             let count = if mosaic { vertical as i32 } else { 1 };
@@ -298,7 +298,7 @@ impl Bus {
         for base in (0..SCREEN_WIDTH).step_by(16) {
             let i = first + base;
             let mut colors: [u16; 16] = self.frame_pixels[i..i + 16].try_into().unwrap();
-            for lane in 0..16 {
+            for (lane, color) in colors.iter_mut().enumerate() {
                 let x = base + lane;
                 if self.line_window_masks[x] & 0x20 == 0 {
                     continue;
@@ -313,7 +313,7 @@ impl Bus {
                 if !alpha && !brightness {
                     continue;
                 }
-                let original = colors[lane];
+                let original = *color;
                 let mut adjusted = 0;
                 for shift in [0, 5, 10] {
                     let top = (original >> shift) & 31;
@@ -321,13 +321,13 @@ impl Bus {
                         let bottom = (self.frame_second_pixels[index] >> shift) & 31;
                         ((top * eva + bottom * evb) >> 4).min(31)
                     } else if effect == 2 {
-                        top + ((31 - top) * factor >> 4)
+                        top + (((31 - top) * factor) >> 4)
                     } else {
-                        top - (top * factor >> 4)
+                        top - ((top * factor) >> 4)
                     };
                     adjusted |= component << shift;
                 }
-                colors[lane] = adjusted;
+                *color = adjusted;
             }
             self.frame_pixels[i..i + 16].copy_from_slice(&colors);
         }

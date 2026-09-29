@@ -569,12 +569,12 @@ impl Bus {
     }
 
     pub(crate) fn background_control_index(address: u32) -> Option<usize> {
-        (address >= MMIO_BASE + 8 && address <= MMIO_BASE + 14 && address & 1 == 0)
+        ((MMIO_BASE + 8..=MMIO_BASE + 14).contains(&address) && address & 1 == 0)
             .then_some(((address - MMIO_BASE - 8) / 2) as usize)
     }
 
     pub(crate) fn background_offset_register(address: u32) -> Option<(usize, bool)> {
-        (address >= MMIO_BASE + 0x10 && address <= MMIO_BASE + 0x1E && address & 1 == 0)
+        ((MMIO_BASE + 0x10..=MMIO_BASE + 0x1E).contains(&address) && address & 1 == 0)
             .then_some((((address - MMIO_BASE - 0x10) / 4) as usize, address & 2 != 0))
     }
 
