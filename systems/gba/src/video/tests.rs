@@ -281,3 +281,57 @@ fn affine_matrix_split_preserves_accumulated_source_coordinate() {
     assert_eq!(after.ref_x + after.pa * 100, 100 * 256);
     assert_eq!(after.ref_x + after.pa * 101, 102 * 256);
 }
+
+/// ZiGBA: "memoized scanlines notice every change to the memory they read"
+#[test]
+fn memoized_scanline_invalidates_on_a_changed_bitmap_page() {
+    let mut bus = Bus::init(&[]);
+    bus.dispcnt = 3 | (1 << 10);
+    bus.vram[0] = 0x1F;
+    bus.render_scanline(0);
+    assert_eq!(bus.frame_pixels[0], 0x001F);
+    bus.render_scanline(0);
+    assert_eq!(bus.scanline_memo.kept, 1);
+
+    bus.vram[0] = 3;
+    bus.scanline_memo.mark_vram(0);
+    bus.render_scanline(0);
+    assert_eq!(bus.scanline_memo.kept, 1);
+    assert_eq!(bus.frame_pixels[0], 3);
+
+    let mut fresh = twin(&bus);
+    fresh.render_scanline(0);
+    assert_line(&bus, &fresh, 0);
+}
+
+/// ZiGBA: "front-to-back BG passes keep the two front-most BG pixels"
+#[test]
+fn front_to_back_passes_preserve_priority_and_the_next_visible_bg() {
+    let mut bus = Bus::init(&[]);
+    bus.dispcnt = (1 << 8) | (1 << 9);
+    bus.bg_controls[0] = 1 | (28 << 8);
+    bus.bg_controls[1] = (1 << 2) | (29 << 8);
+    bus.vram[..4].fill(0x11);
+    bus.vram[0x4000..0x4004].fill(0x22);
+    bus.palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes());
+    bus.palette[4..6].copy_from_slice(&0x03E0u16.to_le_bytes());
+    bus.bldcnt = (1 << 1) | (1 << 6) | (1 << 8);
+    bus.bldalpha = (8 << 8) | 8;
+    bus.render_scanline(0);
+    assert_eq!(bus.frame_layers[0], 1);
+    assert_eq!(bus.frame_priorities[0], 0);
+    assert_eq!(bus.frame_second_layers[0], 0);
+    assert_eq!(bus.frame_second_priorities[0], 1);
+    assert_eq!(bus.frame_second_pixels[0], 0x001F);
+    assert_eq!(bus.frame_pixels[0], 0x01EF);
+
+    // At equal BG priority, the lower BG number is the first surface.
+    bus.bg_controls[0] &= !3;
+    bus.bldcnt = (1 << 0) | (1 << 6) | (1 << 9);
+    bus.scanline_memo.mark_registers();
+    bus.render_scanline(0);
+    assert_eq!(bus.frame_layers[0], 0);
+    assert_eq!(bus.frame_second_layers[0], 1);
+    assert_eq!(bus.frame_second_pixels[0], 0x03E0);
+    assert_eq!(bus.frame_pixels[0], 0x01EF);
+}
