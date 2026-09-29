@@ -22,6 +22,13 @@ miniz_oxide.workspace = true
 sha1 = "0.10"
 sha2 = "0.10"
 
+[dev-dependencies]
+divan.workspace = true
+
+[[bench]]
+name = "hot_paths"
+harness = false
+
 [[test]]
 name = "validator"
 path = "tests/validator.rs"
