@@ -2,7 +2,8 @@
 //! selects exact names or hyphen-delimited prefixes; without arguments all
 //! available ROMs run. Missing ROMs are reported, never synthesized.
 //! `--list`, `--gba-tests DIR`, `--probes DIR`, and `--bios FILE` mirror the
-//! Zig runner's input options. Probes always use HLE boot.
+//! Zig runner's input options. `--require-roms` makes absent inputs a CI
+//! failure; otherwise each absent case is skipped. Probes always use HLE boot.
 
 mod jsmolka_cases;
 mod probe_cases;
@@ -74,6 +75,7 @@ fn main() {
     let mut probes = root.join("probe/build");
     let mut bios_path = env::var_os("EVENFALL_VALIDATE_BIOS").map(PathBuf::from);
     let mut list = false;
+    let mut require_roms = false;
     let mut args = env::args_os().skip(1);
     while let Some(arg) = args.next() {
         match arg.to_str() {
@@ -83,6 +85,7 @@ fn main() {
             Some("--probes") => probes = args.next().expect("--probes needs a directory").into(),
             Some("--bios") => bios_path = Some(args.next().expect("--bios needs a file").into()),
             Some("--list") => list = true,
+            Some("--require-roms") => require_roms = true,
             Some(name) if !name.starts_with('-') => filters.push(name.to_owned()),
             _ => panic!("unknown validator argument: {}", arg.to_string_lossy()),
         }
@@ -137,13 +140,15 @@ fn main() {
                 }
             }
             if let Some(path) = missing {
-                println!(
-                    "skip  {}: {} absent ({} ROMs not installed/built)",
-                    case.name,
-                    path.display(),
-                    suite
-                );
-                skipped += 1;
+                let reason =
+                    format!("{} absent ({} ROMs not installed/built)", path.display(), suite);
+                if require_roms {
+                    eprintln!("FAIL  {}: {reason}", case.name);
+                    failed.push(case.name);
+                } else {
+                    println!("skip  {}: {reason}", case.name);
+                    skipped += 1;
+                }
                 continue;
             }
             let context =
@@ -164,5 +169,6 @@ fn main() {
         return;
     }
     println!("{passed} passed, {skipped} skipped, {} failed", failed.len());
+    assert!(passed != 0 || !failed.is_empty(), "no validator ROMs available");
     assert!(failed.is_empty(), "failed: {}", failed.join(", "));
 }
