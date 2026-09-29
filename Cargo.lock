@@ -219,6 +219,7 @@ dependencies = [
 name = "evenfall-parity"
 version = "0.1.0"
 dependencies = [
+ "evenfall-gba",
  "evenfall-replay",
  "serde_json",
 ]

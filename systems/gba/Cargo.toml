@@ -1,6 +1,7 @@
 [package]
 name = "evenfall-gba"
 description = "A deterministic, cycle-aware Game Boy Advance core"
+autotests = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -27,6 +28,19 @@ divan.workspace = true
 [[bench]]
 name = "hot_paths"
 harness = false
+
+[[test]]
+name = "validator"
+path = "tests/validator.rs"
+harness = false
+
+[[test]]
+name = "mgba_suite_source"
+path = "tests/mgba_suite_source.rs"
+
+[[test]]
+name = "mgba_suite_timing"
+path = "tests/mgba_suite_timing.rs"
 
 [lints]
 workspace = true
