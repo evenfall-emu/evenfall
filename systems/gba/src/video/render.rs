@@ -285,8 +285,8 @@ impl Bus {
         }
     }
 
-    /// Fixed 16-lane chunks instead of Zig's `@Vector(16, u16)`: the control
-    /// decisions remain independent and the arrays are amenable to LLVM SIMD.
+    /// Fixed 16-lane chunks instead of Zig's `@Vector(16, u16)`; per-lane
+    /// window and target decisions keep this loop scalar on current LLVM.
     pub(super) fn apply_color_effects_vector(&mut self, line: usize) {
         let effect = (self.bldcnt >> 6) & 3;
         let first_targets = self.bldcnt & 0x3F;
