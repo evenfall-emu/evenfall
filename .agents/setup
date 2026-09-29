@@ -15,7 +15,7 @@ step() {
 }
 
 step "Installing missing system packages"
-packages=(build-essential curl ca-certificates git xz-utils)
+packages=(build-essential curl ca-certificates git python3 xz-utils)
 missing=()
 for package in "${packages[@]}"; do
     if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -Fqx 'install ok installed'; then
