@@ -1,6 +1,12 @@
 //! GBA CPU state and the scheduling seam around the ARM7TDMI core.
 
-use crate::bus::{Access, AccessKind, AccessSource, AccessWidth, Bus, InstructionFetchRegion};
+use crate::bus::{
+    Access, AccessKind, AccessSource, AccessWidth, Bus, InstructionFetchRegion, PowerState,
+    ThumbStream,
+};
+pub use crate::multiboot::{
+    Encoder as MultiBootEncoder, Mode as MultiBootMode, Parameters as MultiBootParameters,
+};
 use evenfall_cpu_arm::{Core, Pipeline};
 use evenfall_state::Codec;
 use std::ops::{Deref, DerefMut};
@@ -185,6 +191,13 @@ pub enum StepOutcome {
     Faulted(FaultStep),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChunkOutcome {
+    Deadline,
+    Generic,
+    Faulted,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HleBranchResult {
     pub branched: bool,
@@ -265,38 +278,6 @@ pub struct HleMultiBootContinuation {
     pub wait_started_at: u64,
     pub instruction_address: u32,
     pub instruction_set: InstructionSet,
-}
-
-// These nested protocol layouts are ZiGBA multiboot.Parameters/Mode/Encoder.
-// Once the devices crate is merged, they are replaced by its canonical types.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Codec)]
-pub struct MultiBootParameters {
-    pub handshake_data: u8,
-    pub client_data: [u8; 3],
-    pub palette_data: u8,
-    pub client_bit: u8,
-    pub source: u32,
-    pub end: u32,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
-#[codec(tag_bits = 2)]
-pub enum MultiBootMode {
-    #[default]
-    #[codec(rename = "normal_256_khz")]
-    Normal256Khz,
-    #[codec(rename = "multiplayer_115_khz")]
-    Multiplayer115Khz,
-    #[codec(rename = "normal_2_mhz")]
-    Normal2Mhz,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Codec)]
-pub struct MultiBootEncoder {
-    pub checksum: u32,
-    pub key_state: u32,
-    pub checksum_polynomial: u32,
-    pub key_xor: u32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Codec)]
@@ -414,6 +395,109 @@ impl Default for HleBulkWork {
     }
 }
 
+impl HleBulkWork {
+    pub fn service(&self) -> u8 {
+        match self {
+            Self::CpuSet(_) => 0x0b,
+            Self::CpuFastSet(_) => 0x0c,
+            Self::BgAffineSet(_) => 0x0e,
+            Self::ObjAffineSet(_) => 0x0f,
+            Self::BitUnpack(_) => 0x10,
+            Self::Lz77(work) => {
+                if work.vram_output {
+                    0x12
+                } else {
+                    0x11
+                }
+            }
+            Self::Huffman(_) => 0x13,
+            Self::RunLength(work) => {
+                if work.vram_output {
+                    0x15
+                } else {
+                    0x14
+                }
+            }
+            Self::DifferentialFilter(work) => {
+                if work.input_halfword {
+                    0x18
+                } else if work.output_halfword {
+                    0x17
+                } else {
+                    0x16
+                }
+            }
+        }
+    }
+
+    pub fn valid(&self) -> bool {
+        match self {
+            Self::CpuSet(work) => {
+                work.remaining <= 0x001f_ffff
+                    && (work.source | work.destination) & (if work.word { 3 } else { 1 }) == 0
+            }
+            Self::CpuFastSet(work) => {
+                work.remaining_blocks <= 0x0004_0000 && (work.source | work.destination) & 3 == 0
+            }
+            Self::BgAffineSet(work) => {
+                !bg_affine_set_mmio_fault(work.source, work.destination, work.remaining)
+            }
+            Self::ObjAffineSet(_) => true,
+            Self::BitUnpack(work) => {
+                matches!(work.source_width, 1 | 2 | 4 | 8)
+                    && matches!(work.destination_width, 1 | 2 | 4 | 8 | 16 | 32)
+                    && work.input_bits_remaining <= 8
+                    && work.input_bits_remaining % work.source_width == 0
+                    && work.output_bits < 32
+                    && work.output_bits % work.destination_width == 0
+            }
+            Self::Lz77(work) => work.blocks_remaining <= 8,
+            Self::Huffman(work) => {
+                matches!(work.symbol_bits, 4 | 8)
+                    && work.output_bits < 32
+                    && work.output_bits % work.symbol_bits == 0
+            }
+            Self::RunLength(work) => work.padding <= 3,
+            Self::DifferentialFilter(work) => work.output_halfword || !work.input_halfword,
+        }
+    }
+}
+
+fn bg_affine_set_mmio_fault(source: u32, destination: u32, count: u32) -> bool {
+    // ZiGBA's four record streams, in per-record bus access order.
+    for (base, stride) in [
+        (source, 20),
+        (source.wrapping_add(4), 20),
+        (destination.wrapping_add(8), 16),
+        (destination.wrapping_add(12), 16),
+    ] {
+        if base & 3 == 0 {
+            continue;
+        }
+        let record = if base >> 24 == 4 {
+            0
+        } else {
+            (u64::from(0x0400_0000u32.wrapping_sub(base)) + stride - 1) / stride
+        };
+        if record < u64::from(count) {
+            return true;
+        }
+    }
+    false
+}
+
+fn instruction_address_aligned(address: u32, instruction_set: InstructionSet) -> bool {
+    address & (if instruction_set == InstructionSet::Thumb { 1 } else { 3 }) == 0
+}
+
+fn valid_hle_return_state(address: u32, cpsr: u32) -> bool {
+    evenfall_cpu_arm::ProcessorMode::parse(cpsr).is_some()
+        && instruction_address_aligned(
+            address,
+            if cpsr & (1 << 5) != 0 { InstructionSet::Thumb } else { InstructionSet::Arm },
+        )
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Codec)]
 pub struct HleBulkService {
     pub instruction_address: u32,
@@ -453,6 +537,127 @@ impl Cpu {
     pub fn write_state_schema(sink: &mut evenfall_state::Sink<'_>) -> evenfall_state::Result<()> {
         evenfall_state::schema_name(sink, "zigba.cpu.state.v6")?;
         Self::schema(sink)
+    }
+
+    pub fn write_state(
+        &self,
+        sink: &mut evenfall_state::Sink<'_>,
+        current_cycle: u64,
+    ) -> evenfall_state::Result<()> {
+        self.validate_state(current_cycle)?;
+        let mut canonical = self.clone();
+        canonical.hle_irq_stack[usize::from(canonical.hle_irq_depth)..]
+            .fill(HleIrqFrame::default());
+        if let Some(continuation) = &mut canonical.hle_sound_driver_main {
+            continuation.pending_players[usize::from(continuation.pending_player_count)..].fill(0);
+        }
+        canonical.encode(sink)
+    }
+
+    pub fn read_state(
+        &mut self,
+        source: &mut evenfall_state::Source<'_>,
+        current_cycle: u64,
+    ) -> evenfall_state::Result<()> {
+        self.decode(source)?;
+        self.validate_state(current_cycle)
+    }
+
+    pub fn validate_state(&self, current_cycle: u64) -> evenfall_state::Result<()> {
+        use evenfall_state::Error::InvalidSaveState as Invalid;
+        if evenfall_cpu_arm::ProcessorMode::parse(self.cpsr).is_none()
+            || usize::from(self.hle_irq_depth) > self.hle_irq_stack.len()
+        {
+            return Err(Invalid);
+        }
+        let set = if self.is_thumb() { InstructionSet::Thumb } else { InstructionSet::Arm };
+        if !instruction_address_aligned(self.core.next_instruction_address, set) {
+            return Err(Invalid);
+        }
+        if !self.hle_bios
+            && (self.hle_irq_depth != 0
+                || self.hle_interrupt_wait_mask.is_some()
+                || self.hle_sound_channel_clear.is_some()
+                || self.hle_sound_driver_main.is_some()
+                || self.hle_service.is_some())
+        {
+            return Err(Invalid);
+        }
+        for frame in &self.hle_irq_stack[..usize::from(self.hle_irq_depth)] {
+            if !valid_hle_return_state(frame.return_address, frame.saved_spsr_irq) {
+                return Err(Invalid);
+            }
+        }
+        if let Some(continuation) = &self.hle_sound_channel_clear {
+            if !(1..=4).contains(&continuation.channel)
+                || continuation.identifier != 0x6873_6d53
+                || !valid_hle_return_state(continuation.return_address, continuation.return_cpsr)
+            {
+                return Err(Invalid);
+            }
+        }
+        if let Some(continuation) = &self.hle_sound_driver_main {
+            let count = usize::from(continuation.pending_player_count);
+            if count > continuation.pending_players.len()
+                || !valid_hle_return_state(continuation.return_address, continuation.return_cpsr)
+                || (continuation.phase == HleSoundDriverMainPhase::AfterMp2kCallback)
+                    == (count == 0)
+            {
+                return Err(Invalid);
+            }
+        }
+        match &self.hle_service {
+            Some(HleService::MultiBoot(continuation)) => {
+                let p = &continuation.parameters;
+                p.validate().map_err(|_| Invalid)?;
+                let length = p.payload_length();
+                if continuation.source_offset > length
+                    || continuation.source_offset & 3 != 0
+                    || continuation.wait_started_at > current_cycle
+                    || !instruction_address_aligned(
+                        continuation.instruction_address,
+                        continuation.instruction_set,
+                    )
+                    || (continuation.multiplayer_high_half && !continuation.mode.is_multiplayer())
+                {
+                    return Err(Invalid);
+                }
+                let multiplayer = continuation.mode.is_multiplayer();
+                if continuation.encoder.checksum_polynomial
+                    != if multiplayer { 0xa517 } else { 0xc37b }
+                    || continuation.encoder.key_xor
+                        != if multiplayer { 0x6465_646f } else { 0x4320_2f2f }
+                {
+                    return Err(Invalid);
+                }
+            }
+            Some(HleService::Bulk(bulk)) => {
+                let width = if bulk.instruction_set == InstructionSet::Thumb { 2 } else { 4 };
+                let service = match bulk.instruction_set {
+                    InstructionSet::Thumb if bulk.instruction & 0xffff_ff00 == 0xdf00 => {
+                        bulk.instruction as u8
+                    }
+                    InstructionSet::Arm if bulk.instruction & 0x0f00_0000 == 0x0f00_0000 => {
+                        (bulk.instruction >> 16) as u8
+                    }
+                    _ => return Err(Invalid),
+                };
+                if bulk.instruction_set != set
+                    || !instruction_address_aligned(bulk.instruction_address, bulk.instruction_set)
+                    || self.core.next_instruction_address
+                        != bulk.instruction_address.wrapping_add(width)
+                    || service != bulk.work.service()
+                    || !bulk.work.valid()
+                {
+                    return Err(Invalid);
+                }
+            }
+            None => {}
+        }
+        if self.pipeline.is_some_and(|pipeline| pipeline.instruction_set != set) {
+            return Err(Invalid);
+        }
+        Ok(())
     }
 
     pub fn init(entry_address: u32, initial_cpsr: u32, hle_bios: bool) -> Self {
@@ -537,7 +742,8 @@ impl Cpu {
         if self.hle_bios && usize::from(self.hle_irq_depth) == self.hle_irq_stack.len() {
             return Err(FaultReason::HleIrqNestingLimit { depth: self.hle_irq_depth });
         }
-        self.enter_exception(0x12, 0x18, self.core.next_instruction_address.wrapping_add(4));
+        let return_address = self.core.next_instruction_address.wrapping_add(4);
+        self.enter_exception(0x12, 0x18, return_address);
         if self.hle_bios {
             self.hle_irq_stack[usize::from(self.hle_irq_depth)] = HleIrqFrame {
                 return_address: self.registers[14],
@@ -571,6 +777,121 @@ impl Cpu {
         }
         Ok(())
     }
+
+    pub fn inside_hle_bulk_service(&self) -> bool {
+        matches!(self.hle_service, Some(HleService::Bulk(_)))
+    }
+
+    /// Ordinary instruction loop; HLE, power transitions and SWIs return to
+    /// the generic step without touching the waiting instruction.
+    pub fn run_normal_until(
+        &mut self,
+        bus: &mut Bus,
+        yield_at: u64,
+        execution_fault: &mut Option<FaultReason>,
+        fault_out: &mut Option<FaultStep>,
+    ) -> ChunkOutcome {
+        if bus.now() >= yield_at {
+            return ChunkOutcome::Deadline;
+        }
+        if self.hle_service.is_some() || self.pipeline.is_none() {
+            return ChunkOutcome::Generic;
+        }
+        let mut region = InstructionFetchRegion::default();
+        let mut stream = ThumbStream::default();
+        while bus.now() < yield_at {
+            if bus.power_state() != PowerState::Running
+                || self.core.next_instruction_address < 0x4000
+            {
+                return ChunkOutcome::Generic;
+            }
+            let set = if self.is_thumb() { InstructionSet::Thumb } else { InstructionSet::Arm };
+            let width: u32 = if set == InstructionSet::Thumb { 2 } else { 4 };
+            let pipeline = self.pipeline.as_ref().expect("checked before loop");
+            if pipeline.instruction_set != set {
+                return ChunkOutcome::Generic;
+            }
+            let address = self.core.next_instruction_address;
+            let instruction = pipeline.instructions[0];
+            if (set == InstructionSet::Thumb && instruction & 0xff00 == 0xdf00)
+                || (set == InstructionSet::Arm && instruction & 0x0f00_0000 == 0x0f00_0000)
+            {
+                return ChunkOutcome::Generic;
+            }
+            self.pipeline.as_mut().unwrap().instructions[0] = pipeline.instructions[1];
+            let fetched = if set == InstructionSet::Thumb {
+                bus.fetch_thumb_in_region(&mut region, address.wrapping_add(4), &mut stream)
+            } else {
+                bus.fetch_instruction_in_region(
+                    &mut region,
+                    address.wrapping_add(8),
+                    AccessWidth::Word,
+                )
+            };
+            self.pipeline.as_mut().unwrap().instructions[1] = fetched;
+            let execution = if set == InstructionSet::Thumb {
+                Ok(self.core.execute_thumb(bus, instruction as u16))
+            } else {
+                self.core.execute_arm(bus, instruction)
+            };
+            let execution = match execution {
+                Ok(value) => value,
+                Err(reason) => {
+                    let reason = FaultReason::Isa(reason);
+                    *execution_fault = Some(reason);
+                    *fault_out = Some(FaultStep {
+                        instruction_address: address,
+                        instruction,
+                        instruction_set: set,
+                        reason,
+                    });
+                    return ChunkOutcome::Faulted;
+                }
+            };
+            debug_assert!(execution.software_interrupt.is_none());
+            if !execution.bus_free {
+                stream.armed = false;
+            }
+            if !execution.branched {
+                self.core.next_instruction_address = address.wrapping_add(width);
+            }
+            if execution.branched {
+                self.refill_pipeline_in_region(bus, &mut region);
+                stream.armed = false;
+                if bus.now() >= yield_at {
+                    return ChunkOutcome::Deadline;
+                }
+                if self.is_thumb() != (set == InstructionSet::Thumb) {
+                    return ChunkOutcome::Generic;
+                }
+            } else if bus.irq_line && self.cpsr & (1 << 7) == 0 {
+                bus.resume_power();
+                if let Err(reason) = self.enter_irq(bus) {
+                    self.registers[15] = self
+                        .core
+                        .next_instruction_address
+                        .wrapping_add(if self.is_thumb() { 4 } else { 8 });
+                    *execution_fault = Some(reason);
+                    *fault_out = Some(FaultStep {
+                        instruction_address: address,
+                        instruction,
+                        instruction_set: set,
+                        reason,
+                    });
+                    return ChunkOutcome::Faulted;
+                }
+                self.refill_pipeline_in_region(bus, &mut region);
+                return if bus.now() >= yield_at {
+                    ChunkOutcome::Deadline
+                } else {
+                    ChunkOutcome::Generic
+                };
+            } else {
+                self.registers[15] = self.core.next_instruction_address.wrapping_add(2 * width);
+            }
+        }
+        ChunkOutcome::Deadline
+    }
 }
 
 impl Deref for Cpu {
@@ -583,5 +904,36 @@ impl Deref for Cpu {
 impl DerefMut for Cpu {
     fn deref_mut(&mut self) -> &mut Core {
         &mut self.core
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ZiGBA `state_codec.writeSchemaName("zigba.cpu.state.v6"); writeSchema(Cpu)`.
+    #[test]
+    fn cpu_schema_matches_zigba_v6() {
+        let mut hash = blake3::Hasher::new();
+        Cpu::write_state_schema(&mut evenfall_state::Sink::new(None, Some(&mut hash))).unwrap();
+        assert_eq!(
+            hash.finalize().to_hex().as_str(),
+            "75595acc72ede48e7c4c08b601062ccd2da112163cc71959695a2d85ce93e3c0"
+        );
+    }
+
+    /// ZiGBA `validateState`: reject a stale resumed SWI whose PC has moved.
+    #[test]
+    fn bulk_state_requires_return_point() {
+        let mut cpu = Cpu::init(0x0800_0004, 0x1f, true);
+        cpu.hle_service = Some(HleService::Bulk(HleBulkService {
+            instruction_address: 0x0800_0000,
+            instruction: 0xef0b_0000,
+            instruction_set: InstructionSet::Arm,
+            work: HleBulkWork::CpuSet(HleCpuSetWork::default()),
+        }));
+        assert_eq!(cpu.validate_state(0), Ok(()));
+        cpu.core.next_instruction_address = 0x0800_0008;
+        assert_eq!(cpu.validate_state(0), Err(evenfall_state::Error::InvalidSaveState));
     }
 }
