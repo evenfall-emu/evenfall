@@ -605,7 +605,8 @@ impl RewindBuffer {
             .and_then(|n| n.checked_add(history_len))
             .and_then(|n| n.checked_add(32))
             .ok_or(INVALID)?;
-        let mut out = Vec::with_capacity(len);
+        let mut out = Vec::new();
+        out.try_reserve_exact(len).map_err(|_| Error::OutOfMemory)?;
         {
             let mut sink = Sink::new(Some(&mut out), None);
             sink.write_all(b"ZGBRWD\0\0")?;

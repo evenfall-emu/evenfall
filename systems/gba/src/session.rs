@@ -69,6 +69,7 @@ impl Default for Config<'_> {
 #[derive(Debug)]
 pub enum Error {
     InvalidRomSize,
+    OutOfMemory,
     InvalidBiosSize,
     InvalidSampleRate,
     InvalidRtcEpoch,
@@ -175,22 +176,52 @@ impl Session {
             let rtc_enabled = config.rtc_enabled.unwrap_or(features.rtc);
             let rom_sha1 = Sha1::digest(rom).into();
             let rewind_history = RewindBuffer::new(config.rewind)?;
-            Ok((extracted, save_type, save_data, features, rtc_enabled, rom_sha1, rewind_history))
-        })();
-        let (extracted, save_type, save_data, features, rtc_enabled, rom_sha1, rewind_history) =
-            match prepared {
-                Ok(prepared) => prepared,
-                Err(error) => return Err((error, upload.map(|(buffer, _)| buffer))),
+            let copied = if upload.is_none() && extracted.is_none() {
+                let mut copy = Vec::new();
+                copy.try_reserve_exact(image.len()).map_err(|_| Error::OutOfMemory)?;
+                copy.extend_from_slice(image);
+                Some(copy)
+            } else {
+                None
             };
+            let mut bios_copy = Vec::new();
+            bios_copy.try_reserve_exact(config.bios.len()).map_err(|_| Error::OutOfMemory)?;
+            bios_copy.extend_from_slice(config.bios);
+            Ok((
+                extracted,
+                copied,
+                bios_copy,
+                save_type,
+                save_data,
+                features,
+                rtc_enabled,
+                rom_sha1,
+                rewind_history,
+            ))
+        })();
+        let (
+            extracted,
+            copied,
+            bios_copy,
+            save_type,
+            save_data,
+            features,
+            rtc_enabled,
+            rom_sha1,
+            rewind_history,
+        ) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => return Err((error, upload.map(|(buffer, _)| buffer))),
+        };
         let rom = Arc::new(if let Some(rom) = extracted {
             rom
         } else if let Some((mut buffer, image_len)) = upload {
             buffer.truncate(image_len);
             buffer
         } else {
-            config.image.to_vec()
+            copied.expect("borrowed raw ROM was copied during preparation")
         });
-        let bios: Arc<[u8]> = Arc::from(config.bios);
+        let bios: Arc<[u8]> = bios_copy.into();
         let machine = Machine::new_with_owned_media(
             MachineConfig {
                 boot: if config.bios.is_empty() { BootMode::Hle } else { BootMode::ExternalBios },
@@ -451,9 +482,20 @@ impl Session {
         Ok(self.machine.write_state_alloc()?)
     }
 
+    /// Fallible caller-sized output for the WASM ABI; native writes keep the fast path.
+    pub fn write_state_fallible(&mut self) -> Result<Vec<u8>, Error> {
+        self.canonical_framebuffer()?;
+        Ok(self.machine.write_state_alloc_fallible()?)
+    }
+
     /// Portable live state plus the exact retained rewind policy and history.
     pub fn write_rewind_bundle(&mut self) -> Result<Vec<u8>, Error> {
         let live = self.write_state()?;
+        Ok(self.rewind_history.write_bundle(&live)?)
+    }
+
+    pub fn write_rewind_bundle_fallible(&mut self) -> Result<Vec<u8>, Error> {
+        let live = self.write_state_fallible()?;
         Ok(self.rewind_history.write_bundle(&live)?)
     }
 

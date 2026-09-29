@@ -62,9 +62,13 @@ an 8 MiB stack and no imports.
 ZiGBA's separate page-allocator probe checks its own bitmap, in-place page-run
 resize and OOM recovery; those implementation-specific assertions do not apply
 to Rust's dlmalloc. The shipped-module test instead checks small and large
-allocation reuse, while SDK tests check that rejected uploads leave a live
-session and its ROM intact. The scenario and pooled-audio tests use `wasmTest`
-to run their original assertions whenever the binary is present.
+allocation reuse, live bytes across memory growth, and an actual allocation
+failure at the 512 MiB memory limit. Caller-sized uploads, ROM extraction,
+BIOS/save copies, memory reads, state writes and rewind-bundle exports reserve
+fallibly and return `OutOfMemory` without losing the session; fixed-size internal
+allocations may still abort if the host exhausts the instance. The scenario and
+pooled-audio tests use `wasmTest` to run their original assertions whenever the
+binary is present.
 
 Scenario and capture CLIs live at `web/gba/scripts/run-scenario.mjs` and
 `web/gba/scripts/replay-capture.mjs`. They use the same default binary path and

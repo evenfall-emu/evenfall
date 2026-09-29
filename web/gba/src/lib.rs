@@ -128,6 +128,13 @@ fn keys(mask: u32) -> KeyState {
     }
 }
 
+fn copy_upload(bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
+    let mut copy = Vec::new();
+    copy.try_reserve_exact(bytes.len()).map_err(|_| "OutOfMemory")?;
+    copy.extend_from_slice(bytes);
+    Ok(copy)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn zb_version() -> u32 {
     1
@@ -208,8 +215,8 @@ pub extern "C" fn zb_load(
         if !(-1..=7).contains(&save_type) || !(-1..=1).contains(&rtc_mode) || zipped > 1 {
             return Err("InvalidOption".into());
         }
-        let bios = state.input[image_len..image_len + bios_len].to_vec();
-        let save = state.input[image_len + bios_len..].to_vec();
+        let bios = copy_upload(&state.input[image_len..image_len + bios_len])?;
+        let save = copy_upload(&state.input[image_len + bios_len..])?;
         let upload = std::mem::take(&mut state.input);
         let config = Config {
             zipped: zipped == 1,
@@ -298,7 +305,8 @@ pub extern "C" fn zb_run_until(deadline: u64, event_count: u32, input_deadline: 
         if event_count > 1024 || (event_count as usize) * 16 > state.input.len() {
             return Err("InvalidInputLength".into());
         }
-        let mut events = Vec::with_capacity(event_count as usize);
+        let mut events = Vec::new();
+        events.try_reserve_exact(event_count as usize).map_err(|_| "OutOfMemory")?;
         for record in state.input.as_chunks::<16>().0.iter().take(event_count as usize) {
             let mask = u32::from_le_bytes(record[8..12].try_into().unwrap());
             let reserved = u32::from_le_bytes(record[12..16].try_into().unwrap());
@@ -436,7 +444,9 @@ pub extern "C" fn zb_read_memory(address: u32, length: u32) -> i32 {
         if length > 1024 * 1024 {
             return Err("ReadTooLarge".into());
         }
-        let mut bytes = vec![0; length as usize];
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(length as usize).map_err(|_| "OutOfMemory")?;
+        bytes.resize(length as usize, 0);
         session.machine.inspect_memory(address, &mut bytes).map_err(|_| "AddressOverflow")?;
         state.replace_output(bytes);
         Ok(0)
@@ -471,7 +481,7 @@ pub extern "C" fn zb_export_save() -> i32 {
 pub extern "C" fn zb_write_state() -> i32 {
     call(|state| {
         state.clear_output();
-        let bytes = active(state)?.write_state().map_err(session_error)?;
+        let bytes = active(state)?.write_state_fallible().map_err(session_error)?;
         state.replace_output(bytes);
         Ok(0)
     })
@@ -492,7 +502,7 @@ pub extern "C" fn zb_load_state() -> i32 {
 pub extern "C" fn zb_write_rewind_bundle() -> i32 {
     call(|state| {
         state.clear_output();
-        let bytes = active(state)?.write_rewind_bundle().map_err(session_error)?;
+        let bytes = active(state)?.write_rewind_bundle_fallible().map_err(session_error)?;
         state.replace_output(bytes);
         Ok(0)
     })
@@ -595,7 +605,8 @@ pub extern "C" fn zb_rewind_depth() -> u32 {
 pub extern "C" fn zb_rewind_info(index: u32) -> i32 {
     call(|state| {
         let info = active(state)?.rewind_info(index as usize).ok_or("InvalidRewindSteps")?;
-        let mut bytes = Vec::with_capacity(24);
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(24).map_err(|_| "OutOfMemory")?;
         bytes.extend_from_slice(&info.frame.to_le_bytes());
         bytes.extend_from_slice(&info.cycle.to_le_bytes());
         bytes.extend_from_slice(&(info.bytes as u64).to_le_bytes());
@@ -610,7 +621,8 @@ pub extern "C" fn zb_rewind_frame(index: u32) -> i32 {
         state.clear_output();
         let mut frame = vec![0u16; FRAME_PIXELS];
         active(state)?.rewind_framebuffer(index as usize, &mut frame).map_err(session_error)?;
-        let mut bytes = Vec::with_capacity(FRAME_PIXELS * 2);
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(FRAME_PIXELS * 2).map_err(|_| "OutOfMemory")?;
         for pixel in frame {
             bytes.extend_from_slice(&pixel.to_le_bytes());
         }

@@ -6,6 +6,7 @@ pub const MAX_ROM_SIZE: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
+    OutOfMemory,
     ZipNoEndRecord,
     ZipMultiDiskUnsupported,
     NoGbaInZip,
@@ -116,14 +117,24 @@ pub fn extract_single_gba(zip: &[u8]) -> Result<Vec<u8>, Error> {
             if comp_size != uncomp_size {
                 return Err(Error::ZipBadStoredSizes);
             }
-            comp.to_vec()
+            let mut out = Vec::new();
+            out.try_reserve_exact(uncomp_size as usize).map_err(|_| Error::OutOfMemory)?;
+            out.extend_from_slice(comp);
+            out
         }
         8 => {
             // Rewind's inflater handles its own format, not raw ZIP DEFLATE.
-            let out =
-                miniz_oxide::inflate::decompress_to_vec_with_limit(comp, uncomp_size as usize)
-                    .map_err(|_| Error::ZipDecompressFailed)?;
-            if out.len() != uncomp_size as usize {
+            let mut out = Vec::new();
+            out.try_reserve_exact(uncomp_size as usize).map_err(|_| Error::OutOfMemory)?;
+            out.resize(uncomp_size as usize, 0);
+            let written = miniz_oxide::inflate::decompress_slice_iter_to_slice(
+                &mut out,
+                core::iter::once(comp),
+                false,
+                false,
+            )
+            .map_err(|_| Error::ZipDecompressFailed)?;
+            if written != uncomp_size as usize {
                 return Err(Error::ZipDecompressFailed);
             }
             out
