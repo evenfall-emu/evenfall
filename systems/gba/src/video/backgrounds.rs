@@ -74,7 +74,7 @@ pub(super) fn text_row<const COLOR_256: bool>(
             if entry & (1 << 10) != 0 {
                 source = reverse_nibbles(source);
             }
-            *pixels = *cache.row(source, (entry >> 12) as u8);
+            cache.row(source, (entry >> 12) as u8, pixels);
         }
     }
     pages
@@ -82,9 +82,19 @@ pub(super) fn text_row<const COLOR_256: bool>(
 
 /// Horizontal mosaic: each block of `size` pixels repeats its first pixel.
 pub(super) fn apply_horizontal_mosaic(row: &mut [u16; SCREEN_WIDTH], size: usize) {
-    for start in (0..SCREEN_WIDTH).step_by(size) {
-        let color = row[start];
-        row[start..(start + size).min(SCREEN_WIDTH)].fill(color);
+    if size == 2 {
+        for pair in row.as_chunks_mut::<2>().0 {
+            pair[1] = pair[0];
+        }
+        return;
+    }
+    let (mut color, mut left) = (0, 0);
+    for pixel in row.iter_mut() {
+        if left == 0 {
+            (color, left) = (*pixel, size);
+        }
+        *pixel = color;
+        left -= 1;
     }
 }
 
@@ -100,9 +110,31 @@ pub(super) fn affine_row(
 ) {
     let char_base = usize::from((control >> 2) & 3) * 0x4000;
     let screen_base = usize::from((control >> 8) & 31) * 0x800;
-    let dimension = 128i32 << (control >> 14);
-    let tiles = (dimension / 8) as usize;
+    let size = usize::from(control >> 14);
     let wrap = control & (1 << 13) != 0;
+    let map_bytes = 256 << (2 * size);
+    if mosaic == 1 && screen_base + map_bytes <= BG_VRAM {
+        let map = AffineMap {
+            tiles: &vram[screen_base..screen_base + map_bytes],
+            characters: vram[char_base..char_base + 0x4000].try_into().unwrap(),
+            colors,
+        };
+        match (wrap, size) {
+            (true, 0) => map.row::<true, 4>(affine, out),
+            (true, 1) => map.row::<true, 5>(affine, out),
+            (true, 2) => map.row::<true, 6>(affine, out),
+            (true, _) => map.row::<true, 7>(affine, out),
+            (false, 0) => map.row::<false, 4>(affine, out),
+            (false, 1) => map.row::<false, 5>(affine, out),
+            (false, 2) => map.row::<false, 6>(affine, out),
+            (false, _) => map.row::<false, 7>(affine, out),
+        }
+        return;
+    }
+    // Maps that run past BG VRAM read tile zero there, like the per-dot
+    // renderer; mosaic samples block starts.
+    let dimension = 128i32 << size;
+    let tiles = (dimension / 8) as usize;
     let texel = |x: i32, y: i32| {
         let source_x = x >> 8;
         let source_y = y >> 8;
@@ -116,19 +148,45 @@ pub(super) fn affine_row(
         let index = vram[char_base + usize::from(tile) * 64 + sy % 8 * 8 + sx % 8];
         if inside || wrap { colors[usize::from(index)] } else { TRANSPARENT }
     };
-    if mosaic > 1 {
-        for start in (0..SCREEN_WIDTH).step_by(mosaic) {
-            let x = start as i32;
-            let color = texel(affine.ref_x + affine.pa * x, affine.ref_y + affine.pc * x);
-            out[start..(start + mosaic).min(SCREEN_WIDTH)].fill(color);
-        }
-        return;
+    for start in (0..SCREEN_WIDTH).step_by(mosaic) {
+        let x = start as i32;
+        let color = texel(affine.ref_x + affine.pa * x, affine.ref_y + affine.pc * x);
+        out[start..(start + mosaic).min(SCREEN_WIDTH)].fill(color);
     }
-    let (mut x, mut y) = (affine.ref_x, affine.ref_y);
-    for color in out.iter_mut() {
-        *color = texel(x, y);
-        x += affine.pa;
-        y += affine.pc;
+}
+
+/// An affine map that lies wholly in BG VRAM.
+struct AffineMap<'a> {
+    /// Tile numbers, one map row after another.
+    tiles: &'a [u8],
+    /// The 256 8bpp tiles of the character base.
+    characters: &'a [u8; 0x4000],
+    colors: &'a [u16; 256],
+}
+
+impl AffineMap<'_> {
+    /// `TILE_SHIFT` is log2 of the map width in tiles.
+    #[inline(never)]
+    fn row<const WRAP: bool, const TILE_SHIFT: u32>(
+        &self,
+        affine: AffineState,
+        out: &mut [u16; SCREEN_WIDTH],
+    ) {
+        let mask = (8u32 << TILE_SHIFT) - 1;
+        let tiles = &self.tiles[..1 << (2 * TILE_SHIFT)];
+        let (mut x, mut y) = (affine.ref_x, affine.ref_y);
+        for color in out.iter_mut() {
+            let (source_x, source_y) = ((x >> 8) as u32, (y >> 8) as u32);
+            x += affine.pa;
+            y += affine.pc;
+            let (sx, sy) = (source_x & mask, source_y & mask);
+            let at = ((sy >> 3) << TILE_SHIFT | sx >> 3) as usize;
+            let tile = tiles[at & ((1 << (2 * TILE_SHIFT)) - 1)];
+            let index = self.characters
+                [(usize::from(tile) << 6 | (sy as usize & 7) << 3) | (sx as usize & 7)];
+            let texel = self.colors[usize::from(index)];
+            *color = if WRAP || (source_x | source_y) & !mask == 0 { texel } else { TRANSPARENT };
+        }
     }
 }
 
@@ -236,7 +294,7 @@ impl Bus {
                 return None;
             }
             let source = if flipped { reverse_nibbles(source) } else { source };
-            colors = *self.tile_row_cache.row(source, (entry >> 12) as u8);
+            self.tile_row_cache.row(source, (entry >> 12) as u8, &mut colors);
             indices = colors.map(|color| u8::from(color & TRANSPARENT == 0));
         }
         Some(TextRow { colors, fully_opaque: indices.iter().all(|&index| index != 0), indices })
