@@ -119,6 +119,16 @@ impl Mem<'_> {
         (region == 7 || budget - cost > self.video_floor).then_some(cost)
     }
 
+    /// Whether the code page of a RAM address has held decoded code.
+    #[inline(always)]
+    pub(super) fn holds_code(&self, address: u32) -> bool {
+        if address >> 24 == 3 {
+            self.iwram_code[((address as usize) & (IWRAM_SIZE - 1)) >> PAGE_SHIFT]
+        } else {
+            self.ewram_code[((address as usize) & (EWRAM_SIZE - 1)) >> PAGE_SHIFT]
+        }
+    }
+
     /// Whether a RAM store reaches a decoded instruction of either set or
     /// one of the instructions prefetched after the running one.
     #[inline(always)]

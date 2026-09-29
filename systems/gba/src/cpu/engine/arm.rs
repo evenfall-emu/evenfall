@@ -1984,7 +1984,9 @@ fn block_op<const EW: bool>(
         (2, 2) => 6,
         _ => return None,
     };
+    // A block spans at most two code pages: most stores reach neither.
     if !load_list
+        && (c.mem.holds_code(first) || c.mem.holds_code(last))
         && (0..count).any(|beat| {
             c.mem.store_reaches_code(c.running(ops, h.idx), first + 4 * beat, AccessWidth::Word)
         })
@@ -1995,39 +1997,36 @@ fn block_op<const EW: bool>(
         return None;
     }
     if user_bank {
-        c.core.registers.copy_from_slice(&regs[..16]);
-    }
-    let mut address = first;
-    let mut remaining = list;
-    let mut index = 0;
-    while remaining != 0 {
-        let register = remaining.trailing_zeros() as usize;
-        remaining &= remaining - 1;
-        if load_list {
-            let (value, _) = c.mem.load(address, AccessWidth::Word).expect("RAM block");
-            if user_bank {
-                c.core.write_user_bank_register(register, value);
-            } else {
+        user_bank_block(c, regs, word, first, final_base);
+    } else {
+        let ram: &mut [u8] =
+            if first >> 24 == 3 { &mut c.mem.iwram[..] } else { &mut c.mem.ewram[..] };
+        let mask = ram.len() - 4;
+        let mut address = first as usize;
+        let mut remaining = list;
+        let mut index = 0;
+        while remaining != 0 {
+            let register = remaining.trailing_zeros() as usize;
+            remaining &= remaining - 1;
+            let at = address & mask;
+            let slot: &mut [u8; 4] = (&mut ram[at..at + 4]).try_into().expect("a word");
+            if load_list {
+                let value = u32::from_le_bytes(*slot);
                 regs[register] = value;
-            }
-            c.data = value;
-        } else {
-            let value = if register == 15 {
-                regs[15].wrapping_add(4)
-            } else if writeback && register as u32 == rn && index != 0 {
-                final_base
-            } else if user_bank {
-                c.core.read_user_bank_register(register)
+                c.data = value;
             } else {
-                regs[register]
-            };
-            c.mem.store(address, AccessWidth::Word, value);
+                let value = if register == 15 {
+                    regs[15].wrapping_add(4)
+                } else if writeback && register as u32 == rn && index != 0 {
+                    final_base
+                } else {
+                    regs[register]
+                };
+                *slot = value.to_le_bytes();
+            }
+            address = address.wrapping_add(4);
+            index += 1;
         }
-        address = address.wrapping_add(4);
-        index += 1;
-    }
-    if user_bank {
-        regs[..16].copy_from_slice(&c.core.registers);
     }
     if writeback && !(load_list && !user_bank && list & (1 << rn) != 0) {
         regs[rn as usize] = final_base;
@@ -2039,6 +2038,48 @@ fn block_op<const EW: bool>(
     }
     h.next();
     Some(h)
+}
+
+/// The transfers of an LDM or STM with S that moves user-bank registers,
+/// from `first` in one RAM region.
+#[cold]
+#[inline(never)]
+fn user_bank_block<const EW: bool>(
+    c: &mut Ctx<'_, EW>,
+    regs: &mut Registers,
+    word: u32,
+    first: u32,
+    final_base: u32,
+) {
+    let list = word & 0xffff;
+    let rn = (word >> 16) & 15;
+    let load_list = word & (1 << 20) != 0;
+    let writeback = word & (1 << 21) != 0;
+    c.core.registers.copy_from_slice(&regs[..16]);
+    let mut address = first;
+    let mut remaining = list;
+    let mut index = 0;
+    while remaining != 0 {
+        let register = remaining.trailing_zeros() as usize;
+        remaining &= remaining - 1;
+        if load_list {
+            let (value, _) = c.mem.load(address, AccessWidth::Word).expect("RAM block");
+            c.core.write_user_bank_register(register, value);
+            c.data = value;
+        } else {
+            let value = if register == 15 {
+                regs[15].wrapping_add(4)
+            } else if writeback && register as u32 == rn && index != 0 {
+                final_base
+            } else {
+                c.core.read_user_bank_register(register)
+            };
+            c.mem.store(address, AccessWidth::Word, value);
+        }
+        address = address.wrapping_add(4);
+        index += 1;
+    }
+    regs[..16].copy_from_slice(&c.core.registers);
 }
 
 /// A conditional instruction whose condition passed, through the generic

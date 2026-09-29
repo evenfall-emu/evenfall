@@ -423,12 +423,20 @@ impl Bus {
         self.current_cycle = cycle;
         self.fetch_kind = AccessKind::Sequential;
         self.flush_device_batch();
+        let deadline = self.batch_deadline;
         self.batch_active = false;
         self.batch_deadline = 0;
         self.write_mmio(address, width, value);
         self.batch_active = true;
         self.batch_device_cycle = self.current_cycle;
-        self.batch_deadline = self.next_device_boundary();
+        // A register that schedules no device event leaves the next one
+        // where it was: no need to find it again.
+        self.batch_deadline = if schedules_nothing(address, width) {
+            debug_assert_eq!(deadline, self.next_device_boundary(), "{address:08x}");
+            deadline
+        } else {
+            self.next_device_boundary()
+        };
     }
 
     /// Whether a run may go on to `limit` after an MMIO access: no DMA is
@@ -441,6 +449,18 @@ impl Bus {
             && (irq_masked || !self.irq_line)
             && limit < self.batch_deadline
     }
+}
+
+/// Whether a store to these MMIO bytes can change no device's next event:
+/// background, window, mosaic and blend registers, IE and IF, IME, POSTFLG
+/// and HALTCNT, whose writes schedule nothing.
+fn schedules_nothing(address: u32, width: AccessWidth) -> bool {
+    let offset = address.wrapping_sub(MMIO_BASE);
+    let last = offset + width.bytes() as u32 - 1;
+    (0x008 <= offset && last <= 0x05f)
+        || (0x200 <= offset && last <= 0x203)
+        || (0x208 <= offset && last <= 0x20b)
+        || (0x300 <= offset && last <= 0x301)
 }
 
 pub fn begin_arm_iwram_slice(bus: &mut Bus) {
