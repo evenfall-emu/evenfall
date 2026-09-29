@@ -705,6 +705,33 @@ mod tests {
         assert!(matches!(session.rewind(1), Err(Error::RewindEmpty)));
     }
 
+    /// Zig: "rewind escapes a faulted machine with the last good state"
+    #[test]
+    fn rewind_escapes_a_faulted_machine_with_the_last_good_state() {
+        let rom = video_recovery_rom(true);
+        let mut session = Session::create(Config {
+            image: &rom,
+            rewind: RewindConfig { interval_frames: 1, ..RewindConfig::default() },
+            ..Config::default()
+        })
+        .unwrap();
+        for _ in 0..3 {
+            session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        }
+        let healthy_depth = session.rewind_depth();
+        assert!(healthy_depth > 0);
+        session.set_keys(KeyState { a: true, ..KeyState::default() }).unwrap();
+        let result = session.advance(session.machine.now() + 100).unwrap();
+        assert!(matches!(result.reason, StopReason::Faulted(_)));
+        assert!(session.machine.fault().is_some());
+        assert_eq!(session.rewind_depth(), healthy_depth);
+        let restored = session.rewind(1).unwrap();
+        assert!(session.machine.fault().is_none());
+        assert_eq!(restored.frame, session.machine.completed_frames());
+        session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        assert!(session.machine.fault().is_none());
+    }
+
     /// Zig: "explicit loads and resets start a new rewind timeline"
     #[test]
     fn explicit_loads_and_resets_start_a_new_rewind_timeline() {
@@ -943,6 +970,48 @@ mod tests {
         ));
     }
 
+    /// Zig: "bundle restores empty tiny-budget and evicted multi-anchor histories after branching"
+    #[test]
+    fn bundle_restores_empty_tiny_budget_and_evicted_histories_after_branching() {
+        for budget in [0, 1, 400_000, rewind::DEFAULT_BUDGET_BYTES] {
+            let mut session = Session::create(Config {
+                image: LOOP_ROM,
+                rewind: RewindConfig {
+                    interval_frames: 1,
+                    budget_bytes: budget,
+                    ..RewindConfig::default()
+                },
+                ..Config::default()
+            })
+            .unwrap();
+            let mut random = 71_u32;
+            for frame in 0..9_u8 {
+                if frame % 3 == 0 {
+                    for byte in session.machine.bus.ewram.iter_mut() {
+                        random ^= random << 13;
+                        random ^= random >> 17;
+                        random ^= random << 5;
+                        *byte = random as u8;
+                    }
+                }
+                session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+            }
+            let bundle = session.write_rewind_bundle().unwrap();
+            if session.rewind_depth() > 1 {
+                session.rewind(1).unwrap();
+            }
+            session.set_keys(KeyState { a: true, ..KeyState::default() }).unwrap();
+            session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+            session.load_rewind_bundle(&bundle).unwrap();
+            assert_eq!(session.write_rewind_bundle().unwrap(), bundle);
+            if session.rewind_depth() > 1 {
+                let oldest_frame = session.rewind_info(0).unwrap().frame;
+                session.rewind(session.rewind_depth() - 1).unwrap();
+                assert_eq!(session.machine.completed_frames(), oldest_frame);
+            }
+        }
+    }
+
     fn video_recovery_rom(fault_on_a: bool) -> [u8; 32] {
         let words = if fault_on_a {
             [
@@ -1017,6 +1086,41 @@ mod tests {
         assert_eq!(selective.write_state().unwrap(), full.write_state().unwrap());
     }
 
+    /// Zig: "selective recovery reserves bounded history and preserves failing instruction pixels"
+    #[test]
+    fn selective_recovery_bounds_history_and_preserves_faulting_instruction_pixels() {
+        let rom = video_recovery_rom(true);
+        let mut full = Session::create(Config { image: &rom, ..Config::default() }).unwrap();
+        let mut selective = Session::create(Config { image: &rom, ..Config::default() }).unwrap();
+        full.machine.bus.dispcnt = 0;
+        selective.machine.bus.dispcnt = 0;
+        selective.set_video_interval(16).unwrap();
+        for _ in 0..4 {
+            full.advance(full.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+            selective.advance(selective.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        }
+        assert!(!selective.machine.bus.is_framebuffer_canonical());
+        for _ in 0..4100 {
+            full.set_keys(KeyState::default()).unwrap();
+            selective.set_keys(KeyState::default()).unwrap();
+        }
+        full.advance(full.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        selective.advance(selective.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        full.set_keys(KeyState { a: true, ..KeyState::default() }).unwrap();
+        selective.set_keys(KeyState { a: true, ..KeyState::default() }).unwrap();
+        let expected = full.advance(full.machine.now() + 100).unwrap();
+        let actual = selective.advance(selective.machine.now() + 100).unwrap();
+        assert_eq!(actual, expected);
+        assert!(selective.machine.fault().is_some());
+        for _ in 0..4100 {
+            selective.set_keys(KeyState::default()).unwrap();
+        }
+        let cycle = selective.machine.now();
+        assert_eq!(full.machine.framebuffer(), selective.canonical_framebuffer().unwrap());
+        assert_eq!(selective.machine.now(), cycle);
+        assert!(matches!(selective.write_state(), Err(Error::State(StateError::MachineFaulted))));
+    }
+
     /// Zig: "selective Session load and reset replace recovery anchors transactionally"
     #[test]
     fn selective_session_load_and_reset_replace_recovery_anchors_transactionally() {
@@ -1043,5 +1147,65 @@ mod tests {
             fresh.advance(fresh.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
         }
         assert_eq!(session.write_state().unwrap(), fresh.write_state().unwrap());
+    }
+
+    /// Zig: "internal video yields preserve STOP serial horizon and unreachable future inputs"
+    #[test]
+    fn internal_video_yields_preserve_stop_serial_horizon_and_future_inputs() {
+        let rom = [0, 0, 3, 0xef, 0xfe, 0xff, 0xff, 0xea]; // Stop; b .
+        for (future_input, wakes) in [(false, true), (true, true), (false, false)] {
+            let mut full = Session::create(Config { image: &rom, ..Config::default() }).unwrap();
+            let mut selective =
+                Session::create(Config { image: &rom, ..Config::default() }).unwrap();
+            for session in [&mut full, &mut selective] {
+                session.machine.bus.rcnt = 0xc000;
+                session.machine.bus.joy_control = 0x40;
+                session.machine.bus.interrupt_enable_mask = 1 << 7;
+                session.machine.bus.update_irq_line();
+                session
+                    .machine
+                    .bus
+                    .schedule_joy_bus(
+                        if wakes {
+                            crate::bus::JoyBusCommand::Reset
+                        } else {
+                            crate::bus::JoyBusCommand::Status
+                        },
+                        250_000,
+                    )
+                    .unwrap();
+            }
+            selective.set_video_interval(16).unwrap();
+            let future = [TimedInput {
+                at: 220_000,
+                change: crate::bus::TimedInputChange::Keys(KeyState {
+                    a: true,
+                    ..KeyState::default()
+                }),
+            }];
+            let inputs = if future_input { &future[..] } else { &[][..] };
+            let expected = full
+                .run_slice_with_input(Machine::CYCLES_PER_FRAME, Machine::CYCLES_PER_FRAME, inputs)
+                .unwrap();
+            let actual = selective
+                .run_slice_with_input(Machine::CYCLES_PER_FRAME, Machine::CYCLES_PER_FRAME, inputs)
+                .unwrap();
+            assert_eq!(actual, expected);
+            if future_input {
+                assert_eq!(actual.reason, StopReason::PowerStopped);
+                let mut reference =
+                    Session::create(Config { image: &rom, ..Config::default() }).unwrap();
+                reference.step().unwrap();
+                assert_eq!(reference.machine.now(), actual.stopped_at);
+                assert_eq!(selective.machine.bus.joy_completion_cycle, Some(250_000));
+                assert_eq!(actual.inputs_consumed, 0);
+            } else if !wakes {
+                assert_eq!(actual.reason, StopReason::PowerStopped);
+                assert_eq!(actual.stopped_at, 250_000);
+            } else {
+                assert!(actual.stopped_at >= Machine::CYCLES_PER_FRAME);
+            }
+            assert_eq!(full.write_state().unwrap(), selective.write_state().unwrap());
+        }
     }
 }

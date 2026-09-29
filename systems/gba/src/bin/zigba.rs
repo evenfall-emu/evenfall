@@ -32,6 +32,77 @@ fn keys_from_bits(bits: u16) -> KeyState {
     }
 }
 
+/// Zig 0.16's Wyhash final v4.1, seed zero. The `wyhash` crate's top-level
+/// function implements a different generation and changes `--frame-hash`.
+fn frame_wyhash(input: &[u8]) -> u64 {
+    const SECRET: [u64; 4] = [
+        0xa076_1d64_78bd_642f,
+        0xe703_7ed1_a0b4_28db,
+        0x8ebc_6af0_9c88_c6e3,
+        0x5899_65cc_7537_4cc3,
+    ];
+    fn read4(bytes: &[u8]) -> u64 {
+        u64::from(u32::from_le_bytes(bytes[..4].try_into().unwrap()))
+    }
+    fn read8(bytes: &[u8]) -> u64 {
+        u64::from_le_bytes(bytes[..8].try_into().unwrap())
+    }
+    fn mum(a: u64, b: u64) -> (u64, u64) {
+        let product = u128::from(a) * u128::from(b);
+        (product as u64, (product >> 64) as u64)
+    }
+    fn mix(a: u64, b: u64) -> u64 {
+        let (low, high) = mum(a, b);
+        low ^ high
+    }
+
+    let len = input.len();
+    let mut state = [mix(SECRET[0], SECRET[1]); 3];
+    let (mut a, mut b);
+    if len <= 16 {
+        if len >= 4 {
+            let end = len - 4;
+            let quarter = (len >> 3) << 2;
+            a = (read4(input) << 32) | read4(&input[quarter..]);
+            b = (read4(&input[end..]) << 32) | read4(&input[end - quarter..]);
+        } else if len > 0 {
+            a = (u64::from(input[0]) << 16)
+                | (u64::from(input[len >> 1]) << 8)
+                | u64::from(input[len - 1]);
+            b = 0;
+        } else {
+            a = 0;
+            b = 0;
+        }
+    } else {
+        let mut offset = 0;
+        if len >= 48 {
+            while offset + 48 < len {
+                for lane in 0..3 {
+                    let pos = offset + lane * 16;
+                    state[lane] = mix(
+                        read8(&input[pos..]) ^ SECRET[lane + 1],
+                        read8(&input[pos + 8..]) ^ state[lane],
+                    );
+                }
+                offset += 48;
+            }
+            state[0] ^= state[1] ^ state[2];
+        }
+        let mut pos = offset;
+        while pos + 16 < len {
+            state[0] = mix(read8(&input[pos..]) ^ SECRET[1], read8(&input[pos + 8..]) ^ state[0]);
+            pos += 16;
+        }
+        a = read8(&input[len - 16..]);
+        b = read8(&input[len - 8..]);
+    }
+    a ^= SECRET[1];
+    b ^= state[0];
+    let (a, b) = mum(a, b);
+    mix(a ^ SECRET[0] ^ len as u64, b ^ SECRET[1])
+}
+
 fn run(args: &[String], stdout: &mut impl Write) -> Result<(), Box<dyn std::error::Error>> {
     if args.len() < 5 || args[1] != "run" || args[2] != "--steps" {
         stdout.write_all(USAGE.as_bytes())?;
@@ -241,7 +312,7 @@ fn run(args: &[String], stdout: &mut impl Write) -> Result<(), Box<dyn std::erro
             stdout,
             "frame count={} wyhash={:016x}",
             machine.completed_frames(),
-            wyhash::wyhash(&pixels, 0)
+            frame_wyhash(&pixels)
         )?;
     }
     writeln!(
@@ -253,4 +324,27 @@ fn run(args: &[String], stdout: &mut impl Write) -> Result<(), Box<dyn std::erro
         machine.read_register(0)
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::frame_wyhash;
+
+    /// Independent results from Zig 0.16 std.hash.Wyhash.hash(0, bytes),
+    /// including either side of both the 16- and 48-byte block boundaries.
+    #[test]
+    fn frame_hash_matches_zig_wyhash_vectors() {
+        assert_eq!(frame_wyhash(&[0, 1, 3, 8, 21, 55]), 0x85a2_09c1_31ba_b780);
+        let pixels: Vec<u8> = (0..240 * 160 * 2).map(|i| (i * 37 + 11) as u8).collect();
+        for (length, expected) in [
+            (0, 0x0409_638e_e2bd_e459),
+            (16, 0x411f_fa3c_1331_fbaf),
+            (17, 0x08a9_b771_ef15_13d6),
+            (48, 0x8284_ed8c_b813_67a5),
+            (49, 0xe6aa_ced3_f92b_5365),
+            (240 * 160 * 2, 0x3c9a_ac8c_32c4_b966),
+        ] {
+            assert_eq!(frame_wyhash(&pixels[..length]), expected, "length {length}");
+        }
+    }
 }
