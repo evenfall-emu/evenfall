@@ -1,7 +1,6 @@
 [package]
 name = "evenfall-gba"
 description = "A deterministic, cycle-aware Game Boy Advance core"
-autotests = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -29,18 +28,12 @@ divan.workspace = true
 name = "hot_paths"
 harness = false
 
+# The ROM validator prints one line per case and selects cases by name, so it
+# runs without libtest. Every other file in tests/ is discovered automatically.
 [[test]]
 name = "validator"
-path = "tests/validator.rs"
+path = "tests/validator/main.rs"
 harness = false
-
-[[test]]
-name = "mgba_suite_source"
-path = "tests/mgba_suite_source.rs"
-
-[[test]]
-name = "mgba_suite_timing"
-path = "tests/mgba_suite_timing.rs"
 
 [lints]
 workspace = true

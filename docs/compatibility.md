@@ -11,7 +11,7 @@ BIOS is bundled.
 
 ## ROM validators
 
-[`systems/gba/tests/validator.rs`](../systems/gba/tests/validator.rs) runs
+[`systems/gba/tests/validator/main.rs`](../systems/gba/tests/validator/main.rs) runs
 every available case and checks its reported registers and any source-derived
 frame, audio, save or host-device oracle. Register and result-screen cases
 require a stable terminal self-loop; still-image cases capture the completed
@@ -23,7 +23,7 @@ and its missing ROM path.
 ### jsmolka/gba-tests
 
 Every jsmolka ROM is checked against the SHA-256 recorded in
-[`jsmolka_cases.rs`](../systems/gba/tests/jsmolka_cases.rs) before execution.
+[`jsmolka_cases.rs`](../systems/gba/tests/validator/jsmolka_cases.rs) before execution.
 Register cases read the failure number at a fixed evaluation address and
 require a stable terminal self-loop; screen cases compare every pixel of the
 completed frame against the suite's glyphs or an analytic pattern. The
@@ -63,7 +63,7 @@ where a `VCOUNT` polling phase makes the exact dot unstable. Audio cases
 inspect the complete stereo DAC stream, including level and run-length
 patterns, rather than accepting a truncated queue. Every case below passes.
 The source-derived expectations are in
-[`probe_cases.rs`](../systems/gba/tests/probe_cases.rs) and the probe intent
+[`probe_cases.rs`](../systems/gba/tests/validator/probe_cases.rs) and the probe intent
 in [`probe/README.md`](../probe/README.md).
 
 | Probe                | Behavior checked                                                                | Oracle                    |

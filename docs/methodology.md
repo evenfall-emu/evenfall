@@ -49,7 +49,8 @@ if measured hardware contradicts it, investigate the conflict rather than
 silently changing the port. The
 [`tools/parity`](../tools/parity/README.md) harness records ZiGBA checkpoints
 for multiple host slice schedules; its trace comparator checks byte-exact
-frame, audio, save and state blobs when the Rust trace producer is connected.
+frame, audio, save and state blobs against the Rust core
+([`parity.md`](parity.md)).
 The Rust schema description must match the
 ZiGBA v6 [`fixture`](../tools/parity/fixtures/schema-v6.bin) byte for byte;
 its BLAKE3 digest in the state header proves the durable layout agrees. A
@@ -160,14 +161,14 @@ cargo test --workspace
 cargo test --workspace --release
 make -C probe
 cargo run -p evenfall-parity -- oracle build
-cargo run -p evenfall-parity -- oracle run tools/parity/scenarios/probe-timer_irq.json
+cargo run -p evenfall-parity -- run tools/parity/scenarios/probe-timer_irq.json
 ```
 
-The final two commands build and run the **ZiGBA** oracle, not a Rust GBA
-comparison by themselves. When the Rust trace producer is connected, compare
-its output with `cargo run -p evenfall-parity -- compare ORACLE.trace
-RUST.trace`. The original ZiGBA validator target runs from a scratch checkout
-with locally supplied media; no ROM or BIOS is fetched into the repository.
+The final two commands build the **ZiGBA** oracle and compare it against the
+Rust GBA core. Inspect saved traces with `cargo run -p evenfall-parity --
+compare ORACLE.trace RUST.trace`. The original ZiGBA validator target runs
+from a scratch checkout with locally supplied media; no ROM or BIOS is
+committed to the repository.
 Run benchmark targets on declared workloads with the same guest inputs,
 full software rendering and exact audio before accepting a speed claim.
 
