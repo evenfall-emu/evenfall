@@ -1,0 +1,15 @@
+{
+  "name": "bench-tiles-skip_bios",
+  "assets": {
+    "rom": "../../../tools/bench/roms/build/tiles.gba",
+    "bios": "../../../refs/cult-gba-bios/bios.bin"
+  },
+  "config": {
+    "boot": "skip_bios",
+    "saveType": "auto"
+  },
+  "inputs": [],
+  "endCycle": "3370752",
+  "checkpoints": ["1123584", "2247168", "3370752"],
+  "sliceCycles": ["70224", "280896"]
+}
