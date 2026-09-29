@@ -10,7 +10,7 @@ use crate::bus::{
 pub use crate::multiboot::{
     Encoder as MultiBootEncoder, Mode as MultiBootMode, Parameters as MultiBootParameters,
 };
-use evenfall_cpu_arm::{ArmAluHandler, Core, Pipeline};
+use evenfall_cpu_arm::{Core, Pipeline};
 use evenfall_state::Codec;
 use std::ops::{Deref, DerefMut};
 
@@ -246,36 +246,6 @@ impl evenfall_cpu_arm::Bus for ThumbRomRun<'_> {
 
     fn finish_cpu_ram_store_block(&mut self, cycles: u64) {
         self.finish_cpu_ram_store_block(cycles);
-    }
-}
-
-struct ArmKernelState<'a> {
-    region: ArmIwramExecutionRegion<'a>,
-    pc8: u32,
-    current: u32,
-    next: u32,
-    limit: u64,
-}
-
-impl ArmKernelState<'_> {
-    #[inline]
-    fn fits(&self, required: u64) -> bool {
-        self.region.cycle <= self.limit && self.limit - self.region.cycle >= required
-    }
-
-    #[inline]
-    fn bound(&mut self) {
-        let words = u64::from((0x0400_0000 - self.pc8) / 4);
-        self.limit = self.region.end.min(self.region.cycle + words);
-    }
-
-    #[cfg_attr(feature = "kernel-stage-profile", inline(never))]
-    #[cfg_attr(not(feature = "kernel-stage-profile"), inline)]
-    fn advance(&mut self, cpu: &mut Cpu, fetched: u32) {
-        self.current = self.next;
-        self.next = fetched;
-        self.pc8 = self.pc8.wrapping_add(4);
-        cpu.registers[15] = self.pc8;
     }
 }
 
@@ -1134,164 +1104,6 @@ impl Cpu {
         }
     }
 
-    /// A whole-instruction preflight: fetch first, then all data and internal
-    /// cycles, and finally any refill. A failed condition still consumes its
-    /// fetch, even if the encoding would otherwise leave the kernel.
-    #[cfg_attr(feature = "kernel-stage-profile", inline(never))]
-    fn arm_kernel_cycles(
-        &self,
-        state: &mut ArmKernelState<'_>,
-        instruction: u32,
-        condition_passed: bool,
-    ) -> Option<u64> {
-        if instruction & 0x0f00_0000 == 0x0f00_0000 {
-            return None; // SWIs always leave through step_impl.
-        }
-        if !condition_passed {
-            return Some(1);
-        }
-        let rn = ((instruction >> 16) & 15) as usize;
-        let rd = ((instruction >> 12) & 15) as usize;
-        let load = instruction & (1 << 20) != 0;
-        match (instruction >> 25) & 7 {
-            0 if instruction & 0x0fc0_00f0 == 0x0000_0090 => {
-                let rm = (instruction & 15) as usize;
-                let rs = ((instruction >> 8) & 15) as usize;
-                let accumulate = instruction & (1 << 21) != 0;
-                // MUL's Rd is bits 19..16 and its accumulator Rn is 15..12;
-                // the transfer decoder's `rd`/`rn` names are reversed here.
-                if rn == 15 || rs == 15 || rm == 15 || (accumulate && rd == 15) {
-                    return None;
-                }
-                Some(
-                    1 + Core::multiply_iterations(self.registers[rs], true) + u64::from(accumulate),
-                )
-            }
-            0 if instruction & 0x0e00_0090 == 0x0000_0090 && (instruction >> 5) & 3 != 0 => {
-                let operation = (instruction >> 5) & 3;
-                if rd == 15
-                    || (rn == 15 && (instruction & (1 << 24) == 0 || instruction & (1 << 21) != 0))
-                    || (instruction & (1 << 22) == 0 && instruction & 15 == 15)
-                    || (!load && operation != 1)
-                {
-                    return None;
-                }
-                let base = self.registers[rn];
-                let offset = if instruction & (1 << 22) != 0 {
-                    ((instruction >> 8) & 15) << 4 | (instruction & 15)
-                } else {
-                    self.registers[(instruction & 15) as usize]
-                };
-                let adjusted = if instruction & (1 << 23) != 0 {
-                    base.wrapping_add(offset)
-                } else {
-                    base.wrapping_sub(offset)
-                };
-                let address = if instruction & (1 << 24) != 0 { adjusted } else { base };
-                let width = if operation == 2 { AccessWidth::Byte } else { AccessWidth::Half };
-                let bus_address = if width == AccessWidth::Byte { address } else { address & !1 };
-                let cycles = if load {
-                    state.region.load_cycles(bus_address, width)
-                } else {
-                    ArmIwramExecutionRegion::ram_cycles(bus_address, width)
-                }?;
-                Some(1 + cycles + u64::from(load))
-            }
-            0 | 1
-                if rd != 15
-                    && (instruction & 0x90 != 0x90 || instruction & (1 << 25) != 0)
-                    && (instruction & (1 << 25) != 0 || instruction & 0x0e00_0010 == 0)
-                    && (!((8..=11).contains(&((instruction >> 21) & 15))) || load)
-                    && instruction & 0x0fbf_0000 != 0x010f_0000 =>
-            {
-                Some(1)
-            }
-            2 | 3 => {
-                let pre = instruction & (1 << 24) != 0;
-                if rd == 15
-                    || (rn == 15 && (!pre || instruction & (1 << 21) != 0))
-                    || instruction & 0x0e00_0010 == 0x0600_0010
-                {
-                    return None;
-                }
-                let base = self.registers[rn];
-                let offset = if instruction & (1 << 25) != 0 {
-                    self.core.decode_operand2(instruction, false).value
-                } else {
-                    instruction & 0xfff
-                };
-                let adjusted = if instruction & (1 << 23) != 0 {
-                    base.wrapping_add(offset)
-                } else {
-                    base.wrapping_sub(offset)
-                };
-                let address = if pre { adjusted } else { base };
-                let byte = instruction & (1 << 22) != 0;
-                let width = if byte { AccessWidth::Byte } else { AccessWidth::Word };
-                let bus_address = if byte { address } else { address & !3 };
-                let cycles = if load {
-                    state.region.load_cycles(bus_address, width)
-                } else {
-                    ArmIwramExecutionRegion::ram_cycles(bus_address, width)
-                }?;
-                Some(1 + cycles + u64::from(load))
-            }
-            4 => {
-                let list = instruction as u16;
-                if list == 0 || list & 0x8000 != 0 || rn == 15 {
-                    return None;
-                }
-                let count = list.count_ones();
-                let base = self.registers[rn];
-                let up = instruction & (1 << 23) != 0;
-                let pre = instruction & (1 << 24) != 0;
-                let first = if up {
-                    base.wrapping_add(if pre { 4 } else { 0 })
-                } else {
-                    base.wrapping_sub(count * 4).wrapping_add(if pre { 0 } else { 4 })
-                } & !3;
-                let last = first.wrapping_add((count - 1) * 4);
-                if first >> 24 != last >> 24 {
-                    return None;
-                }
-                Some(
-                    1 + u64::from(count)
-                        * ArmIwramExecutionRegion::ram_cycles(first, AccessWidth::Word)?
-                        + u64::from(load),
-                )
-            }
-            5 => {
-                let displacement = (((instruction & 0x00ff_ffff) << 8) as i32 >> 6) as u32;
-                let target = state.pc8.wrapping_add(displacement);
-                (target >= 0x0300_0000 && is_arm_iwram_slice_fetch(target.wrapping_add(8)))
-                    .then_some(3)
-            }
-            _ => None,
-        }
-    }
-
-    // Diagnostic boundaries isolate stages for perf's instruction sampling;
-    // they do not exist in a normal build and alter code layout/call cost.
-    #[cfg(feature = "kernel-stage-profile")]
-    #[inline(never)]
-    fn profile_arm_execute(
-        &mut self,
-        region: &mut ArmIwramExecutionRegion<'_>,
-        instruction: u32,
-    ) -> Result<ExecuteResult, evenfall_cpu_arm::FaultReason> {
-        if let Some(handler) = ArmAluHandler::decode(instruction) {
-            Ok(handler.execute(&mut self.core, region, instruction))
-        } else {
-            self.core.execute_arm_condition_passed(region, instruction)
-        }
-    }
-
-    #[cfg(feature = "kernel-stage-profile")]
-    #[inline(never)]
-    fn profile_arm_fetch(region: &mut ArmIwramExecutionRegion<'_>, address: u32) -> u32 {
-        region.fetch(address)
-    }
-
     #[cfg(feature = "kernel-stage-profile")]
     #[inline(never)]
     fn profile_thumb_execute(
@@ -1308,128 +1120,10 @@ impl Cpu {
         run.fetch(address)
     }
 
-    /// Local IWRAM supply and clock stay inside one event-free device batch.
-    /// The refused instruction remains untouched for the ordinary runner.
-    #[inline(never)]
+    /// The engine entry the ported ARM kernel tests exercise.
+    #[cfg(test)]
     fn run_arm_iwram_kernel(&mut self, bus: &mut Bus, yield_at: u64) -> bool {
-        #[cfg(feature = "kernel-census")]
-        census::ARM[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if bus.irq_line && self.cpsr & (1 << 7) == 0 {
-            return false;
-        }
-        let Some(region) = ArmIwramExecutionRegion::begin(bus, yield_at) else {
-            return false;
-        };
-        let pipeline = self.pipeline.expect("ordinary ARM runner has a pipeline");
-        let mut state = ArmKernelState {
-            region,
-            pc8: self.core.next_instruction_address.wrapping_add(8),
-            current: pipeline.instructions[0],
-            next: pipeline.instructions[1],
-            limit: 0,
-        };
-        let started = state.region.cycle;
-        #[cfg(feature = "kernel-census")]
-        let (mut executed, mut branches) = (0, 0);
-        #[cfg(feature = "kernel-census")]
-        let mut classes = [0_u64; 9];
-        if is_arm_iwram_slice_fetch(state.pc8) {
-            state.bound();
-            loop {
-                let instruction = state.current;
-                let decoded = state.region.arm_op(state.pc8.wrapping_sub(8), instruction);
-                let condition_passed = instruction >> 28 == 14
-                    || self.core.condition_passed(instruction >> 28);
-                let fast = decoded.admitted() && condition_passed;
-                let Some(required) = (if fast {
-                    Some(1)
-                } else {
-                    self.registers[15] = state.pc8;
-                    self.arm_kernel_cycles(&mut state, instruction, condition_passed)
-                }) else {
-                    break;
-                };
-                if !state.fits(required) {
-                    break;
-                }
-                #[cfg(not(feature = "kernel-stage-profile"))]
-                let fetched = state.region.fetch(state.pc8);
-                #[cfg(feature = "kernel-stage-profile")]
-                let fetched = Self::profile_arm_fetch(&mut state.region, state.pc8);
-                #[cfg(feature = "kernel-census")]
-                {
-                    executed += 1;
-                    classes
-                        [if condition_passed { ((instruction >> 25) & 7) as usize } else { 8 }] +=
-                        1;
-                }
-                if !condition_passed {
-                    state.advance(self, fetched);
-                    continue;
-                }
-                if fast {
-                    decoded.execute(&mut self.core, state.pc8);
-                    state.current = state.next;
-                    state.next = fetched;
-                    state.pc8 = state.pc8.wrapping_add(4);
-                    continue;
-                }
-                // The ordinary step exposes the waiting instruction address
-                // throughout execution. In particular BL derives LR from it;
-                // after a fall-through the kernel's Core otherwise still held
-                // the address from the prior instruction.
-                self.registers[15] = state.pc8;
-                self.core.next_instruction_address = state.pc8.wrapping_sub(8);
-                #[cfg(not(feature = "kernel-stage-profile"))]
-                let execution = if let Some(handler) = ArmAluHandler::decode(instruction) {
-                    Ok(handler.execute(&mut self.core, &mut state.region, instruction))
-                } else {
-                    self.core.execute_arm_condition_passed(&mut state.region, instruction)
-                };
-                #[cfg(feature = "kernel-stage-profile")]
-                let execution = self.profile_arm_execute(&mut state.region, instruction);
-                let execution = execution.expect("an admitted ARM instruction cannot fault");
-                if execution.branched {
-                    #[cfg(feature = "kernel-census")]
-                    {
-                        branches += 1;
-                    }
-                    let target = self.core.next_instruction_address;
-                    state.pc8 = target;
-                    state.current = state.region.fetch(state.pc8);
-                    state.pc8 = state.pc8.wrapping_add(4);
-                    state.next = state.region.fetch(state.pc8);
-                    state.pc8 = state.pc8.wrapping_add(4);
-                    self.registers[15] = state.pc8;
-                    state.bound();
-                } else {
-                    debug_assert!(execution.software_interrupt.is_none());
-                    if (instruction >> 25) & 7 == 4
-                        || (instruction >> 25) & 6 == 2
-                        || (instruction & 0x0e00_0090 == 0x0000_0090 && (instruction >> 5) & 3 != 0)
-                    {
-                        state.region.complete_data();
-                    }
-                    state.advance(self, fetched);
-                }
-            }
-        }
-        self.core.next_instruction_address = state.pc8.wrapping_sub(8);
-        self.registers[15] = state.pc8;
-        self.pipeline = Some(Pipeline {
-            instructions: [state.current, state.next],
-            instruction_set: InstructionSet::Arm,
-        });
-        let ran = state.region.cycle != started;
-        state.region.finish(state.next);
-        #[cfg(feature = "kernel-census")]
-        {
-            census::entry(&census::ARM, executed, branches);
-            for (counter, n) in census::ARM_CLASS.iter().zip(classes) {
-                counter.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
-            }
-        }
-        ran
+        self.run_engine(bus, yield_at)
     }
 
     /// The next Thumb instruction's work after its successor fetch. Refuse
@@ -1749,18 +1443,19 @@ impl Cpu {
             {
                 return ChunkOutcome::Generic;
             }
+            if self.run_engine(bus, yield_at) {
+                stream.armed = false;
+                if bus.now() >= yield_at {
+                    return ChunkOutcome::Deadline;
+                }
+                continue;
+            }
             let arm_iwram =
                 set == InstructionSet::Arm && is_arm_iwram_slice_fetch(address.wrapping_add(8));
             if arm_iwram {
                 if !arm_slice {
                     begin_arm_iwram_slice(bus);
                     arm_slice = true;
-                }
-                if self.run_arm_iwram_kernel(bus, yield_at) {
-                    if bus.now() >= yield_at {
-                        return ChunkOutcome::Deadline;
-                    }
-                    continue;
                 }
             } else if set == InstructionSet::Thumb {
                 arm_slice = false;
@@ -2698,6 +2393,10 @@ mod tests {
                             instructions: [opcode, 0xef08_0000],
                             instruction_set: InstructionSet::Arm,
                         });
+                        for b in [&mut bus, &mut reference_bus] {
+                            b.iwram[0..4].copy_from_slice(&opcode.to_le_bytes());
+                            b.iwram[4..8].copy_from_slice(&0xef08_0000_u32.to_le_bytes());
+                        }
                         cpu.registers[0] = 0x9173_250b;
                         cpu.registers[1] = base;
                         cpu.registers[2] = 0xab37_1589;
@@ -2780,6 +2479,9 @@ mod tests {
                         .copy_from_slice(&0xef08_0000_u32.to_le_bytes());
                 }
             }
+            let index = (address & 0x7fff) as usize;
+            runner_bus.iwram[index..index + 4].copy_from_slice(&instruction.to_le_bytes());
+            reference_bus.iwram[index..index + 4].copy_from_slice(&instruction.to_le_bytes());
             runner_bus.begin_device_batch();
             reference_bus.begin_device_batch();
             runner_bus.elapse(1);
@@ -2808,7 +2510,10 @@ mod tests {
             let budget = u64::from(random() % 40 + 1);
             if cpu.run_arm_iwram_kernel(&mut runner_bus, started + budget) {
                 executed += 1;
-                let _ = reference.step(&mut reference_bus);
+                // A branch back into the instruction repeats it.
+                while reference_bus.now() < runner_bus.now() {
+                    let _ = reference.step(&mut reference_bus);
+                }
                 assert_eq!(cpu, reference, "trial {trial}: {instruction:08x}");
                 assert_eq!(runner_bus.now(), reference_bus.now(), "trial {trial}");
                 assert_eq!(

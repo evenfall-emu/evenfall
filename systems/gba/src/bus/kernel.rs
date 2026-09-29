@@ -1,7 +1,143 @@
 //! CPU execution kernels whose local clocks are strictly inside a device horizon.
 
 use super::*;
-use crate::cpu::engine::ArmOp;
+use crate::cpu::engine::CodeCache;
+
+/// Memory one engine run borrows from the bus. The run owns the only view of
+/// RAM and the op caches until it stops.
+pub(crate) struct EngineMemory<'a> {
+    pub(crate) iwram: &'a mut [u8; IWRAM_SIZE],
+    pub(crate) ewram: &'a mut [u8; EWRAM_SIZE],
+    pub(crate) code: &'a mut CodeCache,
+    pub(crate) rom: RomData<'a>,
+}
+
+/// Game Pak ROM as CPU data loads see it while no prefetch is active.
+pub(crate) struct RomData<'a> {
+    bytes: &'a [u8],
+    gpio: bool,
+    eeprom: bool,
+    large: bool,
+    n: [u8; 3],
+    s: [u8; 3],
+}
+
+impl RomData<'_> {
+    /// A nonsequential CPU data load of the bus-aligned `address`: its value
+    /// and cycles, or None where the ordinary bus path must decide (EEPROM,
+    /// GPIO ports, reads beyond the image, save memory).
+    #[inline]
+    pub(crate) fn load(&self, address: u32, width: AccessWidth) -> Option<(u32, Cycle)> {
+        if !(GAME_PAK_BASE..0x0e00_0000).contains(&address)
+            || (width == AccessWidth::Half
+                && self.eeprom
+                && address >= 0x0d00_0000
+                && (!self.large || address >= 0x0dff_ff00))
+        {
+            return None;
+        }
+        let first = ((address - GAME_PAK_BASE) & (GAME_PAK_WINDOW_SIZE - 1)) as usize;
+        let end = first + width.bytes();
+        if self.gpio && first <= 0xc9 && end > 0xc4 {
+            return None;
+        }
+        let window = ((address - GAME_PAK_BASE) / GAME_PAK_WINDOW_SIZE) as usize;
+        let n = Cycle::from(self.n[window]);
+        if end > self.bytes.len() {
+            return Some((self.beyond_image(address, width), self.cycles(address, width)));
+        }
+        Some(match width {
+            AccessWidth::Byte => (u32::from(self.bytes[first]), n),
+            AccessWidth::Half => {
+                (u32::from(u16::from_le_bytes([self.bytes[first], self.bytes[first + 1]])), n)
+            }
+            AccessWidth::Word => (
+                u32::from_le_bytes(self.bytes[first..end].try_into().expect("four bytes")),
+                self.cycles(address, width),
+            ),
+        })
+    }
+}
+
+impl RomData<'_> {
+    fn cycles(&self, address: u32, width: AccessWidth) -> Cycle {
+        let window = ((address - GAME_PAK_BASE) / GAME_PAK_WINDOW_SIZE) as usize;
+        let n = Cycle::from(self.n[window]);
+        if width != AccessWidth::Word {
+            return n;
+        }
+        n + if (address + 2) & 0x1ffff == 0 { n } else { Cycle::from(self.s[window]) }
+    }
+
+    /// Bytes past the image read as the low address halfword, as in
+    /// [`Bus::read_game_pak_rom`].
+    #[cold]
+    fn beyond_image(&self, address: u32, width: AccessWidth) -> u32 {
+        (0..width.bytes()).fold(0, |value, offset| {
+            let byte_address = address.wrapping_add(offset as u32);
+            let index = ((byte_address - GAME_PAK_BASE) & (GAME_PAK_WINDOW_SIZE - 1)) as usize;
+            let byte = self.bytes.get(index).copied().unwrap_or_else(|| {
+                let halfword = (byte_address >> 1) as u16;
+                if byte_address & 1 == 0 { halfword as u8 } else { (halfword >> 8) as u8 }
+            });
+            value | u32::from(byte) << (offset * 8)
+        })
+    }
+}
+
+impl Bus {
+    /// The last cycle an engine run starting now may reach: before the next
+    /// device event and no later than `yield_at`. None while DMA is pending.
+    pub(crate) fn engine_limit(&self, yield_at: Cycle) -> Option<Cycle> {
+        if !self.batch_active
+            || self.pending_dma != 0
+            || self.servicing_dma
+            || self.batch_deadline <= self.current_cycle
+            || yield_at <= self.current_cycle
+        {
+            return None;
+        }
+        let limit = yield_at.min(self.batch_deadline - 1);
+        (limit > self.current_cycle).then_some(limit)
+    }
+
+    /// Whether code fetches have left the Game Pak: no prefetch state that
+    /// an engine run in RAM would have to advance.
+    pub(crate) fn game_pak_code_idle(&self) -> bool {
+        !self.game_pak_code_active && !self.game_pak_prefetch.active
+    }
+
+    pub(crate) fn engine_memory(&mut self) -> EngineMemory<'_> {
+        if self.game_pak_timing_key != self.waitcnt {
+            self.refresh_game_pak_timing();
+        }
+        let size = self.rom.len().min(GAME_PAK_WINDOW_SIZE as usize);
+        EngineMemory {
+            iwram: &mut self.iwram,
+            ewram: &mut self.ewram,
+            code: &mut self.code,
+            rom: RomData {
+                bytes: &self.rom[..size],
+                gpio: self.cartridge_gpio.is_some(),
+                eeprom: self.save.is_eeprom(),
+                large: self.rom.len() > 16 * 1024 * 1024,
+                n: self.game_pak_n_cycles,
+                s: self.game_pak_s_cycles,
+            },
+        }
+    }
+
+    /// Publishes the end of an engine run that executed at least one
+    /// instruction: its clock, the open-bus latch and whether the last
+    /// instruction ended with a data access.
+    pub(crate) fn engine_finish(&mut self, cycle: Cycle, open_bus: u32, data_last: bool) {
+        debug_assert!(cycle > self.current_cycle && cycle < self.batch_deadline);
+        self.current_cycle = cycle;
+        self.open_bus_value = open_bus;
+        self.fetch_kind =
+            if data_last { AccessKind::Nonsequential } else { AccessKind::Sequential };
+    }
+}
 
 pub fn begin_arm_iwram_slice(bus: &mut Bus) {
     bus.game_pak_code_active = false;
@@ -33,11 +169,6 @@ pub struct ArmIwramExecutionRegion<'a> {
 }
 
 impl<'a> ArmIwramExecutionRegion<'a> {
-    #[inline]
-    pub(crate) fn arm_op(&mut self, address: u32, word: u32) -> ArmOp {
-        ArmOp::get(&mut self.bus.arm_iwram_ops[((address as usize) & (IWRAM_SIZE - 1)) / 4], word)
-    }
-
     pub fn begin(bus: &'a mut Bus, yield_at: Cycle) -> Option<Self> {
         if !bus.batch_active
             || bus.pending_dma != 0

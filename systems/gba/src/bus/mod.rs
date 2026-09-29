@@ -15,6 +15,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 mod kernel;
+pub(crate) use kernel::RomData;
 pub use kernel::{
     ArmIwramExecutionRegion, RamWords, ThumbRomRun, begin_arm_iwram_slice, fetch_arm_iwram_in_slice,
 };
@@ -22,8 +23,8 @@ pub use kernel::{
 pub const SCREEN_WIDTH: usize = 240;
 pub const SCREEN_HEIGHT: usize = 160;
 const BIOS_SIZE: usize = 16 * 1024;
-const EWRAM_SIZE: usize = 256 * 1024;
-const IWRAM_SIZE: usize = 32 * 1024;
+pub(crate) const EWRAM_SIZE: usize = 256 * 1024;
+pub(crate) const IWRAM_SIZE: usize = 32 * 1024;
 const VRAM_SIZE: usize = 96 * 1024;
 const PALETTE_SIZE: usize = 1024;
 const OAM_SIZE: usize = 1024;
@@ -377,7 +378,7 @@ pub struct Bus {
     pub ewram: Box<[u8; EWRAM_SIZE]>,
     pub iwram: Box<[u8; IWRAM_SIZE]>,
     #[codec(skip)]
-    pub(crate) arm_iwram_ops: Box<[crate::cpu::engine::ArmOp; IWRAM_SIZE / 4]>,
+    pub(crate) code: crate::cpu::engine::CodeCache,
     pub palette: [u8; PALETTE_SIZE],
     pub vram: Box<[u8; VRAM_SIZE]>,
     pub oam: [u8; OAM_SIZE],
@@ -621,7 +622,7 @@ impl Bus {
         Self {
             ewram: boxed_array(0),
             iwram: boxed_array(0),
-            arm_iwram_ops: boxed_array(crate::cpu::engine::ArmOp::default()),
+            code: crate::cpu::engine::CodeCache::default(),
             palette: [0; PALETTE_SIZE],
             vram: boxed_array(0),
             oam: [0; OAM_SIZE],
@@ -869,6 +870,7 @@ impl Bus {
         self.apu.sample_output_enabled = sample_output_enabled;
         self.apu.high_speed_audio_enabled = high_speed_audio_enabled;
         self.decode(source)?;
+        self.code.clear();
         self.external_input_pointer = None;
         self.external_input_count = 0;
         self.external_input_index = 0;
@@ -1542,6 +1544,7 @@ impl Bus {
     pub fn soft_reset_entry_address(&mut self) -> u32 {
         let reenter_ewram = self.iwram[0x7ffa] != 0;
         self.iwram[0x7e00..].fill(0);
+        self.code.clear();
         if reenter_ewram { EWRAM_BASE } else { GAME_PAK_BASE }
     }
 
@@ -1558,6 +1561,7 @@ impl Bus {
         if flags & 2 != 0 {
             self.iwram[..0x7e00].fill(0);
         }
+        self.code.clear();
         if flags & 4 != 0 {
             self.palette.fill(0);
             self.scanline_memo.mark_palette();
@@ -1605,6 +1609,7 @@ impl Bus {
     pub fn hard_reset(&mut self) {
         self.register_ram_reset(0xff);
         self.iwram[0x7e00..].fill(0);
+        self.code.clear();
         self.frame_pixels.fill(0);
         self.frame_second_pixels.fill(0);
         self.frame_priorities.fill(4);
@@ -2068,12 +2073,9 @@ impl Bus {
     }
 
     fn write_ewram(&mut self, address: u32, width: AccessWidth, value: u32) {
-        write_ram(
-            &mut self.ewram,
-            (address.wrapping_sub(EWRAM_BASE) as usize) & (EWRAM_SIZE - 1),
-            width,
-            value,
-        );
+        let index = (address.wrapping_sub(EWRAM_BASE) as usize) & (EWRAM_SIZE - 1);
+        self.code.write_ewram(index, width.bytes());
+        write_ram(&mut self.ewram, index, width, value);
     }
 
     fn read_iwram(&self, address: u32, width: AccessWidth) -> u32 {
@@ -2081,12 +2083,9 @@ impl Bus {
     }
 
     fn write_iwram(&mut self, address: u32, width: AccessWidth, value: u32) {
-        write_ram(
-            &mut self.iwram,
-            (address.wrapping_sub(IWRAM_BASE) as usize) & (IWRAM_SIZE - 1),
-            width,
-            value,
-        );
+        let index = (address.wrapping_sub(IWRAM_BASE) as usize) & (IWRAM_SIZE - 1);
+        self.code.write_iwram(index, width.bytes());
+        write_ram(&mut self.iwram, index, width, value);
     }
 
     fn write_waitcnt(&mut self, value: u16) {
@@ -3892,7 +3891,7 @@ fn adjusted_dma_address(address: u32, unit_bytes: u32, control: u8) -> u32 {
 }
 
 impl AccessWidth {
-    const fn bytes(self) -> usize {
+    pub(crate) const fn bytes(self) -> usize {
         match self {
             Self::Byte => 1,
             Self::Half => 2,
@@ -3907,7 +3906,7 @@ impl AccessWidth {
 /// masking the index to a width-aligned position inside the array lets the
 /// compiler prove the bounds. A misaligned index keeps the byte-wise wrap.
 #[inline(always)]
-fn read_ram<const N: usize>(ram: &[u8; N], index: usize, width: AccessWidth) -> u32 {
+pub(crate) fn read_ram<const N: usize>(ram: &[u8; N], index: usize, width: AccessWidth) -> u32 {
     const { assert!(N.is_power_of_two() && N >= 4) };
     let index = index & (N - 1);
     match width {
@@ -3925,7 +3924,12 @@ fn read_ram<const N: usize>(ram: &[u8; N], index: usize, width: AccessWidth) -> 
 }
 
 #[inline(always)]
-fn write_ram<const N: usize>(ram: &mut [u8; N], index: usize, width: AccessWidth, value: u32) {
+pub(crate) fn write_ram<const N: usize>(
+    ram: &mut [u8; N],
+    index: usize,
+    width: AccessWidth,
+    value: u32,
+) {
     const { assert!(N.is_power_of_two() && N >= 4) };
     let index = index & (N - 1);
     match width {

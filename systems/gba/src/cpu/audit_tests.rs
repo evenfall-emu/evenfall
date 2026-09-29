@@ -10,6 +10,16 @@ fn arm_cpu(opcode: u32) -> Cpu {
     cpu
 }
 
+/// The engine runs only a pipeline that matches memory: store the latched
+/// words where the kernel tests' CPU says they were fetched from.
+fn load_pipeline(bus: &mut Bus, cpu: &Cpu) {
+    let pc = cpu.core.next_instruction_address;
+    for (slot, word) in cpu.pipeline.unwrap().instructions.into_iter().enumerate() {
+        let index = (pc as usize + 4 * slot) & 0x7fff;
+        bus.iwram[index..index + 4].copy_from_slice(&word.to_le_bytes());
+    }
+}
+
 fn batched(bus: &mut Bus) {
     bus.begin_device_batch();
     bus.elapse(1);
@@ -61,6 +71,8 @@ fn arm_kernel_game_pak_rom_loads_match_ordinary_timing_values_and_prefetch_state
                     }
                     let mut cpu = arm_cpu(opcode);
                     cpu.registers[1] = base;
+                    load_pipeline(&mut bus, &cpu);
+                    load_pipeline(&mut reference_bus, &cpu);
                     let before = cpu.clone();
                     let mut reference = cpu.clone();
                     let _ = reference.step(&mut reference_bus);
@@ -181,7 +193,22 @@ fn thumb_runner_with_prefetch_runs_sequentially_across_a_32_mib_images_window_se
     }
 }
 
+/// Runs the ordinary runner, engine included, to `deadline`.
+fn run_to(cpu: &mut Cpu, bus: &mut Bus, deadline: u64) {
+    let mut reason = None;
+    let mut fault = None;
+    while bus.now() < deadline {
+        match cpu.run_normal_until(bus, deadline, &mut reason, &mut fault) {
+            ChunkOutcome::Deadline => {}
+            ChunkOutcome::Generic => assert!(matches!(cpu.step(bus), StepOutcome::Executed(_))),
+            ChunkOutcome::Faulted => panic!("unexpected fault: {fault:?} {reason:?}"),
+        }
+    }
+}
+
 /// Zig: ARM kernel stops fall-through before the supplied word leaves IWRAM.
+/// The engine never runs in the last IWRAM mirror, so the ordinary runner
+/// takes these instructions; it must still match single stepping.
 #[test]
 fn arm_kernel_stops_fall_through_before_the_supplied_word_leaves_iwram() {
     for branch_first in [false, true] {
@@ -203,8 +230,9 @@ fn arm_kernel_stops_fall_through_before_the_supplied_word_leaves_iwram() {
         for _ in 0..if branch_first { 5 } else { 4 } {
             let _ = reference.step(&mut reference_bus);
         }
-        let deadline = bus.now() + 100;
-        assert!(cpu.run_arm_iwram_kernel(&mut bus, deadline));
+        let deadline = reference_bus.now();
+        assert!(!cpu.clone().run_arm_iwram_kernel(&mut bus, deadline));
+        run_to(&mut cpu, &mut bus, deadline);
         assert_eq!(cpu.core.next_instruction_address, 0x03ff_fff8);
         assert_eq!(cpu.registers[0], 4);
         assert_eq!(cpu, reference);
@@ -221,6 +249,8 @@ fn unified_kernel_failed_conditions_ignore_invalid_transfer_and_branch_targets()
         batched(&mut bus);
         batched(&mut reference_bus);
         let mut cpu = arm_cpu(opcode);
+        load_pipeline(&mut bus, &cpu);
+        load_pipeline(&mut reference_bus, &cpu);
         let mut reference = cpu.clone();
         let _ = reference.step(&mut reference_bus);
         let deadline = bus.now() + 1;
@@ -290,14 +320,17 @@ fn unified_kernel_stores_retain_latched_opcodes_but_change_later_fetches() {
         }
         let mut cpu = arm_cpu(0xe581_2000);
         cpu.pipeline.as_mut().unwrap().instructions[1] = 0xe280_0001;
+        load_pipeline(&mut bus, &cpu);
+        load_pipeline(&mut reference_bus, &cpu);
         cpu.registers[1] = 0x0300_0000 + offset;
         cpu.registers[2] = 0xe280_0011;
         let mut reference = cpu.clone();
         for _ in 0..4 {
             let _ = reference.step(&mut reference_bus);
         }
-        let deadline = bus.now() + 5;
-        assert!(cpu.run_arm_iwram_kernel(&mut bus, deadline));
+        // The engine leaves stores into code pages to the interpreter.
+        let deadline = reference_bus.now();
+        run_to(&mut cpu, &mut bus, deadline);
         assert_eq!(cpu.registers[0], if offset == 12 { 21 } else { 9 });
         assert_eq!(cpu, reference);
         equal_bus(&mut reference_bus, &mut bus);
@@ -338,6 +371,8 @@ fn execution_region_signed_loads_preserve_indexing_sign_and_last_bus_access() {
                 cpu.registers[1] = base;
                 cpu.registers[2] = 0x1234;
                 cpu.registers[3] = 3;
+                load_pipeline(&mut bus, &cpu);
+                load_pipeline(&mut reference_bus, &cpu);
                 let before = cpu.clone();
                 let mut reference = cpu.clone();
                 let _ = reference.step(&mut reference_bus);
@@ -427,6 +462,7 @@ fn execution_region_multiply_keeps_original_alias_timing_and_conditional_effects
                     cpu.registers[1] = 0x0100_0003;
                     cpu.registers[2] = multiplier;
                     cpu.registers[3] = 11;
+                    load_pipeline(&mut bus, &cpu);
                     let before = cpu.clone();
                     let start = bus.now();
                     let ran = cpu.run_arm_iwram_kernel(&mut bus, start + budget);
