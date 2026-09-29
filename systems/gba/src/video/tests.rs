@@ -57,6 +57,22 @@ fn assert_line(left: &Bus, right: &Bus, line: usize) {
     }
 }
 
+#[test]
+fn video_register_decoders_guard_out_of_range_addresses_before_subtracting() {
+    for address in [0, 0x0400_0000, 0x0400_0006, 0x0400_000f, 0x0400_001f, 0x0400_0040] {
+        assert_eq!(Bus::background_control_index(address), None);
+        assert_eq!(Bus::background_offset_register(address), None);
+        assert_eq!(Bus::affine_parameter_register(address), None);
+    }
+    assert_eq!(Bus::background_control_index(0x0400_0008), Some(0));
+    assert_eq!(Bus::background_control_index(0x0400_000e), Some(3));
+    assert_eq!(Bus::background_offset_register(0x0400_0010), Some((0, false)));
+    assert_eq!(Bus::background_offset_register(0x0400_001e), Some((3, true)));
+    assert_eq!(Bus::affine_parameter_register(0x0400_0020), Some((0, 0)));
+    assert_eq!(Bus::affine_parameter_register(0x0400_0036), Some((1, 3)));
+    assert_eq!(Bus::affine_parameter_register(0x0400_0031), None);
+}
+
 /// ZiGBA: "window spans match the point oracle for every horizontal bound"
 #[test]
 fn window_spans_match_the_point_oracle_for_every_horizontal_bound() {

@@ -1031,7 +1031,7 @@ mod tests {
             ]
         };
         let mut rom = [0; 32];
-        for (bytes, word) in rom.chunks_exact_mut(4).zip(words) {
+        for (bytes, word) in rom.as_chunks_mut::<4>().0.iter_mut().zip(words) {
             bytes.copy_from_slice(&word.to_le_bytes());
         }
         rom
@@ -1147,5 +1147,65 @@ mod tests {
             fresh.advance(fresh.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
         }
         assert_eq!(session.write_state().unwrap(), fresh.write_state().unwrap());
+    }
+
+    /// Zig: "internal video yields preserve STOP serial horizon and unreachable future inputs"
+    #[test]
+    fn internal_video_yields_preserve_stop_serial_horizon_and_future_inputs() {
+        let rom = [0, 0, 3, 0xef, 0xfe, 0xff, 0xff, 0xea]; // Stop; b .
+        for (future_input, wakes) in [(false, true), (true, true), (false, false)] {
+            let mut full = Session::create(Config { image: &rom, ..Config::default() }).unwrap();
+            let mut selective =
+                Session::create(Config { image: &rom, ..Config::default() }).unwrap();
+            for session in [&mut full, &mut selective] {
+                session.machine.bus.rcnt = 0xc000;
+                session.machine.bus.joy_control = 0x40;
+                session.machine.bus.interrupt_enable_mask = 1 << 7;
+                session.machine.bus.update_irq_line();
+                session
+                    .machine
+                    .bus
+                    .schedule_joy_bus(
+                        if wakes {
+                            crate::bus::JoyBusCommand::Reset
+                        } else {
+                            crate::bus::JoyBusCommand::Status
+                        },
+                        250_000,
+                    )
+                    .unwrap();
+            }
+            selective.set_video_interval(16).unwrap();
+            let future = [TimedInput {
+                at: 220_000,
+                change: crate::bus::TimedInputChange::Keys(KeyState {
+                    a: true,
+                    ..KeyState::default()
+                }),
+            }];
+            let inputs = if future_input { &future[..] } else { &[][..] };
+            let expected = full
+                .run_slice_with_input(Machine::CYCLES_PER_FRAME, Machine::CYCLES_PER_FRAME, inputs)
+                .unwrap();
+            let actual = selective
+                .run_slice_with_input(Machine::CYCLES_PER_FRAME, Machine::CYCLES_PER_FRAME, inputs)
+                .unwrap();
+            assert_eq!(actual, expected);
+            if future_input {
+                assert_eq!(actual.reason, StopReason::PowerStopped);
+                let mut reference =
+                    Session::create(Config { image: &rom, ..Config::default() }).unwrap();
+                reference.step().unwrap();
+                assert_eq!(reference.machine.now(), actual.stopped_at);
+                assert_eq!(selective.machine.bus.joy_completion_cycle, Some(250_000));
+                assert_eq!(actual.inputs_consumed, 0);
+            } else if !wakes {
+                assert_eq!(actual.reason, StopReason::PowerStopped);
+                assert_eq!(actual.stopped_at, 250_000);
+            } else {
+                assert!(actual.stopped_at >= Machine::CYCLES_PER_FRAME);
+            }
+            assert_eq!(full.write_state().unwrap(), selective.write_state().unwrap());
+        }
     }
 }

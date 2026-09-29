@@ -1108,6 +1108,78 @@ mod tests {
         }
     }
 
+    struct RamBus {
+        optimized: bool,
+        words: [u32; 8],
+        cycles: Cycle,
+        last_word: u32,
+    }
+
+    impl RamBus {
+        fn index(address: u32) -> usize {
+            assert_eq!(address & 3, 0);
+            ((address - 0x0300_0100) / 4) as usize
+        }
+    }
+
+    impl Bus for RamBus {
+        fn read_cpu_data(&mut self, address: u32, width: AccessWidth, _: AccessKind) -> u32 {
+            assert_eq!(width, AccessWidth::Word);
+            self.cycles += 1;
+            self.last_word = self.words[Self::index(address)];
+            self.last_word
+        }
+        fn write_cpu_data(&mut self, address: u32, width: AccessWidth, _: AccessKind, value: u32) {
+            assert_eq!(width, AccessWidth::Word);
+            self.cycles += 1;
+            self.words[Self::index(address)] = value;
+        }
+        fn elapse_cpu_internal(&mut self, cycles: Cycle) {
+            self.cycles += cycles;
+        }
+        fn cpu_ram_block_cycles(&self, _first: u32, beats: u32, internal: Cycle) -> Option<Cycle> {
+            self.optimized.then_some(Cycle::from(beats) + internal)
+        }
+        fn cpu_ram_word(&self, address: u32) -> u32 {
+            self.words[Self::index(address)]
+        }
+        fn set_cpu_ram_word(&mut self, address: u32, value: u32) {
+            self.words[Self::index(address)] = value;
+        }
+        fn finish_cpu_ram_load_block(&mut self, cycles: Cycle, last_word: u32) {
+            self.cycles += cycles;
+            self.last_word = last_word;
+        }
+        fn finish_cpu_ram_store_block(&mut self, cycles: Cycle) {
+            self.cycles += cycles;
+        }
+    }
+
+    /// ZiGBA `executeThumbMultipleTransfer`: admitted RAM blocks match every
+    /// scalar beat, including a listed base register and a trailing load I cycle.
+    #[test]
+    fn thumb_ram_blocks_match_per_beat_reference() {
+        for (instruction, base_register) in [(0xc10b, 1), (0xca25, 2)] {
+            let mut core = Core::new(0x0800_0040, 0x3f);
+            core.registers[0] = 0x7a19_0365;
+            core.registers[1] = 0x0331_0233;
+            core.registers[2] = 0x02b5_090a;
+            core.registers[3] = 0xdead_00af;
+            core.registers[base_register] = 0x0300_0101;
+            let words = [0x187a_2596, 0x0300_0073, 0x6ace_0991, 0, 0, 0, 0, 0];
+            let mut reference_bus = RamBus { optimized: false, words, cycles: 0, last_word: 0 };
+            let mut fast_bus = RamBus { optimized: true, words, cycles: 0, last_word: 0 };
+            let mut fast = core.clone();
+            let reference = core.execute_thumb(&mut reference_bus, instruction);
+            let optimized = fast.execute_thumb(&mut fast_bus, instruction);
+            assert_eq!(optimized, reference);
+            assert_eq!(fast, core);
+            assert_eq!(fast_bus.words, reference_bus.words);
+            assert_eq!(fast_bus.cycles, reference_bus.cycles);
+            assert_eq!(fast_bus.last_word, reference_bus.last_word);
+        }
+    }
+
     /// ZiGBA `switchBankedMode`: FIQ has private r8–r14 while System and User share their bank.
     #[test]
     fn switch_banked_mode() {
