@@ -130,8 +130,9 @@ fn fresh_ops(slots: usize, tail: &[Op]) -> Box<[Op]> {
     ops.into_boxed_slice()
 }
 
-/// Splits the bus memory for a run whose op array is out of the cache.
-fn split_memory(memory: EngineMemory<'_>) -> (Mem<'_>, &mut Vec<Option<Box<[Op]>>>) {
+/// Splits the bus memory for a run of `budget` cycles whose op array is out
+/// of the cache.
+fn split_memory(memory: EngineMemory<'_>, budget: i64) -> (Mem<'_>, &mut Vec<Option<Box<[Op]>>>) {
     let CodeCache { ram, rom_thumb, iwram_code, ewram_code } = memory.code;
     let others = ram.each_ref().map(|isa| isa.each_ref().map(|ops| ops.as_deref()));
     let mem = Mem {
@@ -141,6 +142,8 @@ fn split_memory(memory: EngineMemory<'_>) -> (Mem<'_>, &mut Vec<Option<Box<[Op]>
         ewram_code,
         rom: memory.rom,
         others,
+        video: memory.video,
+        video_floor: budget.saturating_sub(i64::try_from(memory.quiet).unwrap_or(i64::MAX)),
     };
     (mem, rom_thumb)
 }

@@ -505,9 +505,10 @@ fn run_ram<const EW: bool>(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
         return false;
     }
     let start = bus.now();
+    let budget = (limit - start) as i64;
     let memory = bus.engine_memory();
     let mut ops = memory.code.take(region, true, || fresh_ops(size / 2, &[]));
-    let (mem, _) = split_memory(memory);
+    let (mem, _) = split_memory(memory, budget);
     let mut c = Ctx {
         mem,
         place: if EW { Place::Ewram } else { Place::Iwram },
@@ -519,7 +520,6 @@ fn run_ram<const EW: bool>(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
         data: 0,
         clean: true,
     };
-    let budget = (limit - start) as i64;
     let mut exit = None;
     if let Some(mut hot) = enter(core, &c, pc, budget) {
         loop {
@@ -556,15 +556,14 @@ fn run_rom(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
         return false;
     }
     let start = bus.now();
+    let budget = (limit - start) as i64;
     let first_fetch_n =
         bus.fetch_kind == AccessKind::Nonsequential || bus.prefetch_disabled_bug_pending;
     let prefetch = if bus.waitcnt & (1 << 14) != 0 {
-        let memory = bus.engine_memory();
-        let (miss, _) = memory.rom.window_cycles(pc);
         let Some(clock) = bus.thumb_prefetch_entry(pc) else {
             return false;
         };
-        Some((clock, miss))
+        Some(clock)
     } else if bus.game_pak_prefetch.active || bus.prefetch_buffer_was_disabled {
         return false;
     } else {
@@ -572,7 +571,7 @@ fn run_rom(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
     };
     let memory = bus.engine_memory();
     let (n, s) = memory.rom.window_cycles(pc);
-    let (mem, pages) = split_memory(memory);
+    let (mem, pages) = split_memory(memory, budget);
     if pages.is_empty() {
         pages.resize_with(mem.rom.len().div_ceil(PAGE_BYTES as usize).max(1), || None);
     }
@@ -592,7 +591,6 @@ fn run_rom(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
         clean: false,
     };
     c.clean = clean_page(&c);
-    let budget = (limit - start) as i64;
     let (exit, ready) = match (enter(core, &c, pc, budget), prefetch) {
         (None, _) => {
             pages[page_of(pc)] = Some(ops);
@@ -603,10 +601,11 @@ fn run_rom(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
             let timing = Rom { n: n as i64, s: s as i64 };
             rom_runs(core, &mut c, pages, ops, hot, timing, start, budget)
         }
-        (Some(mut hot), Some((clock, miss))) => {
+        (Some(mut hot), Some(clock)) => {
             hot.ready = limit as i64 - clock.head_ready as i64;
+            // A buffer restart after a data load is a nonsequential access.
             let timing =
-                Prefetch { duty: clock.duty as i64, miss: miss as i64, fill: clock.fill as i64 };
+                Prefetch { duty: clock.duty as i64, miss: n as i64, fill: clock.fill as i64 };
             rom_runs(core, &mut c, pages, ops, hot, timing, start, budget)
         }
     };
@@ -619,7 +618,7 @@ fn run_rom(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
             bus.engine_finish(exit.cycle, exit.open_bus, exit.data_last);
             bus.prefetch_disabled_bug_pending = exit.internal_last;
         }
-        Some((clock, _)) => {
+        Some(clock) => {
             let clock = PrefetchClock { head_ready: (limit as i64 - ready) as u64, ..clock };
             if exit.load_last {
                 bus.open_bus_value = exit.open_bus;
@@ -1281,7 +1280,8 @@ fn transfer<const N: usize, T: Timing, const MODE: u8>(
             return Flow::Refused;
         };
         let before = h.budget;
-        if !h.charge(t.fetch(h) + cycles) {
+        let cost = t.fetch(h) + cycles;
+        if !c.mem.store_ends_in_time(bus_address, before - cost) || !h.charge(cost) {
             return Flow::Refused;
         }
         c.mem.store(bus_address, width, r[usize::from(op.rd)]);

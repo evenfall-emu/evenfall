@@ -358,6 +358,7 @@ pub(super) fn run<const EW: bool>(core: &mut Core, bus: &mut Bus, limit: u64) ->
         return false;
     }
     let start = bus.now();
+    let budget = (limit - start) as i64;
     let memory = bus.engine_memory();
     let slots = (mask as usize + 1) / 4;
     let mut ops = memory.code.take(Ctx::<EW>::REGION, false, || {
@@ -365,7 +366,7 @@ pub(super) fn run<const EW: bool>(core: &mut Core, bus: &mut Bus, limit: u64) ->
         tail[slots - 1] = STOP_OP;
         fresh_ops(slots, &tail)
     });
-    let (mem, _) = split_memory(memory);
+    let (mem, _) = split_memory(memory, budget);
     let pipeline = core.pipeline;
     let cpsr = core.cpsr;
     let mut c = Ctx::<EW> { mem, core, base: pc & !mask, load_mark: -1, store_mark: -1, data: 0 };
@@ -374,7 +375,6 @@ pub(super) fn run<const EW: bool>(core: &mut Core, bus: &mut Bus, limit: u64) ->
         bus.code.put(Ctx::<EW>::REGION, false, ops);
         return false;
     }
-    let budget = (limit - start) as i64;
     let hot = Hot { idx: (pc & mask) >> 2, budget, cpsr };
     let hot = if EW {
         let ops = (&mut *ops).try_into().expect("EWRAM op array");
@@ -1063,7 +1063,8 @@ fn transfer<const EW: bool, const MODE: u8>(
         let Some(cycles) = c.mem.store_cycles(c.running(ops, h.idx), bus_address, width) else {
             return false;
         };
-        if !h.charge(Ctx::<EW>::FETCH + cycles) {
+        let cost = Ctx::<EW>::FETCH + cycles;
+        if !c.mem.store_ends_in_time(bus_address, h.budget - cost) || !h.charge(cost) {
             return false;
         }
         c.mem.store(bus_address, width, regs[usize::from(op.rd)]);
@@ -1128,7 +1129,8 @@ fn single_op<const EW: bool>(
         c.load_mark = h.budget;
     } else {
         let cycles = c.mem.store_cycles(c.running(ops, h.idx), bus_address, width)?;
-        if !h.charge(Ctx::<EW>::FETCH + cycles) {
+        let cost = Ctx::<EW>::FETCH + cycles;
+        if !c.mem.store_ends_in_time(bus_address, h.budget - cost) || !h.charge(cost) {
             return None;
         }
         c.mem.store(bus_address, width, regs[rd].wrapping_add(if rd == 15 { 4 } else { 0 }));
@@ -1187,7 +1189,8 @@ fn half_op<const EW: bool>(
         c.load_mark = h.budget;
     } else {
         let cycles = c.mem.store_cycles(c.running(ops, h.idx), bus_address, width)?;
-        if !h.charge(Ctx::<EW>::FETCH + cycles) {
+        let cost = Ctx::<EW>::FETCH + cycles;
+        if !c.mem.store_ends_in_time(bus_address, h.budget - cost) || !h.charge(cost) {
             return None;
         }
         c.mem.store(bus_address, width, regs[rd]);

@@ -4,12 +4,122 @@ use super::*;
 use crate::cpu::engine::CodeCache;
 
 /// Memory one engine run borrows from the bus. The run owns the only view of
-/// RAM and the op caches until it stops.
+/// RAM, video memory and the op caches until it stops.
 pub(crate) struct EngineMemory<'a> {
     pub(crate) iwram: &'a mut [u8; IWRAM_SIZE],
     pub(crate) ewram: &'a mut [u8; EWRAM_SIZE],
     pub(crate) code: &'a mut CodeCache,
     pub(crate) rom: RomData<'a>,
+    pub(crate) video: VideoMemory<'a>,
+    /// Cycles from now during which the PPU shows no visible dot, so that a
+    /// VRAM or palette write records no raster history: zero while a
+    /// visible dot is being drawn.
+    pub(crate) quiet: Cycle,
+}
+
+/// Palette RAM, VRAM and OAM with the render caches their writes
+/// invalidate. Bus accesses and engine runs both go through this view.
+pub(crate) struct VideoMemory<'a> {
+    pub(super) palette: &'a mut [u8; PALETTE_SIZE],
+    pub(super) vram: &'a mut [u8; VRAM_SIZE],
+    pub(super) oam: &'a mut [u8; OAM_SIZE],
+    pub(super) memo: &'a mut scanline_memo::Memo<ScanlineRegisters, SCREEN_HEIGHT>,
+    pub(super) oam_compact_valid: &'a mut bool,
+    pub(super) object_line_index: &'a mut u16,
+    pub(super) dispcnt: u16,
+}
+
+impl VideoMemory<'_> {
+    /// A read of palette RAM, VRAM or OAM (regions 5 to 7).
+    #[inline]
+    pub(crate) fn read(&self, address: u32, width: AccessWidth) -> u32 {
+        match address >> 24 {
+            5 => palette_read(self.palette, address, width),
+            6 => vram_read(self.vram, self.dispcnt, address, width),
+            _ => oam_read(self.oam, address, width),
+        }
+    }
+
+    /// A palette write: a byte lands in both bytes of its halfword.
+    pub(crate) fn write_palette(&mut self, address: u32, width: AccessWidth, value: u32) {
+        let address = (if width == AccessWidth::Byte { address & !1 } else { address }) as usize
+            & (PALETTE_SIZE - 1);
+        let mut changed = false;
+        for offset in 0..width.bytes().max(2) {
+            let byte = if width == AccessWidth::Byte {
+                value as u8
+            } else {
+                (value >> (offset * 8)) as u8
+            };
+            let index = (address + offset) & (PALETTE_SIZE - 1);
+            changed |= self.palette[index] != byte;
+            self.palette[index] = byte;
+        }
+        if changed {
+            self.memo.mark_palette();
+        }
+    }
+
+    /// A VRAM write: a byte lands in both bytes of its halfword, and not at
+    /// all in object tiles.
+    pub(crate) fn write_vram(&mut self, address: u32, width: AccessWidth, value: u32) {
+        if width == AccessWidth::Byte {
+            let Some(index) = vram_index(address & !1, self.dispcnt) else {
+                return;
+            };
+            if index >= vram_obj_boundary(self.dispcnt) {
+                return;
+            }
+            for index in index..index + 2 {
+                self.write_vram_byte(index, value as u8);
+            }
+            return;
+        }
+        for offset in 0..width.bytes() {
+            if let Some(index) = vram_index(address.wrapping_add(offset as u32), self.dispcnt) {
+                self.write_vram_byte(index, (value >> (offset * 8)) as u8);
+            }
+        }
+    }
+
+    fn write_vram_byte(&mut self, index: usize, value: u8) {
+        if self.vram[index] != value {
+            self.memo.mark_vram(index);
+        }
+        self.vram[index] = value;
+    }
+
+    /// An OAM write; byte writes are ignored.
+    pub(crate) fn write_oam(&mut self, address: u32, width: AccessWidth, value: u32) {
+        if width == AccessWidth::Byte {
+            return;
+        }
+        write_ram(self.oam, address as usize & (OAM_SIZE - 1), width, value);
+        self.memo.mark_oam();
+        *self.oam_compact_valid = false;
+        *self.object_line_index = 0xffff;
+    }
+}
+
+pub(super) fn palette_read(palette: &[u8; PALETTE_SIZE], address: u32, width: AccessWidth) -> u32 {
+    read_ram(palette, address as usize & (PALETTE_SIZE - 1), width)
+}
+
+pub(super) fn vram_read(
+    vram: &[u8; VRAM_SIZE],
+    dispcnt: u16,
+    address: u32,
+    width: AccessWidth,
+) -> u32 {
+    (0..width.bytes()).fold(0, |value, offset| {
+        let byte =
+            vram_index(address.wrapping_add(offset as u32), dispcnt).map_or(0, |index| vram[index]);
+        value | (u32::from(byte) << (offset * 8))
+    })
+}
+
+pub(super) fn oam_read(oam: &[u8; OAM_SIZE], address: u32, width: AccessWidth) -> u32 {
+    read_ram(oam, address as usize & (OAM_SIZE - 1), width)
 }
 
 /// Game Pak ROM as CPU data loads see it while no prefetch is active.
@@ -159,10 +269,15 @@ impl Bus {
     }
 
     pub(crate) fn engine_memory(&mut self) -> EngineMemory<'_> {
-        // Computed afresh: refreshing the cached tables here would change
-        // what the ordinary bus later sees.
-        let (n, s) = game_pak_timing(self.waitcnt);
+        // A stale cache is not refreshed here: that would change what the
+        // ordinary bus later sees.
+        let (n, s) = if self.game_pak_timing_key == self.waitcnt {
+            (self.game_pak_n_cycles, self.game_pak_s_cycles)
+        } else {
+            game_pak_timing(self.waitcnt)
+        };
         let size = self.rom.len().min(GAME_PAK_WINDOW_SIZE as usize);
+        let quiet = self.video_quiet_cycles();
         EngineMemory {
             iwram: &mut self.iwram,
             ewram: &mut self.ewram,
@@ -175,6 +290,34 @@ impl Bus {
                 n,
                 s,
             },
+            video: VideoMemory {
+                palette: &mut self.palette,
+                vram: &mut self.vram,
+                oam: &mut self.oam,
+                memo: &mut self.scanline_memo,
+                oam_compact_valid: &mut self.oam_compact_valid,
+                object_line_index: &mut self.object_line_index,
+                dispcnt: self.dispcnt,
+            },
+            quiet,
+        }
+    }
+
+    /// Cycles from now, within the device batch, during which the PPU
+    /// shows no visible dot: to the next line's start in HBlank, to the
+    /// frame's end in VBlank, zero while a visible dot is drawn.
+    fn video_quiet_cycles(&self) -> Cycle {
+        let mut timing = self.ppu_timing;
+        if self.batch_active {
+            timing.elapse_before_boundary(self.current_cycle - self.batch_device_cycle);
+        }
+        let (line, dot) = (Cycle::from(timing.line), Cycle::from(timing.cycle_in_line));
+        if line >= SCREEN_HEIGHT as Cycle {
+            (228 - line) * 1232 - dot
+        } else if dot >= 960 {
+            1232 - dot
+        } else {
+            0
         }
     }
 

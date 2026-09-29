@@ -89,13 +89,45 @@ impl Pair {
         assert_eq!(a.game_pak_code_active, b.game_pak_code_active, "{context}: code active");
         assert!(a.iwram[..] == b.iwram[..], "{context}: IWRAM");
         assert!(a.ewram[..] == b.ewram[..], "{context}: EWRAM");
+        assert!(a.vram[..] == b.vram[..], "{context}: VRAM");
+        assert!(a.palette[..] == b.palette[..], "{context}: palette");
+        assert!(a.oam[..] == b.oam[..], "{context}: OAM");
+        assert_eq!(a.oam_compact_valid, b.oam_compact_valid, "{context}: OAM cache");
+        assert_eq!(a.object_line_index, b.object_line_index, "{context}: object lines");
+        assert!(a.scanline_memo.same_changes(&b.scanline_memo), "{context}: memo marks");
+        // Raster history: VRAM and palette writes during visible dots.
+        let history = |bus: &Bus| {
+            let count = usize::from(bus.backdrop_segment_count);
+            let segments: Vec<_> =
+                bus.backdrop_segments[..count].iter().map(|s| (s.start_x, s.color)).collect();
+            (bus.backdrop_segment_line, segments)
+        };
+        assert_eq!(history(a), history(b), "{context}: raster history");
+    }
+
+    /// Ends both device batches, which brings the lazily advanced devices
+    /// up to the clock, and compares the PPU position.
+    fn settle(&mut self, context: &str) {
+        self.engine_bus.end_device_batch();
+        self.reference_bus.end_device_batch();
+        assert_eq!(self.engine_bus.ppu_timing, self.reference_bus.ppu_timing, "{context}: PPU");
     }
 }
 
-fn set_waitcnt(bus: &mut Bus, value: u16) {
+/// The cycles before a trial: mostly a few lines into the frame, sometimes
+/// in VBlank, where video memory stores run in the engine.
+fn lead(random: &mut Random) -> u64 {
+    if random.below(4) == 0 {
+        160 * 1232 + u64::from(random.below(68 * 1232 - 2000))
+    } else {
+        1 + u64::from(random.below(1200))
+    }
+}
+
+fn set_io(bus: &mut Bus, address: u32, value: u16) {
     bus.write(
         Access {
-            address: 0x0400_0204,
+            address,
             width: AccessWidth::Half,
             kind: AccessKind::Nonsequential,
             source: AccessSource::CpuData,
@@ -104,16 +136,37 @@ fn set_waitcnt(bus: &mut Bus, value: u16) {
     );
 }
 
-/// A register value: small numbers, RAM and ROM pointers, or noise.
+fn set_waitcnt(bus: &mut Bus, value: u16) {
+    set_io(bus, 0x0400_0204, value);
+}
+
+/// Selects a display mode, which changes how VRAM addresses map.
+fn set_dispcnt(bus: &mut Bus, mode: u16) {
+    set_io(bus, 0x0400_0000, mode);
+}
+
+/// A register value: small numbers, RAM, video memory and ROM pointers, or
+/// noise.
 fn operand(random: &mut Random) -> u32 {
-    match random.below(10) {
+    match random.below(11) {
         0..=2 => random.below(64),
         3 => 0x0300_4000 + (random.next() & 0x0ffc),
         4 => 0x0200_8000 + (random.next() & 0x0fff),
         5 => 0x0800_0000 + (random.next() & 0x3ffe),
         6 => 0x0300_4000 + random.below(64),
         7 => 1 << random.below(32),
+        8 => video_pointer(random),
         _ => random.next(),
+    }
+}
+
+/// A pointer into palette RAM, VRAM (with its mirrors and the bitmap-mode
+/// hole) or OAM.
+fn video_pointer(random: &mut Random) -> u32 {
+    match random.below(3) {
+        0 => 0x0500_0000 + (random.next() & 0x3ff),
+        1 => 0x0600_0000 + (random.next() & 0x1_ffff),
+        _ => 0x0700_0000 + (random.next() & 0x3ff),
     }
 }
 
@@ -215,7 +268,11 @@ fn arm_cpu(random: &mut Random, pc: u32) -> Cpu {
     }
     cpu.registers[8] = 0x0300_4000 + (random.next() & 0x3fc);
     cpu.registers[9] = 0x0200_8000 + (random.next() & 0x3ff);
-    cpu.registers[10] = 0x0800_0000 + (random.next() & 0xffe);
+    cpu.registers[10] = if random.below(2) == 0 {
+        0x0800_0000 + (random.next() & 0xffe)
+    } else {
+        video_pointer(random)
+    };
     cpu.registers[11] = 0x0300_4000 + (random.next() & 0xfff);
     cpu
 }
@@ -248,10 +305,12 @@ fn arm_ram_engine_matches_interpreter_for_random_code() {
             cpu
         };
         let waitcnt = random.next() as u16 & 0x5fff;
+        let dispcnt = random.below(6) as u16;
         let mut pair = Pair::new(
             &rom,
             |bus| {
                 set_waitcnt(bus, waitcnt);
+                set_dispcnt(bus, dispcnt);
                 bus.iwram[0x4000..0x6000].copy_from_slice(&iwram);
                 bus.ewram[0x8000..0xa000].copy_from_slice(&ewram);
                 for &(address, word) in &block {
@@ -259,7 +318,7 @@ fn arm_ram_engine_matches_interpreter_for_random_code() {
                 }
             },
             cpu,
-            1 + u64::from(random.below(1200)),
+            lead(&mut random),
         );
         for attempt in 0..6 {
             let budget = 1 + u64::from(random.below(if attempt == 0 { 40 } else { 400 }));
@@ -280,9 +339,12 @@ fn arm_ram_engine_matches_interpreter_for_random_code() {
                 }
             }
         }
+        pair.settle(&format!("trial {trial}"));
     }
     assert!(runs > 4000, "only {runs} runs ({refusals} refusals)");
     assert!(instructions > 40_000, "only {instructions} cycles in engine runs");
+    let video = super::mem::VIDEO_STORES.get();
+    assert!(video > 100, "only {video} video memory stores in engine runs");
 }
 
 /// A long loop in IWRAM: decode once, then many passes through a backward
@@ -324,6 +386,41 @@ fn arm_iwram_loop_runs_to_the_horizon_like_stepping() {
             }
         }
     }
+}
+
+/// Back-to-back VRAM stores from HBlank into the next line: the engine runs
+/// the stores that end before the line's first visible dot and leaves the
+/// rest to the interpreter, which records them in the raster history.
+#[test]
+fn video_stores_stop_before_the_first_visible_dot() {
+    // STRH r0, [r4] (Thumb, 2 cycles from IWRAM) and STR r0, [r4] (ARM, 3).
+    let thumb: Vec<u8> = [0x8020_u16; 24].iter().flat_map(|half| half.to_le_bytes()).collect();
+    let arm: Vec<u8> = [0xe584_0000_u32; 24].iter().flat_map(|word| word.to_le_bytes()).collect();
+    let mut engine_stores = 0;
+    for (code, is_thumb) in [(thumb, true), (arm, false)] {
+        for lead in 5 * 1232 + 900..5 * 1232 + 1300 {
+            let mut cpu = Cpu::init(0x0300_1000, 0x1f | if is_thumb { 0x20 } else { 0 }, true);
+            cpu.registers[0] = 0x1234_5678 ^ lead as u32;
+            cpu.registers[4] = 0x0600_0100;
+            let mut pair = Pair::new(
+                &[],
+                |bus| bus.iwram[0x1000..0x1000 + code.len()].copy_from_slice(&code),
+                cpu,
+                lead,
+            );
+            let yield_at = pair.engine_bus.now() + 40;
+            let before = super::mem::VIDEO_STORES.get();
+            while pair.engine_bus.now() < yield_at {
+                if !pair.compare(yield_at, &format!("lead {lead}")) {
+                    let outcome = pair.engine.step(&mut pair.engine_bus);
+                    assert_eq!(outcome, pair.reference.step(&mut pair.reference_bus));
+                    pair.assert_equal(&format!("lead {lead} after refusal"));
+                }
+            }
+            engine_stores += super::mem::VIDEO_STORES.get() - before;
+        }
+    }
+    assert!(engine_stores > 1000, "only {engine_stores} stores in engine runs");
 }
 
 /// A Thumb instruction drawn to cover the engine's kinds and the forms it
@@ -375,6 +472,7 @@ fn thumb_cpu(random: &mut Random, pc: u32) -> Cpu {
     cpu.registers[1] = 0x0300_4000 + (random.next() & 0x3fc);
     cpu.registers[2] = 0x0200_8000 + (random.next() & 0x3ff);
     cpu.registers[3] = random.below(64);
+    cpu.registers[4] = video_pointer(random);
     cpu.registers[13] = 0x0300_5000 + (random.next() & 0x3fc);
     cpu.registers[14] = pc.wrapping_add(random.below(64) * 2) | 1;
     cpu
@@ -501,10 +599,12 @@ fn thumb_engine_matches_interpreter_for_random_code() {
         let cpu = thumb_cpu(&mut random, pc);
         // Mostly with the prefetch buffer, as games run.
         let waitcnt = random.next() as u16 & 0x3fff | if trial % 3 == 0 { 0 } else { 0x4000 };
+        let dispcnt = random.below(6) as u16;
         let mut pair = Pair::new(
             &image,
             |bus| {
                 set_waitcnt(bus, waitcnt);
+                set_dispcnt(bus, dispcnt);
                 bus.iwram[0x4000..0x6000].copy_from_slice(&iwram);
                 bus.ewram[0x8000..0xa000].copy_from_slice(&ewram);
                 if pc >> 24 < 8 {
@@ -522,7 +622,7 @@ fn thumb_engine_matches_interpreter_for_random_code() {
                 }
             },
             cpu,
-            1 + u64::from(random.below(1200)),
+            lead(&mut random),
         );
         // Enter with the buffer filling, full, or stopped.
         match random.below(4) {
@@ -570,8 +670,11 @@ fn thumb_engine_matches_interpreter_for_random_code() {
                 }
             }
         }
+        pair.settle(&format!("trial {trial}"));
     }
     assert!(runs > 5000, "only {runs} runs ({refusals} refusals)");
     assert!(cycles > 60_000, "only {cycles} cycles in engine runs");
     assert!(prefetch_runs > 1000, "only {prefetch_runs} runs with the prefetch buffer");
+    let video = super::mem::VIDEO_STORES.get();
+    assert!(video > 100, "only {video} video memory stores in engine runs");
 }

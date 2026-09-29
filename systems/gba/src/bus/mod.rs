@@ -17,8 +17,9 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 mod kernel;
-pub(crate) use kernel::{EngineMemory, PrefetchClock, RomData};
+pub(crate) use kernel::{EngineMemory, PrefetchClock, RomData, VideoMemory};
 pub use kernel::{begin_arm_iwram_slice, fetch_arm_iwram_in_slice};
+use kernel::{oam_read, palette_read, vram_read};
 
 pub const SCREEN_WIDTH: usize = 240;
 pub const SCREEN_HEIGHT: usize = 160;
@@ -3423,34 +3424,15 @@ impl Bus {
     }
 
     fn read_palette(&self, address: u32, width: AccessWidth) -> u32 {
-        read_ram(&self.palette, address as usize & (PALETTE_SIZE - 1), width)
+        palette_read(&self.palette, address, width)
     }
 
     pub(crate) fn write_palette(&mut self, address: u32, width: AccessWidth, value: u32) {
-        let address = (if width == AccessWidth::Byte { address & !1 } else { address }) as usize
-            & (PALETTE_SIZE - 1);
-        let mut changed = false;
-        for offset in 0..width.bytes().max(2) {
-            let byte = if width == AccessWidth::Byte {
-                value as u8
-            } else {
-                (value >> (offset * 8)) as u8
-            };
-            let index = (address + offset) & (PALETTE_SIZE - 1);
-            changed |= self.palette[index] != byte;
-            self.palette[index] = byte;
-        }
-        if changed {
-            self.scanline_memo.mark_palette();
-        }
+        self.video_memory().write_palette(address, width, value);
     }
 
     fn read_vram(&self, address: u32, width: AccessWidth) -> u32 {
-        (0..width.bytes()).fold(0, |value, offset| {
-            let byte = vram_index(address.wrapping_add(offset as u32), self.dispcnt)
-                .map_or(0, |index| self.vram[index]);
-            value | (u32::from(byte) << (offset * 8))
-        })
+        vram_read(&self.vram, self.dispcnt, address, width)
     }
 
     #[inline(always)]
@@ -3484,44 +3466,28 @@ impl Bus {
     }
 
     pub(crate) fn write_vram(&mut self, address: u32, width: AccessWidth, value: u32) {
-        if width == AccessWidth::Byte {
-            let Some(index) = vram_index(address & !1, self.dispcnt) else {
-                return;
-            };
-            if index >= vram_obj_boundary(self.dispcnt) {
-                return;
-            }
-            for index in index..index + 2 {
-                self.write_vram_byte(index, value as u8);
-            }
-            return;
-        }
-        for offset in 0..width.bytes() {
-            if let Some(index) = vram_index(address.wrapping_add(offset as u32), self.dispcnt) {
-                self.write_vram_byte(index, (value >> (offset * 8)) as u8);
-            }
-        }
-    }
-
-    fn write_vram_byte(&mut self, index: usize, value: u8) {
-        if self.vram[index] != value {
-            self.scanline_memo.mark_vram(index);
-        }
-        self.vram[index] = value;
+        self.video_memory().write_vram(address, width, value);
     }
 
     fn read_oam(&self, address: u32, width: AccessWidth) -> u32 {
-        read_ram(&self.oam, address as usize & (OAM_SIZE - 1), width)
+        oam_read(&self.oam, address, width)
     }
 
     pub(crate) fn write_oam(&mut self, address: u32, width: AccessWidth, value: u32) {
-        if width == AccessWidth::Byte {
-            return;
+        self.video_memory().write_oam(address, width, value);
+    }
+
+    /// Video memory and the render caches its writes invalidate.
+    pub(crate) fn video_memory(&mut self) -> VideoMemory<'_> {
+        VideoMemory {
+            palette: &mut self.palette,
+            vram: &mut self.vram,
+            oam: &mut self.oam,
+            memo: &mut self.scanline_memo,
+            oam_compact_valid: &mut self.oam_compact_valid,
+            object_line_index: &mut self.object_line_index,
+            dispcnt: self.dispcnt,
         }
-        write_ram(&mut self.oam, address as usize & (OAM_SIZE - 1), width, value);
-        self.scanline_memo.mark_oam();
-        self.oam_compact_valid = false;
-        self.object_line_index = 0xffff;
     }
 
     #[inline(always)]
