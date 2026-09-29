@@ -9,6 +9,8 @@ struct Options {
     flatten: bool,
     rename: Option<String>,
     module: Option<String>,
+    schema_prefix: Option<String>,
+    transparent: bool,
     bits: Option<u16>,
     tag_bits: Option<u16>,
     encode_with: Option<syn::Path>,
@@ -25,6 +27,10 @@ fn options(attrs: &[syn::Attribute]) -> syn::Result<Options> {
                 result.rename = Some(meta.value()?.parse::<syn::LitStr>()?.value());
             } else if meta.path.is_ident("module") {
                 result.module = Some(meta.value()?.parse::<syn::LitStr>()?.value());
+            } else if meta.path.is_ident("schema_prefix") {
+                result.schema_prefix = Some(meta.value()?.parse::<syn::LitStr>()?.value());
+            } else if meta.path.is_ident("transparent") {
+                result.transparent = true;
             } else if meta.path.is_ident("bits") {
                 result.bits = Some(meta.value()?.parse::<syn::LitInt>()?.base10_parse()?);
             } else if meta.path.is_ident("tag_bits") {
@@ -113,8 +119,24 @@ fn expand(item: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                     else if let Some(bits) = o.bits { quote!(::evenfall_state::schema_name(sink, #field_name)?; <#ty as ::evenfall_state::NarrowCodec>::schema_bits(sink, #bits)?;) }
                     else { quote!(::evenfall_state::schema_field::<#ty>(sink, #field_name)?;) });
             }
-            let schema_root = if let Some(module) = container.module {
+            let schema_root = if container.transparent {
+                let mut durable =
+                    fields.named.iter().filter(|f| !options(&f.attrs).is_ok_and(|o| o.skip));
+                let field = durable.next().ok_or_else(|| {
+                    syn::Error::new_spanned(fields, "transparent Codec requires one durable field")
+                })?;
+                if durable.next().is_some() {
+                    return Err(syn::Error::new_spanned(
+                        fields,
+                        "transparent Codec requires one durable field",
+                    ));
+                }
+                let ty = &field.ty;
+                quote!(<#ty as ::evenfall_state::Codec>::schema(sink))
+            } else if let Some(module) = container.module {
                 quote!(::evenfall_state::schema_name(sink, #module)?; Self::schema_fields(sink))
+            } else if let Some(prefix) = container.schema_prefix {
+                quote!(::evenfall_state::schema_name(sink, #prefix)?; sink.write_all(b"s")?; Self::FIELD_COUNT.encode(sink)?; Self::schema_fields(sink))
             } else {
                 quote!(sink.write_all(b"s")?; Self::FIELD_COUNT.encode(sink)?; Self::schema_fields(sink))
             };
@@ -192,16 +214,24 @@ fn enum_methods(data: &syn::DataEnum, o: &Options) -> syn::Result<proc_macro2::T
                 Fields::Named(fs) => {
                     let ids: Vec<_> = fs.named.iter().map(|f| f.ident.as_ref().unwrap()).collect();
                     let tys: Vec<_> = fs.named.iter().map(|f| &f.ty).collect();
-                    let names: Vec<_> = fs
-                        .named
-                        .iter()
-                        .map(|f| name(f.ident.as_ref().unwrap(), &Options::default()))
-                        .collect();
-                    let vars: Vec<_> = ids.iter().map(|id| format_ident!("field_{id}")).collect();
+                    let opts: Vec<_> =
+                        fs.named.iter().map(|f| options(&f.attrs)).collect::<syn::Result<_>>()?;
+                    let names: Vec<_> = ids.iter().zip(&opts).map(|(id, o)| name(id, o)).collect();
+                    let vars: Vec<_> =
+                        ids.iter().enumerate().map(|(n, _)| format_ident!("field_{n}")).collect();
+                    let encs: Vec<_> = ids.iter().zip(&opts).map(|(id, o)| if let Some(bits) = o.bits {
+                        quote!(::evenfall_state::NarrowCodec::encode_bits(#id, sink, #bits)?;)
+                    } else { quote!(#id.encode(sink)?;) }).collect();
+                    let decs: Vec<_> = vars.iter().zip(&opts).map(|(var, o)| if let Some(bits) = o.bits {
+                        quote!(::evenfall_state::NarrowCodec::decode_bits(&mut #var, source, #bits)?;)
+                    } else { quote!(#var.decode(source)?;) }).collect();
+                    let fieldschemas: Vec<_> = tys.iter().zip(&names).zip(&opts).map(|((ty, name), o)| if let Some(bits) = o.bits {
+                        quote!(::evenfall_state::schema_name(sink, #name)?; <#ty as ::evenfall_state::NarrowCodec>::schema_bits(sink, #bits)?;)
+                    } else { quote!(::evenfall_state::schema_field::<#ty>(sink, #name)?;) }).collect();
                     let count = ids.len() as u32;
-                    writes.push(quote!(Self::#id { #(#ids),* } => { (#i as u128).encode_bits(sink, #bits)?; #(#ids.encode(sink)?;)* }));
-                    reads.push(quote!(#tag => { #(let mut #vars: #tys = ::core::default::Default::default(); #vars.decode(source)?;)* Self::#id { #(#ids: #vars),* } },));
-                    payloads.push(quote!(::evenfall_state::schema_name(sink, #field_name)?; sink.write_all(b"s")?; #count.encode(sink)?; #(::evenfall_state::schema_field::<#tys>(sink, #names)?;)*));
+                    writes.push(quote!(Self::#id { #(#ids),* } => { (#i as u128).encode_bits(sink, #bits)?; #(#encs)* }));
+                    reads.push(quote!(#tag => { #(let mut #vars: #tys = ::core::default::Default::default(); #decs)* Self::#id { #(#ids: #vars),* } },));
+                    payloads.push(quote!(::evenfall_state::schema_name(sink, #field_name)?; sink.write_all(b"s")?; #count.encode(sink)?; #(#fieldschemas)*));
                 }
                 _ => {
                     return Err(syn::Error::new_spanned(
