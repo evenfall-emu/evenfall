@@ -3,6 +3,10 @@
 extern crate alloc;
 extern crate self as evenfall_state;
 
+pub mod envelope;
+pub mod rewind;
+pub mod rewind_inflate;
+
 use alloc::{boxed::Box, string::String, vec::Vec};
 use core::ops::Range;
 pub use evenfall_state_derive::Codec;
@@ -16,6 +20,13 @@ pub enum Error {
     SaveStateBootModeMismatch,
     SaveStateRomMismatch,
     SaveStateBiosMismatch,
+    InvalidRewindConfig,
+    InvalidRewindSpeed,
+    InvalidRewindBundle,
+    UnsupportedRewindBundleVersion,
+    RewindBundleTooLarge,
+    InvalidRewindSteps,
+    RewindSequenceExhausted,
 }
 pub type Result<T> = core::result::Result<T, Error>;
 
@@ -147,6 +158,13 @@ macro_rules! integer {
         impl NarrowCodec for $ty {
             fn encode_bits(&self, s: &mut Sink<'_>, bits: u16) -> Result<()> {
                 if bits > (core::mem::size_of::<Self>() * 8) as u16 { return Err(Error::InvalidSaveState); }
+                if bits < (core::mem::size_of::<Self>() * 8) as u16 {
+                    let valid = if bits == 0 { *self == 0 } else if $sign == b'i' {
+                        let shift = bits - 1;
+                        (*self as i128) >= -(1i128 << shift) && (*self as i128) < (1i128 << shift)
+                    } else { (*self as u128) >> bits == 0 };
+                    if !valid { return Err(Error::InvalidSaveState); }
+                }
                 let raw = (*self as u128) & if bits == 0 { 0 } else { u128::MAX >> (128 - bits) };
                 let bytes = raw.to_le_bytes(); s.write_all(&bytes[..usize::from(bits.div_ceil(8))])
             }
@@ -155,7 +173,7 @@ macro_rules! integer {
                 let mut bytes = [0u8; 16];
                 s.read_all(&mut bytes[..usize::from(bits.div_ceil(8))])?;
                 let raw = u128::from_le_bytes(bytes);
-                if (bits == 0 && raw != 0) || (bits != 0 && raw >> bits != 0) { return Err(Error::InvalidSaveState); }
+                if bits < 128 && raw >> bits != 0 { return Err(Error::InvalidSaveState); }
                 // Sign-extend the narrow two's-complement representation.
                 *self = if $sign == b'i' && bits > 0 && bits < 128 && raw & (1u128 << (bits - 1)) != 0 {
                     (raw | (u128::MAX << bits)) as Self
