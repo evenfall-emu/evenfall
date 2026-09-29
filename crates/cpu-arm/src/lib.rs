@@ -9,6 +9,43 @@ mod thumb;
 
 pub type Cycle = u64;
 
+/// For each ARM condition, bit `NZCV` is set when the condition passes under
+/// those flags (N is bit 3 of the index, V bit 0).
+const CONDITION_TRUTH: [u16; 16] = {
+    let mut table = [0u16; 16];
+    let mut condition = 0;
+    while condition < 16 {
+        let mut flags = 0;
+        while flags < 16 {
+            let (n, z, c, v) = (flags & 8 != 0, flags & 4 != 0, flags & 2 != 0, flags & 1 != 0);
+            let passes = match condition {
+                0 => z,
+                1 => !z,
+                2 => c,
+                3 => !c,
+                4 => n,
+                5 => !n,
+                6 => v,
+                7 => !v,
+                8 => c && !z,
+                9 => !c || z,
+                10 => n == v,
+                11 => n != v,
+                12 => !z && n == v,
+                13 => z || n != v,
+                14 => true,
+                _ => false,
+            };
+            if passes {
+                table[condition] |= 1 << flags;
+            }
+            flags += 1;
+        }
+        condition += 1;
+    }
+    table
+};
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
 #[codec(tag_bits = 1)]
 pub enum InstructionSet {
@@ -271,8 +308,16 @@ impl Core {
         }
     }
 
-    #[inline]
+    /// Whether `condition` passes under the current NZCV flags: one lookup of
+    /// bit NZCV in the condition's precomputed truth mask.
+    #[inline(always)]
     pub fn condition_passed(&self, condition: u32) -> bool {
+        (CONDITION_TRUTH[(condition & 15) as usize] >> (self.cpsr >> 28)) & 1 != 0
+    }
+
+    /// The ARM condition table as written in the architecture manual; the
+    /// reference for [`CONDITION_TRUTH`].
+    pub fn condition_passed_reference(&self, condition: u32) -> bool {
         let n = self.cpsr & (1 << 31) != 0;
         let z = self.cpsr & (1 << 30) != 0;
         let c = self.cpsr & (1 << 29) != 0;
@@ -1084,6 +1129,23 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The condition truth table agrees with the architecture manual's rules
+    /// for all sixteen conditions under all sixteen flag settings.
+    #[test]
+    fn condition_table_matches_the_reference_for_every_condition_and_flags() {
+        let mut core = Core::new(0x0800_0000, 0x1f);
+        for flags in 0..16u32 {
+            core.cpsr = (flags << 28) | 0x1f;
+            for condition in 0..16 {
+                assert_eq!(
+                    core.condition_passed(condition),
+                    core.condition_passed_reference(condition),
+                    "condition {condition:x} flags {flags:04b}"
+                );
+            }
+        }
+    }
 
     #[derive(Default)]
     struct TraceBus {
