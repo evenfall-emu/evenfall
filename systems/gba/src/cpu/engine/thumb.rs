@@ -1541,25 +1541,32 @@ fn jump<const N: usize, T: Timing>(
 ) -> Flow {
     let target = c.pc(slot);
     if (slot as usize) < N && (c.clean || c.code(target).is_some()) {
-        let Some(next) = branch(*h, c, t, target, extra) else {
+        if !branch(h, c, t, target, extra) {
             return Flow::Refused;
-        };
-        *h = Hot { idx: slot, ..next };
+        }
+        h.idx = slot;
         return Flow::Next;
     }
     far_jump(h, c, t, target, extra)
 }
 
-/// The state after a branch to `target`, if it fits.
+/// Charges a branch to `target` to `h` if it fits; otherwise leaves `h` as
+/// it was. In place, restoring only what it changes: copies of the whole
+/// state, whose fields were just written one by one, stall store
+/// forwarding.
 #[inline(always)]
-fn branch<T: Timing>(h: Hot, c: &Ctx<'_>, t: T, target: u32, extra: i64) -> Option<Hot> {
-    let mut next = h;
-    if !next.charge(t.fetch(&h) + extra) {
-        return None;
+fn branch<T: Timing>(h: &mut Hot, c: &Ctx<'_>, t: T, target: u32, extra: i64) -> bool {
+    let (budget, fetch, ready) = (h.budget, h.fetch, h.ready);
+    let head = c.pc(h.idx).wrapping_add(6);
+    let fits = h.charge(t.fetch(h) + extra) && {
+        t.after(h, budget, extra != 0);
+        let refill = t.refill(h, target, head);
+        h.charge(refill)
+    };
+    if !fits {
+        (h.budget, h.fetch, h.ready) = (budget, fetch, ready);
     }
-    t.after(&mut next, h.budget, extra != 0);
-    let refill = t.refill(&mut next, target, c.pc(h.idx).wrapping_add(6));
-    next.charge(refill).then_some(next)
+    fits
 }
 
 /// A branch out of the page, if the target is code the engine may run in
@@ -1579,10 +1586,9 @@ fn far_jump<T: Timing>(h: &mut Hot, c: &mut Ctx<'_>, t: T, target: u32, extra: i
             target >> 24 == region && target & !mask != (region << 24 | (0x00ff_ffff & !mask))
         }
     };
-    let Some(next) = same.then(|| branch(*h, c, t, target, extra)).flatten() else {
+    if !same || !branch(h, c, t, target, extra) {
         return Flow::Refused;
-    };
-    *h = next;
+    }
     Flow::Far(target)
 }
 
