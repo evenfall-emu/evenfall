@@ -254,4 +254,10 @@ fn zigba_bundle_imports_and_reexports_original_compressed_entries() {
     }
     // The imported payloads are never re-deflated on export.
     assert_eq!(history.write_bundle(&live).unwrap().as_slice(), fixture);
+
+    let upload = fixture.to_vec();
+    let (owned_live, owned_history) = RewindBuffer::read_bundle_owned(upload, validate).unwrap();
+    assert_eq!(owned_live, live);
+    assert_eq!(owned_history.write_bundle(&owned_live).unwrap().as_slice(), fixture);
+    assert_eq!(owned_history.decode(2).unwrap(), history.decode(2).unwrap());
 }

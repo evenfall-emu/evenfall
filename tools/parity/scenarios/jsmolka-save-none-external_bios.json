@@ -1,0 +1,23 @@
+{
+  "name": "jsmolka-save-none-external_bios",
+  "assets": {
+    "rom": "../../../refs/gba-tests/save/none.gba",
+    "bios": "../../../refs/cult-gba-bios/bios.bin"
+  },
+  "config": {
+    "boot": "external_bios",
+    "saveType": "none"
+  },
+  "inputs": [],
+  "endCycle": "19100928",
+  "checkpoints": [
+    "1123584",
+    "4494336",
+    "8988672",
+    "13483008",
+    "17977344",
+    "19100928"
+  ],
+  "sliceCycles": ["70224", "280896"],
+  "terminalPc": 134218408
+}

@@ -51,7 +51,7 @@ pub struct SquareChannel {
     length_enabled: bool,
     #[codec(bits = 3)]
     phase_index: u8, // u3
-    phase_cycles: u64,
+    pub phase_cycles: u64,
     pub enabled: bool,
 }
 
@@ -238,8 +238,8 @@ fn rotate_nibbles_left(span: &mut [u8], nibbles: u64) {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
-struct WaveChannel {
-    ram: [u8; 32],
+pub struct WaveChannel {
+    pub ram: [u8; 32],
     two_bank: bool,
     #[codec(bits = 1)]
     selected_bank: u8, // u1
@@ -401,7 +401,7 @@ fn lfsr_jump(state: u16, tables: &[[u16; 256]; 8], steps: u64) -> u16 {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
-struct NoiseChannel {
+pub struct NoiseChannel {
     #[codec(bits = 4)]
     initial_volume: u8, // u4
     #[codec(bits = 4)]
@@ -534,7 +534,7 @@ pub enum FifoId {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
-struct DirectSoundFifo {
+pub struct DirectSoundFifo {
     words: [u32; 8],
     #[codec(bits = 3)]
     read_index: u8, // u3
@@ -638,20 +638,20 @@ pub struct Apu {
     pub sound_control_h: u16,
     pub master_enabled: bool,
     pub sound_bias: u16,
-    fifo_a: DirectSoundFifo,
+    pub fifo_a: DirectSoundFifo,
     fifo_b: DirectSoundFifo,
     pub sample_a: i8,
     pub sample_b: i8,
     #[codec(encode_with = Apu::encode_square1)]
-    square1: SquareChannel,
+    pub square1: SquareChannel,
     sweep1: FrequencySweep,
     #[codec(encode_with = Apu::encode_square2)]
     pub square2: SquareChannel,
-    wave: WaveChannel,
+    pub wave: WaveChannel,
     #[codec(encode_with = Apu::encode_noise)]
-    noise: NoiseChannel,
+    pub noise: NoiseChannel,
     #[codec(skip)]
-    pending_square_noise_cycles: u64,
+    pub pending_square_noise_cycles: u64,
     sample_phase: u64,
     frame_phase: u64,
     #[codec(bits = 3)]
