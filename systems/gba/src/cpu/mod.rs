@@ -1691,6 +1691,9 @@ impl DerefMut for Cpu {
 }
 
 #[cfg(test)]
+mod audit_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
