@@ -818,7 +818,7 @@ impl Cpu {
                 PowerState::Stopped if !bus.stop_wake_pending() => Some(WaitReason::Stopped),
                 _ => {
                     bus.resume_power();
-                    if bus.irq_line && self.cpsr & (1 << 7) == 0 {
+                    if bus.irq.irq_line && self.cpsr & (1 << 7) == 0 {
                         if let Err(reason) = self.enter_irq(bus) {
                             return Some(StepOutcome::Faulted(self.boundary_fault(bus, reason)));
                         }
@@ -906,7 +906,7 @@ impl Cpu {
 
         if execution.branched {
             self.refill_pipeline(bus);
-        } else if self.hle_service.is_none() && bus.irq_line && self.cpsr & (1 << 7) == 0 {
+        } else if self.hle_service.is_none() && bus.irq.irq_line && self.cpsr & (1 << 7) == 0 {
             bus.resume_power();
             if let Err(reason) = self.enter_irq(bus) {
                 self.registers[15] = self
@@ -1014,7 +1014,7 @@ impl Cpu {
             }
             if self.run_engine(bus, yield_at) {
                 stream.armed = false;
-                if bus.irq_line && self.cpsr & (1 << 7) == 0 {
+                if bus.irq.irq_line && self.cpsr & (1 << 7) == 0 {
                     // The run's last instruction, an MMIO store, raised an
                     // IRQ, which the interpreter takes right after it.
                     bus.resume_power();
@@ -1108,7 +1108,7 @@ impl Cpu {
                 if self.is_thumb() != (set == InstructionSet::Thumb) {
                     return ChunkOutcome::Generic;
                 }
-            } else if bus.irq_line && self.cpsr & (1 << 7) == 0 {
+            } else if bus.irq.irq_line && self.cpsr & (1 << 7) == 0 {
                 bus.resume_power();
                 if let Err(reason) = self.enter_irq(bus) {
                     self.registers[15] = self

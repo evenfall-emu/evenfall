@@ -13,10 +13,105 @@ pub(crate) struct EngineMemory<'a> {
     pub(crate) bios: &'a [u8],
     pub(crate) rom: RomData<'a>,
     pub(crate) video: VideoMemory<'a>,
+    pub(crate) irq: &'a mut IrqRegisters,
     /// Cycles from now during which the PPU shows no visible dot, so that a
     /// VRAM or palette write records no raster history: zero while a
     /// visible dot is being drawn.
     pub(crate) quiet: Cycle,
+}
+
+/// IE, IF, IME, POSTFLG and HALTCNT are what an engine run reads and
+/// writes itself: their accesses schedule no device event and read no
+/// device state, so they need neither the device batch nor the clock. The
+/// bus's own MMIO paths are the reference for [`IrqRegisters::load`] and
+/// [`IrqRegisters::store`].
+impl IrqRegisters {
+    /// Whether an access of `width` at the bus-aligned MMIO `address`
+    /// touches only these registers: IE and IF, IME, and for stores POSTFLG
+    /// and HALTCNT.
+    #[inline(always)]
+    pub(crate) fn holds(address: u32, width: AccessWidth, store: bool) -> bool {
+        // Offsets from IE: one compare turns away the other registers.
+        let offset = address.wrapping_sub(MMIO_BASE + 0x200);
+        if offset > 0x101 {
+            return false;
+        }
+        let last = offset + width.bytes() as u32 - 1;
+        last <= 0x003
+            || (0x008 <= offset && last <= 0x00b)
+            || (store && 0x100 <= offset && last <= 0x101)
+    }
+
+    fn half(&self, offset: u32) -> Option<u16> {
+        match offset {
+            0x200 => Some(self.interrupt_enable_mask),
+            0x202 => Some(self.interrupt_request_flags),
+            0x208 => Some(u16::from(self.interrupt_master_enabled)),
+            _ => None,
+        }
+    }
+
+    /// A load [`Self::holds`] admits, as [`Bus::read_mmio`] makes it.
+    pub(crate) fn load(&self, address: u32, width: AccessWidth) -> u32 {
+        let offset = address.wrapping_sub(MMIO_BASE);
+        let half = |offset: u32| u32::from(self.half(offset).unwrap_or(0));
+        match width {
+            AccessWidth::Word => half(offset) | half(offset + 2) << 16,
+            AccessWidth::Half => half(offset),
+            AccessWidth::Byte => (half(offset & !1) >> ((offset & 1) * 8)) & 0xff,
+        }
+    }
+
+    /// A store [`Self::holds`] admits, as [`Bus::write_mmio`] makes it.
+    pub(crate) fn store(&mut self, address: u32, width: AccessWidth, value: u32) {
+        let offset = address.wrapping_sub(MMIO_BASE);
+        match width {
+            AccessWidth::Word => {
+                self.store_half(offset, value as u16);
+                self.store_half(offset + 2, (value >> 16) as u16);
+            }
+            AccessWidth::Half => self.store_half(offset, value as u16),
+            AccessWidth::Byte => match offset {
+                0x300 => self.post_boot = value as u8 & 1,
+                0x301 => {
+                    self.power_state =
+                        if value & 0x80 != 0 { PowerState::Stopped } else { PowerState::Halted };
+                }
+                0x202 | 0x203 => {
+                    self.interrupt_request_flags &= !((value as u16 & 0xff) << ((offset & 1) * 8));
+                    self.update_line();
+                }
+                _ => {
+                    let Some(old) = self.half(offset & !1) else {
+                        return;
+                    };
+                    let shift = (offset & 1) * 8;
+                    let merged = (old & !(0xff << shift)) | ((value as u16 & 0xff) << shift);
+                    self.store_half(offset & !1, merged);
+                }
+            },
+        }
+    }
+
+    fn store_half(&mut self, offset: u32, value: u16) {
+        match offset {
+            0x200 => self.interrupt_enable_mask = value & 0x3fff,
+            0x202 => self.interrupt_request_flags &= !value,
+            0x208 => self.interrupt_master_enabled = value & 1 != 0,
+            0x300 => {
+                self.post_boot = (value & 1) as u8;
+                self.power_state =
+                    if value & 0x8000 != 0 { PowerState::Stopped } else { PowerState::Halted };
+            }
+            _ => return,
+        }
+        self.update_line();
+    }
+
+    fn update_line(&mut self) {
+        self.irq_line = self.interrupt_master_enabled
+            && self.interrupt_enable_mask & self.interrupt_request_flags != 0;
+    }
 }
 
 /// Palette RAM, VRAM and OAM with the render caches their writes
@@ -295,6 +390,9 @@ impl Bus {
     }
 
     /// Memory for an engine run; the BIOS image only for a run of BIOS code.
+    /// Inlined: a view returned through memory is read back wider than it
+    /// was written, which stalls.
+    #[inline(always)]
     pub(crate) fn engine_memory(&mut self, bios: bool) -> EngineMemory<'_> {
         // A stale cache is not refreshed here: that would change what the
         // ordinary bus later sees.
@@ -327,6 +425,7 @@ impl Bus {
                 object_line_index: &mut self.object_line_index,
                 dispcnt: self.dispcnt,
             },
+            irq: &mut self.irq,
             quiet,
         }
     }
@@ -334,6 +433,7 @@ impl Bus {
     /// Cycles from now, within the device batch, during which the PPU
     /// shows no visible dot: to the next line's start in HBlank, to the
     /// frame's end in VBlank, zero while a visible dot is drawn.
+    #[inline(never)]
     fn video_quiet_cycles(&self) -> Cycle {
         let mut timing = self.ppu_timing;
         if self.batch_active {
@@ -445,8 +545,8 @@ impl Bus {
     /// the limit.
     pub(crate) fn engine_may_go_on(&self, limit: Cycle, irq_masked: bool) -> bool {
         self.pending_dma == 0
-            && self.power_state == PowerState::Running
-            && (irq_masked || !self.irq_line)
+            && self.irq.power_state == PowerState::Running
+            && (irq_masked || !self.irq.irq_line)
             && limit < self.batch_deadline
     }
 }
@@ -599,6 +699,101 @@ fn block_end(address: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// IE, IF, IME, POSTFLG and HALTCNT loads and stores of every width at
+    /// every byte through [`IrqRegisters`] leave the registers, the IRQ
+    /// line and the power state, and read the values, that `Bus::read` and
+    /// `Bus::write` do, from all kinds of starting values.
+    #[test]
+    fn irq_registers_match_the_bus() {
+        let mut seed = 0x1e1e_2020_u32;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let state = |bus: &Bus| {
+            (
+                bus.irq.interrupt_enable_mask,
+                bus.irq.interrupt_request_flags,
+                bus.irq.interrupt_master_enabled,
+                bus.irq.irq_line,
+                bus.irq.power_state,
+                bus.irq.post_boot,
+            )
+        };
+        let (mut loads, mut stores) = (0, 0);
+        for _ in 0..4000 {
+            let mut bus = Bus::init(&[]);
+            bus.irq.interrupt_enable_mask = next() as u16 & 0x3fff;
+            bus.irq.interrupt_request_flags = next() as u16 & 0x3fff;
+            bus.irq.interrupt_master_enabled = next() & 1 != 0;
+            bus.irq.post_boot = (next() & 1) as u8;
+            bus.update_irq_line();
+            let width =
+                [AccessWidth::Byte, AccessWidth::Half, AccessWidth::Word][next() as usize % 3];
+            let store = next() & 1 != 0;
+            let offset = [0x200, 0x208, 0x300][next() as usize % 3] + (next() & 3);
+            let address = MMIO_BASE + (offset & !(width.bytes() as u32 - 1));
+            if !IrqRegisters::holds(address, width, store) {
+                continue;
+            }
+            let value = next();
+            let mut engine = Bus::init(&[]);
+            (
+                engine.irq.interrupt_enable_mask,
+                engine.irq.interrupt_request_flags,
+                engine.irq.interrupt_master_enabled,
+                engine.irq.irq_line,
+                engine.irq.power_state,
+                engine.irq.post_boot,
+            ) = state(&bus);
+            let access = Access {
+                address,
+                width,
+                kind: AccessKind::Nonsequential,
+                source: AccessSource::CpuData,
+            };
+            let context = format!("{address:08x} {width:?} store {store} value {value:08x}");
+            let memory = engine.engine_memory(false);
+            let irq = memory.irq;
+            if store {
+                irq.store(address, width, value);
+                bus.write(access, value);
+                stores += 1;
+            } else {
+                let loaded = irq.load(address, width);
+                assert_eq!(loaded, bus.read(access).value, "{context}");
+                loads += 1;
+            }
+            assert_eq!(state(&engine), state(&bus), "{context}");
+        }
+        assert!(loads > 500 && stores > 500, "{loads} loads, {stores} stores");
+    }
+
+    /// [`IrqRegisters::holds`] admits exactly the accesses whose every byte
+    /// is IE, IF or IME, or for stores POSTFLG or HALTCNT.
+    #[test]
+    fn irq_registers_hold_exactly_the_interrupt_bytes() {
+        for store in [false, true] {
+            for width in [AccessWidth::Byte, AccessWidth::Half, AccessWidth::Word] {
+                let bytes = width.bytes() as u32;
+                for offset in (0..0x1000).step_by(bytes as usize) {
+                    let held = (offset..offset + bytes).all(|byte| {
+                        matches!(byte, 0x200..=0x203 | 0x208..=0x20b)
+                            || (store && matches!(byte, 0x300 | 0x301))
+                    });
+                    let address = MMIO_BASE + offset;
+                    assert_eq!(
+                        IrqRegisters::holds(address, width, store),
+                        held,
+                        "{address:08x} {width:?} store {store}"
+                    );
+                }
+            }
+        }
+    }
 
     /// An aligned halfword VRAM write in one step stores, skips and marks
     /// exactly what two byte writes do, in every display mode, across the

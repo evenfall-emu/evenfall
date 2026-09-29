@@ -13,7 +13,8 @@
 use super::mem::{Mem, Running};
 use super::{CodeCache, Load, Mmio, Op, PAGE_SHIFT, ROM_PAGE_SLOTS, fresh_ops, split_memory};
 use crate::bus::{
-    AccessKind, AccessWidth, Bus, EWRAM_SIZE, IWRAM_SIZE, PrefetchClock, RomData, read_ram,
+    AccessKind, AccessWidth, Bus, EWRAM_SIZE, IWRAM_SIZE, PowerState, PrefetchClock, RomData,
+    read_ram,
 };
 use evenfall_cpu_arm::{Core, InstructionSet, Pipeline};
 
@@ -669,6 +670,54 @@ fn serve<T: Timing>(
     }
 }
 
+/// Completes `access` on the run's own view of the interrupt registers if
+/// it touches only them ([`Mmio::irq`]), charged as [`serve`] charges it;
+/// None if it touches other registers. The run stops after a store that
+/// halts, stops or raises an IRQ the CPU takes.
+#[inline(always)]
+fn serve_irq<T: Timing>(
+    c: &mut Ctx<'_>,
+    core: &mut Core,
+    t: T,
+    h: Hot,
+    access: &Mmio,
+) -> Option<Resume> {
+    access.irq().then(|| complete_irq(c, core, t, h, access))
+}
+
+/// The part of [`serve_irq`] past the test of the registers.
+#[inline(never)]
+fn complete_irq<T: Timing>(
+    c: &mut Ctx<'_>,
+    core: &mut Core,
+    t: T,
+    h: Hot,
+    access: &Mmio,
+) -> Resume {
+    let store = access.store.is_some();
+    let before = h.budget;
+    let mut next = h;
+    if !next.charge(t.fetch(&h) + if store { 1 } else { 2 }) {
+        return Resume::Out(h);
+    }
+    let value = access.perform_irq(c.mem.irq, &mut core.registers);
+    next.idx += 1;
+    t.after(&mut next, before, !store);
+    c.mmio_mark = next.budget;
+    if !store {
+        c.data = value;
+        c.load_mark = next.budget;
+        c.internal_mark = next.budget;
+    }
+    let irq = &c.mem.irq;
+    let taken = irq.irq_line && core.cpsr & (1 << 7) == 0;
+    if irq.power_state == PowerState::Running && !taken {
+        Resume::On(next)
+    } else {
+        Resume::Out(next)
+    }
+}
+
 fn run_ram<const EW: bool>(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
     let pc = core.next_instruction_address;
     let (region, size) = if EW { (2, EWRAM_SIZE) } else { (3, IWRAM_SIZE) };
@@ -705,13 +754,20 @@ fn ram_runs<const EW: bool>(
     let place = if EW { Place::Ewram } else { Place::Iwram };
     let (mem, _) = split_memory(bus.engine_memory(false), budget);
     let mut c = Saved::new(pc & !mask).ctx(mem, place);
-    let mut hot = enter(core, &c, pc, budget)?;
+    if !enters(core, &c, pc) {
+        return None;
+    }
+    let mut hot = Hot::from_cpsr(budget, pc.wrapping_sub(c.base) >> 1, core.cpsr);
     let access = loop {
         let (next, stop) = ram_loop::<EW>(ops, &mut c, core, hot);
         hot = next;
         match stop {
             Stop::Refused => match mmio_transfer(&ops[hot.idx as usize], &core.registers) {
-                Some(access) => break access,
+                Some(access) => match serve_irq(&mut c, core, Ram::<EW>, hot, &access) {
+                    Some(Resume::On(next)) => hot = next,
+                    Some(Resume::Out(next)) => return leave(core, &c, next, start, budget),
+                    None => break access,
+                },
                 None => return leave(core, &c, hot, start, budget),
             },
             // A branch into another mirror: same ops, new base.
@@ -774,6 +830,11 @@ fn ram_serving<const EW: bool>(
                 let Some(access) = mmio_transfer(&ops[hot.idx as usize], &core.registers) else {
                     return leave(core, &c, hot, start, budget);
                 };
+                if let Some(next) = serve_irq(&mut c, core, Ram::<EW>, hot, &access) {
+                    resume = next;
+                    saved = c.save();
+                    continue;
+                }
                 saved = c.save();
                 resume = serve(core, bus, limit, Ram::<EW>, hot, access, &mut saved);
             }
@@ -871,23 +932,33 @@ fn rom_runs<T: Timing>(
     let mut ops = slot.take().unwrap_or_else(rom_page);
     let mut c = Saved::new(pc & !(PAGE_BYTES - 1)).ctx(mem, Place::Rom);
     c.clean = clean_page(&c);
-    let Some(mut hot) = enter(core, &c, pc, budget) else {
+    if !enters(core, &c, pc) {
         pages[page] = Some(ops);
         return (None, 0);
-    };
+    }
+    let mut hot = Hot::from_cpsr(budget, pc.wrapping_sub(c.base) >> 1, core.cpsr);
     let timing = timing(n as i64, s as i64, &mut hot);
     let access = loop {
         let slots = (&mut *ops).try_into().expect("ROM Thumb page");
         let (next, stop) = run_loop::<ROM_PAGE_SLOTS, _>(slots, &mut c, core, timing, hot);
         hot = next;
         match stop {
-            Stop::Refused => match mmio_transfer(&ops[hot.idx as usize], &core.registers) {
-                Some(access) => break access,
-                None => {
-                    pages[page] = Some(ops);
-                    return (leave(core, &c, hot, start, budget), hot.ready);
+            Stop::Refused => {
+                let flow = mmio_transfer(&ops[hot.idx as usize], &core.registers)
+                    .map(|access| (serve_irq(&mut c, core, timing, hot, &access), access));
+                match flow {
+                    Some((Some(Resume::On(next)), _)) => hot = next,
+                    Some((None, access)) => break access,
+                    Some((Some(Resume::Out(next)), _)) => {
+                        pages[page] = Some(ops);
+                        return (leave(core, &c, next, start, budget), next.ready);
+                    }
+                    None => {
+                        pages[page] = Some(ops);
+                        return (leave(core, &c, hot, start, budget), hot.ready);
+                    }
                 }
-            },
+            }
             Stop::Far(target) => {
                 let next_page = pages[page_of(target)].take().unwrap_or_else(rom_page);
                 pages[page] = Some(std::mem::replace(&mut ops, next_page));
@@ -936,6 +1007,11 @@ fn rom_serving<T: Timing>(
                 let Some(access) = mmio_transfer(&ops[hot.idx as usize], &core.registers) else {
                     break (leave(core, &c, hot, start, budget), hot.ready);
                 };
+                if let Some(next) = serve_irq(&mut c, core, timing, hot, &access) {
+                    resume = next;
+                    saved = c.save();
+                    continue;
+                }
                 saved = c.save();
                 resume = serve(core, bus, limit, timing, hot, access, &mut saved);
             }
@@ -972,14 +1048,16 @@ fn clean_page(c: &Ctx<'_>) -> bool {
     (c.base + PAGE_BYTES) & 0x1ffff != 0 && c.mem.rom.plain(c.base, PAGE_BYTES + 4)
 }
 
-/// The state of a run at its first instruction, if the pipeline holds what
-/// memory holds there and the engine may run from `pc`.
-fn enter(core: &Core, c: &Ctx<'_>, pc: u32, budget: i64) -> Option<Hot> {
-    c.code(pc)?;
+/// Whether a run may start at `pc`: the engine may run from there and the
+/// pipeline holds what memory holds. (Returning the run's state instead
+/// would pass it through memory, and reading it back stalls.)
+fn enters(core: &Core, c: &Ctx<'_>, pc: u32) -> bool {
+    if c.code(pc).is_none() {
+        return false;
+    }
     let latched = [c.half(pc), c.half(pc.wrapping_add(2))];
     let thumb = Pipeline { instructions: latched, instruction_set: InstructionSet::Thumb };
-    (core.pipeline == Some(thumb))
-        .then(|| Hot::from_cpsr(budget, pc.wrapping_sub(c.base) >> 1, core.cpsr))
+    core.pipeline == Some(thumb)
 }
 
 /// What a run leaves on the bus.

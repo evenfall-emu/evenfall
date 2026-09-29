@@ -16,7 +16,7 @@ impl Cpu {
             self.registers[1] = 1;
         }
         let mask = self.registers[1] as u16;
-        bus.interrupt_master_enabled = true;
+        bus.irq.interrupt_master_enabled = true;
         bus.update_irq_line();
         let mut flags = bus.read(access(0x0300_7FF8, AccessWidth::Half)).value as u16;
         if self.registers[0] != 0 {

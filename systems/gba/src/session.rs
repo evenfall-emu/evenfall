@@ -1305,7 +1305,7 @@ mod tests {
             for session in [&mut full, &mut selective] {
                 session.machine.bus.rcnt = 0xc000;
                 session.machine.bus.joy_control = 0x40;
-                session.machine.bus.interrupt_enable_mask = 1 << 7;
+                session.machine.bus.irq.interrupt_enable_mask = 1 << 7;
                 session.machine.bus.update_irq_line();
                 session
                     .machine

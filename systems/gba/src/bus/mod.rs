@@ -142,6 +142,20 @@ pub struct WriteResult {
     pub cycles: Cycle,
 }
 
+/// IE, IF, IME, POSTFLG and HALTCNT, with the IRQ line they drive: a
+/// flat stretch of ZiGBA's bus state, grouped so that an engine run can
+/// read and write them through one reference ([`EngineMemory`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
+pub struct IrqRegisters {
+    pub interrupt_enable_mask: u16,
+    pub interrupt_request_flags: u16,
+    pub interrupt_master_enabled: bool,
+    #[codec(skip)]
+    pub irq_line: bool,
+    pub post_boot: u8,
+    pub power_state: PowerState,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
 #[codec(tag_bits = 2)]
 pub enum PowerState {
@@ -490,13 +504,8 @@ pub struct Bus {
     pub bldalpha: u16,
     pub bldy: u16,
     pub completed_frame_count: Cycle,
-    pub interrupt_enable_mask: u16,
-    pub interrupt_request_flags: u16,
-    pub interrupt_master_enabled: bool,
-    #[codec(skip)]
-    pub irq_line: bool,
-    pub post_boot: u8,
-    pub power_state: PowerState,
+    #[codec(flatten)]
+    pub irq: IrqRegisters,
     pub waitcnt: u16,
     #[codec(skip)]
     pub game_pak_timing_key: u16,
@@ -702,12 +711,7 @@ impl Bus {
             bldalpha: 0,
             bldy: 0,
             completed_frame_count: 0,
-            interrupt_enable_mask: 0,
-            interrupt_request_flags: 0,
-            interrupt_master_enabled: false,
-            irq_line: false,
-            post_boot: 0,
-            power_state: PowerState::Running,
+            irq: IrqRegisters::default(),
             waitcnt: 0,
             game_pak_timing_key: 0,
             game_pak_n_cycles: [5; 3],
@@ -1432,17 +1436,17 @@ impl Bus {
     pub fn enter_halt(&mut self) {
         self.flush_device_batch();
         self.batch_deadline = 0;
-        self.power_state = PowerState::Halted;
+        self.irq.power_state = PowerState::Halted;
     }
 
     pub fn enter_stop(&mut self) {
         self.synchronize_devices();
         self.batch_deadline = 0;
-        self.power_state = PowerState::Stopped;
+        self.irq.power_state = PowerState::Stopped;
     }
 
     pub fn idle_halt_until(&mut self, deadline: Cycle) -> bool {
-        debug_assert_eq!(self.power_state, PowerState::Halted);
+        debug_assert_eq!(self.irq.power_state, PowerState::Halted);
         debug_assert!(deadline >= self.current_cycle);
         self.apply_due_external_inputs();
         while !self.halt_wake_pending()
@@ -1461,7 +1465,7 @@ impl Bus {
     }
 
     pub fn idle_stop_until(&mut self, deadline: Cycle) -> bool {
-        debug_assert_eq!(self.power_state, PowerState::Stopped);
+        debug_assert_eq!(self.irq.power_state, PowerState::Stopped);
         debug_assert!(deadline >= self.current_cycle);
         self.apply_due_external_inputs();
         while !self.stop_wake_pending() && self.current_cycle < deadline {
@@ -1634,8 +1638,8 @@ impl Bus {
         self.keypad_control = 0;
         self.keypad_condition_met = false;
         self.sio_data = [0; 4];
-        self.post_boot = 1;
-        self.power_state = PowerState::Running;
+        self.irq.post_boot = 1;
+        self.irq.power_state = PowerState::Running;
         self.game_pak_prefetch = GamePakPrefetch::default();
         self.duty_valid_until = 0;
         self.game_pak_code_active = false;
@@ -1684,9 +1688,9 @@ impl Bus {
         self.servicing_dma = false;
         self.active_dma_channel = None;
         self.dma_transfer_latch = 0;
-        self.interrupt_enable_mask = 0;
-        self.interrupt_request_flags = 0;
-        self.interrupt_master_enabled = false;
+        self.irq.interrupt_enable_mask = 0;
+        self.irq.interrupt_request_flags = 0;
+        self.irq.interrupt_master_enabled = false;
         self.update_irq_line();
         self.write_waitcnt(0);
     }
@@ -1880,36 +1884,36 @@ impl Bus {
             matching != 0
         };
         if condition && !self.keypad_condition_met && self.keypad_control & (1 << 14) != 0 {
-            self.interrupt_request_flags |= 1 << 12;
+            self.irq.interrupt_request_flags |= 1 << 12;
             self.update_irq_line();
         }
         self.keypad_condition_met = condition;
     }
 
     pub fn irq_pending(&self) -> bool {
-        self.interrupt_master_enabled
-            && self.interrupt_enable_mask & self.interrupt_request_flags != 0
+        self.irq.interrupt_master_enabled
+            && self.irq.interrupt_enable_mask & self.irq.interrupt_request_flags != 0
     }
 
     pub fn update_irq_line(&mut self) {
-        self.irq_line = self.irq_pending();
+        self.irq.irq_line = self.irq_pending();
     }
 
     pub fn power_state(&self) -> PowerState {
-        self.power_state
+        self.irq.power_state
     }
 
     pub fn resume_power(&mut self) {
-        self.power_state = PowerState::Running;
+        self.irq.power_state = PowerState::Running;
     }
 
     pub fn halt_wake_pending(&self) -> bool {
-        self.interrupt_enable_mask & self.interrupt_request_flags != 0
+        self.irq.interrupt_enable_mask & self.irq.interrupt_request_flags != 0
     }
 
     pub fn stop_wake_pending(&self) -> bool {
-        self.interrupt_enable_mask
-            & self.interrupt_request_flags
+        self.irq.interrupt_enable_mask
+            & self.irq.interrupt_request_flags
             & ((1 << 7) | (1 << 12) | (1 << 13))
             != 0
     }
@@ -2169,7 +2173,7 @@ impl Bus {
             .as_mut()
             .is_some_and(|gpio| gpio.write_half(offset, value, self.current_cycle))
         {
-            self.interrupt_request_flags |= 1 << 13;
+            self.irq.interrupt_request_flags |= 1 << 13;
             self.update_irq_line();
         }
     }
@@ -2295,11 +2299,11 @@ impl Bus {
             0x152 => (self.joy_receive >> 16) as u16,
             0x154 | 0x156 => 0,
             0x158 => self.joy_status & 0x3a,
-            0x200 => self.interrupt_enable_mask,
-            0x202 => self.interrupt_request_flags,
+            0x200 => self.irq.interrupt_enable_mask,
+            0x202 => self.irq.interrupt_request_flags,
             0x204 => self.waitcnt,
-            0x208 => u16::from(self.interrupt_master_enabled),
-            0x300 => u16::from(self.post_boot),
+            0x208 => u16::from(self.irq.interrupt_master_enabled),
+            0x300 => u16::from(self.irq.post_boot),
             _ => return None,
         })
     }
@@ -2322,11 +2326,11 @@ impl Bus {
 
     fn write_mmio_byte(&mut self, address: u32, value: u8) {
         if address == MMIO_BASE + 0x300 {
-            self.post_boot = value & 1;
+            self.irq.post_boot = value & 1;
             return;
         }
         if address == MMIO_BASE + 0x301 {
-            self.power_state =
+            self.irq.power_state =
                 if value & 0x80 != 0 { PowerState::Stopped } else { PowerState::Halted };
             return;
         }
@@ -2348,7 +2352,7 @@ impl Bus {
             return;
         }
         if aligned == MMIO_BASE + 0x202 {
-            self.interrupt_request_flags &= !(u16::from(value) << ((address & 1) * 8));
+            self.irq.interrupt_request_flags &= !(u16::from(value) << ((address & 1) * 8));
             self.update_irq_line();
             return;
         }
@@ -2524,21 +2528,21 @@ impl Bus {
                 self.update_keypad_condition();
             }
             0x200 => {
-                self.interrupt_enable_mask = value & 0x3fff;
+                self.irq.interrupt_enable_mask = value & 0x3fff;
                 self.update_irq_line();
             }
             0x202 => {
-                self.interrupt_request_flags &= !value;
+                self.irq.interrupt_request_flags &= !value;
                 self.update_irq_line();
             }
             0x204 => self.write_waitcnt(value),
             0x208 => {
-                self.interrupt_master_enabled = value & 1 != 0;
+                self.irq.interrupt_master_enabled = value & 1 != 0;
                 self.update_irq_line();
             }
             0x300 => {
-                self.post_boot = (value & 1) as u8;
-                self.power_state =
+                self.irq.post_boot = (value & 1) as u8;
+                self.irq.power_state =
                     if value & 0x8000 != 0 { PowerState::Stopped } else { PowerState::Halted };
             }
             0x040 | 0x042 | 0x044 | 0x046 | 0x048 | 0x04a => {
@@ -2651,7 +2655,7 @@ impl Bus {
 
     fn raise_uart_status_edges(&mut self, old: u16) {
         if self.uart_status() & !old & 0x70 != 0 && self.sio_control & 0x4000 != 0 {
-            self.interrupt_request_flags |= 1 << 7;
+            self.irq.interrupt_request_flags |= 1 << 7;
             self.update_irq_line();
         }
     }
@@ -2763,7 +2767,7 @@ impl Bus {
             _ => return,
         }
         if self.sio_control & 0x4000 != 0 {
-            self.interrupt_request_flags |= 1 << 7;
+            self.irq.interrupt_request_flags |= 1 << 7;
             self.update_irq_line();
         }
     }
@@ -2830,7 +2834,7 @@ impl Bus {
 
     fn raise_joy_bus_irq(&mut self) {
         if self.joy_control & 0x40 != 0 {
-            self.interrupt_request_flags |= 1 << 7;
+            self.irq.interrupt_request_flags |= 1 << 7;
             self.update_irq_line();
         }
     }
@@ -3074,7 +3078,7 @@ impl Bus {
                     timer.elapse(elapsed)
                 };
                 if overflows != 0 && timer.irq_enabled() {
-                    self.interrupt_request_flags |= 1 << (index + 3);
+                    self.irq.interrupt_request_flags |= 1 << (index + 3);
                     self.update_irq_line();
                 }
                 if index < 2
@@ -3160,13 +3164,13 @@ impl Bus {
         }
         self.completed_frame_count += events.frames_completed;
         if events.vblank_irq {
-            self.interrupt_request_flags |= 1;
+            self.irq.interrupt_request_flags |= 1;
         }
         if events.hblank_irq {
-            self.interrupt_request_flags |= 1 << 1;
+            self.irq.interrupt_request_flags |= 1 << 1;
         }
         if events.vcount_irq {
-            self.interrupt_request_flags |= 1 << 2;
+            self.irq.interrupt_request_flags |= 1 << 2;
         }
         self.update_irq_line();
         if events.entered_vblank {
@@ -3327,7 +3331,7 @@ impl Bus {
             self.refresh_timer_deadline();
         }
         if control & (1 << 14) != 0 {
-            self.interrupt_request_flags |= 1 << (index + 8);
+            self.irq.interrupt_request_flags |= 1 << (index + 8);
             self.update_irq_line();
         }
         self.active_dma_channel = previous_active;
@@ -4411,7 +4415,7 @@ mod tests {
         assert_eq!(bus.now() - before_start, 11);
         assert_eq!(&bus.iwram[..4], &[0x22, 0x11, 0x44, 0x33]);
         assert!(!bus.dma_channels[3].enabled());
-        assert_eq!(bus.interrupt_request_flags & (1 << 11), 1 << 11);
+        assert_eq!(bus.irq.interrupt_request_flags & (1 << 11), 1 << 11);
     }
 
     /// ZiGBA probe-vdma: VBlank DMA3 uploads a solid tile without enabling VBlank IRQ.
@@ -4546,7 +4550,7 @@ mod tests {
             assert_eq!(bus.sio_data, sent);
             assert_eq!(bus.sio_control & 0x80, 0);
             assert_eq!(bus.sio_control & 0x30, (index as u16) << 4);
-            assert_ne!(bus.interrupt_request_flags & (1 << 7), 0);
+            assert_ne!(bus.irq.interrupt_request_flags & (1 << 7), 0);
         }
     }
 
@@ -4683,7 +4687,7 @@ mod tests {
         }
         batched.end_device_batch();
         assert_eq!(batched.now(), eager.now());
-        assert_eq!(batched.interrupt_request_flags, eager.interrupt_request_flags);
+        assert_eq!(batched.irq.interrupt_request_flags, eager.irq.interrupt_request_flags);
         for (actual, expected) in batched.timers.iter().zip(&eager.timers) {
             assert_eq!(actual.reload, expected.reload);
             assert_eq!(actual.counter, expected.counter);
@@ -4887,9 +4891,9 @@ mod tests {
         bus.write(half(MMIO_BASE + 0x132), 0x4001);
         bus.write(half(MMIO_BASE + 0x200), 1 << 12);
         bus.write(half(MMIO_BASE + 0x208), 1);
-        assert!(!bus.irq_line);
+        assert!(!bus.irq.irq_line);
         bus.set_keys(KeyState { a: true, ..KeyState::default() });
-        assert!(bus.irq_line);
+        assert!(bus.irq.irq_line);
         let byte = Access {
             address: MMIO_BASE + 0x203,
             width: AccessWidth::Byte,
@@ -4897,20 +4901,20 @@ mod tests {
             source: AccessSource::CpuData,
         };
         bus.write(byte, 1 << 4);
-        assert!(!bus.irq_line);
+        assert!(!bus.irq.irq_line);
         bus.set_keys(KeyState::default());
         bus.set_keys(KeyState { a: true, ..KeyState::default() });
-        assert!(bus.irq_line);
+        assert!(bus.irq.irq_line);
         bus.write(half(MMIO_BASE + 0x200), 0);
-        assert!(!bus.irq_line);
+        assert!(!bus.irq.irq_line);
         bus.write(half(MMIO_BASE + 0x200), 1 << 12);
-        assert!(bus.irq_line);
+        assert!(bus.irq.irq_line);
         bus.write(half(MMIO_BASE + 0x208), 0);
-        assert!(!bus.irq_line);
+        assert!(!bus.irq.irq_line);
         bus.write(half(MMIO_BASE + 0x208), 1);
-        assert!(bus.irq_line);
+        assert!(bus.irq.irq_line);
         bus.write(half(MMIO_BASE + 0x202), 1 << 12);
-        assert!(!bus.irq_line);
+        assert!(!bus.irq.irq_line);
     }
 
     /// Zig: "stable bus state retains only strictly future explicit deadlines".
@@ -4956,10 +4960,10 @@ mod tests {
             bus.write(half(MMIO_BASE + 0x128), control);
             bus.elapse(cycles - 2);
             assert_ne!(bus.read(half(MMIO_BASE + 0x128)).value & 0x80, 0);
-            assert_eq!(bus.interrupt_request_flags & (1 << 7), 0);
+            assert_eq!(bus.irq.interrupt_request_flags & (1 << 7), 0);
             bus.elapse(1);
             assert_eq!(bus.read(half(MMIO_BASE + 0x128)).value & 0x80, 0);
-            assert_eq!(bus.interrupt_request_flags & (1 << 7), 1 << 7);
+            assert_eq!(bus.irq.interrupt_request_flags & (1 << 7), 1 << 7);
             if normal32 {
                 assert_eq!(
                     bus.read(Access {
@@ -4996,7 +5000,7 @@ mod tests {
         bus.schedule_joy_bus(JoyBusCommand::Status, bus.now()).unwrap();
         let status = bus.take_joy_bus_response().unwrap();
         assert_eq!(&status.data[..usize::from(status.len)], &[0, 4, 0]);
-        assert_eq!(bus.interrupt_request_flags & (1 << 7), 0);
+        assert_eq!(bus.irq.interrupt_request_flags & (1 << 7), 0);
         bus.write(half(MMIO_BASE + 0x200), 1 << 7);
         let deadline = bus.now() + 37;
         bus.schedule_joy_bus(JoyBusCommand::Reset, deadline).unwrap();
@@ -5006,7 +5010,7 @@ mod tests {
         assert_eq!(bus.now(), deadline);
         assert_eq!(bus.take_joy_bus_response().unwrap().data[..3], [0, 4, 0]);
         assert_eq!(bus.read(half(MMIO_BASE + 0x140)).value, 0x41);
-        assert_eq!(bus.interrupt_request_flags & (1 << 7), 1 << 7);
+        assert_eq!(bus.irq.interrupt_request_flags & (1 << 7), 1 << 7);
     }
 
     /// Zig: timed key changes apply at their exact cycle, before serial and LCD events.
@@ -5024,9 +5028,9 @@ mod tests {
         }
         bus.begin_device_batch();
         bus.elapse(72);
-        assert_eq!(bus.interrupt_request_flags & (1 << 12), 0);
+        assert_eq!(bus.irq.interrupt_request_flags & (1 << 12), 0);
         bus.elapse(1);
-        assert_eq!(bus.interrupt_request_flags & (1 << 12), 1 << 12);
+        assert_eq!(bus.irq.interrupt_request_flags & (1 << 12), 1 << 12);
         assert_eq!(bus.external_inputs_consumed(), 1);
         bus.end_device_batch();
         bus.end_external_inputs();

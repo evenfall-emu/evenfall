@@ -99,7 +99,7 @@ fn no_event_materialization_preserves_every_prescaler_and_cascade_until_the_exac
         assert_eq!(4 * divisor - 1, bus.now());
         assert_eq!(0xffff, bus.timers[0].counter);
         assert_eq!(divisor - 1, bus.timers[0].prescaler_phase);
-        assert_eq!(0, bus.interrupt_request_flags);
+        assert_eq!(0, bus.irq.interrupt_request_flags);
         for timer in &bus.timers[1..] {
             assert_eq!(0xffff, timer.counter);
         }
@@ -107,7 +107,7 @@ fn no_event_materialization_preserves_every_prescaler_and_cascade_until_the_exac
         assert_eq!(4 * divisor, bus.now());
         assert_eq!(0xfffc, bus.timers[0].counter);
         assert_eq!(0, bus.timers[0].prescaler_phase);
-        assert_eq!(0x0078, bus.interrupt_request_flags);
+        assert_eq!(0x0078, bus.irq.interrupt_request_flags);
         for timer in &bus.timers[1..] {
             assert_eq!(0xffff, timer.counter);
         }
@@ -215,25 +215,25 @@ fn cached_irq_line_follows_ie_if_ime_writes_and_keypad_edges() {
     write_half(&mut bus, 0x0400_0132, 0x4001);
     write_half(&mut bus, 0x0400_0200, 1 << 12);
     write_half(&mut bus, 0x0400_0208, 1);
-    assert!(!bus.irq_line);
+    assert!(!bus.irq.irq_line);
     bus.set_keys(KeyState { a: true, ..Default::default() });
-    assert!(bus.irq_line);
+    assert!(bus.irq.irq_line);
     assert!(bus.irq_pending());
     write_byte(&mut bus, 0x0400_0203, 1 << 4);
-    assert!(!bus.irq_line);
+    assert!(!bus.irq.irq_line);
     bus.set_keys(Default::default());
     bus.set_keys(KeyState { a: true, ..Default::default() });
-    assert!(bus.irq_line);
+    assert!(bus.irq.irq_line);
     write_half(&mut bus, 0x0400_0200, 0);
-    assert!(!bus.irq_line);
+    assert!(!bus.irq.irq_line);
     write_half(&mut bus, 0x0400_0200, 1 << 12);
-    assert!(bus.irq_line);
+    assert!(bus.irq.irq_line);
     write_half(&mut bus, 0x0400_0208, 0);
-    assert!(!bus.irq_line);
+    assert!(!bus.irq.irq_line);
     write_half(&mut bus, 0x0400_0208, 1);
-    assert!(bus.irq_line);
+    assert!(bus.irq.irq_line);
     write_half(&mut bus, 0x0400_0202, 1 << 12);
-    assert!(!bus.irq_line);
+    assert!(!bus.irq.irq_line);
 }
 
 /// ZiGBA: "LCD timing follows the GBATEK 960/1232-cycle line and 228-line frame"
@@ -599,12 +599,12 @@ fn mmio_byte_writes_preserve_the_other_lane_for_video_timers_and_dma() {
 #[test]
 fn mmio_byte_writes_keep_interrupt_flag_clearing_lane_local() {
     let mut bus = Bus::init(&[]);
-    bus.interrupt_request_flags = 0xa5a5;
+    bus.irq.interrupt_request_flags = 0xa5a5;
     bus.update_irq_line();
     write_byte(&mut bus, 0x0400_0202, 0x05);
-    assert_eq!(0xa5a0, bus.interrupt_request_flags);
+    assert_eq!(0xa5a0, bus.irq.interrupt_request_flags);
     write_byte(&mut bus, 0x0400_0203, 0xa0);
-    assert_eq!(0x05a0, bus.interrupt_request_flags);
+    assert_eq!(0x05a0, bus.irq.interrupt_request_flags);
 }
 
 /// ZiGBA: "DMA3 immediate starts two cycles after its enabling write, copies halfwords, clears enable, and requests IRQ"
@@ -886,10 +886,10 @@ fn normal_mode_internal_clock_sio_transfers_complete_at_their_bit_clock_deadline
         write_half(&mut bus, 0x0400_0128, control);
         bus.elapse(cycles - 2);
         assert_ne!(0, read_half(&mut bus, 0x0400_0128) & 0x0080);
-        assert_eq!(0, bus.interrupt_request_flags & (1 << 7));
+        assert_eq!(0, bus.irq.interrupt_request_flags & (1 << 7));
         bus.elapse(1);
         assert_eq!(0, read_half(&mut bus, 0x0400_0128) & 0x0080);
-        assert_eq!(1 << 7, bus.interrupt_request_flags & (1 << 7));
+        assert_eq!(1 << 7, bus.irq.interrupt_request_flags & (1 << 7));
         if normal32 {
             assert_eq!(0xffff_ffff, read_word(&mut bus, 0x0400_0120));
         } else {
@@ -907,7 +907,7 @@ fn external_clock_gpio_and_joy_bus_selections_leave_a_started_sio_transfer_pendi
         write_half(&mut bus, 0x0400_0128, siocnt);
         bus.elapse(4096);
         assert_ne!(0, read_half(&mut bus, 0x0400_0128) & 0x0080);
-        assert_eq!(0, bus.interrupt_request_flags & (1 << 7));
+        assert_eq!(0, bus.irq.interrupt_request_flags & (1 << 7));
     }
 }
 
@@ -925,7 +925,7 @@ fn joy_bus_status_and_reset_commands_return_the_gba_type_and_raise_reset_irq() {
     let status = bus.take_joy_bus_response().unwrap();
     assert_eq!(3, status.len);
     assert_eq!(&[0x00, 0x04, 0x00], &status.data[..status.len as usize]);
-    assert_eq!(0, bus.interrupt_request_flags & (1 << 7));
+    assert_eq!(0, bus.irq.interrupt_request_flags & (1 << 7));
     write_half(&mut bus, 0x0400_0200, 1 << 7);
     let deadline = bus.now() + 37;
     bus.schedule_joy_bus(JoyBusCommand::Reset, deadline).unwrap();
@@ -936,7 +936,7 @@ fn joy_bus_status_and_reset_commands_return_the_gba_type_and_raise_reset_irq() {
     assert_eq!(deadline, bus.now());
     assert_eq!(&[0x00, 0x04, 0x00], &reset.data[..reset.len as usize]);
     assert_eq!(0x0041, read_half(&mut bus, 0x0400_0140));
-    assert_eq!(1 << 7, bus.interrupt_request_flags & (1 << 7));
+    assert_eq!(1 << 7, bus.irq.interrupt_request_flags & (1 << 7));
     assert!(bus.halt_wake_pending());
     write_half(&mut bus, 0x0400_0140, 0x0041);
     assert_eq!(0x0040, read_half(&mut bus, 0x0400_0140));
@@ -957,7 +957,7 @@ fn joy_bus_write_command_fills_receive_data_and_mmio_reads_clear_receive_status(
     assert_eq!(0x2211, read_half(&mut bus, 0x0400_0150));
     assert_eq!(0, read_half(&mut bus, 0x0400_0158) & 0x0002);
     assert_eq!(0x4433, read_half(&mut bus, 0x0400_0152));
-    assert_eq!(1 << 7, bus.interrupt_request_flags & (1 << 7));
+    assert_eq!(1 << 7, bus.irq.interrupt_request_flags & (1 << 7));
 }
 
 /// ZiGBA: "JoyBus rejects invalid scheduling and mode exit cancels a pending command"
@@ -991,7 +991,7 @@ fn serial_irq_wakes_halt_at_the_exact_normal_transfer_deadline() {
     bus.enter_halt();
     assert!(bus.idle_halt_until(started_at + 8 * 64));
     assert_eq!(started_at + 8 * 64, bus.now());
-    assert_eq!(1 << 7, bus.interrupt_request_flags & (1 << 7));
+    assert_eq!(1 << 7, bus.irq.interrupt_request_flags & (1 << 7));
 }
 
 /// ZiGBA: "APU byte writes preserve write-only frequency lanes"
@@ -1295,7 +1295,7 @@ fn four_player_sio_exchanges_every_multiplayer_word_at_the_parent_baud_deadline(
         assert_eq!(sent, bus.sio_data);
         assert_eq!(0, bus.sio_control & 0x0080);
         assert_eq!((index as u16) << 4, bus.sio_control & 0x0030);
-        assert_eq!(1 << 7, bus.interrupt_request_flags & (1 << 7));
+        assert_eq!(1 << 7, bus.irq.interrupt_request_flags & (1 << 7));
     }
     let [a, b, c, d] = &mut buses;
     assert_eq!(Ok(false), synchronize_sio(&mut [a, b, c, d], SioConnection::CableMulti));
@@ -1536,12 +1536,12 @@ fn timer_zero_unused_count_up_bit_preserves_the_exact_batched_irq_deadline() {
         let started_at = bus.now();
         bus.begin_device_batch();
         bus.elapse(1);
-        assert_eq!(0, bus.interrupt_request_flags);
-        assert!(!bus.irq_line);
+        assert_eq!(0, bus.irq.interrupt_request_flags);
+        assert!(!bus.irq.irq_line);
         bus.elapse(1);
         assert_eq!(started_at + 2, bus.now());
-        assert_eq!(1 << 3, bus.interrupt_request_flags);
-        assert!(bus.irq_line);
+        assert_eq!(1 << 3, bus.irq.interrupt_request_flags);
+        assert!(bus.irq.irq_line);
         bus.end_device_batch();
     }
 }
@@ -1549,10 +1549,10 @@ fn timer_zero_unused_count_up_bit_preserves_the_exact_batched_irq_deadline() {
 fn expect_timer_irqs_at(bus: &mut Bus, at: u64, flags: u16) {
     let timer_flags = 0xf << 3;
     bus.elapse(at - 1 - bus.now());
-    assert_eq!(0, bus.interrupt_request_flags & timer_flags);
+    assert_eq!(0, bus.irq.interrupt_request_flags & timer_flags);
     bus.elapse(1);
-    assert_eq!(flags, bus.interrupt_request_flags & timer_flags);
-    bus.interrupt_request_flags &= !timer_flags;
+    assert_eq!(flags, bus.irq.interrupt_request_flags & timer_flags);
+    bus.irq.interrupt_request_flags &= !timer_flags;
     bus.update_irq_line();
 }
 
@@ -1561,10 +1561,10 @@ fn expect_timer_overflows_at(bus: &mut Bus, index: u8, expected: u64, divisor: u
     for distance in [expected, 2 * divisor] {
         assert!(distance >= 1);
         bus.elapse(distance - 1);
-        assert_eq!(0, bus.interrupt_request_flags & flag);
+        assert_eq!(0, bus.irq.interrupt_request_flags & flag);
         bus.elapse(1);
-        assert_eq!(flag, bus.interrupt_request_flags & flag);
-        bus.interrupt_request_flags = 0;
+        assert_eq!(flag, bus.irq.interrupt_request_flags & flag);
+        bus.irq.interrupt_request_flags = 0;
         bus.update_irq_line();
     }
 }
@@ -2207,7 +2207,7 @@ fn batched_instruction_fetch_latches_before_dma_at_the_exact_access_boundary() {
     bus.end_device_batch();
     assert_eq!(started + 12, bus.now());
     assert_eq!(0x3344_1122, bus.fetch_instruction(0x0300_0000, AccessWidth::Word));
-    assert_ne!(0, bus.interrupt_request_flags & (1 << 11));
+    assert_ne!(0, bus.irq.interrupt_request_flags & (1 << 11));
 }
 
 /// ZiGBA: "no-event materialization retains simultaneous input serial LCD timer and DMA delivery"
@@ -2245,13 +2245,13 @@ fn no_event_materialization_retains_simultaneous_input_serial_lcd_timer_and_dma_
     assert_eq!(959, bus.now());
     assert_eq!(959, bus.ppu_timing.cycle_in_line);
     assert_eq!(0xffff, bus.timers[0].counter);
-    assert_eq!(0, bus.interrupt_request_flags);
+    assert_eq!(0, bus.irq.interrupt_request_flags);
     assert_eq!(0, bus.external_inputs_consumed());
     assert_eq!(None, bus.take_joy_bus_response());
     bus.elapse(1);
     assert_eq!(964, bus.now());
     assert_eq!(0x108a, u16::from_le_bytes(bus.iwram[0..2].try_into().unwrap()));
-    assert_eq!(0x188a, bus.interrupt_request_flags);
+    assert_eq!(0x188a, bus.irq.interrupt_request_flags);
     assert_eq!(1, bus.external_inputs_consumed());
     assert!(bus.take_joy_bus_response().is_some());
     bus.end_device_batch();
@@ -2378,7 +2378,10 @@ fn a_halted_batch_wakes_at_the_lcd_or_timer_event_after_post_halt_charges_and_cu
                     }
                     assert!(bus.idle_halt_until(bus.now() + 5000));
                     assert_eq!(if timer { 702 } else { 960 }, bus.now());
-                    assert_eq!(if timer { 1 << 3 } else { 1 << 1 }, bus.interrupt_request_flags);
+                    assert_eq!(
+                        if timer { 1 << 3 } else { 1 << 1 },
+                        bus.irq.interrupt_request_flags
+                    );
                     if batched {
                         bus.end_device_batch();
                     }
@@ -2416,7 +2419,7 @@ fn one_cycle_endpoint_preserves_simultaneous_timer_hblank_and_dma_ordering() {
     assert_eq!(960, bus.now());
     assert_eq!(0xfffe, bus.timers[0].read_counter());
     assert_eq!(0xfffd, bus.timers[1].read_counter());
-    assert_eq!((1 << 1) | (1 << 3) | (1 << 4), bus.interrupt_request_flags);
+    assert_eq!((1 << 1) | (1 << 3) | (1 << 4), bus.irq.interrupt_request_flags);
     assert_eq!(0x7fff, bus.framebuffer()[0]);
     assert_eq!(Some(963), bus.dma_start_cycles[0]);
 }

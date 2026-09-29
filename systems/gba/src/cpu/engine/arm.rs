@@ -6,7 +6,7 @@
 
 use super::mem::{Mem, Running};
 use super::{CodeCache, Load, Mmio, Op, PAGE_SHIFT, fresh_ops, split_memory};
-use crate::bus::{AccessWidth, BIOS_SIZE, Bus, EWRAM_SIZE, IWRAM_SIZE, read_ram};
+use crate::bus::{AccessWidth, BIOS_SIZE, Bus, EWRAM_SIZE, IWRAM_SIZE, PowerState, read_ram};
 use evenfall_cpu_arm::{Core, InstructionSet, Pipeline, condition_passes};
 
 /// Op kinds. Data processing kinds are a form's base plus the opcode;
@@ -553,13 +553,13 @@ fn drive<const EW: bool>(
     let mut saved =
         Saved { base, load_mark: -1, store_mark: -1, mmio_mark: -1, data: 0, bios, bios_ok };
     let mut resume = Resume::Start;
-    let exit = loop {
+    let exit = 'pass: loop {
         let left = limit as i64 - bus.now() as i64;
         let memory = bus.engine_memory(saved.bios);
         let image = memory.bios;
         let (mem, _) = split_memory(memory, left);
         let mut c = saved.ctx::<EW>(mem, image, core);
-        let hot = match resume {
+        let mut hot = match resume {
             Resume::Start => {
                 let latched = [c.code_word(pc), c.code_word(pc.wrapping_add(4))];
                 let arm = Pipeline { instructions: latched, instruction_set: InstructionSet::Arm };
@@ -571,12 +571,25 @@ fn drive<const EW: bool>(
             Resume::On(hot) => hot,
             Resume::Out(hot) => break finish(c, hot, budget),
         };
-        let hot = if EW {
-            let ops = (&mut *ops).try_into().expect("EWRAM op array");
-            run_loop::<EW, { 2 * EWRAM_SIZE / 4 }>(ops, &mut c, hot)
-        } else {
-            let ops = (&mut *ops).try_into().expect("IWRAM op array");
-            run_loop::<EW, { 2 * IWRAM_SIZE / 4 }>(ops, &mut c, hot)
+        // Passes on this view of memory, through interrupt register
+        // accesses, which need no other.
+        let (hot, access) = loop {
+            hot = if EW {
+                let ops = (&mut *ops).try_into().expect("EWRAM op array");
+                run_loop::<EW, { 2 * EWRAM_SIZE / 4 }>(ops, &mut c, hot)
+            } else {
+                let ops = (&mut *ops).try_into().expect("IWRAM op array");
+                run_loop::<EW, { 2 * IWRAM_SIZE / 4 }>(ops, &mut c, hot)
+            };
+            let Some(access) = c.mmio.take() else {
+                break (hot, None);
+            };
+            match serve_irq::<EW>(&mut c, hot, &access) {
+                Some(Resume::On(next)) => hot = next,
+                Some(Resume::Out(next)) => break 'pass finish(c, next, budget),
+                Some(Resume::Start) => unreachable!("an access leaves a run going or out"),
+                None => break (hot, Some(access)),
+            }
         };
         if let Some((target, hot)) = c.switch.take() {
             #[cfg(test)]
@@ -589,7 +602,7 @@ fn drive<const EW: bool>(
             resume = Resume::On(Hot { idx: target.wrapping_sub(saved.base) >> 2, ..hot });
             continue;
         }
-        let Some(access) = c.mmio.take() else {
+        let Some(access) = access else {
             break finish(c, hot, budget);
         };
         saved = c.save();
@@ -690,6 +703,39 @@ fn serve<const EW: bool>(
         saved.load_mark = next.budget;
     }
     if bus.engine_may_go_on(limit, core.cpsr & (1 << 7) != 0) {
+        Resume::On(next)
+    } else {
+        Resume::Out(next)
+    }
+}
+
+/// Completes `access` on the run's own view of the interrupt registers if
+/// it touches only them ([`Mmio::irq`]), charged as [`serve`] charges it;
+/// None if it touches other registers. The run stops after a store that
+/// halts, stops or raises an IRQ the CPU takes.
+#[inline(always)]
+fn serve_irq<const EW: bool>(c: &mut Ctx<'_, EW>, h: Hot, access: &Mmio) -> Option<Resume> {
+    access.irq().then(|| complete_irq::<EW>(c, h, access))
+}
+
+/// The part of [`serve_irq`] past the test of the registers.
+#[inline(never)]
+fn complete_irq<const EW: bool>(c: &mut Ctx<'_, EW>, h: Hot, access: &Mmio) -> Resume {
+    let store = access.store.is_some();
+    let mut next = h;
+    if !next.charge(Ctx::<EW>::FETCH + if store { 1 } else { 2 }) {
+        return Resume::Out(h);
+    }
+    let value = access.perform_irq(c.mem.irq, &mut c.core.registers);
+    next.next();
+    c.mmio_mark = next.budget;
+    if !store {
+        c.data = value;
+        c.load_mark = next.budget;
+    }
+    let irq = &c.mem.irq;
+    let taken = irq.irq_line && h.cpsr & (1 << 7) == 0;
+    if irq.power_state == PowerState::Running && !taken {
         Resume::On(next)
     } else {
         Resume::Out(next)

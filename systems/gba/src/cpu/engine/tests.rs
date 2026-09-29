@@ -71,7 +71,7 @@ impl Pair {
             return false;
         }
         let mut end = self.engine_bus.now();
-        if self.engine_bus.irq_line && self.engine.cpsr & (1 << 7) == 0 {
+        if self.engine_bus.irq.irq_line && self.engine.cpsr & (1 << 7) == 0 {
             // As the ordinary loop does after a run that raised an IRQ.
             self.engine_bus.resume_power();
             self.engine.enter_irq(&mut self.engine_bus).expect("IRQ entry");
@@ -107,7 +107,7 @@ impl Pair {
         assert_eq!(self.engine, self.reference, "{context}: CPU");
         let (a, b) = (&self.engine_bus, &self.reference_bus);
         assert_eq!(a.now(), b.now(), "{context}: clock");
-        assert_eq!(a.irq_line, b.irq_line, "{context}: IRQ line");
+        assert_eq!(a.irq.irq_line, b.irq.irq_line, "{context}: IRQ line");
         assert_eq!(a.power_state(), b.power_state(), "{context}: power");
         assert_eq!(a.pending_dma, b.pending_dma, "{context}: pending DMA");
         assert_eq!(a.batch_deadline, b.batch_deadline, "{context}: device horizon");
@@ -342,9 +342,9 @@ fn interrupts(random: &mut Random) -> Option<(u16, u16, bool)> {
 
 fn set_interrupts(bus: &mut Bus, interrupts: Option<(u16, u16, bool)>) {
     if let Some((flags, enabled, master)) = interrupts {
-        bus.interrupt_request_flags = flags;
-        bus.interrupt_enable_mask = enabled;
-        bus.interrupt_master_enabled = master;
+        bus.irq.interrupt_request_flags = flags;
+        bus.irq.interrupt_enable_mask = enabled;
+        bus.irq.interrupt_master_enabled = master;
         bus.update_irq_line();
     }
 }
@@ -869,6 +869,7 @@ fn mmio_transfers_in_runs_match_stepping() {
     }
     let (mut runs, mut irq_entries, mut halts) = (0, 0, 0);
     let mmio_before = super::MMIO_ACCESSES.get();
+    let irq_before = super::IRQ_ACCESSES.get();
     for trial in 0..600 {
         let place = trial % 4;
         let (pc, is_thumb) = match place {
@@ -933,8 +934,10 @@ fn mmio_transfers_in_runs_match_stepping() {
         pair.settle(&context);
     }
     let mmio = super::MMIO_ACCESSES.get() - mmio_before;
+    let irq = super::IRQ_ACCESSES.get() - irq_before;
+    assert!(irq > 50_000, "only {irq} interrupt register accesses in engine runs");
     assert!(runs > 1500, "only {runs} runs");
-    assert!(mmio > 50_000, "only {mmio} MMIO accesses in engine runs");
+    assert!(mmio > 20_000, "only {mmio} MMIO accesses in engine runs");
     assert!(irq_entries > 80, "only {irq_entries} IRQs raised in engine runs");
     assert!(halts > 40, "only {halts} halts");
 }
@@ -1035,6 +1038,7 @@ fn bios_and_indirect_branches_run_like_stepping() {
     let mut random = Random(0xb105_b105);
     let (mut runs, mut halts) = (0, 0);
     let switches = super::SWITCHES.get();
+    let irq = super::IRQ_ACCESSES.get();
     for trial in 0..200 {
         let start_in_bios = trial % 3 == 0;
         let mut cpu = Cpu::init(if start_in_bios { 0x200 } else { MAIN }, 0x1f, false);
@@ -1085,7 +1089,9 @@ fn bios_and_indirect_branches_run_like_stepping() {
         pair.settle(&context);
     }
     let switches = super::SWITCHES.get() - switches;
+    let irq = super::IRQ_ACCESSES.get() - irq;
     assert!(runs > 5000, "only {runs} runs");
+    assert!(irq > 5000, "only {irq} interrupt register accesses in engine runs");
     assert!(halts > 2000, "only {halts} halts");
     assert!(switches > 5000, "only {switches} switches between the BIOS and IWRAM");
 }

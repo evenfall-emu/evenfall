@@ -41,7 +41,7 @@ fn fetch_state_parity(reference: &Bus, active: &Bus) {
     assert_eq!(reference.prefetch_disabled_bug_pending, active.prefetch_disabled_bug_pending);
     assert_eq!(reference.prefetch_buffer_was_disabled, active.prefetch_buffer_was_disabled);
     assert_eq!(reference.batch_deadline, active.batch_deadline);
-    assert_eq!(reference.interrupt_request_flags, active.interrupt_request_flags);
+    assert_eq!(reference.irq.interrupt_request_flags, active.irq.interrupt_request_flags);
 }
 
 fn bus_state_parity(reference: &Bus, active: &Bus) {
@@ -365,12 +365,12 @@ fn synchronized_reads_and_fifo_writes_keep_the_device_batch_armed() {
         eager.elapse(cycles);
         batched.elapse(cycles);
         assert_eq!(eager.now(), batched.now());
-        assert_eq!(eager.interrupt_request_flags, batched.interrupt_request_flags);
+        assert_eq!(eager.irq.interrupt_request_flags, batched.irq.interrupt_request_flags);
         assert_eq!(eager.external_inputs_consumed(), batched.external_inputs_consumed());
         assert_eq!(eager.apu.fifo_a, batched.apu.fifo_a);
         assert_eq!(eager.apu.sample_a, batched.apu.sample_a);
         if batched.now() == 60 {
-            assert_ne!(batched.interrupt_request_flags & (1 << 12), 0);
+            assert_ne!(batched.irq.interrupt_request_flags & (1 << 12), 0);
         }
     }
     let key_input =
@@ -496,7 +496,7 @@ fn delegated_fifo_timer_overflows_match_eager_delivery_through_refill_and_schedu
             }
         }
         assert_eq!(eager.now(), batched.now());
-        assert_eq!(eager.interrupt_request_flags, batched.interrupt_request_flags);
+        assert_eq!(eager.irq.interrupt_request_flags, batched.irq.interrupt_request_flags);
         assert_eq!(eager.pending_dma, batched.pending_dma);
         for (expected, actual) in eager.dma_channels.iter().zip(batched.dma_channels.iter()) {
             assert_eq!(expected.latched_source, actual.latched_source);
@@ -724,7 +724,7 @@ fn selected_frames_preserve_affine_mosaic_raster_histories_dma_and_durable_state
                 )
             );
         }
-        assert_eq!(full.bus.interrupt_request_flags, selected.bus.interrupt_request_flags);
+        assert_eq!(full.bus.irq.interrupt_request_flags, selected.bus.irq.interrupt_request_flags);
         let rendered = frame_index == 0 || (frame_index - 1) % 3 == 0;
         assert_eq!(selected.bus.is_framebuffer_canonical(), rendered);
         if rendered {

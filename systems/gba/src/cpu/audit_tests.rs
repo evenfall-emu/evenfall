@@ -481,9 +481,9 @@ fn execution_region_admission_distinguishes_eligible_irq_and_masked_irq_and_dma_
             slot.copy_from_slice(&0xe280_0003_u32.to_le_bytes());
         }
         match case {
-            0 => bus.irq_line = true,
+            0 => bus.irq.irq_line = true,
             1 => {
-                bus.irq_line = true;
+                bus.irq.irq_line = true;
                 cpu.cpsr |= 1 << 7;
             }
             2 => bus.pending_dma = 1,

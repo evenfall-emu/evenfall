@@ -13,7 +13,7 @@ fn assert_same_bus(reference: &Bus, optimized: &Bus) {
     assert_eq!(reference.now(), optimized.now());
     assert_eq!(reference.open_bus_value, optimized.open_bus_value);
     assert_eq!(reference.fetch_kind, optimized.fetch_kind);
-    assert_eq!(reference.irq_line, optimized.irq_line);
+    assert_eq!(reference.irq.irq_line, optimized.irq.irq_line);
     assert_eq!(reference.game_pak_timing_key, optimized.game_pak_timing_key);
     assert_eq!(reference.game_pak_n_cycles, optimized.game_pak_n_cycles);
     assert_eq!(reference.game_pak_s_cycles, optimized.game_pak_s_cycles);
@@ -831,7 +831,7 @@ fn active_iwram_fetches_latch_before_dma_and_observe_later_writes() {
                 );
             }
             assert_eq!(started + 12, active.now());
-            assert_ne!(0, active.interrupt_request_flags & (1 << 11));
+            assert_ne!(0, active.irq.interrupt_request_flags & (1 << 11));
             assert_view_fetch_parity(
                 &mut reference,
                 &mut active,
@@ -960,7 +960,7 @@ fn assert_fetch_state(reference: &Bus, active: &Bus) {
     assert_eq!(reference.prefetch_disabled_bug_pending, active.prefetch_disabled_bug_pending);
     assert_eq!(reference.prefetch_buffer_was_disabled, active.prefetch_buffer_was_disabled);
     assert_eq!(reference.batch_deadline, active.batch_deadline);
-    assert_eq!(reference.interrupt_request_flags, active.interrupt_request_flags);
+    assert_eq!(reference.irq.interrupt_request_flags, active.irq.interrupt_request_flags);
 }
 
 fn assert_thumb_refill_parity(

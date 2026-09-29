@@ -280,7 +280,7 @@ fn timestamped_input_wakes_halt_at_its_exact_master_cycle() {
     assert_eq!(result.inputs_consumed, 2);
     assert_eq!(machine.now(), 20);
     assert_eq!(result.reason, StopReason::Deadline);
-    assert_ne!(machine.bus.interrupt_request_flags & (1 << 12), 0);
+    assert_ne!(machine.bus.irq.interrupt_request_flags & (1 << 12), 0);
     assert_eq!(machine.bus.keys, KeyState::default());
 }
 
@@ -429,7 +429,7 @@ fn hle_intr_wait_consumes_a_selected_old_bios_irq_flag_without_sleeping() {
     machine.bus.iwram[0x7FF8..0x7FFA].copy_from_slice(&(1_u16 << 3).to_le_bytes());
     executed_step(&mut machine);
     assert_eq!(machine.bus.power_state(), PowerState::Running);
-    assert!(machine.bus.interrupt_master_enabled);
+    assert!(machine.bus.irq.interrupt_master_enabled);
     assert_eq!(&machine.bus.iwram[0x7FF8..0x7FFA], &[0, 0]);
 }
 
@@ -444,7 +444,7 @@ fn hle_vblank_intr_wait_discards_old_vblank_state_and_enters_halt() {
     executed_step(&mut machine);
     assert_eq!((machine.read_register(0), machine.read_register(1)), (1, 1));
     assert_eq!(machine.bus.power_state(), PowerState::Halted);
-    assert!(machine.bus.interrupt_master_enabled);
+    assert!(machine.bus.irq.interrupt_master_enabled);
     assert_eq!(&machine.bus.iwram[0x7FF8..0x7FFA], &[0, 0]);
 }
 
@@ -456,9 +456,9 @@ fn direct_step_while_halted_or_stopped_returns_without_advancing_emulated_state(
         let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
         if state == WaitReason::Stopped {
             machine.bus.enter_stop();
-            machine.bus.interrupt_enable_mask = 1 << 3;
-            machine.bus.interrupt_request_flags = 1 << 3;
-            machine.bus.interrupt_master_enabled = true;
+            machine.bus.irq.interrupt_enable_mask = 1 << 3;
+            machine.bus.irq.interrupt_request_flags = 1 << 3;
+            machine.bus.irq.interrupt_master_enabled = true;
             machine.bus.update_irq_line();
         } else {
             machine.bus.enter_halt();
@@ -484,9 +484,9 @@ fn direct_step_while_halted_or_stopped_returns_without_advancing_emulated_state(
 fn direct_step_resumes_a_pending_halt_wake_independently_of_ime() {
     let rom = [7, 0, 0xA0, 0xE3];
     let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
-    machine.bus.interrupt_enable_mask = 1 << 3;
-    machine.bus.interrupt_request_flags = 1 << 3;
-    machine.bus.interrupt_master_enabled = false;
+    machine.bus.irq.interrupt_enable_mask = 1 << 3;
+    machine.bus.irq.interrupt_request_flags = 1 << 3;
+    machine.bus.irq.interrupt_master_enabled = false;
     machine.bus.update_irq_line();
     machine.bus.enter_halt();
     let step = executed_step(&mut machine);
@@ -502,7 +502,7 @@ fn step_with_input_applies_a_same_cycle_keypad_wake_before_stepping_stop() {
     let rom = [7, 0, 0xA0, 0xE3];
     let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
     machine.bus.keypad_control = (1 << 14) | 1;
-    machine.bus.interrupt_enable_mask = 1 << 12;
+    machine.bus.irq.interrupt_enable_mask = 1 << 12;
     machine.bus.update_irq_line();
     machine.bus.enter_stop();
     let result = machine
@@ -525,7 +525,7 @@ fn step_with_input_applies_a_same_cycle_keypad_wake_before_stepping_stop() {
 fn step_with_input_retains_a_future_input_while_halt_is_waiting() {
     let mut machine = Machine::new(Config::default());
     machine.bus.keypad_control = (1 << 14) | 1;
-    machine.bus.interrupt_enable_mask = 1 << 12;
+    machine.bus.irq.interrupt_enable_mask = 1 << 12;
     machine.bus.update_irq_line();
     machine.bus.enter_halt();
     let result = machine
@@ -546,7 +546,7 @@ fn wait_until_with_input_reaches_a_future_keypad_wake_without_executing_the_gues
     let rom = [7, 0, 0xA0, 0xE3];
     let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
     machine.bus.keypad_control = (1 << 14) | 1;
-    machine.bus.interrupt_enable_mask = 1 << 12;
+    machine.bus.irq.interrupt_enable_mask = 1 << 12;
     machine.bus.update_irq_line();
     machine.bus.enter_halt();
     let address = machine.next_instruction_address();
@@ -705,7 +705,7 @@ fn run_until_resumes_halt_at_an_enabled_device_event_before_its_deadline() {
     write_words(&mut rom, 0, &[0xEF02_0000, 0xE3A0_0007]);
     let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
     executed_step(&mut machine);
-    machine.bus.interrupt_enable_mask = 1 << 3;
+    machine.bus.irq.interrupt_enable_mask = 1 << 3;
     machine.bus.update_irq_line();
     machine.bus.timers[0].write_reload(0xFFFC);
     machine.bus.timers[0].write_control((1 << 7) | (1 << 6), machine.bus.prescaler_counter());
@@ -714,7 +714,7 @@ fn run_until_resumes_halt_at_an_enabled_device_event_before_its_deadline() {
     assert_eq!(result.reason, StopReason::InstructionBoundaryAfterDeadline);
     assert_eq!(machine.now(), target + 2);
     assert_eq!(machine.read_register(0), 7);
-    assert_eq!(machine.bus.interrupt_request_flags, 1 << 3);
+    assert_eq!(machine.bus.irq.interrupt_request_flags, 1 << 3);
     assert_eq!(machine.bus.power_state(), PowerState::Running);
 }
 
@@ -726,8 +726,8 @@ fn halt_wake_enters_an_enabled_irq_before_executing_the_interrupted_instruction(
     let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
     executed_step(&mut machine);
     write_words(&mut machine.bus.iwram[..], 0x7FFC, &[0x0800_0008]);
-    machine.bus.interrupt_enable_mask = 1 << 3;
-    machine.bus.interrupt_master_enabled = true;
+    machine.bus.irq.interrupt_enable_mask = 1 << 3;
+    machine.bus.irq.interrupt_master_enabled = true;
     machine.bus.update_irq_line();
     machine.bus.timers[0].write_reload(0xFFFC);
     machine.bus.timers[0].write_control((1 << 7) | (1 << 6), machine.bus.prescaler_counter());
@@ -750,7 +750,7 @@ fn hle_stop_freezes_system_clocks_and_run_until_reports_the_stopped_state() {
     let stopped_at = machine.now();
     let line = machine.bus.ppu_timing.line;
     let cycle = machine.bus.ppu_timing.cycle_in_line;
-    machine.bus.interrupt_enable_mask = 1 << 3;
+    machine.bus.irq.interrupt_enable_mask = 1 << 3;
     machine.bus.update_irq_line();
     machine.bus.timers[0].write_reload(0xFFFE);
     machine.bus.timers[0].write_control((1 << 7) | (1 << 6), machine.bus.prescaler_counter());
@@ -780,9 +780,9 @@ fn hle_register_ram_reset_resets_sound_and_other_devices_without_clearing_ram() 
     machine.bus.dma_channels[0].destination = 0x0300_1234;
     machine.bus.dma_channels[0].word_count = 7;
     machine.bus.dma_channels[0].control = 0x8400;
-    machine.bus.interrupt_enable_mask = 0x3FFF;
-    machine.bus.interrupt_request_flags = 0x3FFF;
-    machine.bus.interrupt_master_enabled = true;
+    machine.bus.irq.interrupt_enable_mask = 0x3FFF;
+    machine.bus.irq.interrupt_request_flags = 0x3FFF;
+    machine.bus.irq.interrupt_master_enabled = true;
     machine.bus.update_irq_line();
     machine.bus.waitcnt = 0x7FFF;
     machine.bus.ppu_timing.dispstat_control = 0xFF38;
@@ -803,9 +803,9 @@ fn hle_register_ram_reset_resets_sound_and_other_devices_without_clearing_ram() 
     assert_eq!(machine.bus.timers[0].read_control(), 0);
     assert_eq!(machine.bus.dma_channels[0].source, 0);
     assert_eq!(machine.bus.dma_channels[0].control, 0);
-    assert_eq!(machine.bus.interrupt_enable_mask, 0);
-    assert_eq!(machine.bus.interrupt_request_flags, 0);
-    assert!(!machine.bus.interrupt_master_enabled);
+    assert_eq!(machine.bus.irq.interrupt_enable_mask, 0);
+    assert_eq!(machine.bus.irq.interrupt_request_flags, 0);
+    assert!(!machine.bus.irq.interrupt_master_enabled);
     assert_eq!(machine.bus.waitcnt, 0);
     assert_eq!(machine.bus.ppu_timing.dispstat_control, 0);
     assert_eq!(machine.bus.bg_controls, [0; 4]);
@@ -902,11 +902,11 @@ fn hle_hard_reset_resets_console_state_and_reboots_without_erasing_cartridge_sav
     machine.bus.timers[0] =
         evenfall_gba::timer::Timer { reload: 1, counter: 2, control: 0xC0, ..Default::default() };
     machine.bus.dma_channels[0].control = 0x8400;
-    machine.bus.interrupt_enable_mask = 0x3FFF;
-    machine.bus.interrupt_request_flags = 0x3FFF;
-    machine.bus.interrupt_master_enabled = true;
+    machine.bus.irq.interrupt_enable_mask = 0x3FFF;
+    machine.bus.irq.interrupt_request_flags = 0x3FFF;
+    machine.bus.irq.interrupt_master_enabled = true;
     machine.bus.update_irq_line();
-    machine.bus.post_boot = 0;
+    machine.bus.irq.post_boot = 0;
     machine.bus.keys.a = true;
     machine.bus.keypad_control = 0xC001;
     for index in 0..15 {
@@ -939,9 +939,12 @@ fn hle_hard_reset_resets_console_state_and_reboots_without_erasing_cartridge_sav
     assert!(!machine.bus.apu.master_enabled);
     assert_eq!((machine.bus.apu.sound_control_h, machine.bus.apu.sound_bias), (0x000E, 0x0200));
     assert_eq!((machine.bus.timers[0].read_control(), machine.bus.dma_channels[0].control), (0, 0));
-    assert_eq!((machine.bus.interrupt_enable_mask, machine.bus.interrupt_request_flags), (0, 0));
-    assert!(!machine.bus.interrupt_master_enabled);
-    assert_eq!((machine.bus.post_boot, machine.bus.keypad_control), (1, 0));
+    assert_eq!(
+        (machine.bus.irq.interrupt_enable_mask, machine.bus.irq.interrupt_request_flags),
+        (0, 0)
+    );
+    assert!(!machine.bus.irq.interrupt_master_enabled);
+    assert_eq!((machine.bus.irq.post_boot, machine.bus.keypad_control), (1, 0));
     assert!(machine.bus.keys.a);
     assert_eq!(machine.save_data()[0x1234], 0x5A);
 }
@@ -961,7 +964,7 @@ fn haltcnt_byte_writes_select_halt_or_stop_and_halt_resumes_at_the_following_ins
             continue;
         }
         assert_eq!(machine.bus.power_state(), PowerState::Halted);
-        machine.bus.interrupt_enable_mask = 1 << 3;
+        machine.bus.irq.interrupt_enable_mask = 1 << 3;
         machine.bus.update_irq_line();
         machine.bus.timers[0].write_reload(0xFFFE);
         machine.bus.timers[0].write_control((1 << 7) | (1 << 6), machine.bus.prescaler_counter());
@@ -1022,9 +1025,9 @@ fn arm7_defers_a_pending_irq_until_after_a_taken_branch_refill() {
         },
         0x0800_0010,
     );
-    machine.bus.interrupt_enable_mask = 1;
-    machine.bus.interrupt_request_flags = 1;
-    machine.bus.interrupt_master_enabled = true;
+    machine.bus.irq.interrupt_enable_mask = 1;
+    machine.bus.irq.interrupt_request_flags = 1;
+    machine.bus.irq.interrupt_master_enabled = true;
     machine.bus.update_irq_line();
     executed_step(&mut machine);
     assert_eq!(machine.read_cpsr() & 0x1F, 0x1F);
@@ -1401,7 +1404,7 @@ fn hle_intr_wait_completes_only_after_the_irq_handler_updates_the_bios_mirror() 
     write_words(&mut machine.bus.iwram[..], 0x7FFC, &[0x0800_0008]);
     executed_step(&mut machine);
     assert_eq!(machine.bus.power_state(), PowerState::Halted);
-    machine.bus.interrupt_enable_mask = 1 << 3;
+    machine.bus.irq.interrupt_enable_mask = 1 << 3;
     machine.bus.update_irq_line();
     machine.bus.timers[0].write_reload(0xFFFC);
     machine.bus.timers[0].write_control((1 << 7) | (1 << 6), machine.bus.prescaler_counter());
@@ -1409,7 +1412,7 @@ fn hle_intr_wait_completes_only_after_the_irq_handler_updates_the_bios_mirror() 
     let handler = executed_step(&mut machine);
     assert_eq!(handler.instruction_address, 0x0800_0008);
     machine.bus.timers[0].write_control(0, machine.bus.prescaler_counter());
-    machine.bus.interrupt_request_flags = 0;
+    machine.bus.irq.interrupt_request_flags = 0;
     machine.bus.update_irq_line();
     machine.bus.iwram[0x7FF8..0x7FFA].copy_from_slice(&1_u16.to_le_bytes());
     executed_step(&mut machine);
@@ -1421,7 +1424,7 @@ fn hle_intr_wait_completes_only_after_the_irq_handler_updates_the_bios_mirror() 
     let selected_handler = executed_step(&mut machine);
     assert_eq!(selected_handler.instruction_address, 0x0800_0008);
     machine.bus.timers[0].write_control(0, machine.bus.prescaler_counter());
-    machine.bus.interrupt_request_flags = 0;
+    machine.bus.irq.interrupt_request_flags = 0;
     machine.bus.update_irq_line();
     machine.bus.iwram[0x7FF8..0x7FFA].copy_from_slice(&(1_u16 | (1 << 3)).to_le_bytes());
     executed_step(&mut machine);
@@ -1455,23 +1458,23 @@ fn nested_hle_irq_return_does_not_complete_the_outer_intr_wait() {
     write_words(&mut machine.bus.iwram[..], 0x7FFC, &[0x0800_0008]);
     executed_step(&mut machine);
     assert_eq!(machine.bus.power_state(), PowerState::Halted);
-    machine.bus.interrupt_enable_mask = 1;
-    machine.bus.interrupt_request_flags = 1;
+    machine.bus.irq.interrupt_enable_mask = 1;
+    machine.bus.irq.interrupt_request_flags = 1;
     machine.bus.update_irq_line();
     let outer_start = executed_step(&mut machine);
     assert_eq!(outer_start.instruction_address, 0x0800_0008);
     assert_eq!(machine.cpu.hle_irq_depth, 1);
-    machine.bus.interrupt_enable_mask = 1 << 1;
-    machine.bus.interrupt_request_flags = 0;
+    machine.bus.irq.interrupt_enable_mask = 1 << 1;
+    machine.bus.irq.interrupt_request_flags = 0;
     machine.bus.update_irq_line();
     executed_step(&mut machine);
     write_words(&mut machine.bus.iwram[..], 0x7FFC, &[0x0800_0020]);
-    machine.bus.interrupt_request_flags = 1 << 1;
+    machine.bus.irq.interrupt_request_flags = 1 << 1;
     machine.bus.update_irq_line();
     let interrupted = executed_step(&mut machine);
     assert_eq!(interrupted.instruction_address, 0x0800_0010);
     assert_eq!(machine.cpu.hle_irq_depth, 2);
-    machine.bus.interrupt_request_flags = 0;
+    machine.bus.irq.interrupt_request_flags = 0;
     machine.bus.update_irq_line();
     executed_step(&mut machine);
     executed_step(&mut machine);
@@ -2074,11 +2077,11 @@ fn arm_execution_region_leaves_timer_equality_and_irq_entry_to_ordinary_completi
         assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
         if offset == 3 {
             assert_eq!(bounded.read_register(0), 9);
-            assert_eq!(bounded.bus.interrupt_request_flags & (1 << 3), 0);
+            assert_eq!(bounded.bus.irq.interrupt_request_flags & (1 << 3), 0);
         }
         if offset == 4 {
             assert_eq!(bounded.read_register(0), 12);
-            assert_ne!(bounded.bus.interrupt_request_flags & (1 << 3), 0);
+            assert_ne!(bounded.bus.irq.interrupt_request_flags & (1 << 3), 0);
         }
     }
 }
@@ -2360,7 +2363,7 @@ fn arm_iwram_slice_latches_an_opcode_before_deadline_dma_replaces_instruction_me
         assert_eq!(machine.now(), start + 22);
         assert_eq!(machine.read_register(2), 0x11);
         assert_eq!(machine.read_register(3), 0x44);
-        assert_ne!(machine.bus.interrupt_request_flags & (1 << 11), 0);
+        assert_ne!(machine.bus.irq.interrupt_request_flags & (1 << 11), 0);
     }
 }
 
@@ -2503,9 +2506,9 @@ fn ordinary_thumb_irq_faults_retain_the_executed_opcode_across_rom_and_iwram_fet
             machine.cpu.irq_r14 = 0x1111_2222;
             machine.cpu.spsr_irq = 0x3333_4444;
             machine.bus.iwram[4..6].copy_from_slice(&0x2307_u16.to_le_bytes());
-            machine.bus.interrupt_enable_mask = 1;
-            machine.bus.interrupt_request_flags = 1;
-            machine.bus.interrupt_master_enabled = true;
+            machine.bus.irq.interrupt_enable_mask = 1;
+            machine.bus.irq.interrupt_request_flags = 1;
+            machine.bus.irq.interrupt_master_enabled = true;
             machine.bus.update_irq_line();
         }
         let [eager, bounded] = &mut machines;
@@ -2737,7 +2740,7 @@ fn branch_refill_latches_its_first_word_before_dma_and_reads_its_second_word_aft
             u32::from_le_bytes(machine.bus.iwram[0x20..0x24].try_into().unwrap()),
             0xE3A0_2033
         );
-        assert_ne!(machine.bus.interrupt_request_flags & (1 << 11), 0);
+        assert_ne!(machine.bus.irq.interrupt_request_flags & (1 << 11), 0);
         assert_eq!((machine.read_register(2), machine.read_register(3)), (0, 0));
         executed_step(&mut machine);
         executed_step(&mut machine);
@@ -2913,15 +2916,15 @@ fn nested_hle_irqs_preserve_the_outer_exception_return_state() {
         },
         0x0800_0010,
     );
-    machine.bus.interrupt_enable_mask = 1;
-    machine.bus.interrupt_request_flags = 1;
-    machine.bus.interrupt_master_enabled = true;
+    machine.bus.irq.interrupt_enable_mask = 1;
+    machine.bus.irq.interrupt_request_flags = 1;
+    machine.bus.irq.interrupt_master_enabled = true;
     machine.bus.update_irq_line();
     executed_step(&mut machine);
     executed_step(&mut machine);
     machine.cpu.cpsr &= !(1 << 7);
     executed_step(&mut machine);
-    machine.bus.interrupt_request_flags = 0;
+    machine.bus.irq.interrupt_request_flags = 0;
     machine.bus.update_irq_line();
     for _ in 0..4 {
         executed_step(&mut machine);

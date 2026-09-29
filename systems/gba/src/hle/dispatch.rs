@@ -183,7 +183,7 @@ impl Cpu {
         self.hle_service = None;
         bus.set_bios_latch(HLE_SWI_RETURN_LATCH);
         let pipeline_offset = if self.is_thumb() { 4 } else { 8 };
-        if bus.irq_line && self.cpsr & (1 << 7) == 0 {
+        if bus.irq.irq_line && self.cpsr & (1 << 7) == 0 {
             bus.resume_power();
             if let Err(reason) = self.enter_irq(bus) {
                 self.registers[15] = self.next_instruction_address.wrapping_add(pipeline_offset);
