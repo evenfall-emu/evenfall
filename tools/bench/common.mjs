@@ -8,7 +8,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-export const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+export const sha256 = (bytes) =>
+  createHash("sha256").update(bytes).digest("hex");
 export const detectTaskset = () =>
   spawnSync("taskset", ["--version"], { encoding: "utf8" }).status === 0;
 
@@ -46,9 +47,14 @@ function sampleCpuIdle() {
 
 function cpuMaxKhz(id) {
   try {
-    return Number(readFileSync(
-      `/sys/devices/system/cpu/cpu${id}/cpufreq/cpuinfo_max_freq`, "utf8",
-    ).trim()) || 0;
+    return (
+      Number(
+        readFileSync(
+          `/sys/devices/system/cpu/cpu${id}/cpufreq/cpuinfo_max_freq`,
+          "utf8",
+        ).trim(),
+      ) || 0
+    );
   } catch {
     return 0;
   }
@@ -59,9 +65,14 @@ export async function pickCpu(requested) {
   const count = cpus().length;
   if (requested && requested !== "auto") {
     const cpuId = Number(requested);
-    if (!Number.isInteger(cpuId) || cpuId < 0 ||
-      (allowed ? !allowed.has(cpuId) : cpuId >= count))
-      throw new Error(`--cpu must be one of ${allowed ? [...allowed].join(",") : `0..${count - 1}`} or auto`);
+    if (
+      !Number.isInteger(cpuId) ||
+      cpuId < 0 ||
+      (allowed ? !allowed.has(cpuId) : cpuId >= count)
+    )
+      throw new Error(
+        `--cpu must be one of ${allowed ? [...allowed].join(",") : `0..${count - 1}`} or auto`,
+      );
     return { cpuId, note: "explicit" };
   }
   const first = sampleCpuIdle();
@@ -70,25 +81,39 @@ export async function pickCpu(requested) {
   if (first && second) {
     const deltas = [...first.keys()]
       .filter((id) => !allowed || allowed.has(id))
-      .map((id) => ({ id, idle: (second.get(id) ?? 0) - (first.get(id) ?? 0) }));
+      .map((id) => ({
+        id,
+        idle: (second.get(id) ?? 0) - (first.get(id) ?? 0),
+      }));
     if (deltas.length) {
       const bestIdle = Math.max(...deltas.map((entry) => entry.idle));
       const threshold = Math.max(1, Math.floor(bestIdle / 2));
       let candidates = deltas.filter((entry) => entry.idle >= threshold);
       const nonZero = candidates.filter((entry) => entry.id !== 0);
       if (nonZero.length) candidates = nonZero;
-      candidates.sort((a, b) => cpuMaxKhz(b.id) - cpuMaxKhz(a.id) || b.idle - a.idle || a.id - b.id);
+      candidates.sort(
+        (a, b) =>
+          cpuMaxKhz(b.id) - cpuMaxKhz(a.id) || b.idle - a.idle || a.id - b.id,
+      );
       const chosen = candidates[0];
       const khz = cpuMaxKhz(chosen.id);
-      return { cpuId: chosen.id, note: `auto (idle+fastest core${khz ? `, ${(khz / 1e6).toFixed(1)} GHz cap` : ""}, ${first.get(chosen.id)} -> ${second.get(chosen.id)} idle ticks in 250 ms)` };
+      return {
+        cpuId: chosen.id,
+        note: `auto (idle+fastest core${khz ? `, ${(khz / 1e6).toFixed(1)} GHz cap` : ""}, ${first.get(chosen.id)} -> ${second.get(chosen.id)} idle ticks in 250 ms)`,
+      };
     }
   }
-  return { cpuId: allowed?.size ? Math.max(...allowed) : Math.max(0, count - 1), note: "auto (no usable /proc/stat sample; picked last allowed CPU)" };
+  return {
+    cpuId: allowed?.size ? Math.max(...allowed) : Math.max(0, count - 1),
+    note: "auto (no usable /proc/stat sample; picked last allowed CPU)",
+  };
 }
 
 export function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: "utf8", ...options });
   if (result.error || result.status !== 0)
-    throw new Error(`${command} failed: ${result.error?.message ?? `${result.stdout ?? ""}${result.stderr ?? ""}`.trim()}`);
+    throw new Error(
+      `${command} failed: ${result.error?.message ?? `${result.stdout ?? ""}${result.stderr ?? ""}`.trim()}`,
+    );
   return result;
 }

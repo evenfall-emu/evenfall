@@ -180,9 +180,7 @@ try {
 } catch (error) {
   fail(error.message);
 }
-const parent = resolve(
-  opts["work-dir"] ?? join(ROOT, "target/bench/runs"),
-);
+const parent = resolve(opts["work-dir"] ?? join(ROOT, "target/bench/runs"));
 mkdirSync(parent, { recursive: true });
 const workDir = mkdtempSync(
   join(parent, `${new Date().toISOString().replace(/[:.]/g, "-")}-`),
