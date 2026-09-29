@@ -52,13 +52,8 @@
     }
   ],
   "endCycle": "1123584",
-  "checkpoints": [
-    "1123584"
-  ],
-  "sliceCycles": [
-    "70224",
-    "280896"
-  ],
+  "checkpoints": ["1123584"],
+  "sliceCycles": ["70224", "280896"],
   "terminalPc": 134218500,
   "terminalR12": 3
 }
