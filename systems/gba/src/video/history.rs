@@ -215,7 +215,13 @@ impl Bus {
     /// segments per byte it snapshots, and at least one byte or none.
     #[inline(always)]
     pub(crate) fn vram_history_full(&self) -> bool {
-        self.backdrop_segment_line == self.ppu_timing.line
+        self.vram_history_full_on(self.ppu_timing.line)
+    }
+
+    /// [`Self::vram_history_full`] when the PPU is on `line`.
+    #[inline(always)]
+    pub(crate) fn vram_history_full_on(&self, line: u16) -> bool {
+        self.backdrop_segment_line == line
             && usize::from(self.backdrop_segment_count) + 2 > MAX_SEGMENTS
     }
 
