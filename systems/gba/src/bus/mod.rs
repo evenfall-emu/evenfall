@@ -11,6 +11,7 @@ use crate::timer::Timer;
 use crate::types::Cycle;
 use crate::video::{AffineTransition, scanline_memo, tile_row_cache, timing::PpuTiming};
 use evenfall_state::Codec;
+use std::ops::Deref;
 use std::sync::Arc;
 
 mod kernel;
@@ -33,6 +34,40 @@ const MMIO_BASE: u32 = 0x0400_0000;
 const VRAM_BASE: u32 = 0x0600_0000;
 const GAME_PAK_BASE: u32 = 0x0800_0000;
 const GAME_PAK_WINDOW_SIZE: u32 = 32 * 1024 * 1024;
+
+/// Shared, read-only cartridge or BIOS bytes. Adopting a Vec keeps its byte allocation.
+/// Cloning shares the allocation; even with an exclusive handle, no mutable view is exposed.
+///
+/// ```compile_fail
+/// use evenfall_gba::bus::Media;
+/// let mut rom = Media::from_vec(vec![0x42]);
+/// let bytes: &mut [u8] = &mut rom;
+/// bytes[0] = 0;
+/// ```
+#[derive(Clone)]
+pub struct Media(Arc<Vec<u8>>);
+
+impl Media {
+    pub fn from_vec(bytes: Vec<u8>) -> Self {
+        Self(Arc::new(bytes))
+    }
+
+    pub fn from_slice(bytes: &[u8]) -> Self {
+        Self::from_vec(bytes.to_vec())
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl Deref for Media {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AccessWidth {
@@ -395,9 +430,9 @@ pub struct Bus {
     #[codec(skip)]
     pub video_frame_cycle: Cycle,
     #[codec(skip)]
-    pub rom: Arc<Vec<u8>>,
+    pub(crate) rom: Media,
     #[codec(skip)]
-    pub bios: Arc<[u8]>,
+    pub(crate) bios: Media,
     pub cartridge_gpio: Option<CartridgeGpio>,
     pub cartridge_tilt: Option<tilt::Tilt>,
     pub timers: [Timer; 4],
@@ -573,10 +608,10 @@ impl Bus {
     }
 
     pub fn init_with_bios_and_save(rom: &[u8], bios: &[u8], save_type: save::Type) -> Self {
-        Self::init_shared(Arc::new(rom.to_vec()), Arc::from(bios), save_type)
+        Self::init_shared(Media::from_slice(rom), Media::from_slice(bios), save_type)
     }
 
-    fn init_shared(rom: Arc<Vec<u8>>, bios: Arc<[u8]>, save_type: save::Type) -> Self {
+    fn init_shared(rom: Media, bios: Media, save_type: save::Type) -> Self {
         assert!(
             bios.is_empty() || bios.len() == BIOS_SIZE,
             "external GBA BIOS must be exactly 16 KiB"
@@ -762,8 +797,8 @@ impl Bus {
         unsafe {
             Self::init_in_place_shared(
                 ptr,
-                Arc::new(rom.to_vec()),
-                Arc::from(bios),
+                Media::from_slice(rom),
+                Media::from_slice(bios),
                 save_type,
                 save_data,
             )
@@ -771,15 +806,14 @@ impl Bus {
     }
 
     /// Initialize a Bus using already-owned media without copying bytes.
-    /// The ROM must not be mutated while the Bus holds instruction fetch views.
     ///
     /// # Safety
     /// `ptr` must be aligned, writable storage for one Bus, with no live Bus
     /// value at that address. The caller owns and drops the initialized value.
     pub unsafe fn init_in_place_shared(
         ptr: *mut Self,
-        rom: Arc<Vec<u8>>,
-        bios: Arc<[u8]>,
+        rom: Media,
+        bios: Media,
         save_type: save::Type,
         save_data: Option<&[u8]>,
     ) {
@@ -790,6 +824,14 @@ impl Bus {
         // SAFETY: guaranteed by the caller; the constructor owns its ROM,
         // BIOS and boxed large arrays, and does not borrow the input slices.
         unsafe { ptr.write(bus) };
+    }
+
+    pub fn rom(&self) -> &[u8] {
+        &self.rom
+    }
+
+    pub fn bios(&self) -> &[u8] {
+        &self.bios
     }
 
     pub fn write_state(&self, sink: &mut evenfall_state::Sink<'_>) -> evenfall_state::Result<()> {
@@ -2009,14 +2051,15 @@ impl Bus {
     }
 
     fn read_game_pak_rom(&self, address: u32, width: AccessWidth) -> u32 {
+        let rom = self.rom.as_slice();
         let first = ((address - GAME_PAK_BASE) & (GAME_PAK_WINDOW_SIZE - 1)) as usize;
         let end = first + width.bytes();
-        if end <= self.rom.len()
+        if end <= rom.len()
             && end <= GAME_PAK_WINDOW_SIZE as usize
             && (self.cartridge_gpio.is_none() || first > 0xc9 || end <= 0xc4)
         {
             return (0..width.bytes()).fold(0u32, |value, offset| {
-                value | (u32::from(self.rom[first + offset]) << (offset * 8))
+                value | (u32::from(rom[first + offset]) << (offset * 8))
             });
         }
         (0..width.bytes()).fold(0u32, |value, offset| {
@@ -2024,7 +2067,7 @@ impl Bus {
             let index = ((byte_address - GAME_PAK_BASE) & (GAME_PAK_WINDOW_SIZE - 1)) as usize;
             let port = self.cartridge_gpio.as_ref().and_then(|gpio| gpio.read_byte(index as u32));
             let byte = port.unwrap_or_else(|| {
-                self.rom.get(index).copied().unwrap_or_else(|| {
+                rom.get(index).copied().unwrap_or_else(|| {
                     let halfword = (byte_address >> 1) as u16;
                     if byte_address & 1 == 0 { halfword as u8 } else { (halfword >> 8) as u8 }
                 })
@@ -3957,24 +4000,23 @@ mod tests {
         let mut image = vec![0u8; 256];
         image[0xd0..0xd2].copy_from_slice(&0x4321u16.to_le_bytes());
         let upload_bytes = image.as_ptr();
-        let rom = Arc::new(image);
-        let bios: Arc<[u8]> = vec![0x5a; BIOS_SIZE].into();
+        let rom = Media::from_vec(image);
+        let bios = Media::from_slice(&vec![0x5a; BIOS_SIZE]);
         let mut storage = Box::<Bus>::new_uninit();
         // SAFETY: the box is aligned, uninitialized storage for exactly one Bus.
         unsafe {
             Bus::init_in_place_shared(
                 storage.as_mut_ptr(),
-                Arc::clone(&rom),
-                Arc::clone(&bios),
+                rom.clone(),
+                bios.clone(),
                 save::Type::None,
                 None,
             );
         }
         // SAFETY: init_in_place_shared wrote a complete Bus into the box.
         let bus = unsafe { storage.assume_init() };
-        assert!(Arc::ptr_eq(&bus.rom, &rom));
-        assert!(Arc::ptr_eq(&bus.bios, &bios));
-        assert_eq!(bus.rom.as_ptr(), upload_bytes);
+        assert_eq!(bus.rom().as_ptr(), upload_bytes);
+        assert_eq!(bus.bios().as_ptr(), bios.as_ptr());
         assert_eq!(
             bus.instruction_fetch_region(0x0800_00d0).bytes,
             Some(upload_bytes.wrapping_add(0xca))
@@ -3982,8 +4024,7 @@ mod tests {
         assert_eq!(bus.read_game_pak_rom(0x0800_00d0, AccessWidth::Half), 0x4321);
         assert_eq!(bus.read_bios(0, AccessWidth::Byte), 0x5a);
         drop(bus);
-        assert_eq!(Arc::strong_count(&rom), 1);
-        assert_eq!(Arc::strong_count(&bios), 1);
+        assert_eq!(rom.as_ptr(), upload_bytes);
     }
 
     /// Zig: "DMA3 immediate starts two cycles after its enabling write, copies halfwords, clears enable, and requests IRQ".
