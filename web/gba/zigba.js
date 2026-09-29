@@ -1,3 +1,4 @@
+import { wasmSimd } from "./core.js";
 export { KEYS, CYCLES_PER_FRAME, SAVE_TYPES } from "./core.js";
 
 /** An isolated emulator session. All methods serialize through its Worker. */
@@ -5,7 +6,10 @@ export class Emulator extends EventTarget {
   static async create({
     diagnosticsIntervalMs = 0,
     workerUrl,
-    wasmUrl = new URL("./evenfall-gba.wasm", import.meta.url),
+    // The SIMD build where the engine supports it, the scalar build otherwise.
+    wasmUrl = wasmSimd
+      ? new URL("./evenfall-gba.wasm", import.meta.url)
+      : new URL("./evenfall-gba-scalar.wasm", import.meta.url),
   } = {}) {
     // Keep these literal `new Worker(new URL(...))` and `new URL(...)` forms:
     // bundlers (Vite, webpack, Parcel) recognize them and emit the worker and

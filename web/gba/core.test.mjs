@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { crc32 } from "node:zlib";
 import { WasmCore, CYCLES_PER_FRAME as F } from "./core.js";
-import { wasm, wasmTest as test } from "./scripts/wasm-test.mjs";
+import { scalarWasm, wasm, wasmTest as test } from "./scripts/wasm-test.mjs";
 
 const loop = new Uint8Array([0xfe, 0xff, 0xff, 0xea]);
 const romSha = (bytes) => createHash("sha1").update(bytes).digest("hex");
@@ -485,44 +485,53 @@ test("native/WASM canonical state, pixels, audio, memory, and save parity", asyn
   try {
     const file = join(directory, "loop.gba");
     await writeFile(file, loop);
-    for (const path of [file, ...extra])
-      await t.test(path, async () => {
-        const core = await WasmCore.create(wasm);
-        try {
-          core.load(await readFile(path), {
-            zipped: path.toLowerCase().endsWith(".zip"),
-          });
-          const audio = createHash("sha256");
-          for (let target = F / 4n; target <= 120n * F; target += F / 4n) {
-            const result = core.runUntil(target);
-            assert.notEqual(result.reason, "faulted");
-            assert.notEqual(result.reason, "power_stopped");
-            audio.update(asBytes(core.drainAudio()));
+    // The SIMD module (the default) and the scalar fallback must both equal
+    // the native core.
+    const modules = [["simd128", wasm]];
+    if (scalarWasm) modules.push(["scalar", scalarWasm]);
+    for (const [variant, module] of modules)
+      for (const path of [file, ...extra])
+        await t.test(`${variant}: ${path}`, async () => {
+          const core = await WasmCore.create(module);
+          try {
+            core.load(await readFile(path), {
+              zipped: path.toLowerCase().endsWith(".zip"),
+            });
+            const audio = createHash("sha256");
+            for (let target = F / 4n; target <= 120n * F; target += F / 4n) {
+              const result = core.runUntil(target);
+              assert.notEqual(result.reason, "faulted");
+              assert.notEqual(result.reason, "power_stopped");
+              audio.update(asBytes(core.drainAudio()));
+            }
+            const state = core.inspect();
+            const actual = {
+              cycle: String(state.cycle),
+              frames: String(state.frames),
+              pc: state.nextInstructionAddress,
+              cpsr: state.cpsr,
+              state: sha(core.saveState()),
+              ewram: sha(core.readMemory(0x02000000, 256 * 1024)),
+              frame: sha(asBytes(core.frame())),
+              audio: audio.digest("hex"),
+              save: sha(core.exportSave()),
+            };
+            const native = JSON.parse(
+              execFileSync(
+                "../../target/release/session_probe",
+                [path, "120"],
+                {
+                  cwd: new URL(".", import.meta.url),
+                  timeout: 120000,
+                  encoding: "utf8",
+                },
+              ),
+            );
+            assert.deepEqual(actual, native);
+          } finally {
+            core.dispose();
           }
-          const state = core.inspect();
-          const actual = {
-            cycle: String(state.cycle),
-            frames: String(state.frames),
-            pc: state.nextInstructionAddress,
-            cpsr: state.cpsr,
-            state: sha(core.saveState()),
-            ewram: sha(core.readMemory(0x02000000, 256 * 1024)),
-            frame: sha(asBytes(core.frame())),
-            audio: audio.digest("hex"),
-            save: sha(core.exportSave()),
-          };
-          const native = JSON.parse(
-            execFileSync("../../target/release/session_probe", [path, "120"], {
-              cwd: new URL(".", import.meta.url),
-              timeout: 120000,
-              encoding: "utf8",
-            }),
-          );
-          assert.deepEqual(actual, native);
-        } finally {
-          core.dispose();
-        }
-      });
+        });
   } finally {
     await rm(directory, { recursive: true });
   }

@@ -26,10 +26,17 @@ export type RewindCompression = "off" | "fast" | "delta";
  * from one caller at a time. Methods other than `load` throw `NoSession`
  * before a ROM is loaded. Returned arrays are owned copies.
  */
+/**
+ * Whether this engine supports WebAssembly SIMD (simd128). The default core is
+ * `evenfall-gba.wasm` (SIMD) where it does, `evenfall-gba-scalar.wasm` otherwise.
+ */
+export const wasmSimd: boolean;
+
 export class WasmCore {
   /**
    * Instantiate the core. Accepts WASM bytes or a URL. Without an argument it
-   * loads the package's `evenfall-gba.wasm`: fetched in browsers, read from disk in
+   * loads the package's `evenfall-gba.wasm`, or `evenfall-gba-scalar.wasm` on an
+   * engine without WebAssembly SIMD: fetched in browsers, read from disk in
    * Node. Rejects a binary whose `zb_version` ABI does not match this module.
    */
   static create(

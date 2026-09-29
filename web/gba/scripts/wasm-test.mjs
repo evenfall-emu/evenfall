@@ -8,6 +8,13 @@ export const wasm = await readFile(
   throw error;
 });
 
+export const scalarWasm = await readFile(
+  new URL("../evenfall-gba-scalar.wasm", import.meta.url),
+).catch((error) => {
+  if (error.code === "ENOENT") return null;
+  throw error;
+});
+
 export const wasmTest = wasm
   ? test
   : (name, fn) =>

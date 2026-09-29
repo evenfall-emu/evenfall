@@ -23,8 +23,14 @@ application                                      one Worker per Emulator
 `cdylib`. From the repository root,
 `npm run build:wasm -w @evenfall/gba` invokes the
 [`build script`](../../web/gba/scripts/build-wasm.sh), which compiles for
-`wasm32-unknown-unknown` with the `wasm-release` profile and copies the
-gitignored artifact to `web/gba/evenfall-gba.wasm`. The release profile uses
+`wasm32-unknown-unknown` with the `wasm-release` profile twice, from the same
+source: `web/gba/evenfall-gba.wasm` with WebAssembly SIMD
+(`-C target-feature=+simd128`), whose renderer composes eight pixels per
+`v128` lane operation, and `web/gba/evenfall-gba-scalar.wasm` without it, for
+engines that lack SIMD (Chrome before 91, Firefox before 89, Safari before
+16.4). Both artifacts are gitignored and produce identical results; the SDK
+loads the SIMD build when `WebAssembly.validate` accepts a minimal SIMD module
+and the scalar build otherwise. The release profile uses
 LTO, strips symbols and aborts on panic. Builds use pinned **stable Rust**;
 the browser module is **single-threaded**, with no WASM imports, host
 allocator, startup function, `SharedArrayBuffer` or cross-origin-isolation
