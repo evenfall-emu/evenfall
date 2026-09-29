@@ -11,8 +11,9 @@ mean is defined in [`methodology.md`](methodology.md#goals).
 
 ## What works
 
-- **GBA core** (`systems/gba`): timed ARM and Thumb execution with threaded
-  kernels, bus timing with wait states, open bus and Game Pak prefetch; video
+- **GBA core** (`systems/gba`): timed ARM and Thumb execution through a
+  pre-decoded execution engine with the interpreter as its reference, bus
+  timing with wait states, open bus and Game Pak prefetch; video
   modes 0–5 with raster effects; PSG and Direct Sound audio; timers, DMA,
   interrupts, HALT and STOP; every save chip family with autodetection; RTC,
   solar, gyro, tilt and rumble cartridges; serial link modes including

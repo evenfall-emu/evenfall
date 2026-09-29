@@ -1,7 +1,7 @@
 //! ARM7TDMI instruction state and bus-neutral execution primitives.
 //!
 //! The bus, not the interpreter, prices each N/S/I access. The type parameter
-//! permits both the hardware bus and the local RAM/ROM kernel views to inline.
+//! lets the system's bus inline into the executors.
 
 use evenfall_state::Codec;
 
@@ -45,6 +45,12 @@ const CONDITION_TRUTH: [u16; 16] = {
     }
     table
 };
+
+/// Whether `condition` passes under the NZCV flags of `cpsr`.
+#[inline(always)]
+pub fn condition_passes(cpsr: u32, condition: u32) -> bool {
+    (CONDITION_TRUTH[(condition & 15) as usize] >> (cpsr >> 28)) & 1 != 0
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
 #[codec(tag_bits = 1)]
@@ -366,7 +372,7 @@ impl Core {
     /// bit NZCV in the condition's precomputed truth mask.
     #[inline(always)]
     pub fn condition_passed(&self, condition: u32) -> bool {
-        (CONDITION_TRUTH[(condition & 15) as usize] >> (self.cpsr >> 28)) & 1 != 0
+        condition_passes(self.cpsr, condition)
     }
 
     /// The ARM condition table as written in the architecture manual; the

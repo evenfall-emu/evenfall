@@ -70,7 +70,7 @@ impl Default for TilePages {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 struct Changes {
     registers: bool,
     memory: bool,
@@ -170,6 +170,12 @@ impl<R: Copy + PartialEq + Default, const L: usize> Default for Memo<R, L> {
 }
 
 impl<R: Copy + PartialEq + Default, const L: usize> Memo<R, L> {
+    /// Whether both memos hold the same unrendered changes.
+    #[cfg(test)]
+    pub fn same_changes(&self, other: &Self) -> bool {
+        self.changes == other.changes && self.changes_registers == other.changes_registers
+    }
+
     pub fn mark_registers(&mut self) {
         self.changes_registers = true;
     }

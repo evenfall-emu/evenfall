@@ -53,7 +53,11 @@ and DMA accesses carry their width, sequential classification and source;
 the Bus brings devices to the access cycle and delivers events in order.
 The GBA [`Cpu`](../systems/gba/src/cpu/mod.rs) owns architectural and HLE
 continuation state, adapts `cpu-arm::Core` to Bus accesses and chooses between
-the ordinary runner and one-step execution. The
+the ordinary runner and one-step execution. Within the ordinary runner, the
+[execution engine](../systems/gba/src/cpu/engine/mod.rs) runs code from RAM
+and Game Pak ROM out of pre-decoded op caches until the next device event,
+and the interpreter takes every instruction it refuses
+([research](research/execution-engine.md)). The
 [`HLE`](../systems/gba/src/hle/mod.rs) module supplies BIOS services and their
 timed continuations without making them part of the generic ARM core.
 
