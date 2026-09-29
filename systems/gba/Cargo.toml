@@ -1,0 +1,16 @@
+[package]
+name = "evenfall-gba"
+description = "A deterministic, cycle-aware Game Boy Advance core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+evenfall-audio.workspace = true
+evenfall-host.workspace = true
+
+[lints]
+workspace = true

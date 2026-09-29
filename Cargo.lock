@@ -7,6 +7,14 @@ name = "evenfall-audio"
 version = "0.1.0"
 
 [[package]]
+name = "evenfall-gba"
+version = "0.1.0"
+dependencies = [
+ "evenfall-audio",
+ "evenfall-host",
+]
+
+[[package]]
 name = "evenfall-host"
 version = "0.1.0"
 dependencies = [

@@ -2,7 +2,10 @@
 resolver = "3"
 # Every crate under crates/ is a member; list systems, web adapters and tools
 # explicitly as they are added.
-members = ["crates/*"]
+members = [
+    "crates/*",
+    "systems/gba",
+]
 
 [workspace.package]
 version = "0.1.0"
