@@ -22,6 +22,18 @@ struct TextLanes {
     second: [bool; 8],
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct TextLayerRow {
+    pub colors: [u16; SCREEN_WIDTH],
+    pub opaque: [u8; SCREEN_WIDTH],
+}
+
+impl Default for TextLayerRow {
+    fn default() -> Self {
+        Self { colors: [0; SCREEN_WIDTH], opaque: [0; SCREEN_WIDTH] }
+    }
+}
+
 impl Bus {
     fn decode_text_row<const COLOR_256: bool>(
         &mut self,
@@ -115,14 +127,11 @@ impl Bus {
         }
     }
 
-    // Isolate the text loop from unrelated bitmap and Bus inlining decisions.
-    #[inline(never)]
-    fn render_text_tile_rows<const SIMPLE: bool, const COLOR_256: bool>(
+    fn text_tile_sources<const COLOR_256: bool>(
         &mut self,
         line: usize,
         background: usize,
-        priority: u8,
-    ) {
+    ) -> ([u16; 64], [usize; 64], usize, usize) {
         let control = self.bg_controls[background];
         let char_base = usize::from((control >> 2) & 3) * 0x4000;
         let screen_base = usize::from((control >> 8) & 31) * 0x800;
@@ -159,8 +168,20 @@ impl Bus {
                     + source_y * row_bytes;
             }
         }
+        (entries, row_bases, width, usize::from(self.bg_horizontal_offsets[background]))
+    }
+
+    // Isolate the text loop from unrelated bitmap and Bus inlining decisions.
+    #[inline(never)]
+    fn render_text_tile_rows<const SIMPLE: bool, const COLOR_256: bool>(
+        &mut self,
+        line: usize,
+        background: usize,
+        priority: u8,
+    ) {
+        let (entries, row_bases, width, hofs) =
+            self.text_tile_sources::<COLOR_256>(line, background);
         let layout = TextLine { priority, background, first: line * SCREEN_WIDTH };
-        let hofs = usize::from(self.bg_horizontal_offsets[background]);
         let mut x = 0;
         while x < SCREEN_WIDTH {
             let world_x = (x + hofs) & (width - 1);
@@ -173,6 +194,55 @@ impl Bus {
                     self.decode_text_row::<COLOR_256>(entries[column], row_bases[column])
             {
                 self.write_text_row(&layout, x, &row, start, length, &lanes);
+            }
+            x += length;
+        }
+    }
+
+    pub(super) fn render_text_layer(
+        &mut self,
+        line: usize,
+        background: usize,
+        row: &mut TextLayerRow,
+    ) {
+        let mosaic = self.bg_controls[background] & (1 << 6) != 0;
+        let vertical = usize::from((self.mosaic >> 4) & 15) + 1;
+        let line = if mosaic { line - line % vertical } else { line };
+        if self.bg_controls[background] & (1 << 7) != 0 {
+            self.render_text_layer_rows::<true>(line, background, row);
+        } else {
+            self.render_text_layer_rows::<false>(line, background, row);
+        }
+        let horizontal = usize::from(self.mosaic & 15) + 1;
+        if mosaic && horizontal > 1 {
+            // Each sample column precedes the columns copied from it.
+            for x in 0..SCREEN_WIDTH {
+                let sample = x - x % horizontal;
+                row.colors[x] = row.colors[sample];
+                row.opaque[x] = row.opaque[sample];
+            }
+        }
+    }
+
+    #[inline(never)]
+    fn render_text_layer_rows<const COLOR_256: bool>(
+        &mut self,
+        line: usize,
+        background: usize,
+        output: &mut TextLayerRow,
+    ) {
+        let (entries, row_bases, width, hofs) =
+            self.text_tile_sources::<COLOR_256>(line, background);
+        let mut x = 0;
+        while x < SCREEN_WIDTH {
+            let world_x = (x + hofs) & (width - 1);
+            let column = world_x / 8;
+            let start = world_x % 8;
+            let length = (8 - start).min(SCREEN_WIDTH - x);
+            if let Some(row) = self.decode_text_row::<COLOR_256>(entries[column], row_bases[column])
+            {
+                output.colors[x..x + length].copy_from_slice(&row.colors[start..start + length]);
+                output.opaque[x..x + length].copy_from_slice(&row.indices[start..start + length]);
             }
             x += length;
         }

@@ -939,6 +939,33 @@ fn front_to_back_passes_preserve_priority_and_the_next_visible_bg() {
     assert_eq!(bus.frame_pixels[0], 0x01EF);
 }
 
+#[test]
+fn layer_major_text_matches_front_to_back_with_windows_objects_and_effects() {
+    let mut seed = 0xA125_8EC3;
+    for case in 0..240 {
+        let mut fast = Bus::init(&[]);
+        randomize_video(&mut fast, &mut seed);
+        fast.dispcnt = (fast.dispcnt & !0x108F) | 0xF00;
+        if case & 1 != 0 {
+            fast.dispcnt |= 1 << 12;
+            for object in 0..4 {
+                let offset = object * 8;
+                let attr0 = (next(&mut seed) as u16 & 0x2FFF) | 0x40;
+                let attr1 = (next(&mut seed) as u16 & 0xC1FF) & !0x0200;
+                let attr2 = next(&mut seed) as u16;
+                fast.oam[offset..offset + 2].copy_from_slice(&attr0.to_le_bytes());
+                fast.oam[offset + 2..offset + 4].copy_from_slice(&attr1.to_le_bytes());
+                fast.oam[offset + 4..offset + 6].copy_from_slice(&attr2.to_le_bytes());
+            }
+        }
+        let line = next(&mut seed) as usize % SCREEN_HEIGHT;
+        let mut reference = twin(&fast);
+        fast.render_scanline(line);
+        reference.compose_scanline_reference(line);
+        assert_line(&reference, &fast, line);
+    }
+}
+
 /// ZiGBA: "front-to-back BG passes keep the two front-most BG pixels"
 #[test]
 fn front_to_back_bg_passes_match_independently_rendered_layers() {

@@ -1,6 +1,7 @@
-//! ZiGBA's scanline compositor. Background passes fill top, then second
-//! surfaces front to back; objects are evaluated in reverse OAM order.
+//! Layer-major text composition for ordinary mode-0 lines, with ZiGBA's
+//! front-to-back passes retained for raster history and other video modes.
 
+use super::backgrounds::TextLayerRow;
 use super::history::{BlendState, VideoHistoryView};
 use super::scanline_memo::{self, Memory};
 use crate::bus::{Bus, LineScan, SCREEN_HEIGHT, SCREEN_WIDTH, ScanlineRegisters, WindowSegment};
@@ -92,6 +93,15 @@ impl Bus {
     }
 
     fn compose_scanline(&mut self, line: usize) {
+        self.compose_scanline_impl::<false>(line);
+    }
+
+    #[cfg(test)]
+    pub(super) fn compose_scanline_reference(&mut self, line: usize) {
+        self.compose_scanline_impl::<true>(line);
+    }
+
+    fn compose_scanline_impl<const REFERENCE: bool>(&mut self, line: usize) {
         let first = line * SCREEN_WIDTH;
         if self.dispcnt & 0x80 != 0 && !self.has_forced_blank_history(line) {
             self.frame_pixels[first..first + SCREEN_WIDTH].fill(0x7FFF);
@@ -143,6 +153,18 @@ impl Bus {
             self.finish_scanline(line, &history);
             return;
         }
+        // Raster writes retain the dot renderer. Ordinary text lines have
+        // stable sources and priorities, so each layer can be decoded
+        // independently before one per-pixel depth selection.
+        if !REFERENCE && mode == 0 && self.dispcnt & 0x0F00 != 0 && !self.has_raster_history(line) {
+            if self.line_needs_second_surface {
+                self.compose_text_layers::<true>(line);
+            } else {
+                self.compose_text_layers::<false>(line);
+            }
+            self.finish_scanline(line, &history);
+            return;
+        }
         if mode <= 2 && self.dispcnt & 0x0F00 != 0 {
             'passes: for priority in 0..4 {
                 let range = match mode {
@@ -170,6 +192,53 @@ impl Bus {
             self.render_bitmap_background(line, mode as u8, &history);
         }
         self.finish_scanline(line, &history);
+    }
+
+    #[inline(never)]
+    fn compose_text_layers<const SECOND: bool>(&mut self, line: usize) {
+        let mut rows = [TextLayerRow::default(); 4];
+        let mut keys = [37u8; 4];
+        for bg in 0..4 {
+            if self.dispcnt & (1 << (bg + 8)) != 0 {
+                keys[bg] = ((self.bg_controls[bg] & 3) as u8) * 8 + bg as u8;
+                self.render_text_layer(line, bg, &mut rows[bg]);
+            }
+        }
+        let first = line * SCREEN_WIDTH;
+        for x in 0..SCREEN_WIDTH {
+            let i = first + x;
+            let mask = self.line_window_masks[x];
+            let mut top_key = 37u8;
+            let mut second_key = 37u8;
+            let mut top_color = self.frame_pixels[i];
+            let mut second_color = top_color;
+            for bg in 0..4 {
+                let visible = rows[bg].opaque[x] != 0 && mask & (1 << bg) != 0;
+                let key = if visible { keys[bg] } else { 37 };
+                let color = rows[bg].colors[x];
+                let above_top = key < top_key;
+                if SECOND {
+                    let above_second = key < second_key && !above_top;
+                    let keep_top = 0u16.wrapping_sub(u16::from(above_top));
+                    let keep_candidate = 0u16.wrapping_sub(u16::from(above_second));
+                    second_color = (top_color & keep_top)
+                        | (color & keep_candidate)
+                        | (second_color & !(keep_top | keep_candidate));
+                    second_key = second_key.min(top_key.max(key));
+                }
+                let select = 0u16.wrapping_sub(u16::from(above_top));
+                top_color = (color & select) | (top_color & !select);
+                top_key = top_key.min(key);
+            }
+            self.frame_pixels[i] = top_color;
+            self.frame_priorities[i] = top_key / 8;
+            self.frame_layers[i] = top_key % 8;
+            if SECOND {
+                self.frame_second_pixels[i] = second_color;
+                self.frame_second_priorities[i] = second_key / 8;
+                self.frame_second_layers[i] = second_key % 8;
+            }
+        }
     }
 
     fn needs_second_surface(&mut self, line: usize) -> bool {
