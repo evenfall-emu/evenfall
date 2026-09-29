@@ -395,7 +395,7 @@ pub struct Bus {
     #[codec(skip)]
     pub video_frame_cycle: Cycle,
     #[codec(skip)]
-    pub rom: Arc<[u8]>,
+    pub rom: Arc<Vec<u8>>,
     #[codec(skip)]
     pub bios: Arc<[u8]>,
     pub cartridge_gpio: Option<CartridgeGpio>,
@@ -573,10 +573,10 @@ impl Bus {
     }
 
     pub fn init_with_bios_and_save(rom: &[u8], bios: &[u8], save_type: save::Type) -> Self {
-        Self::init_shared(Arc::from(rom), Arc::from(bios), save_type)
+        Self::init_shared(Arc::new(rom.to_vec()), Arc::from(bios), save_type)
     }
 
-    fn init_shared(rom: Arc<[u8]>, bios: Arc<[u8]>, save_type: save::Type) -> Self {
+    fn init_shared(rom: Arc<Vec<u8>>, bios: Arc<[u8]>, save_type: save::Type) -> Self {
         assert!(
             bios.is_empty() || bios.len() == BIOS_SIZE,
             "external GBA BIOS must be exactly 16 KiB"
@@ -760,18 +760,25 @@ impl Bus {
         // SAFETY: the caller provides the storage contract passed through to
         // init_in_place_shared; the input slices are copied into owned media.
         unsafe {
-            Self::init_in_place_shared(ptr, Arc::from(rom), Arc::from(bios), save_type, save_data)
+            Self::init_in_place_shared(
+                ptr,
+                Arc::new(rom.to_vec()),
+                Arc::from(bios),
+                save_type,
+                save_data,
+            )
         };
     }
 
-    /// Initialize a Bus using already-owned immutable media without copying bytes.
+    /// Initialize a Bus using already-owned media without copying bytes.
+    /// The ROM must not be mutated while the Bus holds instruction fetch views.
     ///
     /// # Safety
     /// `ptr` must be aligned, writable storage for one Bus, with no live Bus
     /// value at that address. The caller owns and drops the initialized value.
     pub unsafe fn init_in_place_shared(
         ptr: *mut Self,
-        rom: Arc<[u8]>,
+        rom: Arc<Vec<u8>>,
         bios: Arc<[u8]>,
         save_type: save::Type,
         save_data: Option<&[u8]>,
@@ -3825,7 +3832,8 @@ mod tests {
     fn shared_media_constructor_keeps_rom_and_bios_allocations() {
         let mut image = vec![0u8; 256];
         image[0xd0..0xd2].copy_from_slice(&0x4321u16.to_le_bytes());
-        let rom: Arc<[u8]> = image.into();
+        let upload_bytes = image.as_ptr();
+        let rom = Arc::new(image);
         let bios: Arc<[u8]> = vec![0x5a; BIOS_SIZE].into();
         let mut storage = Box::<Bus>::new_uninit();
         // SAFETY: the box is aligned, uninitialized storage for exactly one Bus.
@@ -3842,9 +3850,10 @@ mod tests {
         let bus = unsafe { storage.assume_init() };
         assert!(Arc::ptr_eq(&bus.rom, &rom));
         assert!(Arc::ptr_eq(&bus.bios, &bios));
+        assert_eq!(bus.rom.as_ptr(), upload_bytes);
         assert_eq!(
             bus.instruction_fetch_region(0x0800_00d0).bytes,
-            Some(rom.as_ptr().wrapping_add(0xca))
+            Some(upload_bytes.wrapping_add(0xca))
         );
         assert_eq!(bus.read_game_pak_rom(0x0800_00d0, AccessWidth::Half), 0x4321);
         assert_eq!(bus.read_bios(0, AccessWidth::Byte), 0x5a);
