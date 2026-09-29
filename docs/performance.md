@@ -53,33 +53,46 @@ guest correctness or which individual optimization to retain.
 ## Results
 
 Native x86-64, HLE boot, pinned CPU 3, five measured rounds and one warmup;
-ZiGBA `ReleaseFast` versus Evenfall Cargo `release` (opt-level 3, incremental,
-**no LTO**). Both render fully and emulate exact audio. Each row's final image
-agrees and is deterministic across observations. ZiGBA is the pinned
-reference commit; each figure belongs to the binaries it was measured on, and
-the runner's `result.json` records both source revisions and binary hashes.
+ZiGBA `ReleaseFast` versus Evenfall `release-lto` (fat LTO, one codegen unit,
+the native equivalent of the shipped WebAssembly build and of Zig's
+whole-program ReleaseFast). Both render fully and emulate exact audio. Each
+row's final image agrees and is deterministic across observations, and the
+parity harness finds every state byte identical to ZiGBA's on its scenarios.
+ZiGBA is the pinned reference commit; each figure belongs to the binaries it
+was measured on, and the runner's `result.json` records both source revisions
+and binary hashes.
 
 | Workload                                               | Frames | Evenfall/ZiGBA loop time |
 | ------------------------------------------------------ | -----: | -----------------------: |
-| Idle / HALT and empty mode-0 frame                     |  3,600 |                    1.18× |
-| ARM mixer / IWRAM code                                 |    600 |                    2.67× |
-| Thumb logic / Game Pak ROM                             |    600 |                    1.84× |
-| Tiles / text backgrounds, sprites, effects and windows |    600 |                    1.65× |
-| Affine / backgrounds, sprites and HBlank DMA           |    600 |                    1.36× |
-| Bitmap DMA / page flips and small transfers            |    600 |                    1.43× |
-| Audio / Direct Sound FIFO DMA and PSG                  |    600 |                    1.50× |
-| **Geometric mean of workload ratios**                  |      — |                **1.61×** |
+| Idle / HALT and empty mode-0 frame                     |  3,600 |                    0.59× |
+| ARM mixer / IWRAM code                                 |    600 |                    0.42× |
+| Thumb logic / Game Pak ROM                             |    600 |                    0.56× |
+| Tiles / text backgrounds, sprites, effects and windows |    600 |                    0.33× |
+| Affine / backgrounds, sprites and HBlank DMA           |    600 |                    0.80× |
+| Bitmap DMA / page flips and small transfers            |    600 |                    0.70× |
+| Audio / Direct Sound FIFO DMA and PSG                  |    600 |                    0.43× |
+| **Geometric mean of workload ratios**                  |      — |                **0.53×** |
 
-Ratios above one mean Evenfall takes longer; all seven paths remain slower in
-this comparison. ARM mixer points to the IWRAM kernel and timed RAM/bus
-accesses; Thumb logic to ROM dispatch and prefetch; tiles and affine to the
-compositor, row renderer and raster work; bitmap DMA to transfer scheduling;
-audio to FIFO, PSG and DMA clocks; idle to the event horizon, HALT and the
-empty frame. These are workload _stresses_, not isolated causal attributions:
-profiling or an exact paired experiment is needed to assign a gap to one
-mechanism. The equal images do not prove complete state or sample parity.
-Small ROMs weight paths differently from games; neither the overall ratio nor
-these native measurements predict another host or the browser.
+Ratios below one mean Evenfall takes less time. In WebAssembly, measured with
+[`wasm.mjs`](../tools/bench/wasm.mjs) in Node 24 on the same CPU (five rounds,
+one warmup, HLE boot), loop time relative to ZiGBA's shipped module
+(`ReleaseSafe`) is:
+
+| Workload    | ZiGBA `ReleaseFast` | Evenfall scalar | Evenfall SIMD (shipped) |
+| ----------- | ------------------: | --------------: | ----------------------: |
+| idle        |               0.96× |           0.60× |                   0.48× |
+| arm-mixer   |               0.86× |           0.27× |                   0.27× |
+| thumb-logic |               0.87× |           0.34× |                   0.34× |
+| tiles       |               0.94× |           0.43× |                   0.23× |
+| affine      |               0.81× |           0.56× |                   0.51× |
+| bitmap-DMA  |               0.82× |           0.63× |                   0.58× |
+| audio       |               0.87× |           0.28× |                   0.28× |
+| geomean     |               0.87× |           0.42× |                   0.36× |
+
+Every image agrees across all modules and with the native harnesses. The
+largest remaining costs are affine rendering (rotated rows and affine
+objects) and bitmap DMA's per-beat work; the benchmark ROMs weight each path
+equally, so neither table predicts a game's ratio.
 
 ### Execution engine
 
