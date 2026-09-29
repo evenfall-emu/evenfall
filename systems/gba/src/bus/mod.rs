@@ -17,7 +17,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 mod kernel;
-pub(crate) use kernel::{EngineMemory, PrefetchClock, RomData, VideoMemory};
+pub(crate) use kernel::{EngineMemory, PrefetchClock, RomData, RunRegisters, VideoMemory};
 pub use kernel::{begin_arm_iwram_slice, fetch_arm_iwram_in_slice};
 use kernel::{oam_read, palette_read, vram_read};
 

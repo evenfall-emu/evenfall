@@ -5,7 +5,7 @@
 
 use super::{Op, PAGE_SHIFT};
 use crate::bus::{
-    AccessWidth, EWRAM_SIZE, IWRAM_SIZE, IrqRegisters, RomData, VideoMemory, read_ram, write_ram,
+    AccessWidth, EWRAM_SIZE, IWRAM_SIZE, RomData, RunRegisters, VideoMemory, read_ram, write_ram,
 };
 
 /// Memory an engine run works on. The array the run executes from is held
@@ -19,8 +19,8 @@ pub(super) struct Mem<'a> {
     pub(super) rom: RomData<'a>,
     pub(super) others: [[Option<&'a [Op]>; 2]; 2],
     pub(super) video: VideoMemory<'a>,
-    /// IE, IF, IME, POSTFLG and HALTCNT, which runs access themselves.
-    pub(super) irq: &'a mut IrqRegisters,
+    /// The MMIO registers runs access themselves.
+    pub(super) registers: RunRegisters<'a>,
     /// A VRAM or palette store may run only if it ends with more budget
     /// left than this: before the next visible dot.
     pub(super) video_floor: i64,

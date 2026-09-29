@@ -670,24 +670,24 @@ fn serve<T: Timing>(
     }
 }
 
-/// Completes `access` on the run's own view of the interrupt registers if
-/// it touches only them ([`Mmio::irq`]), charged as [`serve`] charges it;
-/// None if it touches other registers. The run stops after a store that
-/// halts, stops or raises an IRQ the CPU takes.
+/// Completes `access` on the run's own view of the registers it reads and
+/// writes itself if it touches only those ([`Mmio::local`]), charged as
+/// [`serve`] charges it; None if it touches others. The run stops after a
+/// store that halts, stops or raises an IRQ the CPU takes.
 #[inline(always)]
-fn serve_irq<T: Timing>(
+fn serve_local<T: Timing>(
     c: &mut Ctx<'_>,
     core: &mut Core,
     t: T,
     h: Hot,
     access: &Mmio,
 ) -> Option<Resume> {
-    access.irq().then(|| complete_irq(c, core, t, h, access))
+    access.local().then(|| complete_local(c, core, t, h, access))
 }
 
-/// The part of [`serve_irq`] past the test of the registers.
+/// The part of [`serve_local`] past the test of the registers.
 #[inline(never)]
-fn complete_irq<T: Timing>(
+fn complete_local<T: Timing>(
     c: &mut Ctx<'_>,
     core: &mut Core,
     t: T,
@@ -700,7 +700,7 @@ fn complete_irq<T: Timing>(
     if !next.charge(t.fetch(&h) + if store { 1 } else { 2 }) {
         return Resume::Out(h);
     }
-    let value = access.perform_irq(c.mem.irq, &mut core.registers);
+    let value = access.perform_local(&mut c.mem.registers, &mut core.registers);
     next.idx += 1;
     t.after(&mut next, before, !store);
     c.mmio_mark = next.budget;
@@ -709,7 +709,7 @@ fn complete_irq<T: Timing>(
         c.load_mark = next.budget;
         c.internal_mark = next.budget;
     }
-    let irq = &c.mem.irq;
+    let irq = &c.mem.registers.irq;
     let taken = irq.irq_line && core.cpsr & (1 << 7) == 0;
     if irq.power_state == PowerState::Running && !taken {
         Resume::On(next)
@@ -763,7 +763,7 @@ fn ram_runs<const EW: bool>(
         hot = next;
         match stop {
             Stop::Refused => match mmio_transfer(&ops[hot.idx as usize], &core.registers) {
-                Some(access) => match serve_irq(&mut c, core, Ram::<EW>, hot, &access) {
+                Some(access) => match serve_local(&mut c, core, Ram::<EW>, hot, &access) {
                     Some(Resume::On(next)) => hot = next,
                     Some(Resume::Out(next)) => return leave(core, &c, next, start, budget),
                     None => break access,
@@ -830,7 +830,7 @@ fn ram_serving<const EW: bool>(
                 let Some(access) = mmio_transfer(&ops[hot.idx as usize], &core.registers) else {
                     return leave(core, &c, hot, start, budget);
                 };
-                if let Some(next) = serve_irq(&mut c, core, Ram::<EW>, hot, &access) {
+                if let Some(next) = serve_local(&mut c, core, Ram::<EW>, hot, &access) {
                     resume = next;
                     saved = c.save();
                     continue;
@@ -945,7 +945,7 @@ fn rom_runs<T: Timing>(
         match stop {
             Stop::Refused => {
                 let flow = mmio_transfer(&ops[hot.idx as usize], &core.registers)
-                    .map(|access| (serve_irq(&mut c, core, timing, hot, &access), access));
+                    .map(|access| (serve_local(&mut c, core, timing, hot, &access), access));
                 match flow {
                     Some((Some(Resume::On(next)), _)) => hot = next,
                     Some((None, access)) => break access,
@@ -1007,7 +1007,7 @@ fn rom_serving<T: Timing>(
                 let Some(access) = mmio_transfer(&ops[hot.idx as usize], &core.registers) else {
                     break (leave(core, &c, hot, start, budget), hot.ready);
                 };
-                if let Some(next) = serve_irq(&mut c, core, timing, hot, &access) {
+                if let Some(next) = serve_local(&mut c, core, timing, hot, &access) {
                     resume = next;
                     saved = c.save();
                     continue;
