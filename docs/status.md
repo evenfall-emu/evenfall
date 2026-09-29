@@ -51,8 +51,10 @@ mean is defined in [`methodology.md`](methodology.md#goals).
 
 ## Performance
 
-The core is slower than ZiGBA on the benchmark workloads, most on ARM code
-running from IWRAM; its builds are several times faster than ZiGBA's.
+On the benchmark workloads the core is faster than ZiGBA where rendering or
+idle time dominates (tiles, bitmap DMA, audio, idle) and slower on CPU-bound
+code, most on ARM code running from IWRAM; its builds are several times
+faster than ZiGBA's.
 Results, method and the mechanisms behind each gap are in
 [`performance.md`](performance.md).
 

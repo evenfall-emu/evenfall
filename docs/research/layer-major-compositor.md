@@ -110,10 +110,10 @@ and after this design:
 
 | Workload   | ZiGBA            | Before           | After            |
 | ---------- | ---------------- | ---------------- | ---------------- |
-| tiles      | 11.91 G / 3.00 G | 19.98 G / 4.66 G | 9.28 G / 1.50 G  |
-| affine     | 13.04 G / 2.58 G | 18.59 G / 3.07 G | 15.33 G / 2.49 G |
-| bitmap-dma | 21.64 G / 4.03 G | 27.20 G / 4.52 G | 18.13 G / 2.72 G |
-| idle       | 0.19 G / 0.08 G  | 0.38 G / 0.08 G  | 0.24 G / 0.04 G  |
+| tiles      | 11.91 G / 3.00 G | 19.98 G / 4.67 G | 8.31 G / 1.34 G  |
+| affine     | 13.04 G / 2.58 G | 18.59 G / 3.10 G | 15.30 G / 2.52 G |
+| bitmap-dma | 21.64 G / 4.00 G | 27.20 G / 4.50 G | 18.19 G / 2.80 G |
+| idle       | 0.19 G / 0.08 G  | 0.38 G / 0.08 G  | 0.26 G / 0.04 G  |
 
 Loop-time ratios from the benchmark runner are in
 [`performance.md`](../performance.md).
