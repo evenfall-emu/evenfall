@@ -1,8 +1,9 @@
 //! Device-path throughput; construction and save-state setup are outside timed loops.
 use divan::black_box;
 use evenfall_gba::apu::Apu;
-use evenfall_gba::bus::Bus;
+use evenfall_gba::bus::{Access, AccessKind, AccessSource, AccessWidth, Bus};
 use evenfall_gba::cartridge::save::{Device, Type};
+use evenfall_gba::dma::Channel;
 use evenfall_state::{Sink, Source};
 
 fn main() {
@@ -91,4 +92,49 @@ fn renderer_frame(bencher: divan::Bencher) {
         bus.elapse(black_box(280_896));
         black_box(bus.framebuffer());
     });
+}
+
+// Data reads use Bus's scalar ROM path, not the instruction-fetch pointer view.
+#[divan::bench]
+fn uncached_rom_read(bencher: divan::Bencher) {
+    let mut rom = vec![0; 256 * 1024];
+    for (i, byte) in rom.iter_mut().enumerate() {
+        *byte = i.wrapping_mul(37) as u8;
+    }
+    let mut bus = Box::new(Bus::init_with_save(&rom, Type::None));
+    let mut offset = 0x100;
+    bencher.bench_local(|| {
+        let result = bus.read(Access {
+            address: black_box(0x0800_0000 + offset),
+            width: AccessWidth::Word,
+            kind: AccessKind::Nonsequential,
+            source: AccessSource::CpuData,
+        });
+        black_box(result.value);
+        offset = (offset + 4) & 0x3_ffc;
+    });
+}
+
+// A 16-word ROM-to-RAM burst isolates DMA's scalar ROM source accesses.
+#[divan::bench]
+fn dma_from_rom(bencher: divan::Bencher) {
+    let mut rom = vec![0; 256 * 1024];
+    for (i, byte) in rom.iter_mut().enumerate() {
+        *byte = i.wrapping_mul(37) as u8;
+    }
+    let mut bus = Box::new(Bus::init_with_save(&rom, Type::None));
+    bencher.bench_local(|| {
+        bus.dma_channels[3] = Channel {
+            source: 0x0800_0100,
+            destination: 0x0200_0000,
+            word_count: 16,
+            control: 0x8400,
+            latched_source: 0x0800_0100,
+            latched_destination: 0x0200_0000,
+        };
+        bus.pending_dma = 1 << 3;
+        bus.elapse(1);
+        black_box(&bus.ewram[..64]);
+    });
+    assert_eq!(&bus.ewram[..64], &rom[0x100..0x140]);
 }
