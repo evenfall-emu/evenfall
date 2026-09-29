@@ -175,6 +175,60 @@ pub trait Bus {
     fn finish_cpu_ram_store_block(&mut self, cycles: Cycle);
 }
 
+/// Predecoded ARM ALU handler. Decoding identifies the instruction class but
+/// does not admit accesses or validate unpredictable register combinations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ArmAluHandler(u8);
+
+impl ArmAluHandler {
+    #[inline]
+    pub fn decode(instruction: u32) -> Option<Self> {
+        let class = (instruction >> 25) & 7;
+        (class == 1
+            || (class == 0
+                && instruction & 0x0fc0_00f0 != 0x0000_0090
+                && !(instruction & 0x0e00_0090 == 0x0000_0090 && (instruction >> 5) & 3 != 0)))
+            .then_some(Self(((instruction >> 20) & 31) as u8))
+    }
+
+    /// Caller must admit the opcode first: no PC destination, invalid test
+    /// encoding, exception return or ISA fault may reach this fast path.
+    #[inline(always)]
+    pub fn execute<B: Bus>(self, core: &mut Core, bus: &mut B, instruction: u32) -> ExecuteResult {
+        match self.0 {
+            0 => core.execute_arm_kernel_alu::<0, false, _>(bus, instruction),
+            1 => core.execute_arm_kernel_alu::<0, true, _>(bus, instruction),
+            2 => core.execute_arm_kernel_alu::<1, false, _>(bus, instruction),
+            3 => core.execute_arm_kernel_alu::<1, true, _>(bus, instruction),
+            4 => core.execute_arm_kernel_alu::<2, false, _>(bus, instruction),
+            5 => core.execute_arm_kernel_alu::<2, true, _>(bus, instruction),
+            6 => core.execute_arm_kernel_alu::<3, false, _>(bus, instruction),
+            7 => core.execute_arm_kernel_alu::<3, true, _>(bus, instruction),
+            8 => core.execute_arm_kernel_alu::<4, false, _>(bus, instruction),
+            9 => core.execute_arm_kernel_alu::<4, true, _>(bus, instruction),
+            10 => core.execute_arm_kernel_alu::<5, false, _>(bus, instruction),
+            11 => core.execute_arm_kernel_alu::<5, true, _>(bus, instruction),
+            12 => core.execute_arm_kernel_alu::<6, false, _>(bus, instruction),
+            13 => core.execute_arm_kernel_alu::<6, true, _>(bus, instruction),
+            14 => core.execute_arm_kernel_alu::<7, false, _>(bus, instruction),
+            15 => core.execute_arm_kernel_alu::<7, true, _>(bus, instruction),
+            17 => core.execute_arm_kernel_alu::<8, true, _>(bus, instruction),
+            19 => core.execute_arm_kernel_alu::<9, true, _>(bus, instruction),
+            21 => core.execute_arm_kernel_alu::<10, true, _>(bus, instruction),
+            23 => core.execute_arm_kernel_alu::<11, true, _>(bus, instruction),
+            24 => core.execute_arm_kernel_alu::<12, false, _>(bus, instruction),
+            25 => core.execute_arm_kernel_alu::<12, true, _>(bus, instruction),
+            26 => core.execute_arm_kernel_alu::<13, false, _>(bus, instruction),
+            27 => core.execute_arm_kernel_alu::<13, true, _>(bus, instruction),
+            28 => core.execute_arm_kernel_alu::<14, false, _>(bus, instruction),
+            29 => core.execute_arm_kernel_alu::<14, true, _>(bus, instruction),
+            30 => core.execute_arm_kernel_alu::<15, false, _>(bus, instruction),
+            31 => core.execute_arm_kernel_alu::<15, true, _>(bus, instruction),
+            _ => unreachable!("kernel rejected non-flag-setting test instruction"),
+        }
+    }
+}
+
 /// The flat prefix of ZiGBA's `Cpu` state, through `spsr_undefined`.
 /// The GBA wrapper flattens this into the same durable field order.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Codec)]
@@ -629,6 +683,58 @@ impl Core {
             bus.elapse_cpu_internal(1);
         }
         Ok(ExecuteResult { branched, bus_free: !register_shifted, software_interrupt: None })
+    }
+
+    /// The bounded kernel has already excluded PC writes and exception
+    /// returns. Specialize the ALU opcode without changing the interpreter.
+    #[inline(always)]
+    fn execute_arm_kernel_alu<const OP: u32, const FLAGS: bool, B: Bus>(
+        &mut self,
+        bus: &mut B,
+        instruction: u32,
+    ) -> ExecuteResult {
+        let shift = self.decode_operand2(instruction, instruction & (1 << 25) != 0);
+        let rhs = shift.value;
+        let rn = ((instruction >> 16) & 15) as usize;
+        let rd = ((instruction >> 12) & 15) as usize;
+        let register_shifted = instruction & (1 << 25) == 0 && instruction & (1 << 4) != 0;
+        let lhs = self.registers[rn].wrapping_add(if rn == 15 && register_shifted { 4 } else { 0 });
+        let carry = u32::from(self.cpsr & (1 << 29) != 0);
+        let borrow = 1 - carry;
+        let result = match OP {
+            0 | 8 => lhs & rhs,
+            1 | 9 => lhs ^ rhs,
+            2 | 10 => lhs.wrapping_sub(rhs),
+            3 => rhs.wrapping_sub(lhs),
+            4 | 11 => lhs.wrapping_add(rhs),
+            5 => lhs.wrapping_add(rhs).wrapping_add(carry),
+            6 => lhs.wrapping_sub(rhs).wrapping_sub(borrow),
+            7 => rhs.wrapping_sub(lhs).wrapping_sub(borrow),
+            12 => lhs | rhs,
+            13 => rhs,
+            14 => lhs & !rhs,
+            15 => !rhs,
+            _ => unreachable!(),
+        };
+        if !(8..=11).contains(&OP) {
+            self.registers[rd] = result;
+        }
+        if FLAGS || (8..=11).contains(&OP) {
+            match OP {
+                0 | 1 | 8 | 9 | 12..=15 => self.set_logical_flags(result, shift.carry),
+                2 | 10 => self.set_sub_flags(lhs, rhs, 0, result),
+                3 => self.set_sub_flags(rhs, lhs, 0, result),
+                4 | 11 => self.set_add_flags(lhs, rhs, 0, result),
+                5 => self.set_add_flags(lhs, rhs, carry, result),
+                6 => self.set_sub_flags(lhs, rhs, borrow, result),
+                7 => self.set_sub_flags(rhs, lhs, borrow, result),
+                _ => unreachable!(),
+            }
+        }
+        if register_shifted {
+            bus.elapse_cpu_internal(1);
+        }
+        ExecuteResult { bus_free: !register_shifted, ..ExecuteResult::default() }
     }
 }
 
@@ -1347,6 +1453,40 @@ mod tests {
             bus.writes,
             [(0x0600_401c, AccessWidth::Word, AccessKind::Nonsequential, 0x1111_1111)]
         );
+    }
+
+    #[test]
+    fn admitted_arm_alu_handlers_match_interpreter_for_every_opcode_and_shift_form() {
+        for opcode in 0..16 {
+            for flags in [false, true] {
+                if (8..=11).contains(&opcode) && !flags {
+                    continue; // test opcodes without S are not admitted by the kernel.
+                }
+                for operand in [(1 << 25) | 0x2a5, 0x372] {
+                    let instruction = 0xe000_0000
+                        | (opcode << 21)
+                        | (u32::from(flags) << 20)
+                        | (1 << 16)
+                        | (4 << 12)
+                        | operand;
+                    let mut reference = Core::new(0x0800_0040, 0x1f);
+                    reference.cpsr |= 0xb000_0000;
+                    reference.registers[1] = 0x7162_5aed;
+                    reference.registers[2] = 0x8000_0181;
+                    reference.registers[3] = 9;
+                    reference.registers[4] = 0x1234_5678;
+                    let mut fast = reference.clone();
+                    let mut reference_bus = TraceBus::default();
+                    let mut fast_bus = TraceBus::default();
+                    let expected = reference.execute_arm(&mut reference_bus, instruction).unwrap();
+                    let handler = ArmAluHandler::decode(instruction).unwrap();
+                    let actual = handler.execute(&mut fast, &mut fast_bus, instruction);
+                    assert_eq!(actual, expected, "opcode {opcode}, flags {flags}, {operand:#x}");
+                    assert_eq!(fast, reference, "opcode {opcode}, flags {flags}, {operand:#x}");
+                    assert_eq!(fast_bus.internal, reference_bus.internal);
+                }
+            }
+        }
     }
 
     /// ZiGBA `executeBlockDataTransfer`: empty STM transfers one aligned PC beat and steps by 64.

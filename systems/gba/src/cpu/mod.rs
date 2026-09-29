@@ -8,9 +8,50 @@ use crate::bus::{
 pub use crate::multiboot::{
     Encoder as MultiBootEncoder, Mode as MultiBootMode, Parameters as MultiBootParameters,
 };
-use evenfall_cpu_arm::{Core, Pipeline};
+use evenfall_cpu_arm::{ArmAluHandler, Core, Pipeline};
 use evenfall_state::Codec;
 use std::ops::{Deref, DerefMut};
+
+/// Diagnostic only: one atomic update per attempted kernel entry, not per opcode.
+#[cfg(feature = "kernel-census")]
+mod census {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+
+    // attempts, productive entries, instructions, branches, zero/one/2-7/8-31/32+ lengths.
+    pub static ARM: [AtomicU64; 9] = [const { AtomicU64::new(0) }; 9];
+    pub static THUMB: [AtomicU64; 9] = [const { AtomicU64::new(0) }; 9];
+    pub static ARM_CLASS: [AtomicU64; 9] = [const { AtomicU64::new(0) }; 9];
+    pub static THUMB_CLASS: [AtomicU64; 16] = [const { AtomicU64::new(0) }; 16];
+
+    pub fn entry(counters: &[AtomicU64; 9], instructions: u64, branches: u64) {
+        counters[1].fetch_add(u64::from(instructions != 0), Relaxed);
+        counters[2].fetch_add(instructions, Relaxed);
+        counters[3].fetch_add(branches, Relaxed);
+        let bin = match instructions {
+            0 => 4,
+            1 => 5,
+            2..=7 => 6,
+            8..=31 => 7,
+            _ => 8,
+        };
+        counters[bin].fetch_add(1, Relaxed);
+    }
+}
+
+#[cfg(feature = "kernel-census")]
+pub fn kernel_census() -> [[u64; 9]; 2] {
+    use std::sync::atomic::Ordering::Relaxed;
+    [&census::ARM, &census::THUMB].map(|counters| counters.each_ref().map(|v| v.load(Relaxed)))
+}
+
+#[cfg(feature = "kernel-census")]
+pub fn kernel_classes() -> ([u64; 9], [u64; 16]) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (
+        census::ARM_CLASS.each_ref().map(|v| v.load(Relaxed)),
+        census::THUMB_CLASS.each_ref().map(|v| v.load(Relaxed)),
+    )
+}
 
 pub use evenfall_cpu_arm::{ExecuteResult, InstructionSet};
 
@@ -226,7 +267,8 @@ impl ArmKernelState<'_> {
         self.limit = self.region.end.min(self.region.cycle + words);
     }
 
-    #[inline]
+    #[cfg_attr(feature = "kernel-stage-profile", inline(never))]
+    #[cfg_attr(not(feature = "kernel-stage-profile"), inline)]
     fn advance(&mut self, cpu: &mut Cpu, fetched: u32) {
         self.current = self.next;
         self.next = fetched;
@@ -1093,6 +1135,7 @@ impl Cpu {
     /// A whole-instruction preflight: fetch first, then all data and internal
     /// cycles, and finally any refill. A failed condition still consumes its
     /// fetch, even if the encoding would otherwise leave the kernel.
+    #[cfg_attr(feature = "kernel-stage-profile", inline(never))]
     fn arm_kernel_cycles(
         &self,
         state: &mut ArmKernelState<'_>,
@@ -1225,9 +1268,50 @@ impl Cpu {
         }
     }
 
+    // Diagnostic boundaries isolate stages for perf's instruction sampling;
+    // they do not exist in a normal build and alter code layout/call cost.
+    #[cfg(feature = "kernel-stage-profile")]
+    #[inline(never)]
+    fn profile_arm_execute(
+        &mut self,
+        region: &mut ArmIwramExecutionRegion<'_>,
+        instruction: u32,
+    ) -> Result<ExecuteResult, evenfall_cpu_arm::FaultReason> {
+        if let Some(handler) = ArmAluHandler::decode(instruction) {
+            Ok(handler.execute(&mut self.core, region, instruction))
+        } else {
+            self.core.execute_arm_condition_passed(region, instruction)
+        }
+    }
+
+    #[cfg(feature = "kernel-stage-profile")]
+    #[inline(never)]
+    fn profile_arm_fetch(region: &mut ArmIwramExecutionRegion<'_>, address: u32) -> u32 {
+        region.fetch(address)
+    }
+
+    #[cfg(feature = "kernel-stage-profile")]
+    #[inline(never)]
+    fn profile_thumb_execute(
+        &mut self,
+        run: &mut ThumbRomRun<'_>,
+        instruction: u16,
+    ) -> ExecuteResult {
+        self.core.execute_thumb(run, instruction)
+    }
+
+    #[cfg(feature = "kernel-stage-profile")]
+    #[inline(never)]
+    fn profile_thumb_fetch(run: &mut ThumbRomRun<'_>, address: u32) -> u32 {
+        run.fetch(address)
+    }
+
     /// Local IWRAM supply and clock stay inside one event-free device batch.
     /// The refused instruction remains untouched for the ordinary runner.
+    #[inline(never)]
     fn run_arm_iwram_kernel(&mut self, bus: &mut Bus, yield_at: u64) -> bool {
+        #[cfg(feature = "kernel-census")]
+        census::ARM[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if bus.irq_line && self.cpsr & (1 << 7) == 0 {
             return false;
         }
@@ -1243,6 +1327,10 @@ impl Cpu {
             limit: 0,
         };
         let started = state.region.cycle;
+        #[cfg(feature = "kernel-census")]
+        let (mut executed, mut branches) = (0, 0);
+        #[cfg(feature = "kernel-census")]
+        let mut classes = [0_u64; 9];
         if is_arm_iwram_slice_fetch(state.pc8) {
             state.bound();
             loop {
@@ -1256,7 +1344,17 @@ impl Cpu {
                 if !state.fits(required) {
                     break;
                 }
+                #[cfg(not(feature = "kernel-stage-profile"))]
                 let fetched = state.region.fetch(state.pc8);
+                #[cfg(feature = "kernel-stage-profile")]
+                let fetched = Self::profile_arm_fetch(&mut state.region, state.pc8);
+                #[cfg(feature = "kernel-census")]
+                {
+                    executed += 1;
+                    classes
+                        [if condition_passed { ((instruction >> 25) & 7) as usize } else { 8 }] +=
+                        1;
+                }
                 if !condition_passed {
                     state.advance(self, fetched);
                     continue;
@@ -1266,11 +1364,20 @@ impl Cpu {
                 // after a fall-through the kernel's Core otherwise still held
                 // the address from the prior instruction.
                 self.core.next_instruction_address = state.pc8.wrapping_sub(8);
-                let execution = self
-                    .core
-                    .execute_arm_condition_passed(&mut state.region, instruction)
-                    .expect("an admitted ARM instruction cannot fault");
+                #[cfg(not(feature = "kernel-stage-profile"))]
+                let execution = if let Some(handler) = ArmAluHandler::decode(instruction) {
+                    Ok(handler.execute(&mut self.core, &mut state.region, instruction))
+                } else {
+                    self.core.execute_arm_condition_passed(&mut state.region, instruction)
+                };
+                #[cfg(feature = "kernel-stage-profile")]
+                let execution = self.profile_arm_execute(&mut state.region, instruction);
+                let execution = execution.expect("an admitted ARM instruction cannot fault");
                 if execution.branched {
+                    #[cfg(feature = "kernel-census")]
+                    {
+                        branches += 1;
+                    }
                     let target = self.core.next_instruction_address;
                     state.pc8 = target;
                     state.current = state.region.fetch(state.pc8);
@@ -1298,6 +1405,13 @@ impl Cpu {
         });
         let ran = state.region.cycle != started;
         state.region.finish(state.next);
+        #[cfg(feature = "kernel-census")]
+        {
+            census::entry(&census::ARM, executed, branches);
+            for (counter, n) in census::ARM_CLASS.iter().zip(classes) {
+                counter.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
         ran
     }
 
@@ -1305,6 +1419,7 @@ impl Cpu {
     /// accesses whose timing or target cannot be represented by ThumbRomRun.
     /// In particular, an empty register list and BX to ARM stay with the
     /// ordinary interpreter rather than relaxing the ROM run's admission.
+    #[cfg_attr(feature = "kernel-stage-profile", inline(never))]
     fn thumb_kernel_work(
         &self,
         run: &ThumbRomRun<'_>,
@@ -1445,12 +1560,15 @@ impl Cpu {
     /// Bounded ROM execution with a runtime high-byte dispatch instead of
     /// Zig's 49 comptime-labelled handler classes. The shared ISA executor
     /// remains the semantics source of truth; this loop only admits work.
+    #[inline(never)]
     fn run_thumb_rom_kernel(
         &mut self,
         bus: &mut Bus,
         view: &mut InstructionFetchRegion,
         yield_at: u64,
     ) -> usize {
+        #[cfg(feature = "kernel-census")]
+        census::THUMB[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if bus.irq_line && self.cpsr & (1 << 7) == 0 {
             return 0;
         }
@@ -1466,12 +1584,19 @@ impl Cpu {
         };
         let started = run.cycle;
         let mut executed = 0;
+        #[cfg(feature = "kernel-census")]
+        let mut branches = 0;
+        #[cfg(feature = "kernel-census")]
+        let mut classes = [0_u64; 16];
         let mut waiting = pipeline.instructions[0] as u16;
         let mut next = pipeline.instructions[1] as u16;
         loop {
             let saved_cycle = run.cycle;
             let saved_ready = run.head_ready;
+            #[cfg(not(feature = "kernel-stage-profile"))]
             let fetched = run.fetch(pc.wrapping_add(4)) as u16;
+            #[cfg(feature = "kernel-stage-profile")]
+            let fetched = Self::profile_thumb_fetch(&mut run, pc.wrapping_add(4)) as u16;
             let work = self.thumb_kernel_work(&run, waiting);
             let admitted = work.and_then(|(cycles, branch, data)| {
                 if !run.fits(cycles) {
@@ -1510,8 +1635,15 @@ impl Cpu {
                 run.head_ready = saved_ready;
                 break;
             };
+            #[cfg(feature = "kernel-census")]
+            {
+                classes[(waiting >> 12) as usize] += 1;
+            }
             self.registers[15] = pc.wrapping_add(4);
+            #[cfg(not(feature = "kernel-stage-profile"))]
             let execution = self.core.execute_thumb(&mut run, waiting);
+            #[cfg(feature = "kernel-stage-profile")]
+            let execution = self.profile_thumb_execute(&mut run, waiting);
             executed += 1;
             debug_assert!(execution.software_interrupt.is_none());
             debug_assert_eq!(execution.branched, branch.is_some());
@@ -1523,6 +1655,10 @@ impl Cpu {
                 );
             }
             if let Some(target) = branch {
+                #[cfg(feature = "kernel-census")]
+                {
+                    branches += 1;
+                }
                 debug_assert_eq!(self.core.next_instruction_address, target);
                 let words = run.refill(pc.wrapping_add(6), target);
                 waiting = words[0] as u16;
@@ -1539,6 +1675,8 @@ impl Cpu {
         }
         if executed == 0 {
             debug_assert_eq!(run.cycle, started);
+            #[cfg(feature = "kernel-census")]
+            census::entry(&census::THUMB, 0, 0);
             return 0;
         }
         self.core.next_instruction_address = pc;
@@ -1547,6 +1685,13 @@ impl Cpu {
             instruction_set: InstructionSet::Thumb,
         });
         run.finish(pc, u32::from(next));
+        #[cfg(feature = "kernel-census")]
+        {
+            census::entry(&census::THUMB, executed as u64, branches);
+            for (counter, n) in census::THUMB_CLASS.iter().zip(classes) {
+                counter.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
         executed
     }
 
