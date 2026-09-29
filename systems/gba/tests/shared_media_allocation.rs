@@ -72,7 +72,7 @@ fn large_rom_reset_and_multi_entry_bundle_import_do_not_allocate_media() {
     )
     .unwrap();
     assert_eq!(session.rom().as_ptr(), address);
-    assert_eq!(session.rom().as_ptr(), session.machine.bus.rom.as_ptr());
+    assert_eq!(session.rom().as_ptr(), session.machine.bus.rom().as_ptr());
 
     for _ in 0..4 {
         session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
@@ -84,14 +84,14 @@ fn large_rom_reset_and_multi_entry_bundle_import_do_not_allocate_media() {
 
     let (total, largest) = measured(|| session.reset_with_save(&[]).unwrap());
     assert_eq!(session.rom().as_ptr(), address);
-    assert_eq!(session.rom().as_ptr(), session.machine.bus.rom.as_ptr());
+    assert_eq!(session.rom().as_ptr(), session.machine.bus.rom().as_ptr());
     assert!(largest < ROM_BYTES / 4, "reset allocated {largest} bytes at once");
     assert!(total < 8 * 1024 * 1024, "reset allocated {total} bytes total");
 
     let (total, largest) = measured(|| session.load_rewind_bundle_owned(bundle).unwrap());
     assert_eq!(session.machine.now(), cycle);
     assert_eq!(session.rewind_depth(), depth);
-    assert_eq!(session.rom().as_ptr(), session.machine.bus.rom.as_ptr());
+    assert_eq!(session.rom().as_ptr(), session.machine.bus.rom().as_ptr());
     assert!(largest < ROM_BYTES / 4, "bundle import allocated {largest} bytes at once");
     assert!(total < 8 * 1024 * 1024, "bundle import allocated {total} bytes total");
 }
