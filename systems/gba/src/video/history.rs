@@ -569,13 +569,17 @@ impl Bus {
     }
 
     pub(crate) fn background_control_index(address: u32) -> Option<usize> {
-        (address >= MMIO_BASE + 8 && address <= MMIO_BASE + 14 && address & 1 == 0)
-            .then_some(((address - MMIO_BASE - 8) / 2) as usize)
+        if !(MMIO_BASE + 8..=MMIO_BASE + 14).contains(&address) || address & 1 != 0 {
+            return None;
+        }
+        Some(((address - MMIO_BASE - 8) / 2) as usize)
     }
 
     pub(crate) fn background_offset_register(address: u32) -> Option<(usize, bool)> {
-        (address >= MMIO_BASE + 0x10 && address <= MMIO_BASE + 0x1E && address & 1 == 0)
-            .then_some((((address - MMIO_BASE - 0x10) / 4) as usize, address & 2 != 0))
+        if !(MMIO_BASE + 0x10..=MMIO_BASE + 0x1E).contains(&address) || address & 1 != 0 {
+            return None;
+        }
+        Some((((address - MMIO_BASE - 0x10) / 4) as usize, address & 2 != 0))
     }
 
     pub(crate) fn affine_parameter_register(address: u32) -> Option<(usize, usize)> {
@@ -586,10 +590,10 @@ impl Bus {
         } else {
             return None;
         };
-        (address & 1 == 0).then_some((
-            background,
-            ((address - MMIO_BASE - 0x20 - background as u32 * 0x10) / 2) as usize,
-        ))
+        if address & 1 != 0 {
+            return None;
+        }
+        Some((background, ((address - MMIO_BASE - 0x20 - background as u32 * 0x10) / 2) as usize))
     }
 
     pub(crate) fn affine_reference_register(address: u32) -> Option<(usize, usize, bool)> {
