@@ -524,6 +524,12 @@ does not start it again. An expired or unknown link says so and offers Home.
 
 ## Offline play
 
+The player exposes a web-app manifest with a stable identity, launcher icons
+and standalone display mode. In Android Chrome, use **Add to home screen →
+Install**, rather than **Create shortcut**, to install it as an app. The app
+opens the library without Chrome's address bar. The manifest and launch URLs
+also follow the configured Vite base path for subdirectory hosting.
+
 Production builds install a service worker that caches one complete version of
 the player: every file of the Vite build, including the hashed SDK worker,
 worklet and WASM and the game plugins' lazily loaded layouts. After its first

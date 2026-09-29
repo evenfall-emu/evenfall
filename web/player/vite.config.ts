@@ -28,7 +28,7 @@ export default defineConfig({
     proxy: { "/api": "http://127.0.0.1:8787" },
   },
   // The SDK's worker, WASM and audio worklet are emitted as hashed assets.
-  publicDir: false,
+  // The install manifest and its icons keep stable URLs in public/.
   build: {
     outDir: process.env.ZIGBA_PLAYER_DIR ?? "../zig-out/player",
     emptyOutDir: true,

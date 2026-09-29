@@ -160,6 +160,51 @@ const storedCycle = (page: Page, hash: string) =>
     }
   }, hash);
 
+test("the production install manifest launches the library and stays available offline", async ({
+  browser,
+}) => {
+  const host = await site(browser);
+  try {
+    const page = await host.context.newPage();
+    // A nested page must discover the same manifest as the library.
+    await page.goto("/library/install-check");
+    await installed(page);
+    const cdp = await host.context.newCDPSession(page);
+    const manifest = await cdp.send("Page.getAppManifest");
+    expect(manifest.errors).toEqual([]);
+    expect(manifest.data).toBeTruthy();
+    const data = JSON.parse(manifest.data!);
+    expect(data.name).toBe("Evenfall");
+    expect(data.display).toBe("standalone");
+    const launch = new URL(data.start_url, manifest.url);
+    expect(launch.href).toBe(`${host.url}/library`);
+    expect(new URL(data.scope, manifest.url).href).toBe(`${host.url}/`);
+
+    await host.context.setOffline(true);
+    await page.goto(launch.href);
+    await expect(page.getByPlaceholder("Search games…")).toBeVisible();
+    // Fetch through the controlling worker, not Playwright's network client.
+    const offline = await page.evaluate(async (url) => {
+      const response = await fetch(url);
+      const manifest = await response.json();
+      const sizes = await Promise.all(
+        manifest.icons.map(async (icon: { src: string }) => {
+          const image = await fetch(new URL(icon.src, url));
+          const bitmap = await createImageBitmap(await image.blob());
+          return [bitmap.width, bitmap.height];
+        }),
+      );
+      return sizes;
+    }, manifest.url);
+    expect(offline).toEqual([
+      [192, 192],
+      [512, 512],
+    ]);
+  } finally {
+    await host.close();
+  }
+});
+
 test("an untouched player without a game reloads into a new version, at most once a minute", async ({
   browser,
 }) => {
