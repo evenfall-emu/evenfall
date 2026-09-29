@@ -1129,16 +1129,12 @@ impl Bus {
                         let at = address.wrapping_add(beat * 2);
                         self.advance(1);
                         self.flush_device_batch();
-                        let snapshot = self.snapshot_vram_write(at, AccessWidth::Half);
-                        self.write_vram(at, AccessWidth::Half, value >> (beat * 16));
-                        self.record_vram_write(snapshot);
+                        self.write_vram_at_current_dot(at, AccessWidth::Half, value >> (beat * 16));
                     }
                 } else {
                     self.advance(video_cycles(width));
                     self.flush_device_batch();
-                    let snapshot = self.snapshot_vram_write(address, width);
-                    self.write_vram(address, width, value);
-                    self.record_vram_write(snapshot);
+                    self.write_vram_at_current_dot(address, width, value);
                 }
             }
             7 => {
@@ -3470,6 +3466,20 @@ impl Bus {
                 .map_or(0, |index| self.vram[index]);
             value | (u32::from(byte) << (offset * 8))
         })
+    }
+
+    fn write_vram_at_current_dot(&mut self, address: u32, width: AccessWidth, value: u32) {
+        // Raster history is observed only by visible dots. The write still
+        // marks VRAM dirty and each beat still advances to its own endpoint.
+        if usize::from(self.ppu_timing.line) >= SCREEN_HEIGHT
+            || self.ppu_timing.cycle_in_line >= 960
+        {
+            self.write_vram(address, width, value);
+            return;
+        }
+        let snapshot = self.snapshot_vram_write(address, width);
+        self.write_vram(address, width, value);
+        self.record_vram_write(snapshot);
     }
 
     pub(crate) fn write_vram(&mut self, address: u32, width: AccessWidth, value: u32) {
