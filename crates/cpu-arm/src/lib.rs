@@ -862,7 +862,8 @@ impl Core {
         debug_assert!(!register_offset || instruction & (1 << 4) == 0);
         let base = self.registers[rn];
         let offset = if register_offset {
-            self.decode_operand2(instruction).value
+            // Bit 25 selects a register offset here, but an immediate in data processing.
+            self.decode_operand2(instruction & !(1 << 25)).value
         } else {
             instruction & 0xfff
         };
@@ -1234,6 +1235,22 @@ mod tests {
         assert_eq!(bus.reads, [(0x0200_0000, AccessWidth::Word, AccessKind::Nonsequential)]);
         assert_eq!(cpu.next_instruction_address, 0x0001_8000);
         assert_eq!(bus.internal, 1);
+    }
+
+    /// ZiGBA `executeSingleDataTransfer`: bit 25 selects a register offset, not a rotated immediate.
+    #[test]
+    fn arm_str_register_offset_uses_shifted_register_value() {
+        let mut cpu = Core::new(0x0800_0040, 0x1f);
+        cpu.registers[0] = 0x1111_1111;
+        cpu.registers[1] = 0x0600_4000;
+        cpu.registers[2] = 7;
+        let mut bus = TraceBus::default();
+        // STR r0, [r1, r2, LSL #2]: the target is the last word of a 32-byte tile.
+        cpu.execute_arm(&mut bus, 0xe781_0102).unwrap();
+        assert_eq!(
+            bus.writes,
+            [(0x0600_401c, AccessWidth::Word, AccessKind::Nonsequential, 0x1111_1111)]
+        );
     }
 
     /// ZiGBA `executeBlockDataTransfer`: empty STM transfers one aligned PC beat and steps by 64.
