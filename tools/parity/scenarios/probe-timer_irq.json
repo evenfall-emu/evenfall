@@ -1,0 +1,16 @@
+{
+  "name": "probe-timer_irq",
+  "assets": {
+    "rom": "../../../probe/build/timer_irq.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "inputs": [],
+  "endCycle": "1123584",
+  "checkpoints": ["1123584"],
+  "sliceCycles": ["70224", "280896"],
+  "terminalPc": 134218500,
+  "terminalR12": 655874
+}

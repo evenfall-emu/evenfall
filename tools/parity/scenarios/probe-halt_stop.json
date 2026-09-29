@@ -1,0 +1,23 @@
+{
+  "name": "probe-halt_stop",
+  "assets": {
+    "rom": "../../../probe/build/halt_stop.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "inputs": [
+    {
+      "at": "700",
+      "change": {
+        "keys": 1
+      }
+    }
+  ],
+  "endCycle": "1123584",
+  "checkpoints": ["1123584"],
+  "sliceCycles": ["70224", "280896"],
+  "terminalPc": 134218500,
+  "terminalR12": 2
+}

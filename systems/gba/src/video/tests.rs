@@ -89,7 +89,7 @@ fn text_tile_rows_match_the_per_dot_text_renderer() {
         for color in &mut rows.palette {
             *color = next(&mut seed) as u8;
         }
-        for chunk in rows.vram.chunks_exact_mut(4) {
+        for chunk in rows.vram.as_chunks_mut::<4>().0 {
             let value = match next(&mut seed) & 3 {
                 0 => 0,
                 1 => next(&mut seed) | 0x1111_1111,
@@ -132,6 +132,100 @@ fn text_tile_rows_match_the_per_dot_text_renderer() {
         rows.render_scanline(line);
         dots.render_scanline(line);
         assert_line(&rows, &dots, line);
+    }
+}
+
+/// ZiGBA bus_test: "ordinary and effects-aware text spans agree across map wraps flips and transparency"
+#[test]
+fn ordinary_and_effects_aware_text_spans_agree_across_map_wraps_flips_and_transparency() {
+    for color_256 in [false, true] {
+        for variant in 0..4 {
+            let mut bus = Bus::init(&[]);
+            bus.dispcnt = 1 << 9;
+            bus.bg_controls[1] = 2 | (24 << 8) | (3 << 14) | u16::from(color_256) << 7;
+            bus.bg_horizontal_offsets[1] = 507;
+            bus.bg_vertical_offsets[1] = 503;
+            match variant {
+                1 => {
+                    bus.dispcnt |= 1 << 13;
+                    bus.win0h = 0x00FF;
+                    bus.win0v = 0x00FF;
+                    bus.winin = 0x3F;
+                }
+                2 => {
+                    bus.bldcnt = (1 << 1) | (1 << 6) | (1 << 13);
+                    bus.bldalpha = 16;
+                }
+                3 => {
+                    bus.dispcnt |= 1 << 13;
+                    bus.win0h = (100 << 8) | 160;
+                    bus.win0v = 0x00FF;
+                    bus.winout = 0x3F;
+                }
+                _ => {}
+            }
+            for index in 0..256 {
+                bus.palette[index * 2..index * 2 + 2].copy_from_slice(
+                    &(0x8000 | ((index * 73 + 0x1234) & 0x7FFF) as u16).to_le_bytes(),
+                );
+            }
+            let depth = if color_256 { 256 } else { 16 };
+            for tile in 0..16 {
+                for row in 0..8 {
+                    for column in 0..8 {
+                        let index = ((tile * 17 + row * 3 + column * 5) % depth) as u8;
+                        if color_256 {
+                            bus.vram[tile * 64 + row * 8 + column] = index;
+                        } else {
+                            bus.vram[tile * 32 + row * 4 + column / 2] |=
+                                index << ((column & 1) * 4);
+                        }
+                    }
+                }
+            }
+            for tile_y in 0..64 {
+                for tile_x in 0..64 {
+                    let entry = (((tile_x + tile_y * 3) % 16)
+                        | ((tile_x & 1) << 10)
+                        | ((tile_y & 1) << 11)
+                        | ((tile_y % 16) << 12)) as u16;
+                    let offset = 0xC000
+                        + (tile_y / 32 * 2 + tile_x / 32) * 0x800
+                        + (tile_y % 32 * 32 + tile_x % 32) * 2;
+                    bus.vram[offset..offset + 2].copy_from_slice(&entry.to_le_bytes());
+                }
+            }
+            for y in [0, 1, 8, 159] {
+                bus.render_scanline(y);
+                for x in 0..SCREEN_WIDTH {
+                    let world_x = (x + 507) % 512;
+                    let world_y = (y + 503) % 512;
+                    let tile_x = world_x / 8;
+                    let tile_y = world_y / 8;
+                    let column = if tile_x & 1 != 0 { 7 - world_x % 8 } else { world_x % 8 };
+                    let row = if tile_y & 1 != 0 { 7 - world_y % 8 } else { world_y % 8 };
+                    let tile = (tile_x + tile_y * 3) % 16;
+                    let index = (tile * 17 + row * 3 + column * 5) % depth;
+                    let hidden = variant == 3 && (100..160).contains(&x);
+                    let palette_index = if index == 0 || hidden {
+                        0
+                    } else if color_256 {
+                        index
+                    } else {
+                        tile_y % 16 * 16 + index
+                    };
+                    let expected = ((palette_index * 73 + 0x1234) & 0x7FFF) as u16;
+                    let i = y * SCREEN_WIDTH + x;
+                    assert_eq!(
+                        bus.frame_pixels[i], expected,
+                        "depth={depth}, variant={variant}, x={x}, y={y}"
+                    );
+                    let visible = index != 0 && !hidden;
+                    assert_eq!(bus.frame_priorities[i], if visible { 2 } else { 4 });
+                    assert_eq!(bus.frame_layers[i], if visible { 1 } else { 5 });
+                }
+            }
+        }
     }
 }
 
