@@ -12,6 +12,7 @@ publish.workspace = true
 evenfall-audio.workspace = true
 evenfall-cpu-arm.workspace = true
 evenfall-host.workspace = true
+evenfall-state.workspace = true
 
 [lints]
 workspace = true
