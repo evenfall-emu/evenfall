@@ -63,11 +63,19 @@ export function useRewindTimeline() {
     () => player.state.rewindTimeline,
   );
   const [timeline, setTimeline] = useState<Timeline>();
+  const [selected, setSelected] = useState(0);
   useEffect(() => {
     if (!rewindTimeline) setTimeline(undefined);
   }, [rewindTimeline]);
   const open = useCallback(() => {
-    void player.openRewindTimeline().then(setTimeline).catch(player.error);
+    void player
+      .openRewindTimeline()
+      .then((next) => {
+        if (!next) return;
+        setSelected(next.checkpoints.length - 1);
+        setTimeline(next);
+      })
+      .catch(player.error);
   }, []);
   const close = useCallback(
     (checkpoint?: Timeline["checkpoints"][number]) => {
@@ -87,7 +95,7 @@ export function useRewindTimeline() {
     },
     [timeline],
   );
-  return { timeline, open, close };
+  return { timeline, selected, setSelected, open, close };
 }
 export type RewindTimelineControl = ReturnType<typeof useRewindTimeline>;
 
@@ -100,7 +108,13 @@ export function ConsolePlayer({
   rewind: RewindTimelineControl;
 }) {
   const state = useSyncExternalStore(player.subscribe, player.snapshot);
-  const { timeline, open: openTimeline, close: closeTimeline } = rewind;
+  const {
+    timeline,
+    selected,
+    setSelected,
+    open: openTimeline,
+    close: closeTimeline,
+  } = rewind;
   const displayRef = useRef<HTMLDivElement>(null);
   const screenRef = useCallback((canvas: HTMLCanvasElement | null) => {
     player.canvas = canvas ?? undefined;
@@ -223,6 +237,8 @@ export function ConsolePlayer({
           {timeline && (
             <RewindTimeline
               timeline={timeline}
+              selected={selected}
+              onSelect={setSelected}
               container={displayRef}
               close={closeTimeline}
             />

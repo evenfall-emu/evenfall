@@ -63,14 +63,17 @@ function Thumbnail({
 
 export function RewindTimeline({
   timeline,
+  selected,
+  onSelect,
   container,
   close,
 }: {
   timeline: Timeline;
+  selected: number;
+  onSelect: (index: number) => void;
   container: RefObject<HTMLDivElement | null>;
   close: (checkpoint?: RewindCheckpoint) => void;
 }) {
-  const [selected, setSelected] = useState(timeline.checkpoints.length - 1);
   const cache = useRef(new RewindFrameCache()).current;
   const range = useRef<HTMLInputElement>(null);
   const checkpoint = timeline.checkpoints[selected];
@@ -113,7 +116,7 @@ export function RewindTimeline({
                 checkpoint={timeline.checkpoints[index]}
                 selected={index === selected}
                 cache={cache}
-                choose={() => setSelected(index)}
+                choose={() => onSelect(index)}
               />
             ))}
           </div>
@@ -125,7 +128,7 @@ export function RewindTimeline({
             max={timeline.checkpoints.length - 1}
             step="1"
             value={selected}
-            onChange={(event) => setSelected(Number(event.target.value))}
+            onChange={(event) => onSelect(Number(event.target.value))}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();

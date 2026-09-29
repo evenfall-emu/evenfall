@@ -132,8 +132,13 @@ const phone = ({ width, height }: { width: number; height: number }) =>
 
 async function screenFillsColumn(page: Page) {
   const viewport = page.viewportSize()!;
-  // Crossing the phone breakpoint swaps layouts; measure the settled one.
+  // Crossing portrait/landscape also changes the handheld's own layout.
   await expect(page.locator(".handheld")).toHaveCount(phone(viewport) ? 1 : 0);
+  if (phone(viewport))
+    await expect(page.locator(".handheld")).toHaveAttribute(
+      "data-orientation",
+      viewport.width < viewport.height ? "portrait" : "landscape",
+    );
   const geometry = await page.locator(".console-player").evaluate((player) => {
     const display = player.querySelector(".game-display")!;
     const canvas = display.querySelector("canvas")!;
@@ -407,7 +412,8 @@ test("R steps once while Shift+R previews and commits exact checkpoints", async 
   await expect(range).toHaveValue(
     String(before.timeline.checkpoints.length - 2),
   );
-  await range.fill(String(Math.floor(before.timeline.checkpoints.length / 2)));
+  const midpoint = String(Math.floor(before.timeline.checkpoints.length / 2));
+  await range.fill(midpoint);
   const selected = before.timeline.checkpoints[0];
   const previewed = await page.evaluate(async () => {
     const emulator = (window as unknown as { emulator: Emulator }).emulator;
@@ -425,6 +431,10 @@ test("R steps once while Shift+R previews and commits exact checkpoints", async 
   await page.setViewportSize({ width: 1280, height: 900 });
   await dialog.screenshot({ path: "../artifacts/rewind/timeline-desktop.png" });
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect(
+    page.locator('.handheld[data-orientation="portrait"]'),
+  ).toBeVisible();
+  await expect(range).toHaveValue(midpoint);
   await dialog.screenshot({ path: "../artifacts/rewind/timeline-mobile.png" });
   expect(
     await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth),
