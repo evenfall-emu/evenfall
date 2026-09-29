@@ -1070,6 +1070,7 @@ impl Bus {
         }
     }
 
+    #[inline(always)]
     pub fn write(&mut self, access: Access, value: u32) -> WriteResult {
         let started_at = self.current_cycle;
         let address = access.address;
@@ -3019,6 +3020,7 @@ impl Bus {
         boundary
     }
 
+    #[inline(always)]
     fn advance(&mut self, cycles: Cycle) {
         let end = self.current_cycle + cycles;
         if self.batch_active && end < self.batch_deadline {
@@ -3511,6 +3513,7 @@ impl Bus {
         self.object_line_index = 0xffff;
     }
 
+    #[inline(always)]
     fn complete_read(&mut self, value: u32, cycles: Cycle) -> ReadResult {
         let started_at = self.current_cycle;
         self.open_bus_value = value;
