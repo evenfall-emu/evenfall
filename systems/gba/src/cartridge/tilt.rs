@@ -23,6 +23,14 @@ pub struct Tilt {
     pub command_armed: bool,
 }
 
+/// The power-on sensor with a centred input. Decoding an `Option<Tilt>` starts
+/// from this value and then overwrites every field.
+impl Default for Tilt {
+    fn default() -> Self {
+        Self::init(Sample::default())
+    }
+}
+
 impl Tilt {
     pub fn init(input: Sample) -> Self {
         Self { input, latched: Sample { x: 0xfff, y: 0xfff }, command_armed: false }
