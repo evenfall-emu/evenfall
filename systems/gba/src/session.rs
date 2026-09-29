@@ -7,8 +7,18 @@ use crate::machine::{
     StopReason,
 };
 use crate::rom_image;
+use crate::video_recovery::{self, VideoRecovery};
 use evenfall_audio::{Resampler, StereoSample};
+use evenfall_state::rewind::{self, RewindBuffer};
 use sha1::{Digest, Sha1};
+
+pub use rewind::{Compression as RewindCompression, Info as RewindInfo, RewindConfig};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RewindPosition {
+    pub frame: u64,
+    pub cycle: u64,
+}
 
 pub struct Session {
     pub machine: Box<Machine>,
@@ -22,6 +32,8 @@ pub struct Session {
     rtc_epoch: u64,
     pub audio_output_enabled: bool,
     pub video_interval: u16,
+    video_recovery: Option<VideoRecovery>,
+    rewind_history: RewindBuffer,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -34,6 +46,7 @@ pub struct Config<'a> {
     pub rtc_enabled: Option<bool>,
     pub rtc_epoch: u64,
     pub output_rate: u32,
+    pub rewind: RewindConfig,
 }
 
 impl Default for Config<'_> {
@@ -47,6 +60,7 @@ impl Default for Config<'_> {
             rtc_enabled: None,
             rtc_epoch: 0,
             output_rate: 48_000,
+            rewind: RewindConfig::default(),
         }
     }
 }
@@ -63,7 +77,12 @@ pub enum Error {
     StateTooLarge,
     InvalidVideoInterval,
     MachineFaulted,
+    InvalidRewindSteps,
+    RewindEmpty,
+    InvalidFramebufferSize,
+    Recovery(video_recovery::Error),
     Image(rom_image::Error),
+    Rewind(evenfall_state::Error),
     State(StateError),
     Run(RunError),
 }
@@ -87,6 +106,16 @@ impl From<StateError> for Error {
 impl From<RunError> for Error {
     fn from(error: RunError) -> Self {
         Self::Run(error)
+    }
+}
+impl From<evenfall_state::Error> for Error {
+    fn from(error: evenfall_state::Error) -> Self {
+        Self::Rewind(error)
+    }
+}
+impl From<video_recovery::Error> for Error {
+    fn from(error: video_recovery::Error) -> Self {
+        Self::Recovery(error)
     }
 }
 
@@ -149,6 +178,7 @@ impl Session {
         let rom_sha1 = Sha1::digest(&rom).into();
         let resampler = Resampler::new(machine.audio_sample_rate(), config.output_rate)
             .map_err(|_| Error::InvalidSampleRate)?;
+        let rewind_history = RewindBuffer::new(config.rewind)?;
         Ok(Self {
             machine,
             rom,
@@ -160,6 +190,8 @@ impl Session {
             rtc_epoch: config.rtc_epoch,
             audio_output_enabled: true,
             video_interval: 1,
+            video_recovery: None,
+            rewind_history,
         })
     }
 
@@ -184,14 +216,144 @@ impl Session {
         {
             return Err(Error::TargetBeforeCurrentCycle);
         }
-        Ok(self.machine.run_slice_with_input(deadline, input_deadline, inputs)?)
+        let Some(recovery) = &mut self.video_recovery else {
+            let result = self.machine.run_slice_with_input(deadline, input_deadline, inputs)?;
+            self.maybe_push_rewind();
+            return Ok(result);
+        };
+        let started_at = self.machine.now();
+        let mut consumed = 0;
+        loop {
+            let target = deadline.min(self.machine.bus.next_rendered_frame_cycle());
+            let mut result = recovery.run(
+                &mut self.machine,
+                crate::machine::Slice { yield_at: target, input_deadline, stop_at: Some(deadline) },
+                &inputs[consumed..],
+            )?;
+            consumed += result.inputs_consumed;
+            result.started_at = started_at;
+            result.inputs_consumed = consumed;
+            match result.reason {
+                StopReason::Faulted(_) => return Ok(result),
+                StopReason::PowerStopped => {
+                    self.maybe_push_rewind();
+                    return Ok(result);
+                }
+                _ if self.machine.now() >= deadline => {
+                    result.reason = if self.machine.now() == deadline {
+                        StopReason::Deadline
+                    } else {
+                        StopReason::InstructionBoundaryAfterDeadline
+                    };
+                    self.maybe_push_rewind();
+                    return Ok(result);
+                }
+                _ => {}
+            }
+        }
     }
 
-    pub fn set_keys(&mut self, keys: KeyState) {
-        self.machine.set_keys(keys);
+    pub fn set_keys(&mut self, keys: KeyState) -> Result<(), Error> {
+        if let Some(recovery) = &mut self.video_recovery {
+            recovery.set_keys(&mut self.machine, keys)?;
+        } else {
+            self.machine.set_keys(keys);
+        }
+        Ok(())
     }
-    pub fn step(&mut self) -> StepOutcome {
-        self.machine.step()
+    pub fn step(&mut self) -> Result<StepOutcome, Error> {
+        let outcome = if let Some(recovery) = &mut self.video_recovery {
+            recovery.step(&mut self.machine)?
+        } else {
+            self.machine.step()
+        };
+        if !matches!(outcome, StepOutcome::Faulted(_)) {
+            self.maybe_push_rewind();
+        }
+        Ok(outcome)
+    }
+
+    /// A failed or noncanonical capture is a skipped host-policy tick.
+    fn maybe_push_rewind(&mut self) {
+        if self.machine.fault().is_some() {
+            return;
+        }
+        let frame = self.machine.completed_frames();
+        if !self.rewind_history.due_for_capture(frame) {
+            return;
+        }
+        let state = match self.write_state() {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                self.rewind_history.note_skipped(frame);
+                return;
+            }
+        };
+        if self.rewind_history.push(frame, self.machine.now(), &state).is_err() {
+            self.rewind_history.note_skipped(frame);
+        }
+    }
+
+    pub fn rewind(&mut self, steps: usize) -> Result<RewindPosition, Error> {
+        if steps == 0 {
+            return Err(Error::InvalidRewindSteps);
+        }
+        let index = self
+            .rewind_history
+            .target_older_than(self.machine.completed_frames(), steps)
+            .ok_or(Error::RewindEmpty)?;
+        let info = self.rewind_history.info(index).ok_or(Error::RewindEmpty)?;
+        let state = self.rewind_history.decode(index)?;
+        self.machine.load_state(&state)?;
+        self.machine.set_audio_output(self.audio_output_enabled);
+        if let Some(recovery) = &mut self.video_recovery {
+            recovery.rebase(&self.machine)?;
+        }
+        self.machine.bus.set_video_interval(self.video_interval);
+        self.resampler.reset();
+        self.rewind_history.truncate_newer(index);
+        Ok(RewindPosition { frame: info.frame, cycle: info.cycle })
+    }
+
+    pub fn set_rewind_config(&mut self, config: RewindConfig) -> Result<(), Error> {
+        self.rewind_history.set_config(config)?;
+        Ok(())
+    }
+    pub fn set_rewind_speed_scale(&mut self, scale_q8: u16) -> Result<(), Error> {
+        self.rewind_history.set_speed_scale(scale_q8)?;
+        Ok(())
+    }
+    pub fn clear_rewind(&mut self) {
+        self.rewind_history.clear();
+    }
+    pub fn rewind_depth(&self) -> usize {
+        self.rewind_history.depth()
+    }
+    pub fn rewind_memory_bytes(&self) -> usize {
+        self.rewind_history.memory_bytes()
+    }
+    pub fn rewind_info(&self, index: usize) -> Option<RewindInfo> {
+        self.rewind_history.info(index)
+    }
+
+    pub fn rewind_framebuffer(
+        &self,
+        index: usize,
+        output: &mut [u16],
+    ) -> Result<RewindInfo, Error> {
+        if output.len() != 240 * 160 {
+            return Err(Error::InvalidFramebufferSize);
+        }
+        let state = self.rewind_history.decode(index)?;
+        let mut scratch = Machine::new(MachineConfig {
+            rom: &self.rom,
+            bios: &self.bios,
+            boot: if self.bios.is_empty() { BootMode::Hle } else { BootMode::ExternalBios },
+            ..MachineConfig::default()
+        });
+        scratch.load_state(&state)?;
+        output.copy_from_slice(scratch.framebuffer());
+        self.rewind_history.info(index).ok_or(Error::InvalidRewindSteps)
     }
 
     /// Host preference survives state loads and resets, but is not serialized.
@@ -223,11 +385,21 @@ impl Session {
         if !(1..=16).contains(&interval) {
             return Err(Error::InvalidVideoInterval);
         }
+        if interval == self.video_interval {
+            return Ok(());
+        }
         if interval == 1 {
+            if let Some(recovery) = &mut self.video_recovery {
+                recovery.materialize(&mut self.machine)?;
+                self.video_recovery = None;
+            }
             self.machine.bus.use_full_video();
         } else {
             if self.machine.fault().is_some() {
                 return Err(Error::MachineFaulted);
+            }
+            if self.video_recovery.is_none() {
+                self.video_recovery = Some(VideoRecovery::create(&self.machine)?);
             }
             self.machine.bus.set_video_interval(interval);
         }
@@ -236,6 +408,9 @@ impl Session {
     }
 
     pub fn canonical_framebuffer(&mut self) -> Result<&[u16], Error> {
+        if let Some(recovery) = &mut self.video_recovery {
+            recovery.materialize(&mut self.machine)?;
+        }
         Ok(self.machine.framebuffer())
     }
 
@@ -244,14 +419,54 @@ impl Session {
         Ok(self.machine.write_state_alloc()?)
     }
 
+    /// Portable live state plus the exact retained rewind policy and history.
+    pub fn write_rewind_bundle(&mut self) -> Result<Vec<u8>, Error> {
+        let live = self.write_state()?;
+        Ok(self.rewind_history.write_bundle(&live)?)
+    }
+
+    pub fn load_rewind_bundle(&mut self, bytes: &[u8]) -> Result<(), Error> {
+        // A decoded checkpoint is never trusted just because the outer digest
+        // matches. Reuse one scratch machine to validate all anchors/entries.
+        let scratch = std::cell::RefCell::new(Machine::new(MachineConfig {
+            rom: &self.rom,
+            bios: &self.bios,
+            boot: if self.bios.is_empty() { BootMode::Hle } else { BootMode::ExternalBios },
+            ..MachineConfig::default()
+        }));
+        let (live, history) = RewindBuffer::read_bundle(bytes, |state| {
+            let mut next = scratch.borrow_mut();
+            next.load_state(state).map_err(|error| match error {
+                StateError::Codec(error) => error,
+                _ => evenfall_state::Error::InvalidSaveState,
+            })?;
+            Ok((next.completed_frames(), next.now()))
+        })?;
+        let mut next = scratch.into_inner();
+        next.load_state(&live)?;
+        next.set_audio_output(self.audio_output_enabled);
+        next.bus.set_video_interval(self.video_interval);
+        if let Some(recovery) = &mut self.video_recovery {
+            recovery.rebase(&next)?;
+        }
+        self.machine = next;
+        self.rewind_history = history;
+        self.resampler.reset();
+        Ok(())
+    }
+
     pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), Error> {
         if bytes.len() > 2 * 1024 * 1024 {
             return Err(Error::StateTooLarge);
         }
         self.machine.load_state(bytes)?;
         self.machine.set_audio_output(self.audio_output_enabled);
+        if let Some(recovery) = &mut self.video_recovery {
+            recovery.rebase(&self.machine)?;
+        }
         self.machine.bus.set_video_interval(self.video_interval);
         self.resampler.reset();
+        self.rewind_history.clear();
         Ok(())
     }
 
@@ -277,6 +492,121 @@ impl Session {
         next.bus.set_video_interval(self.video_interval);
         self.machine = next;
         self.resampler.reset();
+        self.rewind_history.clear();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LOOP_ROM: &[u8] = &[0xfe, 0xff, 0xff, 0xea];
+
+    /// Zig: "owned sessions isolate state and preserve snapshot continuation"
+    #[test]
+    fn owned_sessions_isolate_state_and_preserve_snapshot_continuation() {
+        let mut a = Session::create(Config { image: LOOP_ROM, ..Config::default() }).unwrap();
+        let mut b = Session::create(Config { image: LOOP_ROM, ..Config::default() }).unwrap();
+        a.advance(1000).unwrap();
+        assert_eq!(b.machine.now(), 0);
+        let state = a.write_state().unwrap();
+        b.load_state(&state).unwrap();
+        a.advance(2000).unwrap();
+        b.advance(2000).unwrap();
+        assert_eq!(a.write_state().unwrap(), b.write_state().unwrap());
+        let before = a.machine.inspect_cpu();
+        assert!(matches!(
+            a.advance(a.machine.now() + Machine::CYCLES_PER_FRAME + 1),
+            Err(Error::ExecutionBudgetExceeded)
+        ));
+        assert_eq!(a.machine.inspect_cpu(), before);
+        let mut malformed = state;
+        malformed[0] ^= 1;
+        assert!(a.load_state(&malformed).is_err());
+        assert_eq!(a.machine.inspect_cpu(), before);
+    }
+
+    /// Zig: "session rejects invalid media and configuration before constructing a machine"
+    #[test]
+    fn session_rejects_invalid_media_and_configuration_before_constructing_a_machine() {
+        assert!(matches!(Session::create(Config::default()), Err(Error::InvalidRomSize)));
+        assert!(matches!(
+            Session::create(Config { image: &[1], bios: &[1], ..Config::default() }),
+            Err(Error::InvalidBiosSize)
+        ));
+        assert!(matches!(
+            Session::create(Config { image: &[1], output_rate: 0, ..Config::default() }),
+            Err(Error::InvalidSampleRate)
+        ));
+        assert!(matches!(
+            Session::create(Config { image: &[1], save: Some(&[1]), ..Config::default() }),
+            Err(Error::Image(rom_image::Error::InvalidSaveFileSize))
+        ));
+    }
+
+    /// Zig: "buffered snapshots match streamed state bytes for owned and borrowed media"
+    #[test]
+    fn buffered_snapshots_match_streamed_state_bytes_for_owned_media() {
+        for save_type in [
+            SaveType::None,
+            SaveType::Sram,
+            SaveType::Flash64k,
+            SaveType::Flash128k,
+            SaveType::Eeprom512,
+            SaveType::Eeprom8k,
+        ] {
+            let mut session = Session::create(Config {
+                image: LOOP_ROM,
+                save_type: Some(save_type),
+                rtc_enabled: Some(true),
+                rtc_epoch: 12345,
+                ..Config::default()
+            })
+            .unwrap();
+            session.advance(12345).unwrap();
+            let snapshot = session.write_state().unwrap();
+            let mut stream = Vec::new();
+            session.machine.write_state(&mut stream).unwrap();
+            assert_eq!(stream, snapshot);
+            let mut restored = Machine::new(MachineConfig {
+                rom: LOOP_ROM,
+                save_type,
+                rtc_epoch_seconds: Some(12345),
+                ..MachineConfig::default()
+            });
+            restored.load_state(&snapshot).unwrap();
+            assert_eq!(restored.write_state_alloc().unwrap(), snapshot);
+        }
+    }
+
+    /// Zig: "save restoration boots resident media and failure preserves the running session"
+    #[test]
+    fn save_restoration_boots_resident_media_and_failure_preserves_the_running_session() {
+        let mut session = Session::create(Config {
+            image: LOOP_ROM,
+            rtc_enabled: Some(true),
+            rtc_epoch: 12345,
+            ..Config::default()
+        })
+        .unwrap();
+        session.advance(1000).unwrap();
+        let before = session.write_state().unwrap();
+        assert!(matches!(
+            session.reset_with_save(&[1]),
+            Err(Error::Image(rom_image::Error::InvalidSaveFileSize))
+        ));
+        assert_eq!(session.write_state().unwrap(), before);
+        let save = vec![0xa5; 32768];
+        session.reset_with_save(&save).unwrap();
+        let mut loaded = Session::create(Config {
+            image: LOOP_ROM,
+            save: Some(&save),
+            rtc_enabled: Some(true),
+            rtc_epoch: 12345,
+            ..Config::default()
+        })
+        .unwrap();
+        assert_eq!(session.write_state().unwrap(), loaded.write_state().unwrap());
     }
 }
