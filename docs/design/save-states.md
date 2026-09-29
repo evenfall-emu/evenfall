@@ -103,7 +103,9 @@ optional diagnostics, not part of the serialized format.
 The header stores boot mode and the lengths and BLAKE3 digests of the ROM and
 BIOS. Evenfall copies borrowed input or adopts an owned ROM into immutable shared
 media and computes its digests once; ZiGBA's live borrowed-mutable-media identity
-mode has no Rust equivalent. The reader checks magic, version, schema, payload bound,
+mode has no Rust equivalent. The media handles expose no mutable bytes; replacing
+an entire public `Machine.bus` or `Session.machine` is outside the supported
+media-binding lifecycle. The reader checks magic, version, schema, payload bound,
 boot mode, ROM and BIOS in that order, then validates the payload length,
 checksum and absence of trailing data. It reports the specific version,
 schema or media mismatch. The checksum detects corruption, not forgery:

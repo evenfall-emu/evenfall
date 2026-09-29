@@ -1,6 +1,6 @@
 //! Owned, host-independent session translated from `session.zig`.
 
-use crate::bus::{KeyState, TimedInput};
+use crate::bus::{KeyState, Media, TimedInput};
 use crate::cartridge::{self, save::Type as SaveType};
 use crate::machine::{
     BootMode, Config as MachineConfig, Machine, RunError, RunResult, StateError, StepOutcome,
@@ -11,7 +11,6 @@ use crate::video_recovery::{self, VideoRecovery};
 use evenfall_audio::{Resampler, StereoSample};
 use evenfall_state::rewind::{self, RewindBuffer};
 use sha1::{Digest, Sha1};
-use std::sync::Arc;
 
 pub use rewind::{Compression as RewindCompression, Info as RewindInfo, RewindConfig};
 
@@ -22,9 +21,12 @@ pub struct RewindPosition {
 }
 
 pub struct Session {
+    /// The live machine is inspectable; replacing it wholesale bypasses the
+    /// session's resident-media binding. Use load_state/reset_with_save for
+    /// resident media, or construct a new Session for different media.
     pub machine: Box<Machine>,
-    rom: Arc<Vec<u8>>,
-    bios: Arc<[u8]>,
+    rom: Media,
+    bios: Media,
     /// Game identity, SHA-1 of the raw ROM.
     pub rom_sha1: [u8; 20],
     pub rtc_enabled: bool,
@@ -221,7 +223,7 @@ impl Session {
             Ok(prepared) => prepared,
             Err(error) => return Err((error, upload.map(|(buffer, _)| buffer))),
         };
-        let rom = Arc::new(if let Some(rom) = extracted {
+        let rom = Media::from_vec(if let Some(rom) = extracted {
             rom
         } else if let Some((mut buffer, image_len)) = upload {
             buffer.truncate(image_len);
@@ -229,7 +231,7 @@ impl Session {
         } else {
             copied.expect("borrowed raw ROM was copied during preparation")
         });
-        let bios: Arc<[u8]> = bios_copy.into();
+        let bios = Media::from_vec(bios_copy);
         let machine = Machine::new_with_owned_media(
             MachineConfig {
                 boot: if config.bios.is_empty() { BootMode::Hle } else { BootMode::ExternalBios },
@@ -242,8 +244,8 @@ impl Session {
                 tilt_sample: features.tilt.then_some(Default::default()),
                 ..MachineConfig::default()
             },
-            Arc::clone(&rom),
-            Arc::clone(&bios),
+            rom.clone(),
+            bios.clone(),
         );
         // The output rate is checked above and a freshly initialized APU
         // always has a nonzero sample rate.
@@ -651,9 +653,9 @@ mod tests {
         let address = buffer.as_ptr();
         let session =
             Session::create_from_owned_buffer(Config::default(), buffer, LOOP_ROM.len()).unwrap();
-        assert_eq!(session.rom.as_ref().as_ptr(), address);
+        assert_eq!(session.rom.as_ptr(), address);
         assert_eq!(session.rom.as_slice(), LOOP_ROM);
-        assert!(Arc::ptr_eq(&session.rom, &session.machine.bus.rom));
+        assert_eq!(session.rom.as_ptr(), session.machine.bus.rom.as_ptr());
 
         let buffer = LOOP_ROM.to_vec();
         let address = buffer.as_ptr();
@@ -711,7 +713,7 @@ mod tests {
             let mut stream = Vec::new();
             session.machine.write_state(&mut stream).unwrap();
             assert_eq!(stream, snapshot);
-            let rom = Arc::clone(&session.rom);
+            let rom = session.rom.clone();
             let mut restored = Machine::new_with_owned_media(
                 MachineConfig {
                     save_type,
@@ -719,9 +721,9 @@ mod tests {
                     ..MachineConfig::default()
                 },
                 rom,
-                Arc::clone(&session.bios),
+                session.bios.clone(),
             );
-            assert!(Arc::ptr_eq(&session.rom, &restored.bus.rom));
+            assert_eq!(session.rom.as_ptr(), restored.bus.rom.as_ptr());
             restored.load_state(&snapshot).unwrap();
             assert_eq!(restored.write_state_alloc().unwrap(), snapshot);
         }
@@ -739,7 +741,7 @@ mod tests {
         let state = session.write_state().unwrap();
         caller_bios[100] = 1;
         assert_eq!(session.write_state().unwrap(), state);
-        assert!(Arc::ptr_eq(&session.bios, &session.machine.bus.bios));
+        assert_eq!(session.bios.as_ptr(), session.machine.bus.bios.as_ptr());
 
         let mut foreign = Machine::new(MachineConfig {
             rom: LOOP_ROM,
