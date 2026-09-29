@@ -17,7 +17,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 mod kernel;
-pub(crate) use kernel::{EngineMemory, PrefetchClock, RomData, VideoMemory};
+pub(crate) use kernel::{EngineMemory, PrefetchClock, RomData, RunRegisters, VideoMemory};
 pub use kernel::{begin_arm_iwram_slice, fetch_arm_iwram_in_slice};
 use kernel::{oam_read, palette_read, vram_read};
 
@@ -3059,7 +3059,8 @@ impl Bus {
 
     fn advance_step(&mut self, cycles: Cycle) {
         self.advance_game_pak_prefetch(cycles);
-        let events = self.ppu_timing.elapse(cycles);
+        let mut events = crate::video::timing::Events::default();
+        self.ppu_timing.elapse(cycles, &mut events);
         let end = self.current_cycle + cycles;
         let mut audio_requests = 0;
         if !self.devices_deferred {
@@ -3123,14 +3124,15 @@ impl Bus {
             || events.hblank_irq
             || events.vcount_irq
         {
-            self.deliver_lcd_events(events);
+            // By reference, not moved: see `PpuTiming::elapse`.
+            self.deliver_lcd_events(&events);
         }
         if audio_requests != 0 {
             self.queue_audio_dma(audio_requests);
         }
     }
 
-    fn deliver_lcd_events(&mut self, events: crate::video::timing::Events) {
+    fn deliver_lcd_events(&mut self, events: &crate::video::timing::Events) {
         for line in events.hblank_lines.iter() {
             if self.video_render_current {
                 self.render_scanline(line);

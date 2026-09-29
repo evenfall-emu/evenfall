@@ -869,7 +869,7 @@ fn mmio_transfers_in_runs_match_stepping() {
     }
     let (mut runs, mut irq_entries, mut halts) = (0, 0, 0);
     let mmio_before = super::MMIO_ACCESSES.get();
-    let irq_before = super::IRQ_ACCESSES.get();
+    let irq_before = super::LOCAL_ACCESSES.get();
     for trial in 0..600 {
         let place = trial % 4;
         let (pc, is_thumb) = match place {
@@ -934,12 +934,116 @@ fn mmio_transfers_in_runs_match_stepping() {
         pair.settle(&context);
     }
     let mmio = super::MMIO_ACCESSES.get() - mmio_before;
-    let irq = super::IRQ_ACCESSES.get() - irq_before;
+    let irq = super::LOCAL_ACCESSES.get() - irq_before;
     assert!(irq > 50_000, "only {irq} interrupt register accesses in engine runs");
     assert!(runs > 1500, "only {runs} runs");
     assert!(mmio > 20_000, "only {mmio} MMIO accesses in engine runs");
     assert!(irq_entries > 80, "only {irq_entries} IRQs raised in engine runs");
     assert!(halts > 40, "only {halts} halts");
+}
+
+/// DMA-setup-shaped code: source and destination words, a byte and a
+/// halfword into another channel's latches and loads of count and control
+/// registers, which runs serve themselves, then a count and control store
+/// that enables DMA 3 (on the bus), so the transfer copies from what the
+/// latches hold; in ARM code from IWRAM and Thumb code from IWRAM and Game
+/// Pak ROM, match stepping.
+#[test]
+fn dma_setup_in_runs_matches_stepping() {
+    // r4 = 0x04000000 (ARM), r5 = 0x040000b0 (Thumb), r2 = source,
+    // r3 = destination, r6 = DMA3 count and control, r7 = noise.
+    let arm = [
+        0xe282_2004_u32, // ADD r2, r2, #4
+        0xe584_20d4,     // STR r2, [r4, #0xd4]  DMA3SAD
+        0xe584_30d8,     // STR r3, [r4, #0xd8]  DMA3DAD
+        0xe5c4_70bd,     // STRB r7, [r4, #0xbd] DMA1SAD bits 8-15
+        0xe1c4_7cb4,     // STRH r7, [r4, #0xc4] DMA1CNT_L
+        0xe594_10c4,     // LDR r1, [r4, #0xc4]  DMA1CNT_L and CNT_H
+        0xe1d4_0dbe,     // LDRH r0, [r4, #0xde] DMA3CNT_H
+        0xe584_60dc,     // STR r6, [r4, #0xdc]  DMA3CNT_L and CNT_H
+        0xeaff_fff6,     // B back to the first
+    ];
+    let thumb = [
+        0x3204_u16, // ADDS r2, #4
+        0x626a,     // STR r2, [r5, #0x24]  DMA3SAD
+        0x62ab,     // STR r3, [r5, #0x28]  DMA3DAD
+        0x736f,     // STRB r7, [r5, #0x0d] DMA1SAD bits 8-15
+        0x82af,     // STRH r7, [r5, #0x14] DMA1CNT_L
+        0x6969,     // LDR r1, [r5, #0x14]  DMA1CNT_L and CNT_H
+        0x8de8,     // LDRH r0, [r5, #0x2e] DMA3CNT_H
+        0x62ee,     // STR r6, [r5, #0x2c]  DMA3CNT_L and CNT_H
+        0xe7f6,     // B back to the first
+    ];
+    let mut random = Random(0x0d3a_5e70);
+    let mut rom = vec![0u8; 0x1000];
+    for (i, half) in thumb.iter().enumerate() {
+        rom[0x100 + 2 * i..0x102 + 2 * i].copy_from_slice(&half.to_le_bytes());
+    }
+    let (mut runs, mut transfers) = (0, 0);
+    let local_before = super::LOCAL_ACCESSES.get();
+    for trial in 0..300 {
+        let place = trial % 3;
+        let (pc, is_thumb) = match place {
+            0 => (0x0300_1000, false),
+            1 => (0x0300_1000, true),
+            _ => (0x0800_0100, true),
+        };
+        let mut cpu = Cpu::init(pc, 0x9f | if is_thumb { 0x20 } else { 0 }, true);
+        cpu.registers[2] = 0x0200_0000 + (random.next() & 0x7ffc);
+        cpu.registers[3] = 0x0202_0000 + (random.next() & 0x7ffc);
+        cpu.registers[4] = 0x0400_0000;
+        cpu.registers[5] = 0x0400_00b0;
+        // Enabled three times in four: at once, at VBlank or at HBlank;
+        // either width, any destination and increment or decrement source.
+        let control = u32::from(random.below(4) != 0) << 15
+            | [0, 0, 1, 2][random.below(4) as usize] << 12
+            | random.below(2) << 10
+            | random.below(3) << 7
+            | random.below(4) << 5;
+        cpu.registers[6] = control << 16 | (1 + random.below(16));
+        cpu.registers[7] = random.next();
+        let lead = lead(&mut random);
+        let mut pair = Pair::new(
+            &rom,
+            |bus| {
+                set_waitcnt(bus, 0x4317);
+                for i in 0..0x2000 {
+                    bus.ewram[i] = (i as u8).wrapping_mul(29) ^ 0x5a;
+                }
+                if is_thumb {
+                    for (i, half) in thumb.iter().enumerate() {
+                        let at = 0x1000 + 2 * i;
+                        bus.iwram[at..at + 2].copy_from_slice(&half.to_le_bytes());
+                    }
+                } else {
+                    for (i, &word) in arm.iter().enumerate() {
+                        write_word(bus, 0x0300_1000 + 4 * i as u32, word);
+                    }
+                }
+            },
+            cpu,
+            lead,
+        );
+        let context = format!("trial {trial} place {place} lead {lead} control {control:04x}");
+        for attempt in 0..12 {
+            let yield_at = pair.engine_bus.now() + 1 + u64::from(random.below(400));
+            if pair.compare(yield_at, &format!("{context} attempt {attempt}")) {
+                runs += 1;
+                let bus = &pair.engine_bus;
+                transfers += usize::from(bus.pending_dma != 0 || bus.dma_start_cycles[3].is_some());
+            } else {
+                let outcome = pair.engine.step(&mut pair.engine_bus);
+                let reference = pair.reference.step(&mut pair.reference_bus);
+                assert_eq!(outcome, reference, "{context}");
+                pair.assert_equal(&format!("{context} step after refusal"));
+            }
+        }
+        pair.settle(&context);
+    }
+    let local = super::LOCAL_ACCESSES.get() - local_before;
+    assert!(runs > 2000, "only {runs} runs");
+    assert!(local > 20_000, "only {local} DMA register accesses in engine runs");
+    assert!(transfers > 300, "only {transfers} runs that scheduled a transfer");
 }
 
 /// Calls and returns through BX, MOV pc, LDM with pc and a jump table in
@@ -1038,7 +1142,7 @@ fn bios_and_indirect_branches_run_like_stepping() {
     let mut random = Random(0xb105_b105);
     let (mut runs, mut halts) = (0, 0);
     let switches = super::SWITCHES.get();
-    let irq = super::IRQ_ACCESSES.get();
+    let irq = super::LOCAL_ACCESSES.get();
     for trial in 0..200 {
         let start_in_bios = trial % 3 == 0;
         let mut cpu = Cpu::init(if start_in_bios { 0x200 } else { MAIN }, 0x1f, false);
@@ -1089,7 +1193,7 @@ fn bios_and_indirect_branches_run_like_stepping() {
         pair.settle(&context);
     }
     let switches = super::SWITCHES.get() - switches;
-    let irq = super::IRQ_ACCESSES.get() - irq;
+    let irq = super::LOCAL_ACCESSES.get() - irq;
     assert!(runs > 5000, "only {runs} runs");
     assert!(irq > 5000, "only {irq} interrupt register accesses in engine runs");
     assert!(halts > 2000, "only {halts} halts");

@@ -92,12 +92,15 @@ impl PpuTiming {
         }
         until_target
     }
-    pub fn elapse(&mut self, cycles: Cycle) -> Events {
+    /// Advances by `cycles`, adding what happened to `events`. The caller
+    /// owns them: returned by value, events built a byte at a time came
+    /// back through memory and were read back wider than written, which
+    /// stalls store forwarding.
+    pub fn elapse(&mut self, cycles: Cycle, events: &mut Events) {
         if self.elapse_without_events(cycles) {
-            return Events::default();
+            return;
         }
         let mut remaining = cycles;
-        let mut events = Events::default();
         while remaining > 0 {
             let boundary = if self.cycle_in_line < 960 { 960 } else { 1232 };
             let until_boundary = Cycle::from(boundary - self.cycle_in_line);
@@ -133,7 +136,6 @@ impl PpuTiming {
                 events.vcount_irq = true;
             }
         }
-        events
     }
     pub fn elapse_without_events(&mut self, cycles: Cycle) -> bool {
         if cycles >= self.cycles_until_next_event() {
@@ -173,7 +175,8 @@ mod tests {
             line: 159,
             dispstat_control: (160 << 8) | (1 << 3) | (1 << 5),
         };
-        let events = timing.elapse(1 + 272);
+        let mut events = Events::default();
+        timing.elapse(1 + 272, &mut events);
         assert_eq!(timing.line, 160);
         assert_eq!(timing.cycle_in_line, 0);
         assert!(events.hblank_any);
@@ -191,7 +194,8 @@ mod tests {
     fn one_large_advance_preserves_frame_wrapping_and_later_boundaries() {
         let mut timing =
             PpuTiming { cycle_in_line: 1231, line: 227, dispstat_control: (1 << 4) | (1 << 5) };
-        let events = timing.elapse(1 + 1232 * 228 + 960);
+        let mut events = Events::default();
+        timing.elapse(1 + 1232 * 228 + 960, &mut events);
         assert_eq!((timing.line, timing.cycle_in_line), (0, 960));
         assert_eq!(events.frames_completed, 2);
         assert!(events.hblank_any);
@@ -263,7 +267,8 @@ mod tests {
                                 endpoint.cycle_in_line = 0;
                                 endpoint.line = (endpoint.line + 1) % 228;
                             }
-                            let events = boundary.elapse(1);
+                            let mut events = Events::default();
+                            boundary.elapse(1, &mut events);
                             assert_eq!(endpoint, boundary);
                             assert_ne!(events, Events::default());
                         }

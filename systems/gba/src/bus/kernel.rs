@@ -13,18 +13,100 @@ pub(crate) struct EngineMemory<'a> {
     pub(crate) bios: &'a [u8],
     pub(crate) rom: RomData<'a>,
     pub(crate) video: VideoMemory<'a>,
-    pub(crate) irq: &'a mut IrqRegisters,
+    pub(crate) registers: RunRegisters<'a>,
     /// Cycles from now during which the PPU shows no visible dot, so that a
     /// VRAM or palette write records no raster history: zero while a
     /// visible dot is being drawn.
     pub(crate) quiet: Cycle,
 }
 
-/// IE, IF, IME, POSTFLG and HALTCNT are what an engine run reads and
-/// writes itself: their accesses schedule no device event and read no
-/// device state, so they need neither the device batch nor the clock. The
-/// bus's own MMIO paths are the reference for [`IrqRegisters::load`] and
-/// [`IrqRegisters::store`].
+/// The MMIO registers an engine run reads and writes itself: IE, IF, IME,
+/// POSTFLG and HALTCNT, and the DMA source, destination and word count
+/// latches. Their accesses schedule no device event and read no device
+/// state, so they need neither the device batch nor the clock. The bus's
+/// own MMIO paths are the reference for [`Self::load`] and [`Self::store`].
+pub(crate) struct RunRegisters<'a> {
+    pub(crate) irq: &'a mut IrqRegisters,
+    pub(crate) dma: &'a mut [DmaChannel; 4],
+}
+
+impl RunRegisters<'_> {
+    /// Whether an access of `width` at the bus-aligned MMIO `address`
+    /// touches only these registers. A DMA control register takes no store
+    /// here: enabling a channel schedules its transfer.
+    #[inline(always)]
+    pub(crate) fn holds(address: u32, width: AccessWidth, store: bool) -> bool {
+        // Offsets from DMA0SAD: one compare tells the DMA latches apart.
+        let offset = address.wrapping_sub(MMIO_BASE + 0xb0);
+        if offset < 0x30 {
+            // A bus-aligned access stays within one 12-byte channel.
+            return !store || offset % 12 + width.bytes() as u32 <= 10;
+        }
+        IrqRegisters::holds(address, width, store)
+    }
+
+    /// A load [`Self::holds`] admits, as [`Bus::read_mmio`] makes it.
+    pub(crate) fn load(&self, address: u32, width: AccessWidth) -> u32 {
+        let offset = address.wrapping_sub(MMIO_BASE + 0xb0);
+        if offset >= 0x30 {
+            return self.irq.load(address, width);
+        }
+        // Only the control halfword reads back.
+        let half = |offset: u32| {
+            let channel = &self.dma[(offset / 12) as usize];
+            u32::from(if offset % 12 == 10 { channel.control } else { 0 })
+        };
+        match width {
+            AccessWidth::Word => half(offset) | half(offset + 2) << 16,
+            AccessWidth::Half => half(offset),
+            AccessWidth::Byte => (half(offset & !1) >> ((offset & 1) * 8)) & 0xff,
+        }
+    }
+
+    /// A store [`Self::holds`] admits, as [`Bus::write_mmio`] makes it.
+    pub(crate) fn store(&mut self, address: u32, width: AccessWidth, value: u32) {
+        let offset = address.wrapping_sub(MMIO_BASE + 0xb0);
+        if offset >= 0x30 {
+            return self.irq.store(address, width, value);
+        }
+        match width {
+            AccessWidth::Word => {
+                self.store_latch(offset, value as u16);
+                self.store_latch(offset + 2, (value >> 16) as u16);
+            }
+            AccessWidth::Half => self.store_latch(offset, value as u16),
+            AccessWidth::Byte => {
+                let aligned = offset & !1;
+                let channel = &self.dma[(aligned / 12) as usize];
+                let old = match aligned % 12 {
+                    0 => channel.source as u16,
+                    2 => (channel.source >> 16) as u16,
+                    4 => channel.destination as u16,
+                    6 => (channel.destination >> 16) as u16,
+                    _ => channel.word_count,
+                };
+                let shift = (offset & 1) * 8;
+                let merged = (old & !(0xff << shift)) | ((value as u16 & 0xff) << shift);
+                self.store_latch(aligned, merged);
+            }
+        }
+    }
+
+    fn store_latch(&mut self, offset: u32, value: u16) {
+        let index = (offset / 12) as usize;
+        let channel = &mut self.dma[index];
+        match offset % 12 {
+            0 => channel.write_source_low(value),
+            2 => channel.write_source_high(index, value),
+            4 => channel.write_destination_low(value),
+            6 => channel.write_destination_high(index, value),
+            8 => channel.word_count = value,
+            _ => unreachable!("a DMA control store runs on the bus"),
+        }
+    }
+}
+
+/// The interrupt registers of [`RunRegisters`].
 impl IrqRegisters {
     /// Whether an access of `width` at the bus-aligned MMIO `address`
     /// touches only these registers: IE and IF, IME, and for stores POSTFLG
@@ -425,7 +507,7 @@ impl Bus {
                 object_line_index: &mut self.object_line_index,
                 dispcnt: self.dispcnt,
             },
-            irq: &mut self.irq,
+            registers: RunRegisters { irq: &mut self.irq, dma: &mut self.dma_channels },
             quiet,
         }
     }
@@ -700,12 +782,13 @@ fn block_end(address: u32) -> u32 {
 mod tests {
     use super::*;
 
-    /// IE, IF, IME, POSTFLG and HALTCNT loads and stores of every width at
-    /// every byte through [`IrqRegisters`] leave the registers, the IRQ
-    /// line and the power state, and read the values, that `Bus::read` and
-    /// `Bus::write` do, from all kinds of starting values.
+    /// Loads and stores of every width at every byte of IE, IF, IME, POSTFLG,
+    /// HALTCNT and the DMA registers that [`RunRegisters`] admits leave the
+    /// registers, the IRQ line, the power state and the DMA channels, and
+    /// read the values, that `Bus::read` and `Bus::write` do, from all
+    /// kinds of starting values.
     #[test]
-    fn irq_registers_match_the_bus() {
+    fn run_registers_match_the_bus() {
         let mut seed = 0x1e1e_2020_u32;
         let mut next = move || {
             seed ^= seed << 13;
@@ -714,41 +797,56 @@ mod tests {
             seed
         };
         let state = |bus: &Bus| {
-            (
-                bus.irq.interrupt_enable_mask,
-                bus.irq.interrupt_request_flags,
-                bus.irq.interrupt_master_enabled,
-                bus.irq.irq_line,
-                bus.irq.power_state,
-                bus.irq.post_boot,
-            )
+            let channels = bus.dma_channels.each_ref().map(|channel| {
+                (
+                    channel.source,
+                    channel.destination,
+                    channel.word_count,
+                    channel.control,
+                    channel.latched_source,
+                    channel.latched_destination,
+                )
+            });
+            (bus.irq, channels, bus.dma_start_cycles, bus.pending_dma)
         };
-        let (mut loads, mut stores) = (0, 0);
-        for _ in 0..4000 {
+        let (mut loads, mut stores, mut dma) = (0, 0, 0);
+        for _ in 0..8000 {
             let mut bus = Bus::init(&[]);
             bus.irq.interrupt_enable_mask = next() as u16 & 0x3fff;
             bus.irq.interrupt_request_flags = next() as u16 & 0x3fff;
             bus.irq.interrupt_master_enabled = next() & 1 != 0;
             bus.irq.post_boot = (next() & 1) as u8;
             bus.update_irq_line();
+            for channel in &mut bus.dma_channels {
+                channel.source = next();
+                channel.destination = next();
+                channel.word_count = next() as u16;
+                channel.control = next() as u16 & 0xffe0;
+                channel.latched_source = next();
+                channel.latched_destination = next();
+            }
             let width =
                 [AccessWidth::Byte, AccessWidth::Half, AccessWidth::Word][next() as usize % 3];
             let store = next() & 1 != 0;
-            let offset = [0x200, 0x208, 0x300][next() as usize % 3] + (next() & 3);
+            let offset = match next() % 4 {
+                0 => 0x200 + next() % 4,
+                1 => 0x208 + next() % 4,
+                2 => 0x300 + next() % 4,
+                _ => 0xb0 + next() % 0x30,
+            };
             let address = MMIO_BASE + (offset & !(width.bytes() as u32 - 1));
-            if !IrqRegisters::holds(address, width, store) {
+            if !RunRegisters::holds(address, width, store) {
                 continue;
             }
             let value = next();
             let mut engine = Bus::init(&[]);
-            (
-                engine.irq.interrupt_enable_mask,
-                engine.irq.interrupt_request_flags,
-                engine.irq.interrupt_master_enabled,
-                engine.irq.irq_line,
-                engine.irq.power_state,
-                engine.irq.post_boot,
-            ) = state(&bus);
+            engine.irq = bus.irq;
+            for (to, from) in engine.dma_channels.iter_mut().zip(&bus.dma_channels) {
+                (to.source, to.destination, to.word_count, to.control) =
+                    (from.source, from.destination, from.word_count, from.control);
+                (to.latched_source, to.latched_destination) =
+                    (from.latched_source, from.latched_destination);
+            }
             let access = Access {
                 address,
                 width,
@@ -756,38 +854,46 @@ mod tests {
                 source: AccessSource::CpuData,
             };
             let context = format!("{address:08x} {width:?} store {store} value {value:08x}");
-            let memory = engine.engine_memory(false);
-            let irq = memory.irq;
+            let mut registers = engine.engine_memory(false).registers;
             if store {
-                irq.store(address, width, value);
+                registers.store(address, width, value);
                 bus.write(access, value);
                 stores += 1;
             } else {
-                let loaded = irq.load(address, width);
+                let loaded = registers.load(address, width);
                 assert_eq!(loaded, bus.read(access).value, "{context}");
                 loads += 1;
             }
+            dma += usize::from(offset < 0x200);
             assert_eq!(state(&engine), state(&bus), "{context}");
         }
-        assert!(loads > 500 && stores > 500, "{loads} loads, {stores} stores");
+        assert!(
+            loads > 1000 && stores > 1000 && dma > 1000,
+            "{loads} loads, {stores} stores, {dma} DMA"
+        );
     }
 
-    /// [`IrqRegisters::holds`] admits exactly the accesses whose every byte
-    /// is IE, IF or IME, or for stores POSTFLG or HALTCNT.
+    /// [`RunRegisters::holds`] admits exactly the accesses whose every byte
+    /// is IE, IF or IME, or for stores POSTFLG or HALTCNT, or is a DMA
+    /// register other than, for stores, a control register.
     #[test]
-    fn irq_registers_hold_exactly_the_interrupt_bytes() {
+    fn run_registers_hold_exactly_their_bytes() {
         for store in [false, true] {
             for width in [AccessWidth::Byte, AccessWidth::Half, AccessWidth::Word] {
                 let bytes = width.bytes() as u32;
                 for offset in (0..0x1000).step_by(bytes as usize) {
-                    let held = (offset..offset + bytes).all(|byte| {
+                    let bytes = offset..offset + bytes;
+                    let interrupt = bytes.clone().all(|byte| {
                         matches!(byte, 0x200..=0x203 | 0x208..=0x20b)
                             || (store && matches!(byte, 0x300 | 0x301))
                     });
+                    let dma = bytes.clone().all(|byte| {
+                        (0xb0..0xe0).contains(&byte) && !(store && (byte - 0xb0) % 12 >= 10)
+                    });
                     let address = MMIO_BASE + offset;
                     assert_eq!(
-                        IrqRegisters::holds(address, width, store),
-                        held,
+                        RunRegisters::holds(address, width, store),
+                        interrupt || dma,
                         "{address:08x} {width:?} store {store}"
                     );
                 }

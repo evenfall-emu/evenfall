@@ -30,8 +30,8 @@ impl Bus {
                 self.check_kept_scanline(line);
             }
         } else {
-            self.compose_scanline_fast(line);
-            self.scanline_memo.store(line);
+            let pages = self.compose_scanline_fast(line);
+            self.scanline_memo.store(line, pages);
         }
     }
 

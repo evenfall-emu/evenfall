@@ -571,8 +571,8 @@ fn drive<const EW: bool>(
             Resume::On(hot) => hot,
             Resume::Out(hot) => break finish(c, hot, budget),
         };
-        // Passes on this view of memory, through interrupt register
-        // accesses, which need no other.
+        // Passes on this view of memory, through accesses to the registers
+        // a run serves itself, which need no other.
         let (hot, access) = loop {
             hot = if EW {
                 let ops = (&mut *ops).try_into().expect("EWRAM op array");
@@ -584,7 +584,7 @@ fn drive<const EW: bool>(
             let Some(access) = c.mmio.take() else {
                 break (hot, None);
             };
-            match serve_irq::<EW>(&mut c, hot, &access) {
+            match serve_local::<EW>(&mut c, hot, &access) {
                 Some(Resume::On(next)) => hot = next,
                 Some(Resume::Out(next)) => break 'pass finish(c, next, budget),
                 Some(Resume::Start) => unreachable!("an access leaves a run going or out"),
@@ -709,31 +709,31 @@ fn serve<const EW: bool>(
     }
 }
 
-/// Completes `access` on the run's own view of the interrupt registers if
-/// it touches only them ([`Mmio::irq`]), charged as [`serve`] charges it;
-/// None if it touches other registers. The run stops after a store that
-/// halts, stops or raises an IRQ the CPU takes.
+/// Completes `access` on the run's own view of the registers it reads and
+/// writes itself if it touches only those ([`Mmio::local`]), charged as
+/// [`serve`] charges it; None if it touches others. The run stops after a
+/// store that halts, stops or raises an IRQ the CPU takes.
 #[inline(always)]
-fn serve_irq<const EW: bool>(c: &mut Ctx<'_, EW>, h: Hot, access: &Mmio) -> Option<Resume> {
-    access.irq().then(|| complete_irq::<EW>(c, h, access))
+fn serve_local<const EW: bool>(c: &mut Ctx<'_, EW>, h: Hot, access: &Mmio) -> Option<Resume> {
+    access.local().then(|| complete_local::<EW>(c, h, access))
 }
 
-/// The part of [`serve_irq`] past the test of the registers.
+/// The part of [`serve_local`] past the test of the registers.
 #[inline(never)]
-fn complete_irq<const EW: bool>(c: &mut Ctx<'_, EW>, h: Hot, access: &Mmio) -> Resume {
+fn complete_local<const EW: bool>(c: &mut Ctx<'_, EW>, h: Hot, access: &Mmio) -> Resume {
     let store = access.store.is_some();
     let mut next = h;
     if !next.charge(Ctx::<EW>::FETCH + if store { 1 } else { 2 }) {
         return Resume::Out(h);
     }
-    let value = access.perform_irq(c.mem.irq, &mut c.core.registers);
+    let value = access.perform_local(&mut c.mem.registers, &mut c.core.registers);
     next.next();
     c.mmio_mark = next.budget;
     if !store {
         c.data = value;
         c.load_mark = next.budget;
     }
-    let irq = &c.mem.irq;
+    let irq = &c.mem.registers.irq;
     let taken = irq.irq_line && h.cpsr & (1 << 7) == 0;
     if irq.power_state == PowerState::Running && !taken {
         Resume::On(next)

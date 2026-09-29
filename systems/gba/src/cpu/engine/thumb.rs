@@ -670,24 +670,24 @@ fn serve<T: Timing>(
     }
 }
 
-/// Completes `access` on the run's own view of the interrupt registers if
-/// it touches only them ([`Mmio::irq`]), charged as [`serve`] charges it;
-/// None if it touches other registers. The run stops after a store that
-/// halts, stops or raises an IRQ the CPU takes.
+/// Completes `access` on the run's own view of the registers it reads and
+/// writes itself if it touches only those ([`Mmio::local`]), charged as
+/// [`serve`] charges it; None if it touches others. The run stops after a
+/// store that halts, stops or raises an IRQ the CPU takes.
 #[inline(always)]
-fn serve_irq<T: Timing>(
+fn serve_local<T: Timing>(
     c: &mut Ctx<'_>,
     core: &mut Core,
     t: T,
     h: Hot,
     access: &Mmio,
 ) -> Option<Resume> {
-    access.irq().then(|| complete_irq(c, core, t, h, access))
+    access.local().then(|| complete_local(c, core, t, h, access))
 }
 
-/// The part of [`serve_irq`] past the test of the registers.
+/// The part of [`serve_local`] past the test of the registers.
 #[inline(never)]
-fn complete_irq<T: Timing>(
+fn complete_local<T: Timing>(
     c: &mut Ctx<'_>,
     core: &mut Core,
     t: T,
@@ -700,7 +700,7 @@ fn complete_irq<T: Timing>(
     if !next.charge(t.fetch(&h) + if store { 1 } else { 2 }) {
         return Resume::Out(h);
     }
-    let value = access.perform_irq(c.mem.irq, &mut core.registers);
+    let value = access.perform_local(&mut c.mem.registers, &mut core.registers);
     next.idx += 1;
     t.after(&mut next, before, !store);
     c.mmio_mark = next.budget;
@@ -709,7 +709,7 @@ fn complete_irq<T: Timing>(
         c.load_mark = next.budget;
         c.internal_mark = next.budget;
     }
-    let irq = &c.mem.irq;
+    let irq = &c.mem.registers.irq;
     let taken = irq.irq_line && core.cpsr & (1 << 7) == 0;
     if irq.power_state == PowerState::Running && !taken {
         Resume::On(next)
@@ -763,7 +763,7 @@ fn ram_runs<const EW: bool>(
         hot = next;
         match stop {
             Stop::Refused => match mmio_transfer(&ops[hot.idx as usize], &core.registers) {
-                Some(access) => match serve_irq(&mut c, core, Ram::<EW>, hot, &access) {
+                Some(access) => match serve_local(&mut c, core, Ram::<EW>, hot, &access) {
                     Some(Resume::On(next)) => hot = next,
                     Some(Resume::Out(next)) => return leave(core, &c, next, start, budget),
                     None => break access,
@@ -830,7 +830,7 @@ fn ram_serving<const EW: bool>(
                 let Some(access) = mmio_transfer(&ops[hot.idx as usize], &core.registers) else {
                     return leave(core, &c, hot, start, budget);
                 };
-                if let Some(next) = serve_irq(&mut c, core, Ram::<EW>, hot, &access) {
+                if let Some(next) = serve_local(&mut c, core, Ram::<EW>, hot, &access) {
                     resume = next;
                     saved = c.save();
                     continue;
@@ -945,7 +945,7 @@ fn rom_runs<T: Timing>(
         match stop {
             Stop::Refused => {
                 let flow = mmio_transfer(&ops[hot.idx as usize], &core.registers)
-                    .map(|access| (serve_irq(&mut c, core, timing, hot, &access), access));
+                    .map(|access| (serve_local(&mut c, core, timing, hot, &access), access));
                 match flow {
                     Some((Some(Resume::On(next)), _)) => hot = next,
                     Some((None, access)) => break access,
@@ -1007,7 +1007,7 @@ fn rom_serving<T: Timing>(
                 let Some(access) = mmio_transfer(&ops[hot.idx as usize], &core.registers) else {
                     break (leave(core, &c, hot, start, budget), hot.ready);
                 };
-                if let Some(next) = serve_irq(&mut c, core, timing, hot, &access) {
+                if let Some(next) = serve_local(&mut c, core, timing, hot, &access) {
                     resume = next;
                     saved = c.save();
                     continue;
@@ -1541,32 +1541,46 @@ fn jump<const N: usize, T: Timing>(
 ) -> Flow {
     let target = c.pc(slot);
     if (slot as usize) < N && (c.clean || c.code(target).is_some()) {
-        let Some(next) = branch(*h, c, t, target, extra) else {
+        if !branch(h, c, t, target, extra) {
             return Flow::Refused;
-        };
-        *h = Hot { idx: slot, ..next };
+        }
+        h.idx = slot;
         return Flow::Next;
     }
-    far_jump(h, c, t, target, extra)
-}
-
-/// The state after a branch to `target`, if it fits.
-#[inline(always)]
-fn branch<T: Timing>(h: Hot, c: &Ctx<'_>, t: T, target: u32, extra: i64) -> Option<Hot> {
-    let mut next = h;
-    if !next.charge(t.fetch(&h) + extra) {
-        return None;
+    match far_jump(*h, c, t, target, extra) {
+        Some(next) => {
+            *h = next;
+            Flow::Far(target)
+        }
+        None => Flow::Refused,
     }
-    t.after(&mut next, h.budget, extra != 0);
-    let refill = t.refill(&mut next, target, c.pc(h.idx).wrapping_add(6));
-    next.charge(refill).then_some(next)
 }
 
-/// A branch out of the page, if the target is code the engine may run in
-/// the same region and Game Pak window.
+/// Charges a branch to `target` to `h` if it fits; otherwise leaves `h` as
+/// it was. In place, restoring only what it changes: copies of the whole
+/// state, whose fields were just written one by one, stall store
+/// forwarding.
+#[inline(always)]
+fn branch<T: Timing>(h: &mut Hot, c: &Ctx<'_>, t: T, target: u32, extra: i64) -> bool {
+    let (budget, fetch, ready) = (h.budget, h.fetch, h.ready);
+    let head = c.pc(h.idx).wrapping_add(6);
+    let fits = h.charge(t.fetch(h) + extra) && {
+        t.after(h, budget, extra != 0);
+        let refill = t.refill(h, target, head);
+        h.charge(refill)
+    };
+    if !fits {
+        (h.budget, h.fetch, h.ready) = (budget, fetch, ready);
+    }
+    fits
+}
+
+/// The state after a branch out of the page, if the target is code the
+/// engine may run in the same region and Game Pak window. By value, so
+/// that the loop's state has no address and can live in registers.
 #[cold]
 #[inline(never)]
-fn far_jump<T: Timing>(h: &mut Hot, c: &mut Ctx<'_>, t: T, target: u32, extra: i64) -> Flow {
+fn far_jump<T: Timing>(h: Hot, c: &mut Ctx<'_>, t: T, target: u32, extra: i64) -> Option<Hot> {
     let pc = c.pc(h.idx);
     let same = match c.place {
         Place::Rom => {
@@ -1579,11 +1593,8 @@ fn far_jump<T: Timing>(h: &mut Hot, c: &mut Ctx<'_>, t: T, target: u32, extra: i
             target >> 24 == region && target & !mask != (region << 24 | (0x00ff_ffff & !mask))
         }
     };
-    let Some(next) = same.then(|| branch(*h, c, t, target, extra)).flatten() else {
-        return Flow::Refused;
-    };
-    *h = next;
-    Flow::Far(target)
+    let mut next = h;
+    (same && branch(&mut next, c, t, target, extra)).then_some(next)
 }
 
 /// The page slot of an absolute branch target.

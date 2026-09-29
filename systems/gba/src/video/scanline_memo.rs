@@ -309,9 +309,13 @@ impl<R: Copy + PartialEq + Default, const L: usize> Memo<R, L> {
         true
     }
 
-    pub fn store(&mut self, line: usize) {
+    /// Records the line as rendered from what it read: `reads` and the
+    /// background `pages` the compositor returned. (Those are passed
+    /// here rather than merged into the reads, where two halves written
+    /// just before this reads them whole would stall store forwarding.)
+    pub fn store(&mut self, line: usize, pages: u128) {
         self.valid[line] = true;
-        self.vram_pages[line] = self.reads.vram_pages;
+        self.vram_pages[line] = self.reads.vram_pages | pages;
         self.matrix_readers[line] = self.reads.oam_matrices;
         if self.line_versions[line] != self.version {
             self.line_registers[line] = self.registers;
@@ -433,7 +437,7 @@ mod tests {
                 true
             } else {
                 self.memo.reads = reads;
-                self.memo.store(line);
+                self.memo.store(line, 0);
                 false
             }
         }

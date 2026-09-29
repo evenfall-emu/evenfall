@@ -24,7 +24,7 @@ mod tests;
 mod thumb;
 
 use crate::bus::{
-    AccessWidth, Bus, EWRAM_SIZE, EngineMemory, IWRAM_SIZE, IrqRegisters, PowerState,
+    AccessWidth, Bus, EWRAM_SIZE, EngineMemory, IWRAM_SIZE, PowerState, RunRegisters,
 };
 use crate::cpu::Cpu;
 use mem::Mem;
@@ -125,27 +125,31 @@ impl Mmio {
         }
     }
 
-    /// Whether the access touches only IE, IF, IME, POSTFLG or HALTCNT,
-    /// which a run reads and writes itself ([`Self::perform_irq`]).
+    /// Whether the access touches only registers a run reads and writes
+    /// itself ([`RunRegisters`], [`Self::perform_local`]).
     #[inline(always)]
-    pub(super) fn irq(&self) -> bool {
+    pub(super) fn local(&self) -> bool {
         let (width, address) = self.access();
-        IrqRegisters::holds(address, width, self.store.is_some())
+        RunRegisters::holds(address, width, self.store.is_some())
     }
 
-    /// Makes an access [`Self::irq`] admits on the run's own view of the
+    /// Makes an access [`Self::local`] admits on the run's own view of the
     /// registers, and writes the CPU registers. Returns the bus value.
-    pub(super) fn perform_irq(&self, irq: &mut IrqRegisters, registers: &mut [u32; 16]) -> u32 {
+    pub(super) fn perform_local(
+        &self,
+        local: &mut RunRegisters<'_>,
+        registers: &mut [u32; 16],
+    ) -> u32 {
         #[cfg(test)]
-        IRQ_ACCESSES.with(|count| count.set(count.get() + 1));
+        LOCAL_ACCESSES.with(|count| count.set(count.get() + 1));
         let (width, address) = self.access();
         let value = match (self.store, self.load) {
             (Some((value, _)), _) => {
-                irq.store(address, width, value);
+                local.store(address, width, value);
                 value
             }
             (_, Some((rd, load))) => {
-                let value = irq.load(address, width);
+                let value = local.load(address, width);
                 registers[usize::from(rd)] = load.extend(value, self.address);
                 value
             }
@@ -190,7 +194,7 @@ thread_local! {
     /// Branches between the BIOS and IWRAM inside engine runs.
     pub(super) static SWITCHES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// Interrupt register accesses engine runs made on their own view.
-    pub(super) static IRQ_ACCESSES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    pub(super) static LOCAL_ACCESSES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// Decoded-op caches: one array per RAM region and instruction set, with a
@@ -291,7 +295,7 @@ fn split_memory(memory: EngineMemory<'_>, budget: i64) -> (Mem<'_>, &mut Vec<Opt
         rom: memory.rom,
         others,
         video: memory.video,
-        irq: memory.irq,
+        registers: memory.registers,
         video_floor: budget.saturating_sub(i64::try_from(memory.quiet).unwrap_or(i64::MAX)),
     };
     (mem, rom_thumb)
