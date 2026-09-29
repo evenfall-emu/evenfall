@@ -31,7 +31,11 @@ impl Cache {
     /// Validate once per scanline that reads the live palette; historical
     /// palette draws do not use decoded colors.
     pub fn prepare_palette(&mut self, palette: &[u8; 1024]) {
-        if self.palette == *palette {
+        // Word-wise and without an early exit: LLVM keeps this loop instead
+        // of calling `memcmp`, which is a byte loop on WebAssembly.
+        let kept = self.palette.as_chunks::<8>().0.iter().map(|word| u64::from_ne_bytes(*word));
+        let live = palette.as_chunks::<8>().0.iter().map(|word| u64::from_ne_bytes(*word));
+        if kept.zip(live).fold(0, |differ, (a, b)| differ | (a ^ b)) == 0 {
             return;
         }
         if self.palette[..512] != palette[..512] {

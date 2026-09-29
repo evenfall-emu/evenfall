@@ -48,16 +48,17 @@ they repeat frame after frame.
 ### Recorded reads
 
 Each composition records the 1 KiB VRAM pages it read (`Reads.vram_pages`):
-text map rows, text tile rows and regular-object tile rows.
+text map rows, text tile rows, bitmap rows and regular-object tile rows.
 
-- A page holds 32 whole 4bpp tiles or 16 whole 8bpp tiles, so a text map
-  entry's page follows from its tile number alone, whatever the tile row and
-  flips.
-- Consecutive lines usually share their map row, so the pages of a map block
-  are cached per background and block (`TilePages`) and recomputed only for
-  other entries or another character block.
-- Lines that use the per-dot text path, affine and bitmap backgrounds, and
-  affine or mosaic objects record every page.
+- The layer-major text rows record the page of each tile row as they read it
+  (a tile row never crosses a page) and the pages of the map rows.
+- The front-to-back reference's tile-row path relies on a page holding 32
+  whole 4bpp tiles or 16 whole 8bpp tiles, so a map entry's page follows from
+  its tile number alone; consecutive lines usually share their map row, so
+  the pages of a map block are cached per background and block (`TilePages`).
+- An untransformed bitmap row records the pages of its source row.
+- Lines that use the per-dot text path, affine backgrounds, transformed
+  bitmaps, and affine or mosaic objects record every page.
 - A line also records whether it read an OAM affine matrix.
 
 Every line depends on the whole palette and on the attributes of each object
@@ -141,8 +142,8 @@ It is on in debug and test builds; optimized builds can opt in with the
 `scanline-memo-check` Cargo feature. It panics on the first violation:
 
 - every line the memo would keep is composed again (`Bus::check_kept_scanline`),
-  and its color, priority, layer, semi-transparency and OBJ-window surfaces
-  must come out exactly as kept;
+  and its colors must come out exactly as kept (kept lines are always drawn by
+  the layer-major compositor, which writes no other frame surface);
 - the key is rebuilt for every line and must equal the live key whenever no
   register change was marked (`Memo::verify_registers`);
 - each frame start compares the palette, VRAM and OAM with a snapshot taken at
@@ -197,8 +198,6 @@ performance harness is documented in
 - Applying VRAM marks scans every line's pages: once per frame in the measured
   workloads, but up to once per line for a game that changes VRAM between
   lines.
-- Recording text tile-row pages is the largest bookkeeping cost when every
-  line is composed.
 - Any palette change invalidates every line, so fades keep nothing.
 - Check mode verifies only paths a workload reaches; each new mark needs a
   unit test that reaches it.

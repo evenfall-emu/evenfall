@@ -23,7 +23,9 @@ use crate::bus::{Bus, LineScan, SCREEN_WIDTH};
 
 #[cfg(target_arch = "x86_64")]
 type Native = super::lanes::Sse2;
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+type Native = super::lanes::Simd128;
+#[cfg(not(any(target_arch = "x86_64", all(target_arch = "wasm32", target_feature = "simd128"))))]
 type Native = super::lanes::Scalar;
 
 const LAYER: u16 = 7;
