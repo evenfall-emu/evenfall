@@ -859,64 +859,206 @@ fn encoding(raw: u8) -> Result<Encoding> {
 mod tests {
     use super::*;
 
-    fn state(frame: u64) -> Vec<u8> {
-        let mut state = alloc::vec![0; 8192];
-        state[0] = frame as u8;
-        let mut random = frame as u32;
-        for byte in &mut state[1..] {
-            random ^= random << 13;
-            random ^= random >> 17;
-            random ^= random << 5;
-            *byte = random as u8;
+    // Same scene/region-change pattern as Zig's syntheticState; the PRNG is
+    // local to this fixture, so expected states do not come from decode().
+    fn synthetic_state(len: usize, step: u64) -> Vec<u8> {
+        let mut state = alloc::vec![0; len];
+        let mut scene = 0x5eed_u32.wrapping_add((step / 1000) as u32);
+        for (i, byte) in state.iter_mut().enumerate() {
+            if i % 7 == 0 {
+                scene ^= scene << 13;
+                scene ^= scene >> 17;
+                scene ^= scene << 5;
+                *byte = scene as u8;
+            }
         }
+        let mut noise = step as u32 | 1;
+        for region in 0..8 {
+            let at = (region * len / 8 + step as usize * 97) % (len - 256);
+            for byte in &mut state[at..at + 64] {
+                noise ^= noise << 13;
+                noise ^= noise >> 17;
+                noise ^= noise << 5;
+                *byte = noise as u8;
+            }
+        }
+        state[..8].copy_from_slice(&step.to_le_bytes());
         state
     }
 
+    fn push_synthetic(buffer: &mut RewindBuffer, len: usize, step: u64) {
+        buffer.push((step + 1) * 60, (step + 1) * 1000, &synthetic_state(len, step)).unwrap();
+    }
+
+    fn expect_decodes(buffer: &RewindBuffer, index: usize, len: usize) {
+        let step = buffer.info(index).unwrap().frame / 60 - 1;
+        assert_eq!(buffer.decode(index).unwrap(), synthetic_state(len, step));
+    }
+
+    /// Zig: "adopted histories survive compaction eviction anchor folding and branching"
     #[test]
-    fn owned_bundle_borrows_entries_and_recycles_space_after_branching() {
+    fn adopted_histories_survive_compaction_eviction_anchor_folding_and_branching() {
+        let len = 8192;
+        let mut compacted = false;
         for compression in [Compression::Off, Compression::Fast, Compression::Delta] {
-            let mut original = RewindBuffer::new(RewindConfig {
-                compression,
-                budget_bytes: 48 * 1024,
-                ..RewindConfig::default()
-            })
-            .unwrap();
-            for frame in 1..=12 {
-                original.push(frame, frame * 10, &state(frame)).unwrap();
-            }
-            let live = state(13);
-            let bytes = original.write_bundle(&live).unwrap();
-            let address = bytes.as_ptr();
-            drop(original);
-            let validate = |state: &[u8]| Ok((u64::from(state[0]), u64::from(state[0]) * 10));
-            let (loaded_live, mut loaded) =
-                RewindBuffer::read_bundle_owned(bytes, validate).unwrap();
-            assert_eq!(loaded_live, live);
-            assert_eq!(loaded.bundle.as_ref().unwrap().as_ptr(), address);
-            assert!(loaded.entries.iter().all(|entry| matches!(entry.state, Stored::Imported(_))));
-            for index in 0..loaded.depth() {
-                let frame = loaded.info(index).unwrap().frame;
-                assert_eq!(loaded.decode(index).unwrap(), state(frame));
-            }
-            loaded.truncate_newer(loaded.depth() / 2);
-            for frame in 14..=48 {
-                loaded.push(frame, frame * 10, &state(frame)).unwrap();
-                for index in 0..loaded.depth() {
-                    let retained = loaded.info(index).unwrap().frame;
-                    assert_eq!(loaded.decode(index).unwrap(), state(retained));
-                }
-            }
-            assert!(
-                loaded.entries.iter().any(|entry| {
-                    entry.frame >= 14 && matches!(entry.state, Stored::Imported(_))
+            for initial in [2, 36] {
+                let mut original = RewindBuffer::new(RewindConfig {
+                    compression,
+                    budget_bytes: 32 * 1024,
+                    ..RewindConfig::default()
                 })
-            );
-            let exported = loaded.write_bundle(&state(49)).unwrap();
-            let (_, reloaded) = RewindBuffer::read_bundle(&exported, validate).unwrap();
-            assert_eq!(reloaded.write_bundle(&state(49)).unwrap(), exported);
-            loaded.clear();
-            assert!(loaded.bundle.is_none());
+                .unwrap();
+                for step in 0..initial {
+                    push_synthetic(&mut original, len, 980 + step);
+                }
+                let live = synthetic_state(len, 980 + initial);
+                let upload = original.write_bundle(&live).unwrap();
+                let address = upload.as_ptr();
+                drop(original);
+                let validate = |state: &[u8]| {
+                    let step = u64::from_le_bytes(state[..8].try_into().unwrap());
+                    Ok(((step + 1) * 60, (step + 1) * 1000))
+                };
+                let (loaded_live, mut loaded) =
+                    RewindBuffer::read_bundle_owned(upload, validate).unwrap();
+                assert_eq!(loaded_live, live);
+                assert_eq!(loaded.bundle.as_ref().unwrap().as_ptr(), address);
+                assert!(
+                    loaded.entries.iter().all(|entry| matches!(entry.state, Stored::Imported(_)))
+                );
+                let mut reused = false;
+                for step in initial..160 {
+                    if step == 90 {
+                        loaded.truncate_newer(loaded.depth() / 2);
+                    }
+                    let previous_end = loaded.bundle_end;
+                    push_synthetic(&mut loaded, len, 980 + step);
+                    assert!(loaded.memory_bytes() <= 32 * 1024);
+                    compacted |= loaded.bundle.is_some() && loaded.bundle_end < previous_end;
+                    reused |= loaded.entries.iter().any(|entry| {
+                        entry.frame >= (981 + initial) * 60
+                            && matches!(entry.state, Stored::Imported(_))
+                    });
+                    for index in 0..loaded.depth() {
+                        expect_decodes(&loaded, index, len);
+                    }
+                }
+                assert!(reused, "new captures must recycle the adopted allocation");
+                loaded.clear();
+                assert!(loaded.bundle.is_none());
+                push_synthetic(&mut loaded, len, 2001);
+                expect_decodes(&loaded, 0, len);
+            }
         }
+        assert!(compacted, "imported spans must survive in-place compaction");
+
+        // Two imported dependents share an old anchor; a scene change opens a
+        // new one. Evicting the middle dependent folds the oldest in place.
+        let mut original = RewindBuffer::new(RewindConfig::default()).unwrap();
+        for step in [0, 1, 1000] {
+            push_synthetic(&mut original, len, step);
+        }
+        let upload = original.write_bundle(&synthetic_state(len, 1001)).unwrap();
+        let (_, mut loaded) = RewindBuffer::read_bundle_owned(upload, |state| {
+            let step = u64::from_le_bytes(state[..8].try_into().unwrap());
+            Ok(((step + 1) * 60, (step + 1) * 1000))
+        })
+        .unwrap();
+        let old_anchor = loaded.entries[0].anchor;
+        assert_eq!(old_anchor, loaded.entries[1].anchor);
+        assert_ne!(old_anchor, loaded.entries[2].anchor);
+        loaded.config.budget_bytes = (loaded.memory_bytes() - 1) as u32;
+        loaded.enforce_budget();
+        assert_eq!(loaded.depth(), 2);
+        assert_eq!(loaded.info(0).unwrap().encoding, Encoding::Deflate);
+        assert!(loaded.anchors.iter().all(|anchor| anchor.id != old_anchor));
+        expect_decodes(&loaded, 0, len);
+        expect_decodes(&loaded, 1, len);
+    }
+
+    /// Zig: "delta entries are small, share one anchor, and decode exactly"
+    #[test]
+    fn delta_entries_are_small_share_one_anchor_and_decode_exactly() {
+        let len = 64 * 1024;
+        let mut buffer = RewindBuffer::new(RewindConfig::default()).unwrap();
+        for step in 0..20 {
+            push_synthetic(&mut buffer, len, step);
+        }
+        assert_eq!(buffer.depth(), 20);
+        assert_eq!(buffer.anchors.len(), 1);
+        let anchor_bytes = buffer.anchors[0].stored.len();
+        for index in 1..20 {
+            let info = buffer.info(index).unwrap();
+            assert_eq!(info.encoding, Encoding::Delta);
+            assert!(info.bytes * 2 <= anchor_bytes);
+        }
+        for index in 0..20 {
+            expect_decodes(&buffer, index, len);
+        }
+    }
+
+    /// Zig: "budget eviction keeps newest and oldest and coarsens with age"
+    #[test]
+    fn budget_eviction_keeps_newest_and_oldest_and_coarsens_with_age() {
+        let len = 16 * 1024;
+        let mut buffer =
+            RewindBuffer::new(RewindConfig { budget_bytes: 64 * 1024, ..RewindConfig::default() })
+                .unwrap();
+        for step in 0..400 {
+            push_synthetic(&mut buffer, len, step);
+            assert!(buffer.memory_bytes() <= 64 * 1024 || buffer.depth() == 1);
+        }
+        assert!(buffer.depth() < 400);
+        assert_eq!(buffer.info(0).unwrap().frame, 60);
+        assert_eq!(buffer.newest().unwrap().frame, 400 * 60);
+        let items = &buffer.entries;
+        let recent_gap = items[items.len() - 1].sequence - items[items.len() - 2].sequence;
+        let old_gap = items[1].sequence - items[0].sequence;
+        assert!(recent_gap < old_gap);
+        for index in 0..buffer.depth() {
+            expect_decodes(&buffer, index, len);
+        }
+    }
+
+    /// Zig: "entry cap bounds history that never reaches the byte budget"
+    #[test]
+    fn entry_cap_bounds_history_that_never_reaches_the_byte_budget() {
+        let mut buffer = RewindBuffer::new(RewindConfig {
+            budget_bytes: MAX_BUDGET_BYTES,
+            compression: Compression::Off,
+            ..RewindConfig::default()
+        })
+        .unwrap();
+        for i in 0..MAX_ENTRIES + 50 {
+            buffer.push((i + 1) as u64, (i + 1) as u64, &[0; 256]).unwrap();
+        }
+        assert!(buffer.memory_bytes() < MAX_BUDGET_BYTES as usize);
+        assert_eq!(buffer.depth(), MAX_ENTRIES);
+        assert_eq!(buffer.info(0).unwrap().frame, 1);
+        assert_eq!(buffer.newest().unwrap().frame, (MAX_ENTRIES + 50) as u64);
+    }
+
+    /// Zig: "truncateNewer keeps the target as newest and releases anchors"
+    #[test]
+    fn truncate_newer_keeps_the_target_as_newest_and_releases_anchors() {
+        let len = 8 * 1024;
+        let mut buffer = RewindBuffer::new(RewindConfig::default()).unwrap();
+        for step in 0..5 {
+            push_synthetic(&mut buffer, len, step);
+        }
+        push_synthetic(&mut buffer, len, 1000);
+        let discarded_anchor = buffer.entries.last().unwrap().anchor;
+        assert_ne!(discarded_anchor, buffer.entries[2].anchor);
+        buffer.truncate_newer(2);
+        assert_eq!(buffer.depth(), 3);
+        assert_eq!(buffer.newest().unwrap().frame, 180);
+        assert!(buffer.anchors.iter().all(|anchor| anchor.id != discarded_anchor));
+        push_synthetic(&mut buffer, len, 9);
+        expect_decodes(&buffer, 3, len);
+        assert!(buffer.anchors.iter().all(|anchor| {
+            anchor.refs as usize
+                == buffer.entries.iter().filter(|entry| entry.anchor == anchor.id).count()
+        }));
     }
 
     #[test]

@@ -48,7 +48,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut machine = Machine::new(Config {
         rom: &rom,
         bios: &bios,
-        immutable_media: true,
         boot: if bios_path.is_some() { BootMode::SkipBios } else { BootMode::Hle },
         save_type: SaveType::None,
         ..Config::default()

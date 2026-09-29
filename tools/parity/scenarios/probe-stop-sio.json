@@ -1,0 +1,32 @@
+{
+  "name": "probe-stop-sio",
+  "assets": {
+    "rom": "../../../probe/build/multi_parent.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "terminalPc": 134218500,
+  "terminalR12": 43981,
+  "link": {
+    "connection": "cable_multi",
+    "peers": [
+      {
+        "assets": {
+          "rom": "../../../probe/build/stop_sio_child.gba"
+        },
+        "config": {
+          "boot": "hle",
+          "saveType": "auto"
+        },
+        "terminalPc": 134218500,
+        "terminalR12": 4660
+      }
+    ]
+  },
+  "inputs": [],
+  "endCycle": "1123584",
+  "checkpoints": ["20000", "40000", "280896", "1123584"],
+  "sliceCycles": ["20000", "70224"]
+}
