@@ -222,3 +222,60 @@ impl Cpu {
         self.spsr_undefined = 0;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ZiGBA machine_test: "HLE Div and DivArm return quotient remainder and absolute quotient including BIOS edges".
+    #[test]
+    fn hle_division_swi_executes_through_cpu_step() {
+        for (service, numerator, denominator, quotient, remainder, absolute) in [
+            (0x06, 100, 7, 14, 2, 14),
+            (0x07, 7, 100, 14, 2, 14),
+            (0x06, (-100_i32) as u32, 7, (-14_i32) as u32, (-2_i32) as u32, 14),
+            (0x06, 0x8000_0000, u32::MAX, 0x8000_0000, 0, 0x8000_0000),
+            (0x06, 0, 0, 1, 0, 1),
+        ] {
+            let mut bus = Bus::init(&[0, 0, service, 0xEF]);
+            let mut cpu = Cpu::init(0x0800_0000, 0x1F, true);
+            cpu.registers[0] = numerator;
+            cpu.registers[1] = denominator;
+
+            assert_eq!(
+                cpu.step(&mut bus),
+                StepOutcome::Executed(StepResult {
+                    instruction_address: 0x0800_0000,
+                    instruction: 0xEF00_0000 | (u32::from(service) << 16),
+                    instruction_set: InstructionSet::Arm,
+                })
+            );
+            assert_eq!(
+                [cpu.registers[0], cpu.registers[1], cpu.registers[3]],
+                [quotient, remainder, absolute]
+            );
+            assert_eq!(cpu.next_instruction_address, 0x0800_0004);
+            assert_eq!(bus.bios_latch, HLE_SWI_RETURN_LATCH);
+        }
+    }
+
+    /// ZiGBA machine_test: "unsupported HLE SWI is a typed Machine fault" (CPU fault boundary).
+    #[test]
+    fn unsupported_hle_swi_faults_before_return_latch() {
+        let mut bus = Bus::init(&[0, 0, 0x2B, 0xEF]);
+        let mut cpu = Cpu::init(0x0800_0000, 0x1F, true);
+        let original_latch = bus.bios_latch;
+
+        assert_eq!(
+            cpu.step(&mut bus),
+            StepOutcome::Faulted(FaultStep {
+                instruction_address: 0x0800_0000,
+                instruction: 0xEF2B_0000,
+                instruction_set: InstructionSet::Arm,
+                reason: FaultReason::UnsupportedHleSwi { service: 0x2B },
+            })
+        );
+        assert_eq!(cpu.next_instruction_address, 0x0800_0000);
+        assert_eq!(bus.bios_latch, original_latch);
+    }
+}
