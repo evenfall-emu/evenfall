@@ -494,6 +494,9 @@ impl Session {
             tilt_sample: features.tilt.then_some(Default::default()),
         });
         next.set_audio_output(self.audio_output_enabled);
+        if let Some(recovery) = &mut self.video_recovery {
+            recovery.rebase(&next)?;
+        }
         next.bus.set_video_interval(self.video_interval);
         self.machine = next;
         self.resampler.reset();
@@ -1025,5 +1028,11 @@ mod tests {
         session.reset_with_save(&[]).unwrap();
         assert_eq!(session.machine.now(), 0);
         assert_eq!(session.video_interval, 8);
+        let mut fresh = Session::create(Config { image: &rom, ..Config::default() }).unwrap();
+        for _ in 0..2 {
+            session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+            fresh.advance(fresh.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        }
+        assert_eq!(session.write_state().unwrap(), fresh.write_state().unwrap());
     }
 }
