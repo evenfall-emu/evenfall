@@ -780,12 +780,12 @@ impl Bus {
         if last < first || last >> 24 != first >> 24 {
             return None;
         }
-        let cost = match first >> 24 {
+        let cost: Cycle = match first >> 24 {
             2 => 6,
             3 => 1,
             _ => return None,
         };
-        let cycles = Cycle::from(cost) * Cycle::from(beats) + internal;
+        let cycles = cost * Cycle::from(beats) + internal;
         if !self.batch_active
             || self.current_cycle.saturating_add(cycles) >= self.batch_deadline
             || self.pending_dma != 0

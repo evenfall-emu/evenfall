@@ -18,8 +18,5 @@ miniz_oxide.workspace = true
 [dev-dependencies]
 blake3.workspace = true
 
-[dev-dependencies]
-blake3.workspace = true
-
 [lints]
 workspace = true
