@@ -537,9 +537,9 @@ pub enum FifoId {
 pub struct DirectSoundFifo {
     words: [u32; 8],
     #[codec(bits = 3)]
-    read_index: u8, // u3
+    pub read_index: u8, // u3
     #[codec(bits = 3)]
-    write_index: u8, // u3
+    pub write_index: u8, // u3
     playback_word: u32,
     #[codec(bits = 3)]
     playback_bytes_remaining: u8, // u3
