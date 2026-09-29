@@ -1,6 +1,6 @@
 use crate::bus::{
-    Access, AccessKind, AccessSource, AccessWidth, Bus, SCREEN_HEIGHT, SCREEN_WIDTH, ScrollSegment,
-    WindowSegment,
+    Access, AccessKind, AccessSource, AccessWidth, AffineSegment, Bus, SCREEN_HEIGHT, SCREEN_WIDTH,
+    ScrollSegment, WindowSegment,
 };
 
 use super::history::AffineTransition;
@@ -564,6 +564,47 @@ fn memoized_scanline_invalidates_on_a_changed_bitmap_page() {
     let mut fresh = twin(&bus);
     fresh.render_scanline(0);
     assert_line(&bus, &fresh, 0);
+}
+
+#[test]
+fn identity_mode_four_rows_match_segmented_affine_reference_across_pages_and_transparency() {
+    for page in [0, 0xA000] {
+        for line in [0, 43, 159] {
+            let mut fast = Bus::init(&[]);
+            fast.dispcnt = 4 | (1 << 10) | if page == 0 { 0 } else { 1 << 4 };
+            fast.bg_controls[2] = 2;
+            fast.bg_affine_current[0][1] = line as i32 * 256;
+            fast.palette[0..2].copy_from_slice(&0x0710u16.to_le_bytes());
+            fast.palette[2..4].copy_from_slice(&0x1234u16.to_le_bytes());
+            fast.palette[4..6].copy_from_slice(&0xAABCu16.to_le_bytes());
+            fast.bldcnt = (1 << 2) | (1 << 6) | (1 << 13);
+            fast.bldalpha = 16;
+            let first = line * SCREEN_WIDTH;
+            for x in 0..SCREEN_WIDTH {
+                fast.vram[page + first + x] = if x % 11 == 0 {
+                    0
+                } else if x & 1 == 0 {
+                    1
+                } else {
+                    2
+                };
+            }
+            let mut reference = twin(&fast);
+            // A line-start affine record repeats the live identity matrix,
+            // selecting the existing per-dot affine path without changing it.
+            reference.affine_segment_line = line as u16;
+            reference.affine_segment_counts[0] = 1;
+            reference.affine_segments[0][0] =
+                AffineSegment { start_x: 0, pa: 0x100, pc: 0, ref_x: 0, ref_y: line as i32 * 256 };
+            fast.render_scanline(line);
+            reference.render_scanline(line);
+            assert_line(&fast, &reference, line);
+            assert_eq!(fast.frame_pixels[first], 0x0710);
+            assert_eq!(fast.frame_layers[first], 5);
+            assert_eq!(fast.frame_pixels[first + 1], 0x2ABC);
+            assert_eq!(fast.frame_layers[first + 1], 2);
+        }
+    }
 }
 
 /// ZiGBA: "memoized scanlines notice every change to the memory they read"

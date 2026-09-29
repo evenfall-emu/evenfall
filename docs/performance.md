@@ -130,6 +130,17 @@ and browser behavior are described in [`design/`](design/save-states.md) and
 
 ## Differences, experiments and open questions
 
+The [Mode 4 renderer](../systems/gba/src/video/backgrounds.rs) reads a
+contiguous VRAM row when BG2 has an identity transform, every pixel admits it,
+and no raster history changes its source or palette. Transparent index zero
+still leaves the backdrop visible; affine, mosaic, window and raster cases use
+the per-dot path. On CPU 3 with release-LTO, HLE boot and 240-frame matched
+rounds, this changed bitmap-DMA from 1.51× to 1.28× ZiGBA loop time, while
+tiles moved from 1.58× to 1.63× and affine from 1.30× to 1.33×; the full
+seven-workload geometric mean moved from 1.52× to 1.50×. A longer 600-frame
+comparison reproduced the bitmap gain and tiled slowdown. The result is a
+workload tradeoff, not an across-the-board rendering speedup.
+
 Stable Rust uses fixed-size lane loops for text rows, objects and color
 effects where ZiGBA uses `@Vector` operations; the loops do not reliably
 auto-vectorize. The per-dot paths remain references. The portable-state
@@ -149,6 +160,11 @@ text-admission masks gave 1.68×/1.59×, hoisted affine line-state lookups
 1.75×/1.48×, and merged duplicate tile-row cache lookups 1.76×/1.45×.
 There was no stable win; all three trials were reverted, not retained as
 optimizations.
+
+On CPU 3, skipping offscreen VRAM snapshots cut bitmap-DMA to about 1.30×
+but slowed tiles to 1.64× (or 1.62× when restricted to bitmap modes).
+Inlining snapshots or separating the Mode 4 row renderer did not remove the
+tiled slowdown or improve the retained Mode 4 path; those trials were reverted.
 
 In a separate pinned-CPU-1 HLE comparison (matched rounds with equal final
 images), **retained** CPU work reduced the ARM-mixer ratio from 3.21× to
