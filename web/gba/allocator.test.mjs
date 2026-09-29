@@ -10,23 +10,24 @@ test(
     assert.deepEqual(WebAssembly.Module.imports(module), []);
     const { exports: core } = new WebAssembly.Instance(module, {});
     const mib = 1024 * 1024;
-    const size = 32 * mib + 1;
     assert.equal(core.memory.buffer.byteLength, 16 * mib);
-    assert.equal(core.zb_prepare(size), 0);
-    const address = core.zb_input_ptr();
-    const first = core.memory.buffer.byteLength;
-    assert.ok(
-      first < 50 * mib,
-      `a 32 MiB + 1 byte buffer should not occupy 64 MiB: ${first}`,
-    );
-    new Uint8Array(core.memory.buffer)[address + size - 1] = 0xa5;
-
-    for (let i = 0; i < 6; i++) {
-      core.zb_dispose();
+    for (const size of [mib - 1, 32 * mib + 1]) {
       assert.equal(core.zb_prepare(size), 0);
-      assert.equal(core.zb_input_ptr(), address);
-      assert.equal(core.memory.buffer.byteLength, first);
+      const address = core.zb_input_ptr();
+      const first = core.memory.buffer.byteLength;
+      if (size > mib)
+        assert.ok(
+          first < 50 * mib,
+          `a 32 MiB + 1 byte buffer should not occupy 64 MiB: ${first}`,
+        );
+      new Uint8Array(core.memory.buffer)[address + size - 1] = 0xa5;
+      for (let i = 0; i < 6; i++) {
+        core.zb_dispose();
+        assert.equal(core.zb_prepare(size), 0);
+        assert.equal(core.zb_input_ptr(), address);
+        assert.equal(core.memory.buffer.byteLength, first);
+      }
+      core.zb_dispose();
     }
-    core.zb_dispose();
   },
 );
