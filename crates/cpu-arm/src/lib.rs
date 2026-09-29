@@ -1393,6 +1393,40 @@ mod tests {
         );
     }
 
+    #[test]
+    fn admitted_arm_alu_handlers_match_interpreter_for_every_opcode_and_shift_form() {
+        for opcode in 0..16 {
+            for flags in [false, true] {
+                if (8..=11).contains(&opcode) && !flags {
+                    continue; // test opcodes without S are not admitted by the kernel.
+                }
+                for operand in [(1 << 25) | 0x2a5, 0x372] {
+                    let instruction = 0xe000_0000
+                        | (opcode << 21)
+                        | (u32::from(flags) << 20)
+                        | (1 << 16)
+                        | (4 << 12)
+                        | operand;
+                    let mut reference = Core::new(0x0800_0040, 0x1f);
+                    reference.cpsr |= 0xb000_0000;
+                    reference.registers[1] = 0x7162_5aed;
+                    reference.registers[2] = 0x8000_0181;
+                    reference.registers[3] = 9;
+                    reference.registers[4] = 0x1234_5678;
+                    let mut fast = reference.clone();
+                    let mut reference_bus = TraceBus::default();
+                    let mut fast_bus = TraceBus::default();
+                    let expected = reference.execute_arm(&mut reference_bus, instruction).unwrap();
+                    let handler = ArmAluHandler::decode(instruction).unwrap();
+                    let actual = handler.execute(&mut fast, &mut fast_bus, instruction);
+                    assert_eq!(actual, expected, "opcode {opcode}, flags {flags}, {operand:#x}");
+                    assert_eq!(fast, reference, "opcode {opcode}, flags {flags}, {operand:#x}");
+                    assert_eq!(fast_bus.internal, reference_bus.internal);
+                }
+            }
+        }
+    }
+
     /// ZiGBA `executeBlockDataTransfer`: empty STM transfers one aligned PC beat and steps by 64.
     #[test]
     fn empty_stm_preserves_low_base_bits() {
