@@ -6,6 +6,13 @@
 /// Bit 15 of a decoded row color marks a transparent pixel.
 pub const TRANSPARENT: u16 = 0x8000;
 
+/// Decoded palette tables for one text row.
+pub struct Decoded<'a> {
+    /// Per 16-color bank, see [`Cache::pairs`].
+    pub banks: &'a [[u32; 256]; 16],
+    pub bg256: &'a [u16; 256],
+}
+
 #[derive(Clone)]
 pub struct Cache {
     palette: [u8; 1024],
@@ -56,15 +63,34 @@ impl Cache {
     pub fn pairs(&mut self, palette_bank: u8) -> &[u32; 256] {
         let bank = usize::from(palette_bank & 15);
         if self.pair_banks >> bank & 1 == 0 {
-            let words = &self.words[bank * 16..][..16];
-            let color =
-                |index: usize| u32::from(if index == 0 { TRANSPARENT } else { words[index] });
-            for (byte, pair) in self.pairs[bank].iter_mut().enumerate() {
-                *pair = color(byte & 15) | color(byte >> 4) << 16;
-            }
-            self.pair_banks |= 1 << bank;
+            self.build_pairs(bank);
         }
         &self.pairs[bank]
+    }
+
+    /// Every bank's pair table and the 256-color words, building the tables
+    /// once after a BG palette change.
+    #[inline]
+    pub fn all_pairs(&mut self) -> Decoded<'_> {
+        if self.pair_banks != 0xFFFF {
+            for bank in 0..16 {
+                if self.pair_banks >> bank & 1 == 0 {
+                    self.build_pairs(bank);
+                }
+            }
+        }
+        Decoded { banks: &self.pairs, bg256: &self.bg256 }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn build_pairs(&mut self, bank: usize) {
+        let words = &self.words[bank * 16..][..16];
+        let color = |index: usize| u32::from(if index == 0 { TRANSPARENT } else { words[index] });
+        for (byte, pair) in self.pairs[bank].iter_mut().enumerate() {
+            *pair = color(byte & 15) | color(byte >> 4) << 16;
+        }
+        self.pair_banks |= 1 << bank;
     }
 
     /// Colors of one 4bpp row in display order: pixel `i` is nibble `i` of

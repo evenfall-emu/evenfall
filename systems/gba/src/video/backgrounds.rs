@@ -8,15 +8,18 @@ use super::scanline_memo::{ALL_VRAM_PAGES, PAGE_SIZE, VRAM_SIZE};
 use super::tile_row_cache::{Cache, TRANSPARENT, reverse_nibbles};
 use crate::bus::{Bus, SCREEN_WIDTH};
 
-/// Length of a text row buffer. Screen pixel `x` is at `ROW_ORIGIN + x`, so
-/// every tile, including a partly scrolled-off first one, is written whole.
+/// Length of a background row buffer. Text rows hold 32 whole tiles, tile
+/// `k` at `8k`; the line starts at the fine scroll offset (`hofs & 7`), so a
+/// partly scrolled-off first tile needs no special case. Affine and bitmap
+/// rows start at zero.
 pub(super) const ROW: usize = 256;
-pub(super) const ROW_ORIGIN: usize = 8;
 const BG_VRAM: usize = 0x10000;
 
-/// Render one text background line into `out` (see [`ROW_ORIGIN`]) and
-/// return the 1 KiB BG VRAM pages it read. `line` is the source line after
-/// vertical mosaic.
+/// Render one text background line into `out` and return the 1 KiB BG VRAM
+/// pages it read; the screen line starts at `out[hofs & 7]`. `line` is the
+/// source line after vertical mosaic. Out of line: inlined into the line
+/// pipeline, its loop spills to the stack.
+#[inline(never)]
 pub(super) fn text_row<const COLOR_256: bool>(
     vram: &[u8; VRAM_SIZE],
     cache: &mut Cache,
@@ -28,32 +31,32 @@ pub(super) fn text_row<const COLOR_256: bool>(
 ) -> u64 {
     let char_base = usize::from((control >> 2) & 3) * 0x4000;
     let screen_base = usize::from((control >> 8) & 31) * 0x800;
-    let columns = if control & (1 << 14) != 0 { 64 } else { 32 };
+    let wide = control & (1 << 14) != 0;
     let height = if control & (1 << 15) != 0 { 512 } else { 256 };
     let world_y = (line + usize::from(vofs)) & (height - 1);
-    let map_row = screen_base + (world_y / 256) * (columns / 32) * 0x800 + (world_y / 8 % 32) * 64;
-    let tile_y = world_y % 8;
-    let fine = usize::from(hofs) & 7;
-    let first_column = usize::from(hofs) / 8;
+    let blocks = if wide { 2 } else { 1 };
+    let map_row = screen_base + (world_y / 256) * blocks * 0x800 + (world_y / 8 % 32) * 64;
+    // The line's map entries; blocks past BG VRAM read as zero.
+    let mut entries = [0u16; 64];
     let mut pages = 0u64;
-    for block in 0..columns / 32 {
+    for block in 0..blocks {
         let block_row = map_row + block * 0x800;
         if block_row < BG_VRAM {
+            let bytes: &[u8; 64] = vram[block_row..block_row + 64].try_into().unwrap();
+            for (entry, pair) in entries[block * 32..].iter_mut().zip(bytes.as_chunks::<2>().0) {
+                *entry = u16::from_le_bytes(*pair);
+            }
             pages |= 1 << (block_row / PAGE_SIZE);
         }
     }
-    for tile in 0..SCREEN_WIDTH / 8 + 1 {
-        let column = (first_column + tile) & (columns - 1);
-        let entry_at = map_row + (column / 32) * 0x800 + (column % 32) * 2;
-        let entry = if entry_at < BG_VRAM {
-            u16::from_le_bytes([vram[entry_at], vram[entry_at + 1]])
-        } else {
-            0
-        };
-        let source_y = if entry & (1 << 11) != 0 { 7 - tile_y } else { tile_y };
-        let at = ROW_ORIGIN - fine + tile * 8;
-        let pixels: &mut [u16; 8] = (&mut out[at..at + 8]).try_into().unwrap();
-        let row_bytes = if COLOR_256 { 8 } else { 4 };
+    let column_mask = if wide { 63 } else { 31 };
+    let first_column = usize::from(hofs) / 8;
+    let tile_y = world_y % 8;
+    let row_bytes = if COLOR_256 { 8 } else { 4 };
+    let pairs = cache.all_pairs();
+    for (tile, pixels) in out.as_chunks_mut::<8>().0.iter_mut().enumerate().take(31) {
+        let entry = entries[(first_column + tile) & column_mask];
+        let source_y = tile_y ^ if entry & (1 << 11) != 0 { 7 } else { 0 };
         let row_base =
             char_base + usize::from(entry & 0x3FF) * row_bytes * 8 + source_y * row_bytes;
         if row_base >= BG_VRAM {
@@ -61,20 +64,21 @@ pub(super) fn text_row<const COLOR_256: bool>(
             continue;
         }
         pages |= 1 << (row_base / PAGE_SIZE);
+        let flipped = entry & (1 << 10) != 0;
         if COLOR_256 {
-            let mut source = u64::from_le_bytes(vram[row_base..row_base + 8].try_into().unwrap());
-            if entry & (1 << 10) != 0 {
-                source = source.swap_bytes();
-            }
+            let raw = u64::from_le_bytes(vram[row_base..row_base + 8].try_into().unwrap());
+            let source = if flipped { raw.swap_bytes() } else { raw };
             for (pixel, color) in pixels.iter_mut().enumerate() {
-                *color = cache.bg256[usize::from((source >> (pixel * 8)) as u8)];
+                *color = pairs.bg256[usize::from((source >> (pixel * 8)) as u8)];
             }
         } else {
-            let mut source = u32::from_le_bytes(vram[row_base..row_base + 4].try_into().unwrap());
-            if entry & (1 << 10) != 0 {
-                source = reverse_nibbles(source);
+            let raw = u32::from_le_bytes(vram[row_base..row_base + 4].try_into().unwrap());
+            let source = if flipped { reverse_nibbles(raw) } else { raw };
+            let bank = &pairs.banks[usize::from(entry >> 12)];
+            for (pair, byte) in pixels.as_chunks_mut::<2>().0.iter_mut().zip(source.to_le_bytes()) {
+                let colors = bank[usize::from(byte)];
+                *pair = [colors as u16, (colors >> 16) as u16];
             }
-            cache.row(source, (entry >> 12) as u8, pixels);
         }
     }
     pages

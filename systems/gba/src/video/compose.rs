@@ -13,9 +13,7 @@
 //! group of pixels in registers while it paints every background back to
 //! front, merges objects and blends; see [`super::lanes`].
 
-use super::backgrounds::{
-    ROW, ROW_ORIGIN, affine_row, apply_horizontal_mosaic, bitmap_row, text_row,
-};
+use super::backgrounds::{ROW, affine_row, apply_horizontal_mosaic, bitmap_row, text_row};
 use super::history::{AffineState, VideoHistoryView};
 use super::lanes::Lanes;
 use super::scanline_memo::ALL_VRAM_PAGES;
@@ -39,9 +37,14 @@ const SECOND_TARGET: u16 = 1 << 6;
 const PRIORITY_SHIFT: u16 = 8;
 const NO_OBJECT: u16 = 7 << PRIORITY_SHIFT;
 
+/// Line kinds of [`compose_line`]: no color effect, brightness only, alpha
+/// blending (BLDCNT effect 0 or 1 with semi-transparent objects, or effect 1),
+/// alpha blending with brightness (effect 2 or 3 with semi-transparent
+/// objects). The second surface is tracked from `ALPHA` on.
 const DIRECT: u8 = 0;
 const BRIGHT: u8 = 1;
-const BLEND: u8 = 2;
+const ALPHA: u8 = 2;
+const ALPHA_BRIGHT: u8 = 3;
 
 /// A composed surface: color before effects, priority, layer.
 pub type Surface = (u16, u8, u8);
@@ -66,6 +69,8 @@ struct ObjectRows {
 /// Transient per-line buffers of the layer-major compositor.
 pub(crate) struct LineLayers {
     pub(super) backgrounds: [[u16; ROW]; 4],
+    /// Where each background row's screen line starts.
+    offsets: [usize; 4],
     surfaces: Surfaces,
     objects: ObjectRows,
     /// Layer and blend-target bits of the OBJ layer on this line.
@@ -78,6 +83,7 @@ impl Default for LineLayers {
         let surfaces = Surfaces { top: plane, top_meta: plane, second: plane, second_meta: plane };
         Self {
             backgrounds: [[0; ROW]; 4],
+            offsets: [0; 4],
             surfaces,
             objects: ObjectRows {
                 front: plane,
@@ -186,7 +192,8 @@ impl Bus {
         for (slot, &key) in slots.iter_mut().zip(keys[..count].iter().rev()) {
             let background = usize::from(key % 8);
             *slot = Slot {
-                row: layers.backgrounds[background][ROW_ORIGIN..][..SCREEN_WIDTH]
+                row: layers.backgrounds[background][layers.offsets[background] & 7..]
+                    [..SCREEN_WIDTH]
                     .try_into()
                     .unwrap(),
                 bit: 1 << background,
@@ -201,12 +208,11 @@ impl Bus {
             factor: (self.bldy & 31).min(16),
             brighten: effect == 2,
         };
-        let mode = if !effects {
-            DIRECT
-        } else if blend {
-            BLEND
-        } else {
-            BRIGHT
+        let mode = match (effects, blend, effect >= 2) {
+            (false, ..) => DIRECT,
+            (true, false, _) => BRIGHT,
+            (true, true, false) => ALPHA,
+            (true, true, true) => ALPHA_BRIGHT,
         };
         let window = &self.line_window_masks;
         let rows = &layers.objects;
@@ -215,14 +221,17 @@ impl Bus {
             (&mut self.frame_pixels[first..first + SCREEN_WIDTH]).try_into().unwrap();
         let line_inputs =
             LineInputs { slots, window, backdrop, objects: rows, effects: parameters };
-        match (objects, mode) {
-            (false, DIRECT) => compose_line::<Native, false, DIRECT>(&line_inputs, surfaces, out),
-            (false, BRIGHT) => compose_line::<Native, false, BRIGHT>(&line_inputs, surfaces, out),
-            (false, _) => compose_line::<Native, false, BLEND>(&line_inputs, surfaces, out),
-            (true, DIRECT) => compose_line::<Native, true, DIRECT>(&line_inputs, surfaces, out),
-            (true, BRIGHT) => compose_line::<Native, true, BRIGHT>(&line_inputs, surfaces, out),
-            (true, _) => compose_line::<Native, true, BLEND>(&line_inputs, surfaces, out),
-        }
+        let compose = match (objects, mode) {
+            (false, DIRECT) => compose_line::<Native, false, DIRECT>,
+            (false, BRIGHT) => compose_line::<Native, false, BRIGHT>,
+            (false, ALPHA) => compose_line::<Native, false, ALPHA>,
+            (false, _) => compose_line::<Native, false, ALPHA_BRIGHT>,
+            (true, DIRECT) => compose_line::<Native, true, DIRECT>,
+            (true, BRIGHT) => compose_line::<Native, true, BRIGHT>,
+            (true, ALPHA) => compose_line::<Native, true, ALPHA>,
+            (true, _) => compose_line::<Native, true, ALPHA_BRIGHT>,
+        };
+        compose(&line_inputs, surfaces, out);
         if self.green_swap_enabled {
             self.apply_green_swap(line);
         }
@@ -246,8 +255,8 @@ impl Bus {
             let horizontal = if mosaic { usize::from(self.mosaic & 15) + 1 } else { 1 };
             let affine = self.live_affine(background.saturating_sub(2) & 1);
             let row = &mut self.line_layers.backgrounds[background];
-            let screen: &mut [u16; SCREEN_WIDTH] =
-                (&mut row[ROW_ORIGIN..ROW_ORIGIN + SCREEN_WIDTH]).try_into().unwrap();
+            let mut offset = 0;
+            let screen: &mut [u16; SCREEN_WIDTH] = row.first_chunk_mut().unwrap();
             match (mode, background) {
                 (0, _) | (1, 0 | 1) => {
                     let vertical = usize::from((self.mosaic >> 4) & 15) + 1;
@@ -263,9 +272,10 @@ impl Bus {
                         text_row::<false>(&self.vram, cache, source_line, control, hofs, vofs, row)
                     };
                     pages |= u128::from(read);
+                    offset = usize::from(hofs) & 7;
                     if horizontal > 1 {
                         let screen: &mut [u16; SCREEN_WIDTH] =
-                            (&mut row[ROW_ORIGIN..ROW_ORIGIN + SCREEN_WIDTH]).try_into().unwrap();
+                            (&mut row[offset..offset + SCREEN_WIDTH]).try_into().unwrap();
                         apply_horizontal_mosaic(screen, horizontal);
                     }
                 }
@@ -294,6 +304,7 @@ impl Bus {
                 }
                 _ => continue,
             }
+            self.line_layers.offsets[background] = offset;
             let key = ((control & 3) as u8) * 8 + background as u8;
             let mut slot = count;
             while slot > 0 && keys[slot - 1] > key {
@@ -399,19 +410,29 @@ struct LineInputs<'a> {
 /// the top surface whatever its priority, and the background moves to
 /// second; otherwise the minimum-priority object can only take the second
 /// surface. Then color effects apply. `surfaces` receives the final top and
-/// second surfaces (the second only when `MODE` blends).
+/// second surfaces (the second only when `MODE` alpha-blends).
 #[inline(never)]
 fn compose_line<V: Lanes, const OBJECTS: bool, const MODE: u8>(
     inputs: &LineInputs<'_>,
     surfaces: &mut Surfaces,
     out: &mut [u16; SCREEN_WIDTH],
 ) {
+    let second_surface = MODE >= ALPHA;
     let effects = inputs.effects;
     let eva = V::splat(effects.eva);
     let evb = V::splat(effects.evb);
     let factor = V::splat(effects.factor);
     let brighten = V::splat(if effects.brighten { 0xFFFF } else { 0 });
-    let opaque_above = V::splat(0xFFFF);
+    let zero = V::splat(0);
+    // Per-slot vectors, splatted once per line.
+    let count = inputs.slots.len().min(4);
+    let mut rows = [&inputs.objects.front; 4];
+    let (mut bits, mut metas) = ([zero; 4], [zero; 4]);
+    for (index, slot) in inputs.slots.iter().take(4).enumerate() {
+        rows[index] = slot.row;
+        bits[index] = V::splat(slot.bit);
+        metas[index] = V::splat(slot.meta);
+    }
     let mut x = 0;
     while x < SCREEN_WIDTH {
         let window = V::load_bytes(inputs.window, x);
@@ -419,16 +440,16 @@ fn compose_line<V: Lanes, const OBJECTS: bool, const MODE: u8>(
         let mut top_meta = V::splat(inputs.backdrop.meta);
         let mut second = top;
         let mut second_meta = top_meta;
-        for slot in inputs.slots {
-            let color = V::load(slot.row, x);
+        for index in 0..count {
+            let color = V::load(rows[index], x);
             // Transparent pixels have bit 15 set: negative as i16.
-            let visible = color.gt(opaque_above).and(window.any(slot.bit));
-            if MODE == BLEND {
-                second = V::select(visible, top, second);
-                second_meta = V::select(visible, top_meta, second_meta);
+            let hidden = window.and(bits[index]).eq(zero).or(zero.gt(color));
+            if second_surface {
+                second = V::select(hidden, second, top);
+                second_meta = V::select(hidden, second_meta, top_meta);
             }
-            top = V::select(visible, color, top);
-            top_meta = V::select(visible, V::splat(slot.meta), top_meta);
+            top = V::select(hidden, top, color);
+            top_meta = V::select(hidden, top_meta, metas[index]);
         }
         if OBJECTS {
             let objects = inputs.objects;
@@ -436,7 +457,7 @@ fn compose_line<V: Lanes, const OBJECTS: bool, const MODE: u8>(
             let min_meta = V::load(&objects.min_meta, x);
             let min_priority = min_meta.shr::<8>();
             let wins = min_priority.gt(top_meta.shr::<8>()).and_not(admitted);
-            if MODE == BLEND {
+            if second_surface {
                 let behind = wins.or(min_priority.gt(second_meta.shr::<8>())).and_not(admitted);
                 second = V::select(wins, top, V::select(behind, V::load(&objects.min, x), second));
                 second_meta = V::select(wins, top_meta, V::select(behind, min_meta, second_meta));
@@ -459,18 +480,22 @@ fn compose_line<V: Lanes, const OBJECTS: bool, const MODE: u8>(
                     .any(SEMI | ALPHA_FIRST)
                     .and(second_meta.any(SECOND_TARGET))
                     .and(effective);
-                let bright = top_meta
-                    .and(V::splat(SEMI | BRIGHT_FIRST))
-                    .eq(V::splat(BRIGHT_FIRST))
-                    .and(effective);
-                let adjusted = V::select(bright, brightness(top, factor, brighten), top);
+                let adjusted = if MODE == ALPHA_BRIGHT {
+                    let bright = top_meta
+                        .and(V::splat(SEMI | BRIGHT_FIRST))
+                        .eq(V::splat(BRIGHT_FIRST))
+                        .and(effective);
+                    V::select(bright, brightness(top, factor, brighten), top)
+                } else {
+                    top
+                };
                 V::select(alpha, alpha_blend(top, second, eva, evb), adjusted)
             }
         };
         result.store(out, x);
         top.store(&mut surfaces.top, x);
         top_meta.store(&mut surfaces.top_meta, x);
-        if MODE == BLEND {
+        if second_surface {
             second.store(&mut surfaces.second, x);
             second_meta.store(&mut surfaces.second_meta, x);
         }
@@ -585,10 +610,12 @@ mod tests {
             };
             check::<false, DIRECT>(&inputs);
             check::<false, BRIGHT>(&inputs);
-            check::<false, BLEND>(&inputs);
+            check::<false, ALPHA>(&inputs);
+            check::<false, ALPHA_BRIGHT>(&inputs);
             check::<true, DIRECT>(&inputs);
             check::<true, BRIGHT>(&inputs);
-            check::<true, BLEND>(&inputs);
+            check::<true, ALPHA>(&inputs);
+            check::<true, ALPHA_BRIGHT>(&inputs);
         }
     }
 }
