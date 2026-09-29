@@ -1,0 +1,21 @@
+{
+  "name": "probe-midline_bldy",
+  "assets": {
+    "rom": "../../../probe/build/midline_bldy.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "inputs": [],
+  "endCycle": "1404480",
+  "checkpoints": [
+    "1123584",
+    "1404480"
+  ],
+  "sliceCycles": [
+    "70224",
+    "280896"
+  ],
+  "terminalPc": 134218500
+}

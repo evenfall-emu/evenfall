@@ -1,0 +1,64 @@
+{
+  "name": "probe-keypad_irq",
+  "assets": {
+    "rom": "../../../probe/build/keypad_irq.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "inputs": [
+    {
+      "at": "24000",
+      "change": {
+        "keys": 1
+      }
+    },
+    {
+      "at": "48000",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "72000",
+      "change": {
+        "keys": 1
+      }
+    },
+    {
+      "at": "96000",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "120000",
+      "change": {
+        "keys": 1
+      }
+    },
+    {
+      "at": "144000",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "168000",
+      "change": {
+        "keys": 8
+      }
+    }
+  ],
+  "endCycle": "1123584",
+  "checkpoints": [
+    "1123584"
+  ],
+  "sliceCycles": [
+    "70224",
+    "280896"
+  ],
+  "terminalPc": 134218500,
+  "terminalR12": 3
+}

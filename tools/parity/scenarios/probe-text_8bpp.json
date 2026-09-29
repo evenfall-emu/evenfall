@@ -1,0 +1,21 @@
+{
+  "name": "probe-text_8bpp",
+  "assets": {
+    "rom": "../../../probe/build/text_8bpp.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "inputs": [],
+  "endCycle": "1685376",
+  "checkpoints": [
+    "1123584",
+    "1685376"
+  ],
+  "sliceCycles": [
+    "70224",
+    "280896"
+  ],
+  "terminalPc": 134218500
+}
