@@ -49,9 +49,10 @@ before the cartridge reaches its endpoint. The replacement BIOS is known to
 produce a failing protected-BIOS-read test in the jsmolka BIOS ROM; parity
 still compares what **both emulators** do. Some key, STOP, audio and bench
 scenarios add an odd, small slice size alongside quarter- and full-frame
-slices. Linked and multi-machine probes require simultaneous machines on one
-serial timeline and are covered by the ROM validator rather than this
-single-machine runner.
+slices. Linked probes run two to four machines on one cable timeline in
+validator cable order, using the standard two-player or multiplayer cable.
+The two-slave MultiBoot case creates two distinct machines from the same
+child ROM. Each peer has its own terminal PC and r12 checks.
 
 Each JSON manifest names relative ROM/optional BIOS/save assets, boot and
 save type, RTC/sensor settings, absolute-cycle input changes and JoyBus host
@@ -60,14 +61,26 @@ terminal PC/r12 guards test endpoints; continuous bench ROMs have no terminal
 self-loop. [`tools/parity/README.md`](../tools/parity/README.md) describes the
 manifest keys and the available CLI commands.
 
+In linked manifests the top-level `assets`, `config`, and terminal guards
+describe machine 0. `link.connection` selects `cable_2p` or `cable_multi`;
+`link.peers` lists one to three additional machines in cable order, each with
+its own assets, config and optional terminal guards. Linked scenarios do not
+accept timed inputs or JoyBus host actions; the linked probes need neither.
+Each backend advances every machine to a checkpoint with its linked scheduler
+and drains each machine's audio after every host slice.
+
 ## Traces and first differences
 
 `run` writes `target/parity/traces/<scenario>/oracle.trace` and
 `rust-slice-N.trace`, with the oracle's individual `slice-N.trace` files beside
-them. Compare saved traces independently with:
+them. A linked run instead writes one standard trace per machine in cable
+order: `oracle-machine-I.trace`, `slice-N-machine-I.trace` and
+`rust-slice-N-machine-I.trace`. Slice independence and parity are checked for
+every machine. Compare saved traces independently with:
 
 ```sh
 cargo run -p evenfall-parity -- compare target/parity/traces/SCENARIO/oracle.trace target/parity/traces/SCENARIO/rust-slice-0.trace
+cargo run -p evenfall-parity -- compare target/parity/traces/probe-link/oracle-machine-1.trace target/parity/traces/probe-link/rust-slice-0-machine-1.trace
 ```
 
 The compact `EFPAR01\0` binary format is little-endian: an eight-byte magic,

@@ -1,0 +1,54 @@
+{
+  "name": "probe-multi4",
+  "assets": {
+    "rom": "../../../probe/build/multi4_parent.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "terminalPc": 134218500,
+  "terminalR12": 17476,
+  "link": {
+    "connection": "cable_multi",
+    "peers": [
+      {
+        "assets": {
+          "rom": "../../../probe/build/multi4_child1.gba"
+        },
+        "config": {
+          "boot": "hle",
+          "saveType": "auto"
+        },
+        "terminalPc": 134218500,
+        "terminalR12": 13107
+      },
+      {
+        "assets": {
+          "rom": "../../../probe/build/multi4_child2.gba"
+        },
+        "config": {
+          "boot": "hle",
+          "saveType": "auto"
+        },
+        "terminalPc": 134218500,
+        "terminalR12": 17476
+      },
+      {
+        "assets": {
+          "rom": "../../../probe/build/multi4_child3.gba"
+        },
+        "config": {
+          "boot": "hle",
+          "saveType": "auto"
+        },
+        "terminalPc": 134218500,
+        "terminalR12": 4369
+      }
+    ]
+  },
+  "inputs": [],
+  "endCycle": "1123584",
+  "checkpoints": ["20000", "40000", "280896", "1123584"],
+  "sliceCycles": ["20000", "70224"]
+}
