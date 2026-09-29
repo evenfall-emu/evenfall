@@ -90,9 +90,38 @@ one warmup, HLE boot), loop time relative to ZiGBA's shipped module
 | geomean     |               0.87× |           0.42× |                   0.36× |
 
 Every image agrees across all modules and with the native harnesses. The
-largest remaining costs are affine rendering (rotated rows and affine
-objects) and bitmap DMA's per-beat work; the benchmark ROMs weight each path
-equally, so neither table predicts a game's ratio.
+benchmark ROMs weight each path equally, so neither table predicts a game's
+ratio.
+
+### DMA, interrupt handlers and empty lines
+
+Three further changes shorten the workloads the CPU engine left furthest
+from ZiGBA: DMA beats run in bulk when nothing can observe them one at a
+time (see the fast-path table), an engine run refuses at once an entry whose
+first op it would refuse (interrupt handlers begin by reading I/O
+registers, and each such entry used to pay a whole run's setup), and a line
+showing only the backdrop skips the decoded palette's validation and the
+surface fills. On pinned CPU 1 with release-LTO, HLE boot, five matched
+rounds and one warmup in one run, Evenfall/ZiGBA loop time before and after
+them:
+
+| Workload    | Before | After |
+| ----------- | -----: | ----: |
+| idle        |  0.59× | 0.49× |
+| arm-mixer   |  0.43× | 0.43× |
+| thumb-logic |  0.56× | 0.57× |
+| tiles       |  0.34× | 0.34× |
+| affine      |  0.79× | 0.73× |
+| bitmap-DMA  |  0.70× | 0.57× |
+| audio       |  0.43× | 0.43× |
+| geomean     |  0.53× | 0.49× |
+
+Every final image agrees; build times and the WebAssembly module's size are
+unchanged within noise (0.3% larger). The largest remaining costs are affine
+rendering, the per-line HBlank interrupt handler, whose I/O accesses the
+engine leaves to the interpreter (on affine the ARM engine runs 820,000
+times for about nine guest cycles each), and the device batch's per-event
+work when the CPU halts.
 
 ### Execution engine
 
@@ -134,8 +163,11 @@ The engine's monomorphized run loops cost build time and code size: a dev
 one-line rebuild takes 3.6 s against 2.3 s, a release one 2.5 s against
 2.0 s and a wasm-release one 7.7 s against 4.8 s, and the WebAssembly module
 grows from 0.87 MB to 1.26 MB. The two ARM loops (IWRAM and EWRAM) are
-about 170 KB of that module; one loop with the region as values would
-remove one of them at a small cost per instruction.
+about 170 KB of that module. One loop with the region as values, and both
+op arrays of EWRAM's length, would remove about 85 KB, but in a same-run
+comparison on CPU 1 it took 2% longer on arm-mixer (3% more instructions in
+the loop) and 1% longer on affine, so the design keeps both loops and pays
+their size and the slower wasm rebuild.
 
 ### Build-time budget
 
@@ -170,6 +202,7 @@ effects rather than merely counting invocations.
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Event horizon and deferred devices:** [`Bus`](../systems/gba/src/bus/mod.rs) advances in an open batch with a strict next-event deadline, materializing APU and timers before MMIO, overflow effects or host reads. FIFO-only timer overflows delegate to [`Apu::elapse_clocked`](../systems/gba/src/apu.rs), stopping at the first refill request.                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `Bus::advance_eager`/`advance_step` remain the reference; `fifo_only_timer_overflows_match_eager_refill_and_irq_schedule` in [`bus/mod.rs`](../systems/gba/src/bus/mod.rs) and `synchronized_reads_and_fifo_writes_keep_the_device_batch_armed` in [`bus_b.rs`](../systems/gba/tests/bus_b.rs) compare eager and batched endpoints, including DMA.                                                                                                                                                                                               |
 | **Direct DMA beats:** [`Bus::read_dma_source` and `write_dma_destination`](../systems/gba/src/bus/mod.rs) dispatch RAM, ROM and FIFO beats directly while preserving charging and beat-boundary preemption.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Generic `Bus::read`/`write` handles other regions; `dma_at_lcd_boundary_preserves_deferred_batch` and the FIFO/batched differential test above cover timing and state. The direct-versus-generic dispatch itself has no standalone switchable differential test.                                                                                                                                                                                                                                                                                 |
+| **Bulk DMA beats:** [`Bus::dma_bulk`](../systems/gba/src/bus/mod.rs) runs the beats of a DMA from RAM or the latch to RAM, VRAM or OAM that end before the device deadline in one loop, with its own clock and PPU position, while no DMA is pending and each address stays in its region. Devices catch up at the batch's end; a VRAM write on a visible dot whose line's history has room goes through the per-beat path at its cycle. VRAM writes skip their history snapshot once the line's history is full.                                                                                                                                                                                                                                                                                         | The per-beat loop in `Bus::run_dma` is the reference and runs everything else. `bulk_dma_beats_match_the_per_beat_loop` and `vram_writes_skip_snapshots_only_when_history_is_full` in [`bus/mod.rs`](../systems/gba/src/bus/mod.rs) compare durable state bytes, memo marks, raster history and pixels; `halfword_vram_writes_match_byte_writes` in [`bus/kernel.rs`](../systems/gba/src/bus/kernel.rs) checks the one-step halfword write.                                                                                                      |
 | **Execution engine:** [`cpu/engine`](../systems/gba/src/cpu/engine/mod.rs) runs ARM code from IWRAM and EWRAM and Thumb code from IWRAM, EWRAM and Game Pak ROM out of caches of pre-decoded ops, charging each instruction the interpreter's exact cost against a budget that ends before the next device event, and materializing r15, the pipeline, CPSR, open bus and prefetch state only when a run stops. Straight runs of ARM ALU ops execute as charged-once blocks chained through branches; Thumb ROM runs follow the prefetch buffer in closed form; RAM and video memory accesses run inline, VRAM and palette stores only before the next visible dot. Refusals (MMIO, SWI, PSR and mode changes, stores into decoded code) go to the interpreter; [research](research/execution-engine.md). | Ordinary `Cpu::step`/`Core::execute_arm` and `execute_thumb` execute refused work and are the reference. The randomized differentials in [`engine/tests.rs`](../systems/gba/src/cpu/engine/tests.rs), `arm_kernel_matches_ordinary_execution_for_random_encodings_and_operands` and `thumb_rom_engine_matches_ordinary_steps_for_random_code_queues_and_horizons` in [`cpu/mod.rs`](../systems/gba/src/cpu/mod.rs) compare registers, flags, clocks, memory, video memory and its caches, raster history, prefetch state and refusal boundaries. |
 | **Streamed fetches:** where the engine refuses, [`Bus`](../systems/gba/src/bus/mod.rs) streams eligible sequential Thumb fetches for the ordinary runner and fuses the common branch refill.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | The scalar `GamePakPrefetch`/ordinary fetch path stays in `Bus`; `thumb_refills_match_two_ordinary_fetches_in_every_queue_phase_and_at_deadlines` in [`bus/fetch.rs`](../systems/gba/tests/bus/fetch.rs) and `bounded_thumb_rom_streams_match_eager_fetches_across_duty_boundaries_and_deadlines` in [`machine_a.rs`](../systems/gba/tests/machine_a.rs) cover the boundaries.                                                                                                                                                                   |
 | **Lazy PSG:** [`Apu`](../systems/gba/src/apu.rs) accumulates silent square/noise oscillator time and pushes constant sample runs in bulk.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | The eager oscillator scheduler is retained as a test oracle in [`apu/tests.rs`](../systems/gba/src/apu/tests.rs): `deferred_square_and_noise_oscillators_match_eager_endpoint_ordering` and `constant_sample_runs_match_the_eager_scheduler_across_silent_and_audible_psg`.                                                                                                                                                                                                                                                                      |
@@ -287,6 +320,13 @@ unmatched ARM/Thumb baseline is not used to infer an improvement. The
 ordinary interpreter stayed as the reference, and full randomized kernel
 comparisons, validators and ZiGBA parity passed for the retained work;
 Evenfall is still slower here.
+
+A register file kept in the engine's cache between runs, instead of a
+1 KiB array cleared on the stack of every run, cost more than the clear:
+addressing registers through a pointer rather than the stack pointer took
+the ARM memory diagnostic from 37.8 to 38.7 host instructions per guest
+instruction and thumb-logic 2% more cycles, for 1% on affine. It is not
+retained.
 
 **Rejected CPU trials:** replacing the condition match with a bitmask moved
 ARM 2.74×→2.77× and Thumb 1.94×→1.96× (ten matched rounds); inlining the

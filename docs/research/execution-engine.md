@@ -29,8 +29,10 @@ instructions, however execution is sliced:
   interpreter then executes that instruction. A refused run changes nothing.
   When the cached op at the entry address is certainly refused with the
   current registers (an op the engine never runs, BX to ARM, a transfer to
-  MMIO), the run is refused before any setup: code that writes several I/O
-  registers in a row would otherwise pay a run's setup for each.
+  MMIO or, in ARM code, through a base register pointing at MMIO), the run
+  is refused before any setup: code that writes several I/O registers in a
+  row, and interrupt handlers that start by reading them, would otherwise
+  pay a run's setup for each.
 - **Exit state.** Registers live in a local 256-entry array (any byte
   indexes it, so decoded register fields need no masks) and the CPSR or the
   Thumb flags in host registers. r15, the two-instruction pipeline, the next
@@ -171,12 +173,28 @@ one out-of-line body for conditional ops, reached only when a condition
 passes, costs nothing measurable and brings them to 7.7 s and 3.6 s. A
 closure defined inside a macro that expands once per dispatch arm is a new
 type each time: passing one to a generic block loop instantiated that loop
-132 times in debug builds.
+132 times in debug builds. One ARM dispatch loop for both RAM regions, with
+the region's fetch cost, mask and slots as values, would save about 85 KB of
+WebAssembly, but it retired 3% more instructions in the ARM mixer's loop and
+took 2% longer; the loop stays specialized per region.
+
+Thumb blocks were built and not kept. With the prefetch buffer a block's
+cost is not static, but it is bounded: after the first fetch each waits at
+most one duty, so a budget covering the first fetch and a duty per further op
+covers the block, and the loop charges each op exactly without checking.
+Chained through branches, blocks took the Thumb ROM diagnostic loop from 37.1
+to 31.6 host instructions per guest instruction. On the thumb-logic
+workload, whose runs of ALU ops average three ops, they cost 26% more
+instructions; counting only runs of 16 or more, still 4% more: the block
+checks in every ALU arm of the dispatch loop cost more than blocks recover.
+Returning the 48-byte Thumb run state by value from the out-of-line block
+loop also kept it in memory, costing 80% more cycles on thumb-logic, until
+the loop worked on a local copy.
 
 ## Open questions
 
-Thumb code has no blocks yet: its fetch costs vary with the prefetch buffer,
-though a run of ALU ops from RAM, or from ROM with the buffer drained, has a
-static cost. Block transfers to video memory, MMIO accesses that cannot move
+Thumb code runs without blocks (see above); a design that costs nothing per
+op when no block leads, such as a separate block kind chosen at decode,
+might recover the diagnostic loop's gain without the dispatch cost. Block transfers to video memory, MMIO accesses that cannot move
 a device deadline, and BIOS code still go to the interpreter. Games with
 self-modifying code in hot loops pay for exits at each store into code.
