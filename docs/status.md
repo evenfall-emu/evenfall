@@ -52,12 +52,12 @@ mean is defined in [`methodology.md`](methodology.md#goals).
 
 ## Performance
 
-On the benchmark workloads the core is faster than ZiGBA where rendering or
-idle time dominates (tiles, bitmap DMA, audio, idle) and slower on CPU-bound
-code, most on ARM code running from IWRAM; its builds are several times
-faster than ZiGBA's.
-Results, method and the mechanisms behind each gap are in
-[`performance.md`](performance.md).
+On the benchmark workloads the core takes about half of ZiGBA's loop time
+natively and about a third of it in WebAssembly, with every frame and state
+byte still identical to ZiGBA's. A pre-decoded execution engine runs ARM and
+Thumb code, and a layer-major compositor renders lines with SIMD lanes (SSE2
+natively, `simd128` in the default WebAssembly build). Results, method and
+the remaining gaps are in [`performance.md`](performance.md).
 
 ## Deliberate differences from ZiGBA
 
@@ -107,7 +107,7 @@ and background fetches past the BG side of VRAM reading as zero
 
 ## What's next
 
-Closing the performance gap to ZiGBA, broader compatibility evidence (the
+Broader compatibility evidence (the
 mGBA suite ROMs, representative games, hardware captures), fixes for the
 issues above, moving the player and server into this repository, and then
 the next systems. See [`roadmap.md`](roadmap.md).
