@@ -33,6 +33,7 @@ miniz_oxide = "0.8"
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "3", features = ["full"] }
+wide = { version = "1.7", default-features = false }
 
 [workspace.lints.rust]
 # `unsafe` needs a measured reason: code that has one allows it where it lives.
