@@ -973,7 +973,10 @@ impl Cpu {
     }
 
     /// Ordinary instruction loop; HLE, power transitions and SWIs return to
-    /// the generic step without touching the waiting instruction.
+    /// the generic step without touching the waiting instruction. Out of
+    /// line, as the engine entries are, so that changes to one of them leave
+    /// the code of the others and of `Machine::run_slice` alone.
+    #[inline(never)]
     pub fn run_normal_until(
         &mut self,
         bus: &mut Bus,

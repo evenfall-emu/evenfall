@@ -219,10 +219,6 @@ impl RomData<'_> {
         Some(u16::from_le_bytes([self.bytes[first], self.bytes[first + 1]]))
     }
 
-    pub(crate) fn len(&self) -> usize {
-        self.bytes.len()
-    }
-
     /// Whether `bytes` bytes from `address` read as plain image bytes: no
     /// GPIO port, EEPROM or end of the image among them.
     pub(crate) fn plain(&self, address: u32, bytes: u32) -> bool {
@@ -234,10 +230,8 @@ impl RomData<'_> {
             && !(self.eeprom && last >= 0x0d00_0000 && (!self.large || last >= 0x0dff_ff00))
     }
 
-    /// A halfword of the image, for a pipeline the engine hands back.
-    pub(crate) fn half(&self, address: u32) -> u32 {
-        let first = ((address - GAME_PAK_BASE) & (GAME_PAK_WINDOW_SIZE - 1)) as usize;
-        u32::from(u16::from_le_bytes([self.bytes[first], self.bytes[first + 1]]))
+    pub(crate) fn len(&self) -> usize {
+        self.bytes.len()
     }
 
     /// The nonsequential and sequential halfword cycles of the Game Pak
@@ -245,6 +239,12 @@ impl RomData<'_> {
     pub(crate) fn window_cycles(&self, address: u32) -> (Cycle, Cycle) {
         let window = ((address - GAME_PAK_BASE) / GAME_PAK_WINDOW_SIZE) as usize;
         (Cycle::from(self.n[window]), Cycle::from(self.s[window]))
+    }
+
+    /// A halfword of the image, for a pipeline the engine hands back.
+    pub(crate) fn half(&self, address: u32) -> u32 {
+        let first = ((address - GAME_PAK_BASE) & (GAME_PAK_WINDOW_SIZE - 1)) as usize;
+        u32::from(u16::from_le_bytes([self.bytes[first], self.bytes[first + 1]]))
     }
 
     fn cycles(&self, address: u32, width: AccessWidth) -> Cycle {
