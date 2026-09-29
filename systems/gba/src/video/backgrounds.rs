@@ -46,8 +46,9 @@ impl Bus {
             if source == 0 {
                 return None;
             }
-            indices = self.tile_row_cache.lookup(source).indices;
-            colors = *self.tile_row_cache.colors(source, (entry >> 12) as u8);
+            let row = self.tile_row_cache.row(source, (entry >> 12) as u8);
+            indices = row.indices;
+            colors = row.colors;
             if flipped {
                 indices.reverse();
                 colors.reverse();
@@ -111,6 +112,8 @@ impl Bus {
         }
     }
 
+    // Isolate the text loop from unrelated bitmap and Bus inlining decisions.
+    #[inline(never)]
     fn render_text_tile_rows(
         &mut self,
         line: usize,
@@ -174,6 +177,8 @@ impl Bus {
         }
     }
 
+    // Keep mosaic/raster text code out of compose_scanline's hot-path codegen.
+    #[inline(never)]
     pub(super) fn render_text_background(
         &mut self,
         line: usize,
@@ -339,6 +344,34 @@ impl Bus {
         let width = if mode == 5 { 160 } else { 240 };
         let height = if mode == 5 { 128 } else { 160 };
         let page = if mode >= 4 && self.dispcnt & (1 << 4) != 0 { 0xA000 } else { 0 };
+        if mode == 4
+            && history.vram_records == 0
+            && history.palette_records == 0
+            && (self.affine_segment_line != line as u16 || self.affine_segment_counts[0] == 0)
+            && (self.scroll_segment_line != line as u16 || self.scroll_segment_counts[2] == 0)
+            && (self.mosaic_segment_line != line as u16 || self.mosaic_segment_count == 0)
+            && (control & (1 << 6) == 0 || self.mosaic & 15 == 0)
+            && self.bg_affine_parameters[0][0] == 0x100
+            && self.bg_affine_parameters[0][2] == 0
+            && self.bg_affine_current[0] == [0, (line as i32) << 8]
+            && self.line_unmasked_layers & (1 << 2) != 0
+        {
+            let first = line * SCREEN_WIDTH;
+            let row = &self.vram[page + first..page + first + SCREEN_WIDTH];
+            let palette = &self.palette;
+            let pixels = &mut self.frame_pixels[first..first + SCREEN_WIDTH];
+            let priorities = &mut self.frame_priorities[first..first + SCREEN_WIDTH];
+            let layers = &mut self.frame_layers[first..first + SCREEN_WIDTH];
+            for (x, &index) in row.iter().enumerate() {
+                if index != 0 {
+                    let color = usize::from(index) * 2;
+                    pixels[x] = u16::from_le_bytes([palette[color], palette[color + 1]]) & 0x7FFF;
+                    priorities[x] = (control & 3) as u8;
+                    layers[x] = 2;
+                }
+            }
+            return;
+        }
         for x in 0..SCREEN_WIDTH {
             if self.line_window_masks[x] & (1 << 2) == 0 {
                 continue;
