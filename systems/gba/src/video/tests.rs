@@ -3,7 +3,6 @@ use crate::bus::{
     ScrollSegment, WindowSegment,
 };
 
-use super::compose::{LAYER_SHIFT, PRIORITY_SHIFT, SEMI};
 use super::history::AffineTransition;
 
 fn next(seed: &mut u32) -> u32 {
@@ -59,11 +58,6 @@ fn twin(source: &Bus) -> Bus {
     bus
 }
 
-/// A layer-major surface entry as (color before effects, priority, layer).
-fn surface(entry: u32) -> (u16, u8, u8) {
-    ((entry & 0x7FFF) as u16, (entry >> PRIORITY_SHIFT) as u8, (entry >> LAYER_SHIFT & 7) as u8)
-}
-
 /// Whether the last layer-major line tracked a second surface.
 fn tracks_second(bus: &Bus) -> bool {
     bus.line_needs_second_surface && bus.line_has_color_effects
@@ -85,10 +79,9 @@ fn assert_fast_line(fast: &Bus, reference: &Bus, line: usize) {
     }
     for x in 0..SCREEN_WIDTH {
         let i = first + x;
-        let top = fast.line_layers.top[x];
-        let (_, priority, layer) = surface(top);
+        let ((_, priority, layer), semi, second) = fast.composed_surfaces(x);
         assert_eq!(
-            (priority, layer, top & SEMI != 0),
+            (priority, layer, semi),
             (
                 reference.frame_priorities[i],
                 reference.frame_layers[i],
@@ -98,7 +91,7 @@ fn assert_fast_line(fast: &Bus, reference: &Bus, line: usize) {
         );
         if tracks_second(fast) {
             assert_eq!(
-                surface(fast.line_layers.second[x]),
+                second,
                 (
                     reference.frame_second_pixels[i],
                     reference.frame_second_priorities[i],
@@ -115,9 +108,13 @@ fn assert_line(left: &Bus, right: &Bus, line: usize) {
     let range = line * SCREEN_WIDTH..(line + 1) * SCREEN_WIDTH;
     assert_eq!(left.frame_pixels[range.clone()], right.frame_pixels[range.clone()]);
     assert_eq!(left.frame_obj_window[range.clone()], right.frame_obj_window[range]);
-    assert_eq!(left.line_layers.top, right.line_layers.top);
-    if tracks_second(left) {
-        assert_eq!(left.line_layers.second, right.line_layers.second);
+    for x in 0..SCREEN_WIDTH {
+        let (left_top, left_semi, left_second) = left.composed_surfaces(x);
+        let (right_top, right_semi, right_second) = right.composed_surfaces(x);
+        assert_eq!((left_top, left_semi), (right_top, right_semi), "x={x}");
+        if tracks_second(left) {
+            assert_eq!(left_second, right_second, "x={x}");
+        }
     }
 }
 
@@ -424,7 +421,7 @@ fn ordinary_and_effects_aware_text_spans_agree_across_map_wraps_flips_and_transp
                         "depth={depth}, variant={variant}, x={x}, y={y}"
                     );
                     let visible = index != 0 && !hidden;
-                    let (_, priority, layer) = surface(bus.line_layers.top[x]);
+                    let (_, priority, layer) = bus.composed_surfaces(x).0;
                     assert_eq!(priority, if visible { 2 } else { 4 });
                     assert_eq!(layer, if visible { 1 } else { 5 });
                 }
@@ -639,9 +636,9 @@ fn identity_mode_four_rows_match_segmented_affine_reference_across_pages_and_tra
             reference.render_scanline(line);
             assert_fast_line(&fast, &reference, line);
             assert_eq!(fast.frame_pixels[first], 0x0710);
-            assert_eq!(surface(fast.line_layers.top[0]).2, 5);
+            assert_eq!(fast.composed_surfaces(0).0.2, 5);
             assert_eq!(fast.frame_pixels[first + 1], 0x2ABC);
-            assert_eq!(surface(fast.line_layers.top[1]).2, 2);
+            assert_eq!(fast.composed_surfaces(1).0.2, 2);
         }
     }
 }
@@ -960,8 +957,8 @@ fn front_to_back_passes_preserve_priority_and_the_next_visible_bg() {
     bus.bldcnt = (1 << 1) | (1 << 6) | (1 << 8);
     bus.bldalpha = (8 << 8) | 8;
     bus.render_scanline(0);
-    assert_eq!(surface(bus.line_layers.top[0]), (0x03E0, 0, 1));
-    assert_eq!(surface(bus.line_layers.second[0]), (0x001F, 1, 0));
+    assert_eq!(bus.composed_surfaces(0).0, (0x03E0, 0, 1));
+    assert_eq!(bus.composed_surfaces(0).2, (0x001F, 1, 0));
     assert_eq!(bus.frame_pixels[0], 0x01EF);
 
     // At equal BG priority, the lower BG number is the first surface.
@@ -969,8 +966,8 @@ fn front_to_back_passes_preserve_priority_and_the_next_visible_bg() {
     bus.bldcnt = (1 << 0) | (1 << 6) | (1 << 9);
     bus.scanline_memo.mark_registers();
     bus.render_scanline(0);
-    assert_eq!(surface(bus.line_layers.top[0]), (0x001F, 0, 0));
-    assert_eq!(surface(bus.line_layers.second[0]), (0x03E0, 0, 1));
+    assert_eq!(bus.composed_surfaces(0).0, (0x001F, 0, 0));
+    assert_eq!(bus.composed_surfaces(0).2, (0x03E0, 0, 1));
     assert_eq!(bus.frame_pixels[0], 0x01EF);
 }
 
@@ -1142,7 +1139,7 @@ fn front_to_back_bg_passes_match_independently_rendered_layers() {
             single.dispcnt &= !0xF00 | (1 << (background + 8));
             single.render_scanline(line);
             for x in 0..SCREEN_WIDTH {
-                let (color, _, layer) = surface(single.line_layers.top[x]);
+                let (color, _, layer) = single.composed_surfaces(x).0;
                 drawn[background][x] = layer == background as u8;
                 colors[background][x] = color;
             }
@@ -1165,9 +1162,8 @@ fn front_to_back_bg_passes_match_independently_rendered_layers() {
             for (depth, expected) in
                 surfaces.into_iter().take(if tracks_second(&full) { 2 } else { 1 }).enumerate()
             {
-                let entry =
-                    if depth == 0 { full.line_layers.top[x] } else { full.line_layers.second[x] };
-                let (pixel, priority, layer) = surface(entry);
+                let (top, _, second) = full.composed_surfaces(x);
+                let (pixel, priority, layer) = if depth == 0 { top } else { second };
                 if let Some(background) = expected {
                     assert_eq!(layer, background as u8, "x={x}, line={line}, depth={depth}");
                     assert_eq!(priority, (full.bg_controls[background] & 3) as u8);

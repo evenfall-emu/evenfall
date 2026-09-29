@@ -3,6 +3,7 @@
 mod backgrounds;
 mod compose;
 mod history;
+mod lanes;
 mod objects;
 mod render;
 pub(crate) use compose::LineLayers;
