@@ -1,9 +1,194 @@
-//! Text, affine, and bitmap backgrounds. Per-dot text is the reference for
-//! mosaic and raster history; ordinary lines decode eight-pixel tile rows.
+//! Text, affine, and bitmap backgrounds. Lines without raster history render
+//! each background into a color row (`text_row`, `affine_row`, `bitmap_row`)
+//! for layer-major composition. The per-dot renderers are the reference and
+//! draw lines with raster history.
 
-use super::history::VideoHistoryView;
-use super::scanline_memo::ALL_VRAM_PAGES;
+use super::history::{AffineState, VideoHistoryView};
+use super::scanline_memo::{ALL_VRAM_PAGES, PAGE_SIZE, VRAM_SIZE};
+use super::tile_row_cache::{Cache, TRANSPARENT, reverse_nibbles};
 use crate::bus::{Bus, SCREEN_WIDTH};
+
+/// Length of a text row buffer. Screen pixel `x` is at `ROW_ORIGIN + x`, so
+/// every tile, including a partly scrolled-off first one, is written whole.
+pub(super) const ROW: usize = 256;
+pub(super) const ROW_ORIGIN: usize = 8;
+const BG_VRAM: usize = 0x10000;
+
+/// Render one text background line into `out` (see [`ROW_ORIGIN`]) and
+/// return the 1 KiB BG VRAM pages it read. `line` is the source line after
+/// vertical mosaic.
+pub(super) fn text_row<const COLOR_256: bool>(
+    vram: &[u8; VRAM_SIZE],
+    cache: &mut Cache,
+    line: usize,
+    control: u16,
+    hofs: u16,
+    vofs: u16,
+    out: &mut [u16; ROW],
+) -> u64 {
+    let char_base = usize::from((control >> 2) & 3) * 0x4000;
+    let screen_base = usize::from((control >> 8) & 31) * 0x800;
+    let columns = if control & (1 << 14) != 0 { 64 } else { 32 };
+    let height = if control & (1 << 15) != 0 { 512 } else { 256 };
+    let world_y = (line + usize::from(vofs)) & (height - 1);
+    let map_row = screen_base + (world_y / 256) * (columns / 32) * 0x800 + (world_y / 8 % 32) * 64;
+    let tile_y = world_y % 8;
+    let fine = usize::from(hofs) & 7;
+    let first_column = usize::from(hofs) / 8;
+    let mut pages = 0u64;
+    for block in 0..columns / 32 {
+        let block_row = map_row + block * 0x800;
+        if block_row < BG_VRAM {
+            pages |= 1 << (block_row / PAGE_SIZE);
+        }
+    }
+    for tile in 0..SCREEN_WIDTH / 8 + 1 {
+        let column = (first_column + tile) & (columns - 1);
+        let entry_at = map_row + (column / 32) * 0x800 + (column % 32) * 2;
+        let entry = if entry_at < BG_VRAM {
+            u16::from_le_bytes([vram[entry_at], vram[entry_at + 1]])
+        } else {
+            0
+        };
+        let source_y = if entry & (1 << 11) != 0 { 7 - tile_y } else { tile_y };
+        let at = ROW_ORIGIN - fine + tile * 8;
+        let pixels: &mut [u16; 8] = (&mut out[at..at + 8]).try_into().unwrap();
+        let row_bytes = if COLOR_256 { 8 } else { 4 };
+        let row_base =
+            char_base + usize::from(entry & 0x3FF) * row_bytes * 8 + source_y * row_bytes;
+        if row_base >= BG_VRAM {
+            *pixels = [TRANSPARENT; 8];
+            continue;
+        }
+        pages |= 1 << (row_base / PAGE_SIZE);
+        if COLOR_256 {
+            let mut source = u64::from_le_bytes(vram[row_base..row_base + 8].try_into().unwrap());
+            if entry & (1 << 10) != 0 {
+                source = source.swap_bytes();
+            }
+            for (pixel, color) in pixels.iter_mut().enumerate() {
+                *color = cache.bg256[usize::from((source >> (pixel * 8)) as u8)];
+            }
+        } else {
+            let mut source = u32::from_le_bytes(vram[row_base..row_base + 4].try_into().unwrap());
+            if entry & (1 << 10) != 0 {
+                source = reverse_nibbles(source);
+            }
+            *pixels = *cache.row(source, (entry >> 12) as u8);
+        }
+    }
+    pages
+}
+
+/// Horizontal mosaic: each block of `size` pixels repeats its first pixel.
+pub(super) fn apply_horizontal_mosaic(row: &mut [u16; SCREEN_WIDTH], size: usize) {
+    for start in (0..SCREEN_WIDTH).step_by(size) {
+        let color = row[start];
+        row[start..(start + size).min(SCREEN_WIDTH)].fill(color);
+    }
+}
+
+/// Render one affine background line. `mosaic` is the horizontal mosaic
+/// block size (1 when mosaic is off).
+pub(super) fn affine_row(
+    vram: &[u8; VRAM_SIZE],
+    colors: &[u16; 256],
+    control: u16,
+    affine: AffineState,
+    mosaic: usize,
+    out: &mut [u16; SCREEN_WIDTH],
+) {
+    let char_base = usize::from((control >> 2) & 3) * 0x4000;
+    let screen_base = usize::from((control >> 8) & 31) * 0x800;
+    let dimension = 128i32 << (control >> 14);
+    let tiles = (dimension / 8) as usize;
+    let wrap = control & (1 << 13) != 0;
+    let texel = |x: i32, y: i32| {
+        let source_x = x >> 8;
+        let source_y = y >> 8;
+        let inside = (source_x as u32) < dimension as u32 && (source_y as u32) < dimension as u32;
+        // Affine dimensions are powers of two: masking is Euclidean modulo
+        // even for negative source coordinates.
+        let sx = (source_x & (dimension - 1)) as usize;
+        let sy = (source_y & (dimension - 1)) as usize;
+        let map = screen_base + sy / 8 * tiles + sx / 8;
+        let tile = if map < BG_VRAM { vram[map] } else { 0 };
+        let index = vram[char_base + usize::from(tile) * 64 + sy % 8 * 8 + sx % 8];
+        if inside || wrap { colors[usize::from(index)] } else { TRANSPARENT }
+    };
+    if mosaic > 1 {
+        for start in (0..SCREEN_WIDTH).step_by(mosaic) {
+            let x = start as i32;
+            let color = texel(affine.ref_x + affine.pa * x, affine.ref_y + affine.pc * x);
+            out[start..(start + mosaic).min(SCREEN_WIDTH)].fill(color);
+        }
+        return;
+    }
+    let (mut x, mut y) = (affine.ref_x, affine.ref_y);
+    for color in out.iter_mut() {
+        *color = texel(x, y);
+        x += affine.pa;
+        y += affine.pc;
+    }
+}
+
+/// Render one bitmap line (modes 3–5, BG2) and return the VRAM pages read.
+pub(super) fn bitmap_row(
+    vram: &[u8; VRAM_SIZE],
+    colors: &[u16; 256],
+    mode: u16,
+    page: usize,
+    affine: AffineState,
+    mosaic: usize,
+    out: &mut [u16; SCREEN_WIDTH],
+) -> u128 {
+    let (width, height) = if mode == 5 { (160i32, 128i32) } else { (240, 160) };
+    let texel = |sx: i32, sy: i32| {
+        if sx < 0 || sy < 0 || sx >= width || sy >= height {
+            return TRANSPARENT;
+        }
+        let index = sy as usize * width as usize + sx as usize;
+        if mode == 4 {
+            colors[usize::from(vram[page + index])]
+        } else {
+            let offset = page + index * 2;
+            u16::from_le_bytes([vram[offset], vram[offset + 1]]) & 0x7FFF
+        }
+    };
+    if mosaic == 1 && affine.pa == 0x100 && affine.pc == 0 {
+        // One source row, possibly translated: (ref_x + 256x) >> 8 is
+        // (ref_x >> 8) + x exactly.
+        let sy = affine.ref_y >> 8;
+        let sx = affine.ref_x >> 8;
+        for (x, color) in out.iter_mut().enumerate() {
+            *color = texel(sx + x as i32, sy);
+        }
+        if sy < 0 || sy >= height {
+            return 0;
+        }
+        let bytes = if mode == 4 { 1 } else { 2 };
+        let start = page + sy as usize * width as usize * bytes;
+        let end = start + width as usize * bytes - 1;
+        let pages = (start / PAGE_SIZE)..=(end / PAGE_SIZE);
+        return pages.fold(0, |pages, page| pages | 1 << page);
+    }
+    if mosaic > 1 {
+        for start in (0..SCREEN_WIDTH).step_by(mosaic) {
+            let x = start as i32;
+            let color =
+                texel((affine.ref_x + affine.pa * x) >> 8, (affine.ref_y + affine.pc * x) >> 8);
+            out[start..(start + mosaic).min(SCREEN_WIDTH)].fill(color);
+        }
+    } else {
+        let (mut x, mut y) = (affine.ref_x, affine.ref_y);
+        for color in out.iter_mut() {
+            *color = texel(x >> 8, y >> 8);
+            x += affine.pa;
+            y += affine.pc;
+        }
+    }
+    ALL_VRAM_PAGES
+}
 
 struct TextLine {
     priority: u8,
@@ -20,18 +205,6 @@ struct TextRow {
 struct TextLanes {
     top: [bool; 8],
     second: [bool; 8],
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct TextLayerRow {
-    pub colors: [u16; SCREEN_WIDTH],
-    pub opaque: [u8; SCREEN_WIDTH],
-}
-
-impl Default for TextLayerRow {
-    fn default() -> Self {
-        Self { colors: [0; SCREEN_WIDTH], opaque: [0; SCREEN_WIDTH] }
-    }
 }
 
 impl Bus {
@@ -62,13 +235,9 @@ impl Bus {
             if source == 0 {
                 return None;
             }
-            let row = self.tile_row_cache.row(source, (entry >> 12) as u8);
-            indices = row.indices;
-            colors = row.colors;
-            if flipped {
-                indices.reverse();
-                colors.reverse();
-            }
+            let source = if flipped { reverse_nibbles(source) } else { source };
+            colors = *self.tile_row_cache.row(source, (entry >> 12) as u8);
+            indices = colors.map(|color| u8::from(color & TRANSPARENT == 0));
         }
         Some(TextRow { colors, fully_opaque: indices.iter().all(|&index| index != 0), indices })
     }
@@ -194,55 +363,6 @@ impl Bus {
                     self.decode_text_row::<COLOR_256>(entries[column], row_bases[column])
             {
                 self.write_text_row(&layout, x, &row, start, length, &lanes);
-            }
-            x += length;
-        }
-    }
-
-    pub(super) fn render_text_layer(
-        &mut self,
-        line: usize,
-        background: usize,
-        row: &mut TextLayerRow,
-    ) {
-        let mosaic = self.bg_controls[background] & (1 << 6) != 0;
-        let vertical = usize::from((self.mosaic >> 4) & 15) + 1;
-        let line = if mosaic { line - line % vertical } else { line };
-        if self.bg_controls[background] & (1 << 7) != 0 {
-            self.render_text_layer_rows::<true>(line, background, row);
-        } else {
-            self.render_text_layer_rows::<false>(line, background, row);
-        }
-        let horizontal = usize::from(self.mosaic & 15) + 1;
-        if mosaic && horizontal > 1 {
-            // Each sample column precedes the columns copied from it.
-            for x in 0..SCREEN_WIDTH {
-                let sample = x - x % horizontal;
-                row.colors[x] = row.colors[sample];
-                row.opaque[x] = row.opaque[sample];
-            }
-        }
-    }
-
-    #[inline(never)]
-    fn render_text_layer_rows<const COLOR_256: bool>(
-        &mut self,
-        line: usize,
-        background: usize,
-        output: &mut TextLayerRow,
-    ) {
-        let (entries, row_bases, width, hofs) =
-            self.text_tile_sources::<COLOR_256>(line, background);
-        let mut x = 0;
-        while x < SCREEN_WIDTH {
-            let world_x = (x + hofs) & (width - 1);
-            let column = world_x / 8;
-            let start = world_x % 8;
-            let length = (8 - start).min(SCREEN_WIDTH - x);
-            if let Some(row) = self.decode_text_row::<COLOR_256>(entries[column], row_bases[column])
-            {
-                output.colors[x..x + length].copy_from_slice(&row.colors[start..start + length]);
-                output.opaque[x..x + length].copy_from_slice(&row.indices[start..start + length]);
             }
             x += length;
         }

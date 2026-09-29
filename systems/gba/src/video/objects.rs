@@ -150,7 +150,10 @@ impl Bus {
         }
     }
 
-    pub(super) fn render_objects(
+    /// Render the line's objects in descending OAM order. `ROWS` records
+    /// color objects in the layer-major object rows (no window or palette
+    /// history); otherwise each pixel is composed into the reference surfaces.
+    pub(super) fn render_objects<const ROWS: bool>(
         &mut self,
         line: usize,
         window_pass: bool,
@@ -174,7 +177,7 @@ impl Bus {
                 continue;
             }
             if !record.affine && attr0 & (1 << 12) == 0 && history.palette_records == 0 {
-                self.render_regular_object(line, &record, window_pass, mapping_1d);
+                self.render_regular_object::<ROWS>(line, &record, window_pass, mapping_1d);
                 continue;
             }
             self.scanline_memo.reads.vram_pages = scanline_memo::ALL_VRAM_PAGES;
@@ -274,14 +277,19 @@ impl Bus {
                     self.frame_obj_window[i] = true;
                     continue;
                 }
-                if self.line_window_masks[x] & (1 << 4) == 0 {
-                    continue;
-                }
                 let palette = if color_256 {
                     256 + usize::from(index)
                 } else {
                     256 + bank * 16 + usize::from(index)
                 };
+                if ROWS {
+                    let color = self.tile_row_cache.words[palette];
+                    self.put_object_pixel(x, color, priority, object_mode == 1);
+                    continue;
+                }
+                if self.line_window_masks[x] & (1 << 4) == 0 {
+                    continue;
+                }
                 let color = self.palette_color_for(history, x, palette);
                 self.compose_object_pixel(i, color, priority, object_mode == 1);
             }
@@ -328,7 +336,7 @@ impl Bus {
         }
     }
 
-    fn render_regular_object(
+    fn render_regular_object<const ROWS: bool>(
         &mut self,
         line: usize,
         record: &ObjectLineData,
@@ -400,6 +408,8 @@ impl Bus {
                         self.frame_obj_window[line * SCREEN_WIDTH + x + lane] = true;
                     }
                 }
+            } else if ROWS {
+                self.put_object_lanes(x, lanes, palette_start, priority, semi);
             } else {
                 self.compose_object_lanes(
                     line * SCREEN_WIDTH + x,
@@ -419,6 +429,9 @@ impl Bus {
                 let i = line * SCREEN_WIDTH + x;
                 if window_pass {
                     self.frame_obj_window[i] = true;
+                } else if ROWS {
+                    let color = self.tile_row_cache.words[palette_start + usize::from(index)];
+                    self.put_object_pixel(x, color, priority, semi);
                 } else if self.line_window_masks[x] & (1 << 4) != 0 {
                     self.compose_object_pixel(
                         i,

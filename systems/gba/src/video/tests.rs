@@ -3,6 +3,7 @@ use crate::bus::{
     ScrollSegment, WindowSegment,
 };
 
+use super::compose::{LAYER_SHIFT, PRIORITY_SHIFT, SEMI};
 use super::history::AffineTransition;
 
 fn next(seed: &mut u32) -> u32 {
@@ -58,26 +59,65 @@ fn twin(source: &Bus) -> Bus {
     bus
 }
 
+/// A layer-major surface entry as (color before effects, priority, layer).
+fn surface(entry: u32) -> (u16, u8, u8) {
+    ((entry & 0x7FFF) as u16, (entry >> PRIORITY_SHIFT) as u8, (entry >> LAYER_SHIFT & 7) as u8)
+}
+
+/// Whether the last layer-major line tracked a second surface.
+fn tracks_second(bus: &Bus) -> bool {
+    bus.line_needs_second_surface && bus.line_has_color_effects
+}
+
+/// Compare a line composed by the layer-major path with the same line
+/// composed by the front-to-back reference: final colors, the top surface's
+/// priority, layer and semi-transparency, and the second surface when the
+/// line blends.
+fn assert_fast_line(fast: &Bus, reference: &Bus, line: usize) {
+    let first = line * SCREEN_WIDTH;
+    let range = first..first + SCREEN_WIDTH;
+    assert_eq!(fast.frame_pixels[range.clone()], reference.frame_pixels[range.clone()]);
+    assert_eq!(fast.frame_obj_window[range.clone()], reference.frame_obj_window[range]);
+    assert_eq!(fast.line_needs_second_surface, reference.line_needs_second_surface);
+    assert_eq!(fast.line_has_color_effects, reference.line_has_color_effects);
+    if reference.dispcnt & 0x80 != 0 {
+        return;
+    }
+    for x in 0..SCREEN_WIDTH {
+        let i = first + x;
+        let top = fast.line_layers.top[x];
+        let (_, priority, layer) = surface(top);
+        assert_eq!(
+            (priority, layer, top & SEMI != 0),
+            (
+                reference.frame_priorities[i],
+                reference.frame_layers[i],
+                reference.frame_semitransparent[i]
+            ),
+            "top surface at x={x}, line={line}"
+        );
+        if tracks_second(fast) {
+            assert_eq!(
+                surface(fast.line_layers.second[x]),
+                (
+                    reference.frame_second_pixels[i],
+                    reference.frame_second_priorities[i],
+                    reference.frame_second_layers[i]
+                ),
+                "second surface at x={x}, line={line}"
+            );
+        }
+    }
+}
+
+/// Compare two lines composed by the layer-major path.
 fn assert_line(left: &Bus, right: &Bus, line: usize) {
     let range = line * SCREEN_WIDTH..(line + 1) * SCREEN_WIDTH;
     assert_eq!(left.frame_pixels[range.clone()], right.frame_pixels[range.clone()]);
-    assert_eq!(left.frame_priorities[range.clone()], right.frame_priorities[range.clone()]);
-    assert_eq!(left.frame_layers[range.clone()], right.frame_layers[range.clone()]);
-    assert_eq!(
-        left.frame_semitransparent[range.clone()],
-        right.frame_semitransparent[range.clone()]
-    );
-    assert_eq!(left.frame_obj_window[range.clone()], right.frame_obj_window[range.clone()]);
-    if left.line_needs_second_surface {
-        assert_eq!(
-            left.frame_second_pixels[range.clone()],
-            right.frame_second_pixels[range.clone()]
-        );
-        assert_eq!(
-            left.frame_second_priorities[range.clone()],
-            right.frame_second_priorities[range.clone()]
-        );
-        assert_eq!(left.frame_second_layers[range.clone()], right.frame_second_layers[range]);
+    assert_eq!(left.frame_obj_window[range.clone()], right.frame_obj_window[range]);
+    assert_eq!(left.line_layers.top, right.line_layers.top);
+    if tracks_second(left) {
+        assert_eq!(left.line_layers.second, right.line_layers.second);
     }
 }
 
@@ -93,12 +133,10 @@ fn write_half(bus: &mut Bus, address: u32, value: u16) {
     );
 }
 
+/// Layer-major lines write only colors: the auxiliary surfaces belong to
+/// the reference passes.
 fn assert_surfaces(expected: &Bus, actual: &Bus) {
     assert_eq!(expected.frame_pixels[..], actual.frame_pixels[..]);
-    assert_eq!(expected.frame_priorities[..], actual.frame_priorities[..]);
-    assert_eq!(expected.frame_layers[..], actual.frame_layers[..]);
-    assert_eq!(expected.frame_semitransparent[..], actual.frame_semitransparent[..]);
-    assert_eq!(expected.frame_obj_window[..], actual.frame_obj_window[..]);
 }
 
 fn randomize_video(bus: &mut Bus, seed: &mut u32) {
@@ -296,7 +334,7 @@ fn text_tile_rows_match_the_per_dot_text_renderer() {
         }
         rows.render_scanline(line);
         dots.render_scanline(line);
-        assert_line(&rows, &dots, line);
+        assert_fast_line(&rows, &dots, line);
     }
 }
 
@@ -386,8 +424,9 @@ fn ordinary_and_effects_aware_text_spans_agree_across_map_wraps_flips_and_transp
                         "depth={depth}, variant={variant}, x={x}, y={y}"
                     );
                     let visible = index != 0 && !hidden;
-                    assert_eq!(bus.frame_priorities[i], if visible { 2 } else { 4 });
-                    assert_eq!(bus.frame_layers[i], if visible { 1 } else { 5 });
+                    let (_, priority, layer) = surface(bus.line_layers.top[x]);
+                    assert_eq!(priority, if visible { 2 } else { 4 });
+                    assert_eq!(layer, if visible { 1 } else { 5 });
                 }
             }
         }
@@ -436,7 +475,7 @@ fn regular_object_rows_match_the_per_pixel_object_renderer() {
         dots.backdrop_segments[0] = Bus::palette_segment(1, 0, dots.palette_entry_color(1));
         rows.render_scanline(line);
         dots.render_scanline(line);
-        assert_line(&rows, &dots, line);
+        assert_fast_line(&rows, &dots, line);
     }
 }
 
@@ -598,11 +637,11 @@ fn identity_mode_four_rows_match_segmented_affine_reference_across_pages_and_tra
                 AffineSegment { start_x: 0, pa: 0x100, pc: 0, ref_x: 0, ref_y: line as i32 * 256 };
             fast.render_scanline(line);
             reference.render_scanline(line);
-            assert_line(&fast, &reference, line);
+            assert_fast_line(&fast, &reference, line);
             assert_eq!(fast.frame_pixels[first], 0x0710);
-            assert_eq!(fast.frame_layers[first], 5);
+            assert_eq!(surface(fast.line_layers.top[0]).2, 5);
             assert_eq!(fast.frame_pixels[first + 1], 0x2ABC);
-            assert_eq!(fast.frame_layers[first + 1], 2);
+            assert_eq!(surface(fast.line_layers.top[1]).2, 2);
         }
     }
 }
@@ -921,11 +960,8 @@ fn front_to_back_passes_preserve_priority_and_the_next_visible_bg() {
     bus.bldcnt = (1 << 1) | (1 << 6) | (1 << 8);
     bus.bldalpha = (8 << 8) | 8;
     bus.render_scanline(0);
-    assert_eq!(bus.frame_layers[0], 1);
-    assert_eq!(bus.frame_priorities[0], 0);
-    assert_eq!(bus.frame_second_layers[0], 0);
-    assert_eq!(bus.frame_second_priorities[0], 1);
-    assert_eq!(bus.frame_second_pixels[0], 0x001F);
+    assert_eq!(surface(bus.line_layers.top[0]), (0x03E0, 0, 1));
+    assert_eq!(surface(bus.line_layers.second[0]), (0x001F, 1, 0));
     assert_eq!(bus.frame_pixels[0], 0x01EF);
 
     // At equal BG priority, the lower BG number is the first surface.
@@ -933,36 +969,147 @@ fn front_to_back_passes_preserve_priority_and_the_next_visible_bg() {
     bus.bldcnt = (1 << 0) | (1 << 6) | (1 << 9);
     bus.scanline_memo.mark_registers();
     bus.render_scanline(0);
-    assert_eq!(bus.frame_layers[0], 0);
-    assert_eq!(bus.frame_second_layers[0], 1);
-    assert_eq!(bus.frame_second_pixels[0], 0x03E0);
+    assert_eq!(surface(bus.line_layers.top[0]), (0x001F, 0, 0));
+    assert_eq!(surface(bus.line_layers.second[0]), (0x03E0, 0, 1));
     assert_eq!(bus.frame_pixels[0], 0x01EF);
 }
 
-#[test]
-fn layer_major_text_matches_front_to_back_with_windows_objects_and_effects() {
-    let mut seed = 0xA125_8EC3;
-    for case in 0..240 {
-        let mut fast = Bus::init(&[]);
-        randomize_video(&mut fast, &mut seed);
-        fast.dispcnt = (fast.dispcnt & !0x108F) | 0xF00;
-        if case & 1 != 0 {
-            fast.dispcnt |= 1 << 12;
-            for object in 0..4 {
-                let offset = object * 8;
-                let attr0 = (next(&mut seed) as u16 & 0x2FFF) | 0x40;
-                let attr1 = (next(&mut seed) as u16 & 0xC1FF) & !0x0200;
-                let attr2 = next(&mut seed) as u16;
-                fast.oam[offset..offset + 2].copy_from_slice(&attr0.to_le_bytes());
-                fast.oam[offset + 2..offset + 4].copy_from_slice(&attr1.to_le_bytes());
-                fast.oam[offset + 4..offset + 6].copy_from_slice(&attr2.to_le_bytes());
+/// Randomize every input the layer-major compositor reads, including the
+/// cases `randomize_video` leaves out: BG and OBJ mosaic, all display modes,
+/// affine and bitmap transforms, every object kind and the OBJ window.
+fn randomize_line_inputs(bus: &mut Bus, seed: &mut u32) {
+    randomize_video(bus, seed);
+    for control in &mut bus.bg_controls {
+        if next(seed) & 1 != 0 {
+            *control |= 1 << 6;
+        }
+    }
+    bus.mosaic = match next(seed) % 4 {
+        0 => 0,
+        1 => 0x1111,
+        _ => next(seed) as u16,
+    };
+    let mode = match next(seed) % 16 {
+        0..=5 => 0,
+        6..=7 => 1,
+        8..=9 => 2,
+        10 => 3,
+        11..=12 => 4,
+        13 => 5,
+        14 => 6,
+        _ => 7,
+    };
+    bus.dispcnt = (next(seed) as u16 & 0xFF70) | mode;
+    if next(seed).is_multiple_of(16) {
+        bus.dispcnt |= 0x80;
+    }
+    bus.green_swap_enabled = next(seed).is_multiple_of(8);
+    let line = next(seed) as i32 % SCREEN_HEIGHT as i32;
+    for index in 0..2 {
+        let [pa, pb, pc, pd] = &mut bus.bg_affine_parameters[index];
+        let [x, y] = &mut bus.bg_affine_current[index];
+        match next(seed) % 4 {
+            // Identity and translated bitmap rows.
+            0 => (*pa, *pb, *pc, *pd, *x, *y) = (0x100, 0, 0, 0x100, 0, line << 8),
+            1 => {
+                (*pa, *pc) = (0x100, 0);
+                *x = (next(seed) % 0x8000) as i32 - 0x4000;
+                *y = (next(seed) % 0x10000) as i32 - 0x2000;
+            }
+            _ => {
+                *pa = (next(seed) % 0x401) as i16 - 0x200;
+                *pc = (next(seed) % 0x401) as i16 - 0x200;
+                *x = (next(seed) % 0x40001) as i32 - 0x20000;
+                *y = (next(seed) % 0x40001) as i32 - 0x20000;
             }
         }
+    }
+    if next(seed) & 1 != 0 {
+        bus.bldcnt = (bus.bldcnt & 0xFF3F) | (1 << 6);
+    }
+    let objects = next(seed) as usize % 129;
+    for object in 0..128 {
+        let offset = object * 8;
+        let mut attr0 = if object < objects { next(seed) as u16 } else { 1 << 9 };
+        if object < objects {
+            attr0 = (attr0 & !0xFF) | ((line + (next(seed) % 64) as i32 - 48) as u16 & 0xFF);
+            if !next(seed).is_multiple_of(3) {
+                attr0 &= !(1 << 8);
+            }
+            if !next(seed).is_multiple_of(3) {
+                attr0 &= !(1 << 12);
+            }
+            if attr0 >> 14 == 3 {
+                attr0 &= !(1 << 15);
+            }
+        }
+        let attr1 = next(seed) as u16;
+        let attr2 = next(seed) as u16;
+        bus.oam[offset..offset + 2].copy_from_slice(&attr0.to_le_bytes());
+        bus.oam[offset + 2..offset + 4].copy_from_slice(&attr1.to_le_bytes());
+        bus.oam[offset + 4..offset + 6].copy_from_slice(&attr2.to_le_bytes());
+        let parameter = (next(seed) % 0x401) as i16 - 0x200;
+        bus.oam[offset + 6..offset + 8].copy_from_slice(&parameter.to_le_bytes());
+    }
+}
+
+#[test]
+fn layer_major_lines_match_the_front_to_back_reference() {
+    let mut seed = 0xA125_8EC3;
+    let mut counts = [0usize; 8];
+    for _ in 0..3000 {
+        let mut fast = Bus::init(&[]);
+        randomize_line_inputs(&mut fast, &mut seed);
         let line = next(&mut seed) as usize % SCREEN_HEIGHT;
         let mut reference = twin(&fast);
+        reference.green_swap_enabled = fast.green_swap_enabled;
         fast.render_scanline(line);
         reference.compose_scanline_reference(line);
-        assert_line(&reference, &fast, line);
+        assert_fast_line(&fast, &reference, line);
+        counts[usize::from(fast.dispcnt & 7)] += 1;
+    }
+    // Every display mode is exercised.
+    assert!(counts.iter().all(|&count| count > 50), "{counts:?}");
+}
+
+/// Mid-line VRAM writes outside the pages a line reads leave it to the
+/// layer-major compositor; writes to a page it reads select the reference.
+#[test]
+fn vram_history_selects_the_reference_only_for_pages_the_line_reads() {
+    for (mode, written, relevant) in [
+        (4, 0xA000 + 30 * 240 + 17, false), // Hidden page.
+        (4, 30 * 240 + 17, true),           // Shown row.
+        (4, 40 * 240 + 17, false),          // A later row on another page.
+        (0, 0x8000 + 0x20, false),          // Unused charblock.
+        (0, 0x20, true),                    // Tile 1, read by the line.
+        (0, 0xF800 + 3 * 64 + 6, true),     // Map row of the line.
+    ] {
+        let mut fast = Bus::init(&[]);
+        let mut seed = 0x51DE_0A7E;
+        randomize_video(&mut fast, &mut seed);
+        fast.dispcnt = mode | if mode == 4 { 1 << 10 } else { 1 << 8 };
+        fast.bg_controls[0] = 31 << 8;
+        fast.bg_affine_current[0] = [0, 30 << 8];
+        for entry in 0..1024 {
+            let map = 0xF800 + entry * 2;
+            fast.vram[map..map + 2].copy_from_slice(&1u16.to_le_bytes());
+        }
+        fast.ppu_timing.line = 30;
+        fast.ppu_timing.cycle_in_line = 4 * 100;
+        let snapshot = fast.snapshot_vram_write(0x0600_0000 + written as u32, AccessWidth::Half);
+        let old = [fast.vram[written], fast.vram[written + 1]];
+        fast.vram[written] = !old[0];
+        fast.vram[written + 1] = !old[1];
+        fast.record_vram_write(snapshot);
+        fast.frame_layers[30 * SCREEN_WIDTH..31 * SCREEN_WIDTH].fill(0xEE);
+        let mut reference = twin(&fast);
+        fast.render_scanline(30);
+        reference.compose_scanline_reference(30);
+        let range = 30 * SCREEN_WIDTH..31 * SCREEN_WIDTH;
+        assert_eq!(fast.frame_pixels[range.clone()], reference.frame_pixels[range.clone()]);
+        // The reference passes write the layer surface; the compositor does not.
+        let used_reference = fast.frame_layers[range.start] != 0xEE;
+        assert_eq!(used_reference, relevant, "mode={mode}, written={written:#x}");
     }
 }
 
@@ -988,7 +1135,6 @@ fn front_to_back_bg_passes_match_independently_rendered_layers() {
             }
         }
         let line = next(&mut seed) as usize % SCREEN_HEIGHT;
-        let first = line * SCREEN_WIDTH;
         let mut drawn = [[false; SCREEN_WIDTH]; 4];
         let mut colors = [[0u16; SCREEN_WIDTH]; 4];
         for background in 0..4 {
@@ -996,8 +1142,9 @@ fn front_to_back_bg_passes_match_independently_rendered_layers() {
             single.dispcnt &= !0xF00 | (1 << (background + 8));
             single.render_scanline(line);
             for x in 0..SCREEN_WIDTH {
-                drawn[background][x] = single.frame_layers[first + x] == background as u8;
-                colors[background][x] = single.frame_pixels[first + x];
+                let (color, _, layer) = surface(single.line_layers.top[x]);
+                drawn[background][x] = layer == background as u8;
+                colors[background][x] = color;
             }
         }
         full.render_scanline(line);
@@ -1015,26 +1162,13 @@ fn front_to_back_bg_passes_match_independently_rendered_layers() {
                     }
                 }
             }
-            let index = first + x;
-            for (depth, surface) in surfaces
-                .into_iter()
-                .take(if full.line_needs_second_surface { 2 } else { 1 })
-                .enumerate()
+            for (depth, expected) in
+                surfaces.into_iter().take(if tracks_second(&full) { 2 } else { 1 }).enumerate()
             {
-                let (pixel, priority, layer) = if depth == 0 {
-                    (
-                        full.frame_pixels[index],
-                        full.frame_priorities[index],
-                        full.frame_layers[index],
-                    )
-                } else {
-                    (
-                        full.frame_second_pixels[index],
-                        full.frame_second_priorities[index],
-                        full.frame_second_layers[index],
-                    )
-                };
-                if let Some(background) = surface {
+                let entry =
+                    if depth == 0 { full.line_layers.top[x] } else { full.line_layers.second[x] };
+                let (pixel, priority, layer) = surface(entry);
+                if let Some(background) = expected {
                     assert_eq!(layer, background as u8, "x={x}, line={line}, depth={depth}");
                     assert_eq!(priority, (full.bg_controls[background] & 3) as u8);
                     assert_eq!(pixel, colors[background][x]);

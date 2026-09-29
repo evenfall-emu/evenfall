@@ -560,17 +560,10 @@ fn text_row_colors_refresh_before_stable_second_surface_lines_and_retain_palette
         let expected = if x % 8 == 0 { 0x3DE0 } else { (x % 8 + 1) as u16 | 0x01E0 };
         let at = 240 + x;
         assert_eq!(bus.framebuffer()[at], expected, "x={x}");
-        assert_eq!(bus.frame_second_pixels[at], 0x03E0);
-        assert_eq!(
-            (
-                bus.frame_priorities[at],
-                bus.frame_layers[at],
-                bus.frame_second_priorities[at],
-                bus.frame_second_layers[at],
-                bus.frame_semitransparent[at]
-            ),
-            (0, 0, 1, 1, false)
-        );
+        // Line 1 has no raster history: the layer-major compositor drew it.
+        let ((_, priority, layer), semi, second) = bus.composed_surfaces(x);
+        assert_eq!((priority, layer, semi), (0, 0, false));
+        assert_eq!(second, (0x03E0, 1, 1));
     }
     bus.elapse(2 * 1232 + 399 - bus.now());
     write_half(&mut bus, 0x0500_0000 + 49 * 2, 0x001F);
@@ -585,17 +578,25 @@ fn text_row_colors_refresh_before_stable_second_surface_lines_and_retain_palette
             };
             let at = line * 240 + x;
             assert_eq!(bus.framebuffer()[at], expected, "line={line} x={x}");
-            assert_eq!(bus.frame_second_pixels[at], 0x03E0);
-            assert_eq!(
-                (
-                    bus.frame_priorities[at],
-                    bus.frame_layers[at],
-                    bus.frame_second_priorities[at],
-                    bus.frame_second_layers[at],
-                    bus.frame_semitransparent[at]
-                ),
-                (0, 0, 1, 1, false)
-            );
+            if line == 2 {
+                // The palette write gives line 2 raster history: the
+                // front-to-back reference drew it into the frame surfaces.
+                assert_eq!(bus.frame_second_pixels[at], 0x03E0);
+                assert_eq!(
+                    (
+                        bus.frame_priorities[at],
+                        bus.frame_layers[at],
+                        bus.frame_second_priorities[at],
+                        bus.frame_second_layers[at],
+                        bus.frame_semitransparent[at]
+                    ),
+                    (0, 0, 1, 1, false)
+                );
+            } else {
+                let ((_, priority, layer), semi, second) = bus.composed_surfaces(x);
+                assert_eq!((priority, layer, semi), (0, 0, false));
+                assert_eq!(second, (0x03E0, 1, 1));
+            }
         }
     }
 }
@@ -633,13 +634,12 @@ fn cached_text_colors_preserve_palette_raster_history_and_portable_state() {
     }
     machine.load_state(&state).unwrap();
     machine.bus.elapse(Machine::CYCLES_PER_FRAME);
-    for ((&pixel, &priority), &layer) in machine
-        .framebuffer()
-        .iter()
-        .zip(machine.bus.frame_priorities.iter())
-        .zip(machine.bus.frame_layers.iter())
-    {
-        assert_eq!((pixel, priority, layer), (0x03E0, 0, 0));
+    for &pixel in machine.framebuffer() {
+        assert_eq!(pixel, 0x03E0);
+    }
+    for x in 0..240 {
+        let (top, semi, _) = machine.bus.composed_surfaces(x);
+        assert_eq!((top, semi), ((0x03E0, 0, 0), false));
     }
 }
 
@@ -852,28 +852,11 @@ fn complete_mixed_text_rows_retain_layered_surfaces_through_masks_flips_and_semi
                     top_color,
                     "x={x} second={second_surface} masked={masked}"
                 );
-                assert_eq!(
-                    (bus.frame_priorities[x], bus.frame_layers[x], bus.frame_semitransparent[x]),
-                    (top_priority, top_layer, semi_obj)
-                );
+                let ((_, priority, layer), semi, second) = bus.composed_surfaces(x);
+                assert_eq!((priority, layer, semi), (top_priority, top_layer, semi_obj));
+                // Only blending lines track the second surface.
                 if second_surface {
-                    assert_eq!(
-                        (
-                            bus.frame_second_pixels[x],
-                            bus.frame_second_priorities[x],
-                            bus.frame_second_layers[x]
-                        ),
-                        (second_color, second_priority, second_layer)
-                    );
-                } else {
-                    assert_eq!(
-                        (
-                            bus.frame_second_pixels[x],
-                            bus.frame_second_priorities[x],
-                            bus.frame_second_layers[x]
-                        ),
-                        (0, 4, 5)
-                    );
+                    assert_eq!(second, (second_color, second_priority, second_layer));
                 }
             }
         }
