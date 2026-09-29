@@ -605,47 +605,6 @@ kbd:not(:where([data-ui], [data-ui] *)) {
   display: flex;
   padding: 16px 24px;
 }
-.screen-empty {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  background: radial-gradient(ellipse at 70% 85%, #174663, #05243e 70%);
-}
-.pixel-mark {
-  font-size: 4rem;
-  line-height: 1;
-  color: #83dbc9;
-  text-shadow: 5px 5px #063850;
-}
-.screen-empty h1 {
-  font-size: 1.9rem;
-}
-.screen-empty p {
-  color: var(--muted);
-}
-.screen-empty small {
-  font-size: 0.8rem;
-  color: #718f9d;
-}
-.screen-open {
-  border: 1px solid #fff0c8;
-  background: #fff0c8;
-  color: #05243e;
-  padding: 8px 28px;
-  position: relative;
-  cursor: pointer;
-}
-.screen-open input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  width: 100%;
-  cursor: pointer;
-}
 .toolbar-menu-positioner {
   z-index: 30;
 }
@@ -1163,18 +1122,6 @@ kbd:not(:where([data-ui], [data-ui] *)) {
   .generic-experience {
     padding: 12px 8px;
   }
-  .screen-empty {
-    gap: 10px;
-  }
-  .screen-empty h1 {
-    font-size: 1.35rem;
-  }
-  .screen-empty p {
-    font-size: 0.9rem;
-  }
-  .pixel-mark {
-    font-size: 2.5rem;
-  }
   .console-notices {
     font-size: 0.9rem;
     width: max-content;
@@ -1183,18 +1130,6 @@ kbd:not(:where([data-ui], [data-ui] *)) {
 @container (max-width: 760px) {
   .quick-bar kbd {
     display: none;
-  }
-}
-@container (max-height: 320px) {
-  .screen-empty .pixel-mark,
-  .screen-empty small {
-    display: none;
-  }
-  .screen-empty {
-    gap: 8px;
-  }
-  .screen-empty h1 {
-    font-size: 1.2rem;
   }
 }
 /* Phone player (handheld.tsx). The screen fills the width in portrait and the

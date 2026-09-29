@@ -3,6 +3,7 @@ import logo from "../../assets/brand/evenfall-logo.svg";
 import { Icon, PixelIcon } from "../../ui/icons";
 import { button, cx, focusRing } from "../../ui/styles";
 import { createFresco, type Fresco, type LayerName } from "./fresco";
+import { prefersStill, watchSceneMotion } from "./motion";
 import { RewindDemo } from "./rewind-demo";
 import { AccountDevices, GamePanels, RomhackFan, SpeedMeter } from "./showcase";
 
@@ -80,9 +81,7 @@ export function LandingPage({
   const seabed = useRef<HTMLCanvasElement>(null);
   const intro = useRef<HTMLDivElement>(null);
   // The illustrations hold still under a reduced-motion preference.
-  const [still, setStill] = useState(
-    () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-  );
+  const [still, setStill] = useState(prefersStill);
   useEffect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
     const changed = () => setStill(media.matches);
@@ -108,11 +107,7 @@ export function LandingPage({
     );
     // The scene always moves, except while the page is hidden or the
     // window is unfocused, and never under a reduced-motion preference.
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const sync = () =>
-      fresco?.setRunning(
-        !reduced.matches && !document.hidden && document.hasFocus(),
-      );
+    let moving = false;
     // Only layers on screen animate. A target whose edge only touches the
     // view counts as intersecting; the 1px inset keeps it off until visible.
     const watch = new IntersectionObserver(
@@ -126,7 +121,7 @@ export function LandingPage({
     // of the view.
     const dive = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting && !reduced.matches) fresco?.dive();
+        if (entry.isIntersecting && !prefersStill()) fresco?.dive();
       },
       { rootMargin: "0px 0px -35% 0px" },
     );
@@ -151,23 +146,20 @@ export function LandingPage({
         fresco = created;
         for (const canvas of Object.values(layers)) watch.observe(canvas);
         dive.observe(layers.descent);
-        sync();
+        created.setRunning(moving);
       })
       .catch(() => {
         layers.surface.dataset.ready = "error";
       });
-    document.addEventListener("visibilitychange", sync);
-    window.addEventListener("focus", sync);
-    window.addEventListener("blur", sync);
-    reduced.addEventListener("change", sync);
+    const stopMotion = watchSceneMotion((next) => {
+      moving = next;
+      fresco?.setRunning(next);
+    });
     return () => {
       disposed = true;
       watch.disconnect();
       dive.disconnect();
-      document.removeEventListener("visibilitychange", sync);
-      window.removeEventListener("focus", sync);
-      window.removeEventListener("blur", sync);
-      reduced.removeEventListener("change", sync);
+      stopMotion();
       fresco?.dispose();
     };
   }, []);

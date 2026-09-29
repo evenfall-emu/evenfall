@@ -143,10 +143,11 @@ grants no catalog rights.
 
 ## Player controls
 
-Open or drag a `.gba` file or a single-ROM ZIP onto the player. The native
-importer normalizes the ROM; its raw SHA-1 identifies the game and its save
-lock. Opening a ROM starts playback from its battery save. Unknown ROMs use
-the generic player without game panels.
+Open or drag a `.gba` file or a single-ROM ZIP onto the player. Until one
+is open, the screen shows Home's sunset over the sea with **Open game**. The
+native importer normalizes the ROM; its raw SHA-1 identifies the game and
+its save lock. Opening a ROM starts playback from its battery save. Unknown
+ROMs use the generic player without game panels.
 
 | Key                | Action                                                         |
 | ------------------ | -------------------------------------------------------------- |

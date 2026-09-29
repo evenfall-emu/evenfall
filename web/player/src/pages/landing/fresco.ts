@@ -1,6 +1,5 @@
 import descentArt from "../../assets/landing/descent.png";
 import seabedArt from "../../assets/landing/seabed.png";
-import surfaceArt from "../../assets/landing/surface.png";
 import { createAbyss } from "./abyss";
 import {
   ambient,
@@ -11,25 +10,18 @@ import {
 } from "./bubbles";
 import { frame, type Camera, type Framing, type Plate } from "./camera";
 import { fadeEdge, type Edge } from "./dither";
-import { observeDeviceSize, type DeviceSize } from "./pixel-canvas";
-import { drawClouds, drawGlow, type Clouds, type Glow } from "./sky";
-import { drawSea, type Sea } from "./waves";
+import { FRAME_SECONDS } from "./motion";
+import { loadImage, observeDeviceSize, type DeviceSize } from "./pixel-canvas";
+import { drawSurface, SKY, SUN_X, SURFACE, SURFACE_ART } from "./surface";
 
 // The fresco's plates share one 480-art-pixel-wide grid and one sun column.
 // The surface is framed first; every lower canvas reuses its scale and
 // horizontal offset, so their columns line up down the whole page.
 // Coordinates are art pixels within each plate; see the assets' README.
-const WIDTH = 480;
-const SUN = { left: 297, top: 159, right: 346, bottom: 197 };
-const SUN_X = Math.round((SUN.left + SUN.right) / 2);
+const WIDTH = SURFACE.width;
 
 export const PLATES = {
-  surface: {
-    width: WIDTH,
-    height: 252,
-    keep: SUN,
-    anchor: { x: SUN_X, y: SUN.bottom },
-  },
+  surface: SURFACE,
   descent: { width: WIDTH, height: 98, anchor: { x: SUN_X, y: 0 } },
   seabed: { width: WIDTH, height: 128, anchor: { x: SUN_X, y: 128 } },
 } satisfies Record<string, Plate>;
@@ -37,47 +29,9 @@ export const PLATES = {
 type PlateName = keyof typeof PLATES;
 export type LayerName = PlateName | "abyss";
 
-/** The painted sea in the surface plate, from the horizon down to where the
- * waterline (the surface seen from below, its last rows) begins. */
-const SEA: Sea = { top: 198, bottom: 241, swell: 204 };
-/** The painted cliff foot reaches into the sea's first rows; hold it still. */
-const shore = (row: number) =>
-  row < 200 ? 290 : row < 202 ? 90 : row < 204 ? 70 : 0;
-/**
- * The painted cloud band drifts over two minutes, from above its highest
- * cloud to just above the sun (row 159), so the disk never shears. Each row
- * starts right of the headland, which rises into the band from row 123.
- */
-const CLOUDS: Clouds = {
-  top: 94,
-  bottom: 157,
-  left: (row) => (row < 125 ? 0 : row < 146 ? 14 : 40),
-  reach: 6,
-  cycle: 120,
-};
-/** The lighthouse lamp pulses. The painted stars stay still and lit. */
-const BEACON: Glow = {
-  pixels: [
-    [103, 165],
-    [104, 165],
-    [105, 165],
-    [102, 166],
-    [103, 166],
-    [104, 166],
-    [105, 166],
-    [102, 167],
-    [103, 167],
-    [104, 167],
-    [103, 168],
-    [104, 168],
-  ],
-  ramp: ["#55bca4", "#8cdbbe", "#bcd8af", "#fff0c8"],
-  period: 5,
-};
-
 /** Each layer's edge color, filling a view beyond its plate. */
 const FILL: Record<LayerName, string> = {
-  surface: "#072957",
+  surface: SKY,
   descent: "#012d53",
   abyss: "#012d53",
   seabed: "#012d53",
@@ -102,8 +56,6 @@ const PIXEL = 4;
  * It matches the page's `md` breakpoint, where the hero layout changes. */
 const NARROW = 768;
 const BUBBLE = "#bcd8af";
-/** Everything moves in whole art pixels; fifteen frames a second is enough. */
-const FRAME_SECONDS = 1 / 15;
 
 /** Where the hero text sits over the surface canvas, in CSS pixels. */
 export interface TextBox {
@@ -155,12 +107,6 @@ export function follow(
   const y =
     name === "seabed" ? height - surface.scale * PLATES.seabed.height : 0;
   return { scale: surface.scale, x: surface.x, y };
-}
-
-function load(src: string) {
-  const image = new Image();
-  image.src = src;
-  return image.decode().then(() => image);
 }
 
 export type FrescoCanvases = Record<LayerName, HTMLCanvasElement>;
@@ -238,9 +184,9 @@ export async function createFresco(
   textColumn: () => number,
 ): Promise<Fresco> {
   const images = await Promise.all([
-    load(surfaceArt),
-    load(descentArt),
-    load(seabedArt),
+    loadImage(SURFACE_ART),
+    loadImage(descentArt),
+    loadImage(seabedArt),
   ]).then(([surface, descent, seabed]) => ({ surface, descent, seabed }));
   const names = Object.keys(canvases) as LayerName[];
   const sizes: Partial<Record<LayerName, DeviceSize>> = {};
@@ -274,6 +220,10 @@ export async function createFresco(
     }
     context.fillStyle = FILL[name];
     context.fillRect(0, 0, canvas.width, canvas.height);
+    if (name === "surface") {
+      drawSurface(context, images.surface, camera, seconds);
+      return;
+    }
     const plate = PLATES[name];
     context.drawImage(
       images[name],
@@ -282,12 +232,6 @@ export async function createFresco(
       plate.width * camera.scale,
       plate.height * camera.scale,
     );
-    if (name === "surface") {
-      drawClouds(context, images.surface, plate, CLOUDS, camera, seconds);
-      drawSea(context, images.surface, plate, SEA, camera, seconds, shore);
-      drawGlow(context, BEACON, camera, seconds);
-      return;
-    }
     const age = diveStart === null ? null : seconds - diveStart;
     const span = size.width / camera.scale;
     const middle = Math.round((size.width / 2 - camera.x) / camera.scale);

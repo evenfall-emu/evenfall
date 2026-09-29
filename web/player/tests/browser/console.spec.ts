@@ -257,6 +257,93 @@ test("player and controls fit wide, short, and portrait viewports", async ({
   await expect(page.getByRole("button", { name: /^Rewind/ })).toBeEnabled();
 });
 
+/**
+ * The empty screen's sunset: its scale and where its sun and text sit, in
+ * CSS pixels. The sun covers art pixels 297–346 across and 159–197 down
+ * (see src/assets/landing/README.md).
+ */
+function emptyScreen(page: Page) {
+  return page.locator(".screen-empty canvas").evaluate((element) => {
+    const canvas = element as HTMLCanvasElement;
+    const { scale, x, y, ratio } = canvas.dataset;
+    const k = Number(scale) / Number(ratio);
+    const box = canvas.getBoundingClientRect();
+    const text = canvas.nextElementSibling!.getBoundingClientRect();
+    return {
+      scale: Number(scale),
+      backing: [canvas.width, canvas.height],
+      device: [
+        Math.round(box.width * Number(ratio)),
+        Math.round(box.height * Number(ratio)),
+      ],
+      textBottom: text.bottom - box.top,
+      width: box.width,
+      height: box.height,
+      sun: {
+        left: Number(x) / Number(ratio) + 297 * k,
+        right: Number(x) / Number(ratio) + 347 * k,
+        top: Number(y) / Number(ratio) + 159 * k,
+        bottom: Number(y) / Number(ratio) + 198 * k,
+      },
+    };
+  });
+}
+
+test("the empty screen draws the sunset at whole pixels, the sun whole below the text", async ({
+  page,
+}) => {
+  await ready(page);
+  await page.evaluate(() => document.fonts.ready);
+  for (const [width, height] of [
+    [1920, 1080],
+    [1366, 768],
+    [1024, 600],
+    [390, 844],
+    [360, 780],
+    [844, 390],
+  ]) {
+    await page.setViewportSize({ width, height });
+    const canvas = page.locator(".screen-empty canvas");
+    await expect(canvas).toHaveAttribute("data-scale", /^\d+$/);
+    // Let the resize settle into a new framing before measuring it.
+    await page.waitForTimeout(100);
+    const screen = await emptyScreen(page);
+    const at = `${width}×${height}`;
+    // One canvas pixel per device pixel, and a whole number of them per
+    // art pixel, at no less than two CSS pixels on these screens.
+    expect(screen.backing, at).toEqual(screen.device);
+    expect(screen.scale, at).toBeGreaterThanOrEqual(2);
+    expect(screen.sun.top, at).toBeGreaterThanOrEqual(screen.textBottom);
+    expect(screen.sun.bottom, at).toBeLessThanOrEqual(screen.height);
+    expect(screen.sun.left, at).toBeGreaterThanOrEqual(0);
+    expect(screen.sun.right, at).toBeLessThanOrEqual(screen.width);
+  }
+
+  // It moves while the page has focus, like Home's scene.
+  await page.bringToFront();
+  const canvas = page.locator(".screen-empty canvas");
+  await expect(canvas).toHaveAttribute("data-motion", "playing");
+  const pixels = () =>
+    canvas.evaluate((element: HTMLCanvasElement) =>
+      Array.from(
+        element
+          .getContext("2d")!
+          .getImageData(0, 0, element.width, element.height).data,
+      ).join(),
+    );
+  const before = await pixels();
+  await expect.poll(pixels).not.toBe(before);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(canvas).toHaveAttribute("data-motion", "still");
+
+  // Opening a game replaces it.
+  await page.getByLabel("Open game", { exact: true }).setInputFiles(loop);
+  await expect(
+    page.getByRole("heading", { name: "Loop", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".screen-empty")).toHaveCount(0);
+});
+
 test("console autoplays, routes keys outside the canvas, and keeps help and typing isolated", async ({
   page,
 }) => {

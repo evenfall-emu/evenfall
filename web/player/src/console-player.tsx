@@ -9,6 +9,7 @@ import {
 import type { RewindTimeline as Timeline } from "@evenfall/gba";
 import { gameInputBlocked, player } from "./player";
 import { QUICK_SLOTS, quickSlotForKey } from "./library";
+import { EmptyScreen } from "./empty-screen";
 import { draw } from "./media";
 import { RewindTimeline } from "./rewind-timeline";
 
@@ -191,26 +192,10 @@ export function ConsolePlayer({
             aria-label="Game screen. Arrows move, X and Z are A and B. Space pauses."
           />
           {!state.game && (
-            <div className="screen-empty">
-              <span className="pixel-mark">Z</span>
-              <h1>Your next adventure.</h1>
-              <p>Open a .gba or .zip to begin</p>
-              <label className="screen-open">
-                Open game
-                <input
-                  type="file"
-                  aria-label="Open game"
-                  accept=".gba,.zip"
-                  disabled={!state.ready}
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    event.target.value = "";
-                    if (file) void player.open(file).catch(player.error);
-                  }}
-                />
-              </label>
-              <small>Games and saves stay on this device.</small>
-            </div>
+            <EmptyScreen
+              ready={state.ready}
+              onOpen={(file) => void player.open(file).catch(player.error)}
+            />
           )}
           {state.game &&
             !state.playing &&

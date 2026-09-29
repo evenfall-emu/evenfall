@@ -86,4 +86,17 @@ moves by whole art pixels:
   margins.
 
 The scene runs without a pause control. It stops while the page is hidden or
-the window is unfocused, and a reduced-motion preference shows it still.
+the window is unfocused, and a reduced-motion preference shows it still;
+[`motion.ts`](../../pages/landing/motion.ts) holds that rule and the frame
+rate.
+
+## The Player's empty screen
+
+Before a game is open, the Player's screen shows the surface plate alone,
+drawn by [`sunset.ts`](../../pages/landing/sunset.ts) with the same sky and
+waves ([`surface.ts`](../../pages/landing/surface.ts)). It ends on the open
+sea: the waterline rows only lead into Home's descent. The camera centers
+the sun across the screen and keeps it whole below the text, at the whole
+scale nearest one art pixel per 1/280 of the screen's width and at least two
+CSS pixels per art pixel; where the text leaves too little room it drops to a
+smaller scale. It moves only while on screen, under the same rule as Home.

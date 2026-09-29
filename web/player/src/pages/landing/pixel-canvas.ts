@@ -42,3 +42,10 @@ export function observeDeviceSize(
   }
   return () => observer.disconnect();
 }
+
+/** An image, decoded and ready to draw. */
+export function loadImage(src: string): Promise<HTMLImageElement> {
+  const image = new Image();
+  image.src = src;
+  return image.decode().then(() => image);
+}
