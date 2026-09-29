@@ -18,3 +18,4 @@ games, hosts or browsers.
 | [`tile-row-cache.md`](tile-row-cache.md)                 | Decoding 4bpp tile rows two pixels per lookup through per-bank tables validated against the palette's content                          |
 | [`selective-video.md`](selective-video.md)               | Omitting pixel production above 2× playback, with exact on-demand reconstruction of the framebuffer                                    |
 | [`rewind-compression.md`](rewind-compression.md)         | Compressing rewind history so it can cover hours of play in a small memory budget                                                      |
+| [`execution-engine.md`](execution-engine.md)             | Running ARM and Thumb code from pre-decoded op caches at the interpreter's exact cost, with the interpreter as reference               |
