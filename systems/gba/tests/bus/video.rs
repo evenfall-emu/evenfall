@@ -905,3 +905,92 @@ fn scanlines_resume_alpha_obj_and_raster_effects_after_opaque_composition() {
     assert_eq!(0x3c0f, bus.framebuffer()[5 * 240]);
     assert_eq!(0x001f, bus.framebuffer()[5 * 240 + 239]);
 }
+
+/// ZiGBA: "selective video latches whole frames and publishes only complete images"
+#[test]
+fn selective_video_latches_whole_frames_and_publishes_only_complete_images() {
+    const FRAME: u64 = 280896;
+    const VISIBLE_END: u64 = 159 * 1232 + 960;
+    let mut bus = Bus::init(&[]);
+    bus.dispcnt = 0;
+    bus.palette[..2].copy_from_slice(&0x001fu16.to_le_bytes());
+    bus.elapse(400);
+    bus.set_video_interval(3);
+    assert!(bus.is_framebuffer_canonical());
+    assert_eq!(0, bus.video_frame_id);
+    assert_eq!(VISIBLE_END, bus.next_rendered_frame_cycle());
+    bus.elapse(VISIBLE_END - bus.now());
+    assert_eq!(1, bus.video_frame_id);
+    assert_eq!(VISIBLE_END, bus.video_frame_cycle);
+    assert!(bus.published_framebuffer().iter().all(|&p| p == 0x001f));
+    bus.elapse(FRAME - bus.now());
+    bus.palette[..2].copy_from_slice(&0x03e0u16.to_le_bytes());
+    bus.scanline_memo.invalidate();
+    bus.elapse(960);
+    assert_eq!(0x03e0, bus.framebuffer()[0]);
+    assert_eq!(0x001f, bus.framebuffer()[240]);
+    assert!(bus.published_framebuffer().iter().all(|&p| p == 0x001f));
+    assert_eq!(1, bus.video_frame_id);
+    bus.elapse(FRAME + VISIBLE_END - bus.now());
+    assert_eq!(2, bus.video_frame_id);
+    assert_eq!(4 * FRAME + VISIBLE_END, bus.next_rendered_frame_cycle());
+    assert!(bus.published_framebuffer().iter().all(|&p| p == 0x03e0));
+    bus.elapse(2 * FRAME - bus.now());
+    bus.palette[..2].copy_from_slice(&0x7c00u16.to_le_bytes());
+    bus.scanline_memo.invalidate();
+    bus.elapse(960);
+    assert!(!bus.is_framebuffer_canonical());
+    assert_eq!(0x03e0, bus.framebuffer()[0]);
+    bus.set_video_interval(16);
+    let next_selected = 3 * FRAME + VISIBLE_END;
+    assert_eq!(next_selected, bus.next_rendered_frame_cycle());
+    bus.set_video_interval(16);
+    assert_eq!(next_selected, bus.next_rendered_frame_cycle());
+    bus.elapse(3 * FRAME + 960 - bus.now());
+    assert!(!bus.is_framebuffer_canonical());
+    assert_eq!(0x7c00, bus.framebuffer()[0]);
+    assert!(bus.published_framebuffer().iter().all(|&p| p == 0x03e0));
+    bus.set_video_interval(1);
+    bus.elapse(next_selected - bus.now());
+    assert!(bus.is_framebuffer_canonical());
+    assert_eq!(4, bus.video_frame_id);
+    assert_eq!(4 * FRAME + VISIBLE_END, bus.next_rendered_frame_cycle());
+    assert!(bus.published_framebuffer().iter().all(|&p| p == 0x7c00));
+    bus.elapse(4 * FRAME + VISIBLE_END - bus.now());
+    assert_eq!(bus.framebuffer().as_ptr(), bus.published_framebuffer().as_ptr());
+    assert_eq!(5 * FRAME + VISIBLE_END, bus.next_rendered_frame_cycle());
+}
+
+/// ZiGBA: "canonical video repair preserves publication and full rendering resumes immediately"
+#[test]
+fn canonical_video_repair_preserves_publication_and_full_rendering_resumes_immediately() {
+    const FRAME: u64 = 280896;
+    const VISIBLE_END: u64 = 159 * 1232 + 960;
+    let mut bus = Bus::init(&[]);
+    bus.set_video_interval(2);
+    bus.elapse(2 * FRAME + 960);
+    assert!(!bus.is_framebuffer_canonical());
+    let published_id = bus.video_frame_id;
+    let published_cycle = bus.video_frame_cycle;
+    bus.accept_canonical_framebuffer(&[0x1234; 240 * 160]);
+    assert!(bus.is_framebuffer_canonical());
+    assert_eq!(published_id, bus.video_frame_id);
+    assert_eq!(published_cycle, bus.video_frame_cycle);
+    assert_eq!(0x7fff, bus.published_framebuffer()[0]);
+    bus.use_full_video();
+    assert_eq!(bus.framebuffer().as_ptr(), bus.published_framebuffer().as_ptr());
+    bus.elapse(1232);
+    assert_eq!(0x1234, bus.framebuffer()[0]);
+    assert_eq!(0x7fff, bus.framebuffer()[240]);
+    assert_eq!(2 * FRAME + VISIBLE_END, bus.next_rendered_frame_cycle());
+    bus.set_video_interval(16);
+    let reset_cycle = bus.now();
+    bus.hard_reset();
+    assert!(bus.is_framebuffer_canonical());
+    assert_eq!(0, bus.video_frame_id);
+    assert_eq!(reset_cycle + VISIBLE_END, bus.next_rendered_frame_cycle());
+    assert!(bus.published_framebuffer().iter().all(|&p| p == 0));
+    bus.elapse(VISIBLE_END);
+    assert_eq!(reset_cycle + 16 * FRAME + VISIBLE_END, bus.next_rendered_frame_cycle());
+    assert!(bus.published_framebuffer().iter().all(|&p| p == 0x7fff));
+}

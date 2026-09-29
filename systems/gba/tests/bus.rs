@@ -2,10 +2,12 @@
 
 use evenfall_gba::bus::{
     Access, AccessKind, AccessSource, AccessWidth, Bus, JoyBusCommand, JoyBusError, KeyState,
-    SioConnection, SioLinkError, synchronize_sio,
+    SioConnection, SioLinkError, TimedInput, TimedInputChange, synchronize_sio,
 };
 use evenfall_gba::cartridge::save::Type as SaveType;
 
+#[path = "bus/peripherals.rs"]
+mod peripherals;
 #[path = "bus/video.rs"]
 mod video;
 
@@ -2095,4 +2097,324 @@ fn timer_zero_unused_count_up_bit_cannot_bypass_state_phase_validation() {
     bus.timers[1].control = 0x0084;
     bus.timers[1].prescaler_phase = 63;
     bus.write_state(&mut evenfall_state::Sink::new(None, None)).unwrap();
+}
+
+/// ZiGBA: "no-event materialization keeps a simultaneous audio sample before FIFO consumption"
+#[test]
+fn no_event_materialization_keeps_a_simultaneous_audio_sample_before_fifo_consumption() {
+    let mut bus = Bus::init(&[]);
+    write_half(&mut bus, 0x0400_0084, 1 << 7);
+    write_half(&mut bus, 0x0400_0082, (1 << 2) | (1 << 8) | (1 << 9));
+    write_word(&mut bus, 0x0400_00a0, 0x0403_0201);
+    bus.elapse(505);
+    bus.timers[0].reload = 0xfffc;
+    bus.timers[0].counter = 0xfffc;
+    bus.timers[0].control = 0x0084;
+    bus.begin_device_batch();
+    bus.elapse(1);
+    bus.elapse(2);
+    bus.set_video_interval(1);
+    let mut samples = [Default::default(); 2];
+    assert_eq!(0, bus.drain_audio_samples(&mut samples));
+    assert_eq!(0xffff, bus.timers[0].counter);
+    bus.elapse(1);
+    assert_eq!(1, bus.drain_audio_samples(&mut samples));
+    assert_eq!((0, 0), (samples[0].left, samples[0].right));
+    assert_eq!((4, 4), (bus.current_audio_sample().left, bus.current_audio_sample().right));
+    write_half(&mut bus, 0x0400_0102, 0);
+    for _ in 0..511 {
+        bus.elapse(1);
+    }
+    bus.set_audio_output(true);
+    assert_eq!(1024, bus.now());
+    assert_eq!(1, bus.drain_audio_samples(&mut samples));
+    assert_eq!((4, 4), (samples[0].left, samples[0].right));
+    bus.end_device_batch();
+}
+
+/// ZiGBA: "full prefetch queue restarts with boundary and sequential wait states"
+#[test]
+fn full_prefetch_queue_restarts_with_boundary_and_sequential_wait_states() {
+    let rom = vec![0xa5; 0x20040];
+    for batched in [false, true] {
+        for width in [AccessWidth::Half, AccessWidth::Word] {
+            let stride = if width == AccessWidth::Word { 4 } else { 2 };
+            let capacity = if width == AccessWidth::Word { 4 } else { 8 };
+            let sequential = if width == AccessWidth::Word { 4 } else { 2 };
+            let boundary_duty = if width == AccessWidth::Word { 6 } else { 4 };
+            let boundary = 0x0802_0000;
+            let start = boundary - (capacity + 1) * stride;
+            let value = if width == AccessWidth::Word { 0xa5a5_a5a5 } else { 0xa5a5 };
+            let mut bus = Bus::init(&rom);
+            write_half(&mut bus, 0x0400_0204, 0x4014);
+            let mut region = Default::default();
+            bus.fetch_instruction_in_region(&mut region, start, width);
+            bus.elapse(u64::from(capacity * sequential));
+            assert_eq!(capacity, u32::from(bus.game_pak_prefetch.count));
+            assert_eq!(0, bus.game_pak_prefetch.countdown);
+            assert_eq!(boundary - stride, bus.game_pak_prefetch.last_address);
+            if batched {
+                bus.begin_device_batch();
+            }
+            let first = bus.now();
+            assert_eq!(value, bus.fetch_instruction_in_region(&mut region, start + stride, width));
+            assert_eq!(first + 1, bus.now());
+            assert_eq!(capacity - 1, u32::from(bus.game_pak_prefetch.count));
+            assert_eq!(boundary, bus.game_pak_prefetch.last_address);
+            assert_eq!(boundary_duty - 1, bus.game_pak_prefetch.countdown);
+            bus.elapse(boundary_duty - 1);
+            assert_eq!(capacity, u32::from(bus.game_pak_prefetch.count));
+            assert_eq!(0, bus.game_pak_prefetch.countdown);
+            let second = bus.now();
+            assert_eq!(
+                value,
+                bus.fetch_instruction_in_region(&mut region, start + 2 * stride, width)
+            );
+            assert_eq!(second + 1, bus.now());
+            assert_eq!(boundary + stride, bus.game_pak_prefetch.last_address);
+            assert_eq!(u64::from(sequential - 1), bus.game_pak_prefetch.countdown);
+            if batched {
+                bus.end_device_batch();
+            }
+        }
+    }
+}
+
+/// ZiGBA: "batched instruction fetch latches before DMA at the exact access boundary"
+#[test]
+fn batched_instruction_fetch_latches_before_dma_at_the_exact_access_boundary() {
+    let mut bus = Bus::init(&[]);
+    for (addr, value) in [
+        (0x0200_0000, 0x1122),
+        (0x0200_0002, 0x3344),
+        (0x0400_00d4, 0),
+        (0x0400_00d6, 0x0200),
+        (0x0400_00d8, 0),
+        (0x0400_00da, 0x0300),
+        (0x0400_00dc, 2),
+        (0x0400_00de, (1 << 14) | (1 << 15)),
+    ] {
+        write_half(&mut bus, addr, value);
+    }
+    let started = bus.now();
+    bus.begin_device_batch();
+    bus.fetch_kind = AccessKind::Sequential;
+    for _ in 0..2 {
+        assert_eq!(0, bus.fetch_instruction(0x0300_0000, AccessWidth::Word));
+    }
+    bus.end_device_batch();
+    assert_eq!(started + 12, bus.now());
+    assert_eq!(0x3344_1122, bus.fetch_instruction(0x0300_0000, AccessWidth::Word));
+    assert_ne!(0, bus.interrupt_request_flags & (1 << 11));
+}
+
+/// ZiGBA: "no-event materialization retains simultaneous input serial LCD timer and DMA delivery"
+#[test]
+fn no_event_materialization_retains_simultaneous_input_serial_lcd_timer_and_dma_delivery() {
+    let mut bus = Bus::init(&[]);
+    bus.elapse(953);
+    bus.ppu_timing.write_dispstat(1 << 4);
+    bus.timers[0].reload = 0;
+    bus.timers[0].counter = 0xfff9;
+    bus.timers[0].control = 0x00c4;
+    bus.keypad_control = 0x4001;
+    bus.rcnt = 0xc000;
+    bus.joy_control = 0x0040;
+    bus.schedule_joy_bus(JoyBusCommand::Reset, 960).unwrap();
+    bus.dma_channels[3].source = 0x0400_0202;
+    bus.dma_channels[3].destination = 0x0300_0000;
+    bus.dma_channels[3].word_count = 1;
+    bus.dma_channels[3].control = 0xc000;
+    bus.dma_channels[3].latched_source = 0x0400_0202;
+    bus.dma_channels[3].latched_destination = 0x0300_0000;
+    bus.dma_start_cycles[3] = Some(960);
+    let inputs = [TimedInput {
+        at: 960,
+        change: TimedInputChange::Keys(KeyState { a: true, ..Default::default() }),
+    }];
+    // SAFETY: `inputs` remains immutable and in scope through `end_external_inputs` below.
+    unsafe {
+        bus.begin_external_inputs(&inputs);
+    }
+    bus.begin_device_batch();
+    bus.elapse(1);
+    bus.elapse(5);
+    bus.set_video_interval(1);
+    assert_eq!(959, bus.now());
+    assert_eq!(959, bus.ppu_timing.cycle_in_line);
+    assert_eq!(0xffff, bus.timers[0].counter);
+    assert_eq!(0, bus.interrupt_request_flags);
+    assert_eq!(0, bus.external_inputs_consumed());
+    assert_eq!(None, bus.take_joy_bus_response());
+    bus.elapse(1);
+    assert_eq!(964, bus.now());
+    assert_eq!(0x108a, u16::from_le_bytes(bus.iwram[0..2].try_into().unwrap()));
+    assert_eq!(0x188a, bus.interrupt_request_flags);
+    assert_eq!(1, bus.external_inputs_consumed());
+    assert!(bus.take_joy_bus_response().is_some());
+    bus.end_device_batch();
+    bus.end_external_inputs();
+}
+
+/// ZiGBA: "audio DMA refill timing is invariant to elapsed-cycle chunking"
+#[test]
+fn audio_dma_refill_timing_is_invariant_to_elapsed_cycle_chunking() {
+    let mut coarse = Bus::init(&[]);
+    let mut fine = Bus::init(&[]);
+    for bus in [&mut coarse, &mut fine] {
+        let source = 0x0300_0000;
+        for index in 0..4 {
+            write_word(bus, source + index * 4, 0x1111_1111);
+        }
+        for (addr, value) in [
+            (0x0400_0084, 1 << 7),
+            (0x0400_0082, (1 << 2) | (1 << 9)),
+            (0x0400_00bc, source as u16),
+            (0x0400_00be, (source >> 16) as u16),
+            (0x0400_00c0, 0x00a0),
+            (0x0400_00c2, 0x0400),
+            (0x0400_00c4, 1),
+            (0x0400_00c6, (1 << 15) | (3 << 12) | (1 << 9)),
+            (0x0400_0100, 0xffff),
+            (0x0400_0102, (1 << 7) | 2),
+        ] {
+            write_half(bus, addr, value);
+        }
+    }
+    coarse.elapse(1024);
+    for _ in 0..1024 {
+        fine.elapse(1);
+    }
+    let mut coarse_samples = [Default::default(); 4];
+    let mut fine_samples = [Default::default(); 4];
+    let coarse_count = coarse.drain_audio_samples(&mut coarse_samples);
+    let fine_count = fine.drain_audio_samples(&mut fine_samples);
+    assert_eq!(fine_count, coarse_count);
+    assert_eq!(&fine_samples[..fine_count], &coarse_samples[..coarse_count]);
+    assert_eq!(0, coarse_samples[0].left);
+    assert_eq!(0x11 * 4, coarse_samples[1].left);
+}
+
+/// ZiGBA: "a DMA burst that never releases the bus latches a livelock and returns"
+#[test]
+fn a_dma_burst_that_never_releases_the_bus_latches_a_livelock_and_returns() {
+    let mut bus = Bus::init(&[]);
+    write_half(&mut bus, 0x0400_0084, 0x0080);
+    write_half(&mut bus, 0x0400_0082, 0xfb00);
+    write_word(&mut bus, 0x0400_00bc, 0x0300_2000);
+    write_word(&mut bus, 0x0400_00c0, 0x0400_00a0);
+    write_half(&mut bus, 0x0400_00c6, 0xb740);
+    write_word(&mut bus, 0x0400_00c8, 0x0300_2000);
+    write_word(&mut bus, 0x0400_00cc, 0x0400_00a4);
+    write_half(&mut bus, 0x0400_00d2, 0xb740);
+    write_word(&mut bus, 0x0400_0100, 0x0080_ffff);
+    write_word(&mut bus, 0x0400_0104, 0x0080_ffff);
+    let started_at = bus.now();
+    bus.elapse(1);
+    let livelock = bus.dma_livelock().expect("DMA livelock");
+    assert!(livelock.channel == 1 || livelock.channel == 2);
+    assert!(livelock.started_at >= started_at);
+    assert!(bus.now() - livelock.started_at >= Bus::MAX_DMA_BURST_CYCLES);
+    let after = bus.now();
+    bus.elapse(100);
+    assert_eq!(after + 100, bus.now());
+}
+
+/// ZiGBA: "batched STOP serial time does not accrue system device clocks"
+#[test]
+fn batched_stop_serial_time_does_not_accrue_system_device_clocks() {
+    let mut bus = Bus::init(&[]);
+    write_half(&mut bus, 0x0400_0134, 0xc000);
+    write_half(&mut bus, 0x0400_0140, 0x0040);
+    write_half(&mut bus, 0x0400_0200, 1 << 7);
+    bus.begin_device_batch();
+    bus.elapse(1);
+    bus.elapse(6);
+    bus.enter_stop();
+    let ppu = bus.ppu_timing;
+    let apu = bus.apu.clone();
+    let timers = bus
+        .timers
+        .each_ref()
+        .map(|timer| (timer.reload, timer.counter, timer.control, timer.prescaler_phase));
+    let deadline = bus.now() + 4096;
+    bus.schedule_joy_bus(JoyBusCommand::Reset, deadline).unwrap();
+    assert!(bus.idle_stop_until(deadline));
+    bus.end_device_batch();
+    assert_eq!(deadline, bus.now());
+    assert_eq!(ppu, bus.ppu_timing);
+    assert_eq!(apu, bus.apu);
+    for (before, after) in timers.iter().zip(bus.timers.iter()) {
+        assert_eq!(*before, (after.reload, after.counter, after.control, after.prescaler_phase));
+    }
+    assert!(bus.take_joy_bus_response().is_some());
+}
+
+/// ZiGBA: "a halted batch wakes at the LCD or timer event after post-halt charges and cut slices"
+#[test]
+fn a_halted_batch_wakes_at_the_lcd_or_timer_event_after_post_halt_charges_and_cut_slices() {
+    for timer in [true, false] {
+        for lag in [0, 12] {
+            for split in [0, 100] {
+                for batched in [false, true] {
+                    let mut bus = Bus::init(&[]);
+                    if timer {
+                        write_half(&mut bus, 0x0400_0200, 1 << 3);
+                        write_word(&mut bus, 0x0400_0100, 0x00c0_0000 | (0x10000 - 700));
+                    } else {
+                        write_half(&mut bus, 0x0400_0200, 1 << 1);
+                        write_half(&mut bus, 0x0400_0004, 1 << 4);
+                    }
+                    if batched {
+                        bus.begin_device_batch();
+                    }
+                    bus.enter_halt();
+                    write_word(&mut bus, 0x0300_7ff8, 0);
+                    bus.elapse(lag);
+                    if split != 0 {
+                        assert!(!bus.idle_halt_until(bus.now() + split));
+                    }
+                    assert!(bus.idle_halt_until(bus.now() + 5000));
+                    assert_eq!(if timer { 702 } else { 960 }, bus.now());
+                    assert_eq!(if timer { 1 << 3 } else { 1 << 1 }, bus.interrupt_request_flags);
+                    if batched {
+                        bus.end_device_batch();
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// ZiGBA: "one-cycle endpoint preserves simultaneous timer HBlank and DMA ordering"
+#[test]
+fn one_cycle_endpoint_preserves_simultaneous_timer_hblank_and_dma_ordering() {
+    let mut bus = Bus::init(&[]);
+    bus.elapse(959);
+    bus.ppu_timing.write_dispstat(1 << 4);
+    bus.timers[0].reload = 0xfffe;
+    bus.timers[0].counter = 0xffff;
+    bus.timers[0].control = (1 << 7) | (1 << 6);
+    bus.timers[1].reload = 0xfffd;
+    bus.timers[1].counter = 0xffff;
+    bus.timers[1].control = (1 << 7) | (1 << 6) | (1 << 2);
+    bus.dma_channels[0].source = 0x0300_0100;
+    bus.dma_channels[0].destination = 0x0300_0200;
+    bus.dma_channels[0].word_count = 1;
+    bus.dma_channels[0].control = (2 << 12) | (1 << 15);
+    bus.dma_channels[0].latched_source = 0x0300_0100;
+    bus.dma_channels[0].latched_destination = 0x0300_0200;
+    let boundary = bus.read(access(
+        0x0300_0000,
+        AccessWidth::Word,
+        AccessKind::Nonsequential,
+        AccessSource::CpuData,
+    ));
+    assert_eq!(1, boundary.cycles);
+    assert_eq!(960, bus.now());
+    assert_eq!(0xfffe, bus.timers[0].read_counter());
+    assert_eq!(0xfffd, bus.timers[1].read_counter());
+    assert_eq!((1 << 1) | (1 << 3) | (1 << 4), bus.interrupt_request_flags);
+    assert_eq!(0x7fff, bus.framebuffer()[0]);
+    assert_eq!(Some(963), bus.dma_start_cycles[0]);
 }
