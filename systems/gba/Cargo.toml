@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 evenfall-audio.workspace = true
 evenfall-host.workspace = true
+evenfall-state.workspace = true
 
 [lints]
 workspace = true
