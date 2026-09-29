@@ -1,0 +1,25 @@
+{
+  "name": "probe-tilt_sample",
+  "assets": {
+    "rom": "../../../probe/build/tilt_sample.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "none",
+    "tilt": [
+      914,
+      928
+    ]
+  },
+  "inputs": [],
+  "endCycle": "1123584",
+  "checkpoints": [
+    "1123584"
+  ],
+  "sliceCycles": [
+    "70224",
+    "280896"
+  ],
+  "terminalPc": 134218500,
+  "terminalR12": 60851090
+}

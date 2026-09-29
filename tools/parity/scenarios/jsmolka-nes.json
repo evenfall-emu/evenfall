@@ -1,0 +1,20 @@
+{
+  "name": "jsmolka-nes",
+  "assets": {
+    "rom": "../../../refs/gba-tests/nes/nes.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "none"
+  },
+  "inputs": [],
+  "endCycle": "1404480",
+  "checkpoints": [
+    "1123584",
+    "1404480"
+  ],
+  "sliceCycles": [
+    "70224",
+    "280896"
+  ]
+}

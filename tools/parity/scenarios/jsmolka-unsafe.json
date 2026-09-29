@@ -1,0 +1,20 @@
+{
+  "name": "jsmolka-unsafe",
+  "assets": {
+    "rom": "../../../refs/gba-tests/unsafe/unsafe.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "sram"
+  },
+  "inputs": [],
+  "endCycle": "1966272",
+  "checkpoints": [
+    "1123584",
+    "1966272"
+  ],
+  "sliceCycles": [
+    "70224",
+    "280896"
+  ]
+}
