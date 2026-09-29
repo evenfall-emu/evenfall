@@ -457,7 +457,7 @@ pub extern "C" fn zb_read_memory(address: u32, length: u32) -> i32 {
 pub extern "C" fn zb_export_rom() -> i32 {
     call(|state| {
         let (ptr, len) = {
-            let rom = &active(state)?.rom;
+            let rom = active(state)?.rom();
             (rom.as_ptr(), rom.len())
         };
         state.borrow_output(ptr, len);
