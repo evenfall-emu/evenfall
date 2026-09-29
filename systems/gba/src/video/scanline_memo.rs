@@ -6,7 +6,7 @@ pub const VRAM_SIZE: usize = 96 * 1024;
 pub const OAM_SIZE: usize = 1024;
 pub const PAGE_SIZE: usize = 1024;
 pub const ALL_VRAM_PAGES: u128 = (1 << (VRAM_SIZE / PAGE_SIZE)) - 1;
-pub const CHECK: bool = cfg!(any(debug_assertions, test));
+pub const CHECK: bool = cfg!(any(debug_assertions, test, feature = "scanline-memo-check"));
 
 pub struct Memory<'a> {
     pub palette: &'a [u8; PALETTE_SIZE],
@@ -84,6 +84,7 @@ impl Changes {
         Self { registers: true, memory: true, oam: true, ..Self::default() }
     }
 
+    #[cfg(any(debug_assertions, test, feature = "scanline-memo-check"))]
     fn add(&mut self, other: Self) {
         self.registers |= other.registers;
         self.memory |= other.memory;
@@ -100,6 +101,7 @@ pub enum UnmarkedChange {
     Oam,
 }
 
+#[cfg(any(debug_assertions, test, feature = "scanline-memo-check"))]
 #[derive(Clone)]
 struct Verification {
     palette: [u8; PALETTE_SIZE],
@@ -110,6 +112,7 @@ struct Verification {
     previous_line: usize,
 }
 
+#[cfg(any(debug_assertions, test, feature = "scanline-memo-check"))]
 impl Default for Verification {
     fn default() -> Self {
         Self {
@@ -140,6 +143,7 @@ pub struct Memo<R: Copy + PartialEq + Default, const L: usize> {
     pub reads: Reads,
     pub tile_pages: [[TilePages; 2]; 4],
     pub kept: u64,
+    #[cfg(any(debug_assertions, test, feature = "scanline-memo-check"))]
     verification: Verification,
 }
 
@@ -159,6 +163,7 @@ impl<R: Copy + PartialEq + Default, const L: usize> Default for Memo<R, L> {
             reads: Reads::default(),
             tile_pages: [[TilePages::default(); 2]; 4],
             kept: 0,
+            #[cfg(any(debug_assertions, test, feature = "scanline-memo-check"))]
             verification: Verification::default(),
         }
     }
@@ -211,10 +216,14 @@ impl<R: Copy + PartialEq + Default, const L: usize> Memo<R, L> {
         memory: Memory<'_>,
         object_rows: fn(u16, u16) -> Option<ObjectRows>,
     ) {
-        let snapshot = if CHECK { self.verify_marks(line, &memory) } else { false };
+        #[cfg(any(debug_assertions, test, feature = "scanline-memo-check"))]
+        let snapshot = self.verify_marks(line, &memory);
+        #[cfg(not(any(debug_assertions, test, feature = "scanline-memo-check")))]
+        let _ = line;
         if self.changes.memory {
             self.apply_memory_changes(memory.oam, object_rows);
         }
+        #[cfg(any(debug_assertions, test, feature = "scanline-memo-check"))]
         if snapshot {
             self.verification.marks = Changes::default();
         }
@@ -228,9 +237,8 @@ impl<R: Copy + PartialEq + Default, const L: usize> Memo<R, L> {
     ) {
         let changes = std::mem::take(&mut self.changes);
         self.changes.registers = self.changes_registers;
-        if CHECK {
-            self.verification.marks.add(changes);
-        }
+        #[cfg(any(debug_assertions, test, feature = "scanline-memo-check"))]
+        self.verification.marks.add(changes);
         let mut stale = [false; L];
         if changes.oam && self.oam != *oam {
             for object in 0..OAM_SIZE / 8 {
@@ -313,11 +321,13 @@ impl<R: Copy + PartialEq + Default, const L: usize> Memo<R, L> {
         self.valid.fill(false);
         self.changes = Changes::unknown();
         self.changes_registers = true;
-        if CHECK {
+        #[cfg(any(debug_assertions, test, feature = "scanline-memo-check"))]
+        {
             self.verification.snapshot_valid = false;
         }
     }
 
+    #[cfg(any(debug_assertions, test, feature = "scanline-memo-check"))]
     fn verify_marks(&mut self, line: usize, memory: &Memory<'_>) -> bool {
         let previous = std::mem::replace(&mut self.verification.previous_line, line);
         if line > previous {
@@ -341,6 +351,7 @@ impl<R: Copy + PartialEq + Default, const L: usize> Memo<R, L> {
         true
     }
 
+    #[cfg(any(debug_assertions, test, feature = "scanline-memo-check"))]
     pub fn unmarked_change(&self, memory: &Memory<'_>) -> Option<UnmarkedChange> {
         let verification = &self.verification;
         if !verification.snapshot_valid {
