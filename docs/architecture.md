@@ -7,7 +7,7 @@ device behavior is ported from the pinned local ZiGBA checkout's
 `refs/zigba/docs/hardware/` reference.
 
 ```text
-CLI · native parity · WebAssembly adapter (porting)
+CLI · native parity · WebAssembly adapter
                        │
                 GBA Session (host policy)
                        │
@@ -106,10 +106,10 @@ save file belongs to [`host_save`](../systems/gba/src/host/host_save.rs).
 ([usage](cli.md)); [`session_probe`](../systems/gba/src/bin/session_probe.rs)
 is the native side of session parity. The
 [`tools/parity`](../tools/parity/README.md) oracle and scenario runner compare
-Rust observations against ZiGBA. The WebAssembly ABI and JS host adapter are
-still being ported; they are adapters to Session, not part of the hardware
-core. Full GBA parity and the large Machine/Bus integration suites are also
-being ported; the source map describes the code present now.
+Rust observations against ZiGBA. The
+[`web/gba`](../web/gba/README.md) WebAssembly ABI and JS host adapter call
+Session rather than implementing hardware. Broader game compatibility remains
+open; the source map describes the code present now.
 
 ## Rust source map
 
@@ -126,6 +126,7 @@ being ported; the source map describes the code present now.
 | [`crates/state`](../crates/state/src/lib.rs), [`crates/state-derive`](../crates/state-derive/src/lib.rs)                                                                                     | Portable codec, envelope, schema and rewind                |
 | [`crates/audio`](../crates/audio/src/lib.rs), [`systems/gba/src/rom_image.rs`](../systems/gba/src/rom_image.rs), [`systems/gba/src/host/host_save.rs`](../systems/gba/src/host/host_save.rs) | Resampling, ROM import and native save-file policy         |
 | [`systems/gba/src/bin`](../systems/gba/src/bin/zigba.rs), [`tools/parity`](../tools/parity/README.md)                                                                                        | Native hosts and differential checks                       |
+| [`web/gba`](../web/gba/README.md)                                                                                                                                                            | GBA WebAssembly ABI, JS SDK and Worker host                |
 
 Unit tests live next to their modules. Ported integration suites exercise the
 Machine and Bus independently; parity scenarios compare whole-machine
