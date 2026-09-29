@@ -51,8 +51,11 @@ fn zigba_build_cli_fixtures() {
     for &(name, rom, args, expected) in cases {
         let path = directory.join(format!("{name}.gba"));
         std::fs::write(&path, rom).unwrap();
-        let output =
-            Command::new(env!("CARGO_BIN_EXE_evenfall-gba")).args(args).arg(&path).output().unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_evenfall-gba"))
+            .args(args)
+            .arg(&path)
+            .output()
+            .unwrap();
         assert!(output.status.success(), "{name}: {output:?}");
         assert_eq!(output.stdout, expected.as_bytes(), "{name}");
         assert!(output.stderr.is_empty(), "{name}: {output:?}");
