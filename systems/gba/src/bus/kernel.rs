@@ -9,6 +9,8 @@ pub(crate) struct EngineMemory<'a> {
     pub(crate) iwram: &'a mut [u8; IWRAM_SIZE],
     pub(crate) ewram: &'a mut [u8; EWRAM_SIZE],
     pub(crate) code: &'a mut CodeCache,
+    /// The BIOS image for a run of BIOS code, otherwise nothing.
+    pub(crate) bios: &'a [u8],
     pub(crate) rom: RomData<'a>,
     pub(crate) video: VideoMemory<'a>,
     /// Cycles from now during which the PPU shows no visible dot, so that a
@@ -292,7 +294,8 @@ impl Bus {
         !self.game_pak_code_active && !self.game_pak_prefetch.active
     }
 
-    pub(crate) fn engine_memory(&mut self) -> EngineMemory<'_> {
+    /// Memory for an engine run; the BIOS image only for a run of BIOS code.
+    pub(crate) fn engine_memory(&mut self, bios: bool) -> EngineMemory<'_> {
         // A stale cache is not refreshed here: that would change what the
         // ordinary bus later sees.
         let (n, s) = if self.game_pak_timing_key == self.waitcnt {
@@ -306,6 +309,7 @@ impl Bus {
             iwram: &mut self.iwram,
             ewram: &mut self.ewram,
             code: &mut self.code,
+            bios: if bios && self.bios.len() == BIOS_SIZE { &self.bios[..] } else { &[] },
             rom: RomData {
                 bytes: &self.rom[..size],
                 gpio: self.cartridge_gpio.is_some(),

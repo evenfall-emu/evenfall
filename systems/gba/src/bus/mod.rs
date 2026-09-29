@@ -23,7 +23,7 @@ use kernel::{oam_read, palette_read, vram_read};
 
 pub const SCREEN_WIDTH: usize = 240;
 pub const SCREEN_HEIGHT: usize = 160;
-const BIOS_SIZE: usize = 16 * 1024;
+pub(crate) const BIOS_SIZE: usize = 16 * 1024;
 pub(crate) const EWRAM_SIZE: usize = 256 * 1024;
 pub(crate) const IWRAM_SIZE: usize = 32 * 1024;
 const VRAM_SIZE: usize = 96 * 1024;

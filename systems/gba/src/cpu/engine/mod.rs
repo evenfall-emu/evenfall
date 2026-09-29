@@ -153,6 +153,8 @@ thread_local! {
     /// MMIO accesses engine runs made on this thread, for tests to show
     /// they exercised them.
     pub(super) static MMIO_ACCESSES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Branches between the BIOS and IWRAM inside engine runs.
+    pub(super) static SWITCHES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// Decoded-op caches: one array per RAM region and instruction set, with a
@@ -162,8 +164,10 @@ thread_local! {
 pub(crate) struct CodeCache {
     /// `[EWRAM, IWRAM]` by `[ARM, Thumb]`.
     ram: [[Option<Box<[Op]>>; 2]; 2],
-    /// ROM never changes, so its pages are never forgotten.
+    /// ROM never changes, so its pages are never forgotten; nor does the
+    /// BIOS, whose ARM ops run in the IWRAM loop ([`arm::run_bios`]).
     rom_thumb: Vec<Option<Box<[Op]>>>,
+    bios_arm: Option<Box<[Op]>>,
     /// Pages that have held a decoded op or the prefetch window of one.
     iwram_code: [bool; IWRAM_SIZE >> PAGE_SHIFT],
     ewram_code: [bool; EWRAM_SIZE >> PAGE_SHIFT],
@@ -174,6 +178,7 @@ impl Default for CodeCache {
         Self {
             ram: Default::default(),
             rom_thumb: Vec::new(),
+            bios_arm: None,
             iwram_code: [false; IWRAM_SIZE >> PAGE_SHIFT],
             ewram_code: [false; EWRAM_SIZE >> PAGE_SHIFT],
         }
@@ -240,7 +245,7 @@ fn fresh_ops(slots: usize, tail: &[Op]) -> Box<[Op]> {
 /// Splits the bus memory for a run of `budget` cycles whose op array is out
 /// of the cache.
 fn split_memory(memory: EngineMemory<'_>, budget: i64) -> (Mem<'_>, &mut Vec<Option<Box<[Op]>>>) {
-    let CodeCache { ram, rom_thumb, iwram_code, ewram_code } = memory.code;
+    let CodeCache { ram, rom_thumb, iwram_code, ewram_code, .. } = memory.code;
     let others = ram.each_ref().map(|isa| isa.each_ref().map(|ops| ops.as_deref()));
     let mem = Mem {
         iwram: memory.iwram,
@@ -271,9 +276,11 @@ impl Cpu {
         if self.is_thumb() {
             return thumb::run(&mut self.core, bus, limit);
         }
+        let bios_ok = self.low_code_is_ordinary();
         match self.core.next_instruction_address >> 24 {
-            2 => arm::run::<true>(&mut self.core, bus, limit),
-            3 => arm::run::<false>(&mut self.core, bus, limit),
+            0 if bios_ok => arm::run_bios(&mut self.core, bus, limit),
+            2 => arm::run::<true>(&mut self.core, bus, limit, false),
+            3 => arm::run::<false>(&mut self.core, bus, limit, bios_ok),
             _ => false,
         }
     }

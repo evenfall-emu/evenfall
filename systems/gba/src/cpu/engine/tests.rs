@@ -42,7 +42,11 @@ struct Pair {
 
 impl Pair {
     fn new(rom: &[u8], setup: impl Fn(&mut Bus), cpu: Cpu, lead: u64) -> Self {
-        let mut buses = [Bus::init(rom), Bus::init(rom)];
+        Self::with_bios(rom, &[], setup, cpu, lead)
+    }
+
+    fn with_bios(rom: &[u8], bios: &[u8], setup: impl Fn(&mut Bus), cpu: Cpu, lead: u64) -> Self {
+        let mut buses = [Bus::init_with_bios(rom, bios), Bus::init_with_bios(rom, bios)];
         let mut cpus = [cpu.clone(), cpu];
         for (bus, cpu) in buses.iter_mut().zip(&mut cpus) {
             setup(bus);
@@ -933,4 +937,155 @@ fn mmio_transfers_in_runs_match_stepping() {
     assert!(mmio > 50_000, "only {mmio} MMIO accesses in engine runs");
     assert!(irq_entries > 80, "only {irq_entries} IRQs raised in engine runs");
     assert!(halts > 40, "only {halts} halts");
+}
+
+/// Calls and returns through BX, MOV pc, LDM with pc and a jump table in
+/// IWRAM, and interrupts through a BIOS whose vector branches to a
+/// dispatcher that loads the handler's address (in IWRAM) into pc and
+/// returns to it, plus an IntrWait-style loop in the BIOS that halts,
+/// masks IME and acknowledges its flag: engine runs that branch between
+/// the BIOS and IWRAM match stepping, across halts and HBlank and VBlank
+/// interrupts, from leads all over the frame.
+#[test]
+fn bios_and_indirect_branches_run_like_stepping() {
+    use crate::bus::PowerState;
+    const HANDLER: u32 = 0x0300_1000;
+    const MAIN: u32 = 0x0300_2000;
+    let mut bios = vec![0u8; 0x4000];
+    let put = |image: &mut Vec<u8>, at: usize, words: &[u32]| {
+        for (i, word) in words.iter().enumerate() {
+            image[at + 4 * i..at + 4 * i + 4].copy_from_slice(&word.to_le_bytes());
+        }
+    };
+    put(&mut bios, 0x18, &[0xea00_003c]); // B 0x110
+    put(
+        &mut bios,
+        0x110,
+        &[
+            0xe92d_500f, // STMFD sp!, {r0-r3, r12, lr}
+            0xe3a0_0301, // MOV r0, #0x04000000
+            0xe28f_e000, // ADD lr, pc, #0
+            0xe510_f004, // LDR pc, [r0, #-4]
+            0xe8bd_500f, // LDMFD sp!, {r0-r3, r12, lr}
+            0xe25e_f004, // SUBS pc, lr, #4
+        ],
+    );
+    put(
+        &mut bios,
+        0x200,
+        &[
+            0xe3a0_c301, // MOV r12, #0x04000000
+            0xe3a0_2000, // MOV r2, #0
+            0xe3a0_3001, // MOV r3, #1
+            0xe5cc_2301, // STRB r2, [r12, #0x301]  halt
+            0xe5cc_2208, // STRB r2, [r12, #0x208]  IME = 0
+            0xe15c_40b8, // LDRH r4, [r12, #-8]
+            0xe011_0004, // ANDS r0, r1, r4
+            0x1024_4000, // EORNE r4, r4, r0
+            0x114c_40b8, // STRHNE r4, [r12, #-8]
+            0xe5cc_3208, // STRB r3, [r12, #0x208]  IME = 1
+            0x0aff_fff7, // BEQ 0x20c
+            0xe12f_ff1e, // BX lr
+        ],
+    );
+    let handler = [
+        0xe3a0_3301_u32, // MOV r3, #0x04000000
+        0xe283_3c02,     // ADD r3, r3, #0x200
+        0xe1d3_20b2,     // LDRH r2, [r3, #2]   IF
+        0xe1d3_10b0,     // LDRH r1, [r3]       IE
+        0xe002_2001,     // AND r2, r2, r1
+        0xe92d_4030,     // STMFD sp!, {r4, r5, lr}
+        0xe28f_5024,     // ADD r5, pc, #0x24   the subroutine
+        0xe1a0_e00f,     // MOV lr, pc
+        0xe12f_ff15,     // BX r5
+        0xe1c3_20b2,     // STRH r2, [r3, #2]   acknowledge
+        0xe59f_c010,     // LDR r12, [pc, #16]  0x03007ff8
+        0xe1dc_00b0,     // LDRH r0, [r12]
+        0xe180_0002,     // ORR r0, r0, r2
+        0xe1cc_00b0,     // STRH r0, [r12]      the BIOS flags
+        0xe8bd_4030,     // LDMFD sp!, {r4, r5, lr}
+        0xe12f_ff1e,     // BX lr
+        0x0300_7ff8,     // the literal (after the return, never run)
+        0xe92d_4000,     // STMFD sp!, {lr}     the subroutine
+        0xe3a0_0301,     // MOV r0, #0x04000000
+        0xe1d0_10b6,     // LDRH r1, [r0, #6]   VCOUNT
+        0xe580_103c,     // STR r1, [r0, #0x3c] BG3X
+        0xe8bd_8000,     // LDMFD sp!, {pc}
+    ];
+    let main = [
+        0xe286_6001_u32, // ADD r6, r6, #1
+        0xe3a0_7301,     // MOV r7, #0x04000000
+        0xe287_9c02,     // ADD r9, r7, #0x200
+        0xe1c9_80b8,     // STRH r8, [r9, #8]   IME
+        0xe28f_a004,     // ADD r10, pc, #4
+        0xe1a0_e00f,     // MOV lr, pc
+        0xe1a0_f00a,     // MOV pc, r10
+        0xe59f_f000,     // LDR pc, [pc, #0]    through the table
+        0xe1a0_0000,     // MOV r0, r0
+        MAIN + 0x2c,     // the table
+        0xe1a0_0000,     // MOV r0, r0
+        0x0a00_0000,     // BEQ +0 (the next)
+        0xe357_0000,     // CMP r7, #0
+        0x13a0_1002,     // MOVNE r1, #2         wait for HBlank
+        0x128f_e004,     // ADDNE lr, pc, #4     back to the loop
+        0x13a0_ff80,     // MOVNE pc, #0x200     IntrWait in the BIOS
+        0xe1a0_0000,     // MOV r0, r0
+        0xeaff_ffed,     // B the loop
+    ];
+    let mut random = Random(0xb105_b105);
+    let (mut runs, mut halts) = (0, 0);
+    let switches = super::SWITCHES.get();
+    for trial in 0..200 {
+        let start_in_bios = trial % 3 == 0;
+        let mut cpu = Cpu::init(if start_in_bios { 0x200 } else { MAIN }, 0x1f, false);
+        cpu.registers[1] = 1 + random.below(3);
+        cpu.registers[8] = random.below(2);
+        cpu.registers[14] = MAIN;
+        let lead = lead(&mut random);
+        let mut pair = Pair::with_bios(
+            &[],
+            &bios,
+            |bus| {
+                for (i, &word) in handler.iter().enumerate() {
+                    write_word(bus, HANDLER + 4 * i as u32, word);
+                }
+                for (i, &word) in main.iter().enumerate() {
+                    write_word(bus, MAIN + 4 * i as u32, word);
+                }
+                write_word(bus, 0x0300_7ffc, HANDLER);
+                // HBlank and VBlank interrupts, enabled.
+                set_io(bus, 0x0400_0004, 0x0018);
+                set_io(bus, 0x0400_0200, 0x0003);
+                set_io(bus, 0x0400_0208, 1);
+            },
+            cpu,
+            lead,
+        );
+        let context = format!("trial {trial} lead {lead}");
+        let end = pair.engine_bus.now() + 20_000;
+        while pair.engine_bus.now() < end {
+            let yield_at = end.min(pair.engine_bus.now() + 1 + u64::from(random.below(3000)));
+            let halted = pair.engine_bus.power_state() == PowerState::Halted
+                && !pair.engine_bus.halt_wake_pending();
+            if halted {
+                halts += 1;
+                pair.engine_bus.idle_halt_until(yield_at);
+                pair.reference_bus.idle_halt_until(yield_at);
+                pair.assert_equal(&format!("{context} halted"));
+                continue;
+            }
+            if pair.compare(yield_at, &context) {
+                runs += 1;
+            } else {
+                let outcome = pair.engine.step(&mut pair.engine_bus);
+                assert_eq!(outcome, pair.reference.step(&mut pair.reference_bus), "{context}");
+                pair.assert_equal(&format!("{context} after refusal"));
+            }
+        }
+        pair.settle(&context);
+    }
+    let switches = super::SWITCHES.get() - switches;
+    assert!(runs > 5000, "only {runs} runs");
+    assert!(halts > 2000, "only {halts} halts");
+    assert!(switches > 5000, "only {switches} switches between the BIOS and IWRAM");
 }

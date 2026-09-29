@@ -656,7 +656,7 @@ fn run_ram<const EW: bool>(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
     let mut resume = Resume::Start;
     let exit = loop {
         let left = limit as i64 - bus.now() as i64;
-        let (mem, _) = split_memory(bus.engine_memory(), left);
+        let (mem, _) = split_memory(bus.engine_memory(false), left);
         let mut c = saved.ctx(mem, place);
         let hot = match resume {
             Resume::Start => match enter(core, &c, pc, budget) {
@@ -715,7 +715,7 @@ fn run_rom(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
         None
     };
     let (n, s) = {
-        let memory = bus.engine_memory();
+        let memory = bus.engine_memory(false);
         let (n, s) = memory.rom.window_cycles(pc);
         let (mem, pages) = split_memory(memory, budget);
         if pages.is_empty() {
@@ -790,7 +790,7 @@ fn rom_runs<T: Timing>(
     let mut ready = 0;
     let exit = loop {
         let left = limit as i64 - bus.now() as i64;
-        let (mem, pages) = split_memory(bus.engine_memory(), left);
+        let (mem, pages) = split_memory(bus.engine_memory(false), left);
         let mut c = saved.ctx(mem, Place::Rom);
         let hot = match resume {
             Resume::Start => {

@@ -785,7 +785,7 @@ impl Cpu {
     /// Whether code below 0x4000 may run as ordinary instructions: with an
     /// external BIOS and no HLE continuation, none of the HLE stubs that
     /// `step_impl` intercepts there can be reached.
-    fn low_code_is_ordinary(&self) -> bool {
+    pub(crate) fn low_code_is_ordinary(&self) -> bool {
         !self.hle_bios
             && self.hle_irq_depth == 0
             && self.hle_service.is_none()
