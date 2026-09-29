@@ -1,0 +1,17 @@
+{
+  "name": "probe-rtc_write",
+  "assets": {
+    "rom": "../../../probe/build/rtc_write.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto",
+    "rtcEpoch": 981205445
+  },
+  "inputs": [],
+  "endCycle": "1123584",
+  "checkpoints": ["1123584"],
+  "sliceCycles": ["70224", "280896"],
+  "terminalPc": 134218500,
+  "terminalR12": 0
+}

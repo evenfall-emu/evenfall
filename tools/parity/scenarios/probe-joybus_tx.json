@@ -1,0 +1,23 @@
+{
+  "name": "probe-joybus_tx",
+  "assets": {
+    "rom": "../../../probe/build/joybus_tx.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "inputs": [],
+  "endCycle": "1123584",
+  "checkpoints": ["1123584"],
+  "sliceCycles": ["70224", "280896"],
+  "hostActions": [
+    {
+      "at": "20000",
+      "command": {
+        "joybus_read": true
+      }
+    }
+  ],
+  "terminalPc": 134218500
+}

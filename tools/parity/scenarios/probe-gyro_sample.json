@@ -1,0 +1,17 @@
+{
+  "name": "probe-gyro_sample",
+  "assets": {
+    "rom": "../../../probe/build/gyro_sample.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto",
+    "gyroSample": 1728
+  },
+  "inputs": [],
+  "endCycle": "1123584",
+  "checkpoints": ["1123584"],
+  "sliceCycles": ["70224", "280896"],
+  "terminalPc": 134218500,
+  "terminalR12": 1728
+}

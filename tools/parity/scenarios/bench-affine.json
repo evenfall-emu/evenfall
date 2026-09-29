@@ -1,0 +1,14 @@
+{
+  "name": "bench-affine",
+  "assets": {
+    "rom": "../../../tools/bench/roms/build/affine.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "inputs": [],
+  "endCycle": "3370752",
+  "checkpoints": ["1123584", "2247168", "3370752"],
+  "sliceCycles": ["70224", "280896"]
+}

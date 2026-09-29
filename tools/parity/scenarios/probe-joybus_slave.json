@@ -1,0 +1,24 @@
+{
+  "name": "probe-joybus_slave",
+  "assets": {
+    "rom": "../../../probe/build/joybus_slave.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "inputs": [],
+  "endCycle": "1123584",
+  "checkpoints": ["1123584"],
+  "sliceCycles": ["70224", "280896"],
+  "hostActions": [
+    {
+      "at": "20000",
+      "command": {
+        "joybus_write": 1144201745
+      }
+    }
+  ],
+  "terminalPc": 134218500,
+  "terminalR12": 1144201745
+}

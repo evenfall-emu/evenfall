@@ -1,0 +1,28 @@
+{
+  "name": "evenfall-workspace",
+  "private": true,
+  "description": "Evenfall JavaScript workspaces",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "workspaces": [
+    "web/*"
+  ],
+  "scripts": {
+    "check": "vp check && npm run typecheck",
+    "typecheck": "npm run check --workspaces --if-present",
+    "fmt": "vp fmt",
+    "fmt:check": "vp fmt --check",
+    "lint": "vp lint",
+    "test": "npm run test -w @evenfall/gba"
+  },
+  "engines": {
+    "node": "^24.11.0 || >=26.0.0"
+  },
+  "overrides": {
+    "vite": "npm:@voidzero-dev/vite-plus-core@1.0.0",
+    "vitest": "5.0.1"
+  },
+  "devDependencies": {
+    "vite-plus": "1.0.0"
+  }
+}

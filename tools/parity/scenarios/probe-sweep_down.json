@@ -1,0 +1,15 @@
+{
+  "name": "probe-sweep_down",
+  "assets": {
+    "rom": "../../../probe/build/sweep_down.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "inputs": [],
+  "endCycle": "2528064",
+  "checkpoints": ["1123584", "2247168", "2528064"],
+  "sliceCycles": ["70224", "280896"],
+  "terminalPc": 134218500
+}

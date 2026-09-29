@@ -1,0 +1,16 @@
+{
+  "name": "probe-rumble_flag",
+  "assets": {
+    "rom": "../../../probe/build/rumble_flag.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto",
+    "rumble": true
+  },
+  "inputs": [],
+  "endCycle": "1123584",
+  "checkpoints": ["1123584"],
+  "sliceCycles": ["70224", "280896"],
+  "terminalPc": 134218500
+}
