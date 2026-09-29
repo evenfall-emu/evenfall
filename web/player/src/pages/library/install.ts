@@ -4,7 +4,7 @@ import type { CatalogVersion } from "./catalog";
 /** Largest patch download; a patch never needs to exceed the ROM it builds. */
 const MAX_PATCH_SIZE = 40 * 1024 * 1024;
 
-async function sha1(bytes: Uint8Array<ArrayBuffer>) {
+export async function sha1(bytes: Uint8Array<ArrayBuffer>) {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-1", bytes));
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(
     "",

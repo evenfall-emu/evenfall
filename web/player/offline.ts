@@ -34,7 +34,7 @@ const CACHE = ${JSON.stringify(cache)};
 const FILES = ${JSON.stringify(files)};
 const urls = new Set(FILES.map(file => new URL(file, self.registration.scope).href));
 // The player's pages, relative to the scope; each one is index.html.
-const PAGE = /^(library(\\/[^/]+)?|player|share\\/state\\/[^/]+)?$/;
+const PAGE = /^((library|manage)(\\/[^/]+)?|player|share\\/state\\/[^/]+)?$/;
 // Vite's hashed assets: a name always identifies the same bytes.
 const ASSETS = new URL('assets/', self.registration.scope).href;
 self.addEventListener('install', event => {

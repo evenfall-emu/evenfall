@@ -146,6 +146,7 @@ export function GameDetails({
   onRename,
   onExport,
   onDelete,
+  onManage,
 }: {
   game: LibraryGame;
   now: number;
@@ -161,6 +162,8 @@ export function GameDetails({
   onRename: (run: PlaythroughEntry) => void;
   onExport: (run: PlaythroughEntry) => void;
   onDelete: (run: PlaythroughEntry) => void;
+  /** Opens the game in Manage; only for accounts that may edit it. */
+  onManage?: () => void;
 }) {
   const { latest } = game;
   return (
@@ -206,6 +209,19 @@ export function GameDetails({
                 onClick={onReleaseNotes}
               >
                 <Icon name="releaseNotes" className="size-7" />
+              </button>
+            )}
+            {onManage && (
+              <button
+                className={cx(
+                  button("outline"),
+                  "ml-auto h-10 px-3 text-1x5 max-sm:h-9",
+                )}
+                aria-label={`Edit ${game.title} in Manage`}
+                onClick={onManage}
+              >
+                <Icon name="pencil" className="size-5" />
+                Edit
               </button>
             )}
           </div>

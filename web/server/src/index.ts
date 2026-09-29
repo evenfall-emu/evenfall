@@ -106,6 +106,38 @@ app.all("/api/auth/*", async (c) => {
   return auth.handler(c.req.raw);
 });
 
+// What the signed-in account may do. `admin` matches the management guard, so
+// it is false while the account's deletion is in progress.
+app.get("/api/me", async (c) => {
+  c.header("Cache-Control", "no-store");
+  const auth = createAuth(c.env);
+  if (!auth)
+    return c.json(
+      {
+        error: {
+          code: "auth_unavailable",
+          message: "Sign-in is not configured",
+        },
+      },
+      503,
+    );
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+  if (!session)
+    return c.json(
+      {
+        error: {
+          code: "unauthorized",
+          message: "A valid session is required",
+        },
+      },
+      401,
+    );
+  return c.json({
+    id: session.user.id,
+    admin: await activeAdminAccount(c.env.DB!, session.user.id),
+  });
+});
+
 const requireAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
   const secret = c.env.ADMIN_SECRET;
   const auth = createAuth(c.env);
@@ -471,6 +503,8 @@ app.delete("/api/admin/bases/:id", async (c) => {
 for (const path of [
   "/library",
   "/library/:gameId",
+  "/manage",
+  "/manage/:gameId",
   "/player",
   "/share/state/:shareId",
 ])

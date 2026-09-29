@@ -35,6 +35,8 @@
       "/api/*",
       "/library",
       "/library/*",
+      "/manage",
+      "/manage/*",
       "/player",
       "/share/*",
     ],

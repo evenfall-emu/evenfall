@@ -100,6 +100,8 @@ link lands on it again:
 | `/`                  | Home                                              |
 | `/library`           | Library                                           |
 | `/library/<game ID>` | Library, with that game's details                 |
+| `/manage`            | [Manage](#managing-the-catalog)                   |
+| `/manage/<game ID>`  | Manage, with that game open                       |
 | `/player`            | Player                                            |
 | `/share/state/<ID>`  | Home, starting a [shared state](#sharing-a-state) |
 
@@ -120,16 +122,18 @@ is preferred. Its footer carries the trademark and non-affiliation notice
 and, when [configured](#analytics), a privacy-notice link. Opening a ROM from
 Home switches to Player and starts it.
 
-Library and Player share one header with a tab for each, the evenfall logo
-and **Account**; Home has its own with **Features**, **Library** and
+Library, Player and Manage share one header with a tab for each, the
+evenfall logo and **Account**; the Manage tab appears only for accounts that
+may manage the catalog. Home has its own with **Features**, **Library** and
 **Account**, which on phones shows only Library and Account, as icons.
 Playback actions live in a separate Player toolbar below the header. The
 logo returns Home without unloading the current game. Returning to Player
 resumes the session only if it was playing before navigation, including
 through the browser's Back and Forward buttons. On narrow screens the tabs
-move to a second row beside an Account button, where the Library's details
-replace them with **Back to Library**. On phones the Player drops the header
-and toolbar for its [phone layout](#phones).
+move to a second row beside an Account button, with Manage as an icon, where
+the Library's details replace them with **Back to Library** and an open game
+in Manage with **Back to Manage**. On phones the Player drops the header and
+toolbar for its [phone layout](#phones).
 
 **Account** is available on Home and in the header. Opening it pauses play
 and persists progress before Discord can navigate away; closing it resumes a
@@ -281,6 +285,41 @@ and the account's cloud checkpoints;
 [`model.ts`](src/pages/library/model.ts) joins both into what the page shows.
 Browser tests serve their own catalog through Playwright routes, and unit
 tests use [`tests/library-fixtures.ts`](tests/library-fixtures.ts).
+
+### Managing the catalog
+
+Manage edits the hosted catalog through the server's
+[admin API](../server/README.md#catalog-api). The header shows its tab, and a
+catalog game's details show **Edit**, when `GET /api/me` reports an admin
+account; the server still authorizes every request. The page is its own
+chunk, [`src/pages/manage`](src/pages/manage/manage-page.tsx), which players
+never download.
+
+The page lists every game, including hidden, patchless and release-less ones,
+with its releases' visibility, what it lacks (patch, cover image, release
+date, source link) and its cloud playthroughs. Filters for each gap and for
+experimental and hidden releases show their counts; search matches name, ID,
+franchise and tags, ignoring accents. Selecting a game changes the URL to
+`/manage/<game ID>` and opens it beside the table, or in its place below the
+`xl` breakpoint.
+
+**Details** edits the game's name, summary, description, cover image URL,
+franchise, tags and internal name; saving sends only the changed fields.
+**Releases** lists the game's releases newest first. Each one's visibility
+saves as soon as it changes, and its menu edits the release's details,
+uploads or replaces its patch, or deletes it. **Add game** creates a game
+with no releases.
+
+**Add release** checks a patch on this device before anything is written. It
+finds the chosen base ROM in the Library by SHA-1, or reads a chosen file,
+applies the patch, and names the release by the SHA-1 of the ROM it builds;
+it refuses a patch for another base, and an output another release already
+has. The release is then saved without a patch, with the chosen visibility
+(Experimental by default), and the patch is uploaded to it. If the upload
+fails, the release remains without a patch, which players cannot see, and
+adding it again retries. Replacing a
+patch accepts only one that builds the release's own output. Every write
+reloads both the page and the Library's catalog.
 
 ### Playthroughs
 

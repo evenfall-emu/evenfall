@@ -48,6 +48,7 @@ export function LibraryPage({
   onBack,
   onAddGame,
   onAction,
+  onManage,
 }: {
   catalog: LibraryCatalog;
   /** SHA-1 to No-Intro name, titling ROMs the catalog does not list. */
@@ -61,6 +62,8 @@ export function LibraryPage({
   onBack: () => void;
   onAddGame: () => void;
   onAction: LibraryActionHandler;
+  /** Opens a catalog game in Manage; absent for accounts that cannot manage. */
+  onManage?: (gameId: string) => void;
 }) {
   const [showExperimental, setShowExperimental] = useState(() => {
     try {
@@ -252,6 +255,11 @@ export function LibraryPage({
             onRename={(entry) => setDialog({ kind: "rename", run: entry })}
             onExport={exportSave}
             onDelete={(entry) => setDialog({ kind: "delete", run: entry })}
+            onManage={
+              onManage && selected.visibility !== null
+                ? () => onManage(selected.id)
+                : undefined
+            }
           />
         ) : (
           <p className="p-8 text-muted">Choose a game to see its details.</p>

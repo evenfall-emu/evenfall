@@ -152,6 +152,12 @@ foreign one. Admin responses use `Cache-Control: no-store`. No mutable catalog
 route is public. Seeding is explicit: ordinary reads and Worker startup never
 seed.
 
+`GET /api/me` returns the signed-in account's `{ id, admin }`, where `admin`
+is whether its session passes the management guard: the flag is set and the
+account is not being deleted. It answers `401` without a session, `503` when
+sign-in is not configured, and is `no-store`. It only informs a client's
+interface; management routes still authorize every request.
+
 ## Accounts
 
 Better Auth handles `/api/auth/*` on the same origin. `user`, `account`,

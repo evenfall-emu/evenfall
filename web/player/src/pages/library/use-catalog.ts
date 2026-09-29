@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type {
   CatalogGameSummary,
   CatalogVersion,
@@ -32,15 +32,17 @@ async function get<T>(path: string, signal: AbortSignal): Promise<T> {
 }
 
 /**
- * The public catalog, fetched once per mount. The last catalog read stays in
- * localStorage, so the Library shows it at once and while offline. `settled`
- * turns true once the fetch has answered or failed, so `catalog` is as fresh
- * as it will get.
+ * The public catalog, fetched once per mount and again on `reload`. The last
+ * catalog read stays in localStorage, so the Library shows it at once and
+ * while offline. `settled` turns true once the first fetch has answered or
+ * failed, so `catalog` is as fresh as it will get.
  */
 export function useCatalog() {
   const [catalog, setCatalog] = useState(cached);
   const [offline, setOffline] = useState(false);
   const [settled, setSettled] = useState(false);
+  const [revision, setRevision] = useState(0);
+  const reload = useCallback(() => setRevision((value) => value + 1), []);
   useEffect(() => {
     const request = new AbortController();
     Promise.all([
@@ -65,8 +67,8 @@ export function useCatalog() {
       },
     );
     return () => request.abort();
-  }, []);
-  return { catalog, offline, settled };
+  }, [revision]);
+  return { catalog, offline, settled, reload };
 }
 
 /**

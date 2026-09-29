@@ -6,7 +6,7 @@ import type {
   CatalogVersion,
 } from "../../src/pages/library/catalog";
 
-const romBytes = (marker: number) =>
+export const romBytes = (marker: number) =>
   Buffer.from([marker, 0, 160, 227, 254, 255, 255, 234]);
 export const loop = (marker: number, name: string) => ({
   name: `${name}.gba`,
@@ -85,7 +85,7 @@ const u32 = (value: number) =>
   [0, 8, 16, 24].map((shift) => (value >>> shift) & 0xff);
 
 /** A BPS patch whose one action writes the whole target from the patch. */
-function bps(source: Buffer, target: Buffer) {
+export function bps(source: Buffer, target: Buffer) {
   // Each size fits one 7-bit group, which BPS ends with the high bit.
   const body = [
     ...Buffer.from("BPS1"),

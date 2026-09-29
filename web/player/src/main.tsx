@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -42,6 +44,9 @@ import type { LibraryDevice } from "./pages/library/catalog";
 import { patchRelease } from "./pages/library/install";
 import { useCatalog, useDumpNames } from "./pages/library/use-catalog";
 import { AppHeader, type AppView } from "./app-header";
+import { useMe } from "./me";
+import type { ManageAccess } from "./pages/manage/manage-page";
+import type { RomSource } from "./pages/manage/verify";
 import { AppUpdate } from "./app-update";
 import { Account } from "./account";
 import {
@@ -72,6 +77,15 @@ import { download } from "./media";
 import { trackShare, trackView } from "./analytics";
 import { cx } from "./ui/styles";
 import "./styles.css";
+
+// Catalog management is its own chunk: players never download it.
+const ManagePage = lazy(() => import("./pages/manage/manage-page"));
+
+/** Base ROMs for Manage's patch checks: the Library's, or a chosen file. */
+const manageRoms: RomSource = {
+  get: (sha1) => player.library.rom(sha1),
+  inspect: (file) => player.inspectRom(file),
+};
 
 const act = (action: () => Promise<unknown>) =>
   void action().catch(player.error);
@@ -196,20 +210,34 @@ function App() {
       ? "player"
       : page.routeId === "/library" || page.routeId === "/library/$gameId"
         ? "library"
-        : "home";
+        : page.routeId === "/manage" || page.routeId === "/manage/$gameId"
+          ? "manage"
+          : "home";
   const libraryGameId =
     page.routeId === "/library/$gameId" ? page.params.gameId : undefined;
+  const manageGameId =
+    page.routeId === "/manage/$gameId" ? page.params.gameId : undefined;
   // A share link opens over Home and leaves for Player once it starts.
   const shareId =
     page.routeId === "/share/state/$shareId" ? page.params.shareId : undefined;
   const home = view === "home";
   const library = view === "library";
+  const manage = view === "manage";
   const {
     catalog,
     offline: catalogOffline,
     settled: catalogSettled,
+    reload: reloadCatalog,
   } = useCatalog();
   const dumpNames = useDumpNames(library);
+  const { me, checking: meChecking } = useMe(state.cloud.accountId, manage);
+  const manageAccess: ManageAccess = meChecking
+    ? "checking"
+    : !me
+      ? "signed-out"
+      : me.admin
+        ? "admin"
+        : "denied";
   const [cloudJobs, setCloudJobs] = useState<CloudJob[]>([]);
   const libraryDevice = useMemo(
     (): LibraryDevice => ({
@@ -393,8 +421,9 @@ function App() {
     if (document.activeElement === document.body) player.canvas?.focus();
   }, [experience?.game]);
   // A share link's ID is its only credential, so its page is never tracked.
+  // Manage is not a player page and sends no page view.
   useEffect(() => {
-    if (!shareId) trackView(view);
+    if (!shareId && view !== "manage") trackView(view);
   }, [view, shareId]);
   // The shared ROM may be a catalog release that a base on this device
   // becomes, so a link opens once the catalog is as fresh as it will get.
@@ -681,7 +710,7 @@ function App() {
     transition(destination);
     void navigate({ to: paths[destination], replace });
   }
-  function browse(destination: "home" | "library") {
+  function browse(destination: "home" | "library" | "manage") {
     if (player.state.changing) return;
     showView(destination);
   }
@@ -1102,7 +1131,7 @@ function App() {
     </div>
   );
   const tools = (
-    <div className="player-tools" hidden={home || library}>
+    <div className="player-tools" hidden={home || library || manage}>
       <h1 className="player-tools-title">
         {state.game?.title ?? "No game loaded"}
       </h1>
@@ -1569,11 +1598,12 @@ function App() {
         className={cx(
           "console-app",
           dragging && "dragging",
-          library && "bg-canvas md:h-dvh md:overflow-hidden",
+          (library || manage) && "bg-canvas md:h-dvh md:overflow-hidden",
         )}
         data-view={view}
+        // Manage takes patch files in its own drop zone, never a game here.
         onDragEnter={(event) => {
-          if (event.dataTransfer.types.includes("Files")) {
+          if (!manage && event.dataTransfer.types.includes("Files")) {
             event.preventDefault();
             if (++dragDepth.current === 1) setDragging(true);
           }
@@ -1593,7 +1623,8 @@ function App() {
           dragDepth.current = 0;
           setDragging(false);
           const file = event.dataTransfer.files[0];
-          if (file && state.ready && !state.changing) act(() => openFile(file));
+          if (file && !manage && state.ready && !state.changing)
+            act(() => openFile(file));
         }}
       >
         {!home && !(handheld && view === "player") && (
@@ -1609,9 +1640,15 @@ function App() {
                     label: "Library",
                     onBack: () => void navigate({ to: "/library" }),
                   }
-                : undefined
+                : manage && manageGameId
+                  ? {
+                      label: "Manage",
+                      onBack: () => void navigate({ to: "/manage" }),
+                    }
+                  : undefined
             }
             busy={!state.ready || state.changing || launching}
+            manage={me?.admin === true}
           />
         )}
         <input
@@ -1641,7 +1678,33 @@ function App() {
             onBack={() => void navigate({ to: "/library" })}
             onAddGame={() => romInput.current?.click()}
             onAction={libraryAction}
+            onManage={
+              me?.admin
+                ? (gameId) =>
+                    void navigate({ to: "/manage/$gameId", params: { gameId } })
+                : undefined
+            }
           />
+        ) : manage ? (
+          <Suspense
+            fallback={
+              <main className="grid flex-1 place-items-center bg-canvas font-sans text-2x text-muted">
+                Loading…
+              </main>
+            }
+          >
+            <ManagePage
+              access={manageAccess}
+              selectedId={manageGameId}
+              onSelect={(gameId) =>
+                void navigate({ to: "/manage/$gameId", params: { gameId } })
+              }
+              onClose={() => void navigate({ to: "/manage" })}
+              onAccount={openAccount}
+              onChanged={reloadCatalog}
+              roms={manageRoms}
+            />
+          </Suspense>
         ) : home ? (
           <>
             <LandingPage
@@ -1961,7 +2024,12 @@ function App() {
   );
 }
 
-const paths = { home: "/", library: "/library", player: "/player" } as const;
+const paths = {
+  home: "/",
+  library: "/library",
+  player: "/player",
+  manage: "/manage",
+} as const;
 
 // Servers answer these paths with the player (see tools/serve-web.py, the
 // Worker and offline.ts); every other path is a 404.
@@ -1974,6 +2042,8 @@ const router = createRouter({
     createRoute({ getParentRoute: () => rootRoute, path: "/" }),
     createRoute({ getParentRoute: () => rootRoute, path: "/library" }),
     createRoute({ getParentRoute: () => rootRoute, path: "/library/$gameId" }),
+    createRoute({ getParentRoute: () => rootRoute, path: "/manage" }),
+    createRoute({ getParentRoute: () => rootRoute, path: "/manage/$gameId" }),
     createRoute({
       getParentRoute: () => rootRoute,
       path: "/share/state/$shareId",

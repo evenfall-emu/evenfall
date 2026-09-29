@@ -14,6 +14,12 @@ const glyphs = {
       <path className="stroke-on-accent" d="M12 6.5v7m0 3v1" />
     </>
   ),
+  calendar: (
+    <>
+      <path d="M3 5h18v16H3Z" />
+      <path d="M3 10h18M8 2v5m8-5v5" />
+    </>
+  ),
   check: <path d="m4 12.5 5 5L20 6.5" />,
   chevronDown: <path d="m6 9 6 6 6-6" />,
   chevronLeft: <path d="m15 5-7 7 7 7" />,
@@ -59,10 +65,22 @@ const glyphs = {
       <path d="M3 4v5h5m4-2v5l3 3" />
     </>
   ),
+  image: (
+    <>
+      <path d="M3 4h18v16H3Z" />
+      <path d="m3 17 5-5 4 4 3-3 6 6M15 8h1" />
+    </>
+  ),
   info: (
     <>
       <circle cx="12" cy="12" r="9" />
       <path d="M12 11v6m0-10v1" />
+    </>
+  ),
+  link: (
+    <>
+      <path d="m11 7 2-2a4.24 4.24 0 0 1 6 6l-2 2" />
+      <path d="m13 17-2 2a4.24 4.24 0 0 1-6-6l2-2m2 6 6-6" />
     </>
   ),
   loadState: <path d="M12 15V4m-5 5 5-5 5 5M4 15v5h16v-5" />,
@@ -73,6 +91,7 @@ const glyphs = {
     </>
   ),
   pause: <path d="M8 5v14m8-14v14" />,
+  pencil: <path d="M4 20v-4L15 5l4 4L8 20Zm8-12 4 4" />,
   play: <path d="M7 4v16l13-8Z" />,
   plus: <path d="M12 4v16M4 12h16" />,
   releaseNotes: (
@@ -168,6 +187,19 @@ const pixelGlyphs = {
     ".##########.",
     ".##.####.##.",
     ".....##.....",
+  ],
+  manage: [
+    "..##........",
+    "############",
+    "..##........",
+    "............",
+    "........##..",
+    "############",
+    "........##..",
+    "............",
+    "....##......",
+    "############",
+    "....##......",
   ],
   play: [
     "#.....",

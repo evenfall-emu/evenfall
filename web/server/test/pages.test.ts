@@ -20,6 +20,8 @@ describe("player pages", () => {
     for (const path of [
       "/library",
       "/library/elite-redux",
+      "/manage",
+      "/manage/elite-redux",
       "/player",
       "/share/state/Ab-_0123456789abcdefghij",
     ]) {
@@ -42,6 +44,8 @@ describe("player pages", () => {
     for (const path of [
       "/libraries",
       "/library/a/b",
+      "/manage/a/b",
+      "/managers",
       "/player/1",
       "/home",
       "/share",

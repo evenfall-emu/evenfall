@@ -95,6 +95,17 @@ const versionNames = new Intl.Collator("en", {
   sensitivity: "base",
 });
 
+/** Newest first: dated releases by date, then undated ones by version name. */
+export function newestFirst(a: CatalogVersion, b: CatalogVersion) {
+  const date = (version: CatalogVersion) =>
+    version.releasedAt ? Date.parse(version.releasedAt) : -Infinity;
+  return (
+    date(b) - date(a) ||
+    versionNames.compare(b.internalName, a.internalName) ||
+    a.id.localeCompare(b.id)
+  );
+}
+
 function release(version: CatalogVersion, roms: Set<string>): Release {
   return {
     id: version.id,
@@ -216,15 +227,7 @@ export function buildLibrary(
     const versions = publicVersions
       .filter((version) => version.gameId === game.id)
       .map((version) => ({ version, release: release(version, roms) }))
-      .sort(
-        (a, b) =>
-          dated(b.release) - dated(a.release) ||
-          versionNames.compare(
-            b.version.internalName,
-            a.version.internalName,
-          ) ||
-          a.version.id.localeCompare(b.version.id),
-      );
+      .sort((a, b) => newestFirst(a.version, b.version));
     const newest = versions[0]?.version;
     if (!newest) return [];
     const releases = versions.map((item) => item.release);

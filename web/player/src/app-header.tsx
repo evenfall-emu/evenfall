@@ -3,25 +3,32 @@ import coast from "./assets/sunset/coast.png";
 import { PixelIcon, type PixelIconName } from "./ui/icons";
 import { button, cx, focusRing } from "./ui/styles";
 
-export type AppView = "home" | "player" | "library";
+export type AppView = "home" | "player" | "library" | "manage";
 
 const tabs: { view: AppView; label: string; icon: PixelIconName }[] = [
   { view: "library", label: "Library", icon: "book" },
   { view: "player", label: "Player", icon: "play" },
+  { view: "manage", label: "Manage", icon: "manage" },
 ];
 
 function Tabs({
   view,
   busy,
+  manage,
+  compact = false,
   onNavigate,
 }: {
   view: AppView;
   busy: boolean;
+  manage: boolean;
+  /** The phone row: Manage shows only its icon, so three tabs fit. */
+  compact?: boolean;
   onNavigate: (view: AppView) => void;
 }) {
   return (
     <nav aria-label="Main navigation" className="flex self-stretch">
       {tabs.map((tab) => {
+        if (tab.view === "manage" && !manage) return null;
         const current = view === tab.view;
         return (
           <button
@@ -43,7 +50,11 @@ function Tabs({
               name={tab.icon}
               className={cx(!current && tab.icon === "play" && "text-info")}
             />
-            {tab.label}
+            {compact && tab.view === "manage" ? (
+              <span className="sr-only">{tab.label}</span>
+            ) : (
+              tab.label
+            )}
           </button>
         );
       })}
@@ -70,9 +81,10 @@ function Banner({ className }: { className: string }) {
 }
 
 /**
- * The navigation shared by Library and Player. Home has its own header; the
- * logo returns there. On narrow screens a page can replace the tabs with a
- * Back button.
+ * The navigation shared by Library, Player and Manage. Home has its own
+ * header; the logo returns there. Manage is a tab only for accounts that may
+ * manage the catalog, or while it is open. On narrow screens a page can
+ * replace the tabs with a Back button.
  */
 export function AppHeader({
   view,
@@ -80,13 +92,16 @@ export function AppHeader({
   onAccount,
   back,
   busy = false,
+  manage = false,
 }: {
   view: AppView;
   onNavigate: (view: AppView) => void;
   onAccount: () => void;
   back?: { label: string; onBack: () => void };
   busy?: boolean;
+  manage?: boolean;
 }) {
+  const showManage = manage || view === "manage";
   return (
     <header
       data-ui
@@ -105,7 +120,12 @@ export function AppHeader({
           <img src={logo} alt="" className="h-10 w-auto md:h-12" />
         </button>
         <div className="hidden self-stretch md:flex">
-          <Tabs view={view} busy={busy} onNavigate={onNavigate} />
+          <Tabs
+            view={view}
+            busy={busy}
+            manage={showManage}
+            onNavigate={onNavigate}
+          />
         </div>
         <Banner className="absolute inset-y-0 right-0 -z-10 w-[min(440px,calc(100%-144px))] bg-size-[502px_auto] bg-position-[right_-40px_top_-148px] md:static md:z-auto md:ml-auto md:hidden md:h-full md:w-[640px] xl:block md:min-w-0 md:bg-size-[836px_auto] md:bg-position-[right_-40px_top_-269px]" />
         <div className="hidden md:ml-auto md:block xl:ml-0">
@@ -135,7 +155,13 @@ export function AppHeader({
             {back.label}
           </button>
         ) : (
-          <Tabs view={view} busy={busy} onNavigate={onNavigate} />
+          <Tabs
+            view={view}
+            busy={busy}
+            manage={showManage}
+            compact
+            onNavigate={onNavigate}
+          />
         )}
         <button
           className={button("ghost", "icon")}

@@ -249,6 +249,62 @@ describe("account authentication", () => {
     expect((await request(path, { headers: { Cookie } })).status).toBe(403);
   });
 
+  it("reports the session's own account ID and active admin rights", async () => {
+    const me = (Cookie?: string) =>
+      request("/api/me", { headers: Cookie ? { Cookie } : {} });
+    const signIn = async (email: string, ip: string) => {
+      await request("/api/auth/sign-in/magic-link", post({ email }, ip));
+      // Verification is rate-limited per IP; without one, requests share a
+      // bucket with the other tests' links.
+      const Cookie = sessionCookie(
+        await request(messageLink(), {
+          headers: { "CF-Connecting-IP": ip },
+        }),
+      );
+      const session = (await (
+        await request("/api/auth/get-session", { headers: { Cookie } })
+      ).json()) as { user: { id: string } };
+      return { Cookie, id: session.user.id };
+    };
+    const admin = await signIn("me-admin@example.com", "192.0.2.212");
+    const player = await signIn("me-player@example.com", "192.0.2.213");
+    await database
+      .prepare("INSERT INTO account_limits (user_id, admin) VALUES (?, 1)")
+      .bind(admin.id)
+      .run();
+
+    const anonymous = await me();
+    expect(anonymous.status).toBe(401);
+    expect(anonymous.headers.get("Cache-Control")).toBe("no-store");
+    const adminResponse = await me(admin.Cookie);
+    expect(adminResponse.status).toBe(200);
+    expect(adminResponse.headers.get("Cache-Control")).toBe("no-store");
+    expect(await adminResponse.json()).toEqual({ id: admin.id, admin: true });
+    expect(await (await me(player.Cookie)).json()).toEqual({
+      id: player.id,
+      admin: false,
+    });
+
+    await database
+      .prepare(
+        "INSERT INTO account_deletions (user_id, requested_at) VALUES (?, ?)",
+      )
+      .bind(admin.id, Date.now())
+      .run();
+    expect(await (await me(admin.Cookie)).json()).toEqual({
+      id: admin.id,
+      admin: false,
+    });
+    const unconfigured = await app.request(
+      `${origin}/api/me`,
+      {},
+      {
+        DB: database,
+      },
+    );
+    expect(unconfigured.status).toBe(503);
+  });
+
   it("keeps native Workers auth responses private, including redirects", async () => {
     const session = await miniflare.dispatchFetch(
       `${origin}/api/auth/get-session`,
