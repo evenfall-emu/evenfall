@@ -131,6 +131,7 @@ fn dma_from_rom(bencher: divan::Bencher) {
             control: 0x8400,
             latched_source: 0x0800_0100,
             latched_destination: 0x0200_0000,
+            latched_word_count: 16,
         };
         bus.pending_dma = 1 << 3;
         bus.elapse(1);

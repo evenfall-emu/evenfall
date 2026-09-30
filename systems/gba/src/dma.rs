@@ -10,6 +10,10 @@ pub struct Channel {
     pub control: u16,
     pub latched_source: u32,
     pub latched_destination: u32,
+    /// The word count the next transfer copies: `word_count` as it was when
+    /// the channel was enabled, then as it was when the last repeat ended
+    /// (GBATEK, DMA Transfers).
+    pub latched_word_count: u16,
 }
 
 impl Channel {
@@ -19,8 +23,10 @@ impl Channel {
     pub fn start_timing(&self) -> u8 {
         ((self.control >> 12) & 3) as u8
     }
+    /// Units the next transfer copies, from the latched count.
     pub fn transfer_words(&self, index: usize) -> u32 {
-        let masked = if index == 3 { self.word_count } else { self.word_count & 0x3fff };
+        let count = self.latched_word_count;
+        let masked = if index == 3 { count } else { count & 0x3fff };
         if masked != 0 {
             u32::from(masked)
         } else if index == 3 {
@@ -56,6 +62,7 @@ impl Channel {
         if newly_enabled {
             self.latched_source = self.source;
             self.latched_destination = self.destination;
+            self.latched_word_count = self.word_count;
         }
         newly_enabled
     }

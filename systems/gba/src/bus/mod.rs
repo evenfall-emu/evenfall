@@ -3545,6 +3545,10 @@ impl Bus {
         } else {
             self.dma_channels[index].latched_destination = destination;
         }
+        if repeat {
+            let channel = &mut self.dma_channels[index];
+            channel.latched_word_count = channel.word_count;
+        }
         if !repeat {
             self.dma_channels[index].control &= !(1 << 15);
         }
@@ -4727,6 +4731,7 @@ mod tests {
             control: 0x9000,
             latched_source: EWRAM_BASE,
             latched_destination: VRAM_BASE + 0xa0,
+            latched_word_count: 1,
         };
 
         bus.elapse(1);
@@ -4756,6 +4761,7 @@ mod tests {
             control: 0x9000,
             latched_source: EWRAM_BASE,
             latched_destination: VRAM_BASE + 0xa0,
+            latched_word_count: 1,
         };
         bus.begin_device_batch();
         bus.elapse(4);

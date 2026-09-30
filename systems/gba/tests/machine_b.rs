@@ -2086,6 +2086,7 @@ fn hle_sound_driver_main_samples_cgb_callback_once_across_hblank_dma() {
     dma.control = 0xa400;
     dma.latched_source = 0x0200_0200;
     dma.latched_destination = 0x0200_0128;
+    dma.latched_word_count = 1;
     machine.bus.elapse(927);
     let step = executed_step(&mut machine);
     assert_eq!(step.instruction_address, 0x0800_0000);

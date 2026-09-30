@@ -44,6 +44,7 @@ const ORACLE_PATCHES: &[&str] = &[
     "intr-wait-latch.patch",
     "hblank-flag.patch",
     "dma-prefetch-collision.patch",
+    "dma-count-latch.patch",
 ];
 
 fn build() -> Result<(), Box<dyn Error>> {

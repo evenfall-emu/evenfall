@@ -2310,6 +2310,7 @@ fn no_event_materialization_retains_simultaneous_input_serial_lcd_timer_and_dma_
     bus.dma_channels[3].control = 0xc000;
     bus.dma_channels[3].latched_source = 0x0400_0202;
     bus.dma_channels[3].latched_destination = 0x0300_0000;
+    bus.dma_channels[3].latched_word_count = 1;
     bus.dma_start_cycles[3] = Some(960);
     let inputs = [TimedInput {
         at: 960,
@@ -2493,6 +2494,7 @@ fn one_cycle_endpoint_preserves_simultaneous_timer_hblank_and_dma_ordering() {
     bus.dma_channels[0].control = (2 << 12) | (1 << 15);
     bus.dma_channels[0].latched_source = 0x0300_0100;
     bus.dma_channels[0].latched_destination = 0x0300_0200;
+    bus.dma_channels[0].latched_word_count = 1;
     let boundary = bus.read(access(
         0x0300_0000,
         AccessWidth::Word,
@@ -2506,4 +2508,33 @@ fn one_cycle_endpoint_preserves_simultaneous_timer_hblank_and_dma_ordering() {
     assert_eq!((1 << 1) | (1 << 3) | (1 << 4), bus.irq.interrupt_request_flags);
     assert_eq!(0x7fff, bus.framebuffer()[0]);
     assert_eq!(Some(963), bus.dma_start_cycles[0]);
+}
+
+/// GBATEK, DMA Transfers ("Source and Destination Address and Word Count
+/// Registers"): enabling a channel copies `CNT_L` into its internal counter,
+/// and each repeat reloads it from `CNT_L`. The mGBA suite's "DMA count
+/// latching" (`src/misc-edge.c`, recorded on hardware) rewrites `DMA3CNT_L`
+/// to 4 after enabling a repeating VBlank transfer of 2 halfwords to a fixed
+/// destination: the first transfer ends on halfword 1, the repeat on 5.
+#[test]
+fn dma_word_count_latches_on_enable_and_reloads_on_repeat() {
+    let mut bus = Bus::init(&[]);
+    for index in 0..32 {
+        write_half(&mut bus, 0x0200_0000 + 2 * index, index as u16);
+    }
+    write_half(&mut bus, 0x0200_0100, 0xffff);
+    write_word(&mut bus, 0x0400_00d4, 0x0200_0000);
+    write_word(&mut bus, 0x0400_00d8, 0x0200_0100);
+    // VBlank start, repeat, halfwords, source increments, destination fixed.
+    let control = 1 << 12 | 1 << 9 | 2 << 5;
+    write_word(&mut bus, 0x0400_00dc, control << 16 | 2);
+    write_half(&mut bus, 0x0400_00de, (control | 1 << 15) as u16);
+    write_half(&mut bus, 0x0400_00dc, 4);
+    let vblank = 160 * 1232;
+    bus.elapse(vblank + 100 - bus.now());
+    assert_eq!(1, read_half(&mut bus, 0x0200_0100));
+    assert_eq!(0x0200_0004, bus.dma_channels[3].latched_source);
+    bus.elapse(228 * 1232);
+    assert_eq!(5, read_half(&mut bus, 0x0200_0100));
+    assert_eq!(0x0200_000c, bus.dma_channels[3].latched_source);
 }

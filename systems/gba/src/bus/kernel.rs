@@ -909,6 +909,7 @@ mod tests {
                     channel.control,
                     channel.latched_source,
                     channel.latched_destination,
+                    channel.latched_word_count,
                 )
             });
             let affine = (bus.bg_affine_parameters, bus.bg_reference_points, bus.bg_affine_current);
@@ -933,6 +934,7 @@ mod tests {
                 channel.control = next() as u16 & 0xffe0;
                 channel.latched_source = next();
                 channel.latched_destination = next();
+                channel.latched_word_count = next() as u16;
             }
             for background in 0..2 {
                 bus.bg_affine_parameters[background] = std::array::from_fn(|_| next() as i16);
@@ -971,8 +973,8 @@ mod tests {
             for (to, from) in engine.dma_channels.iter_mut().zip(&bus.dma_channels) {
                 (to.source, to.destination, to.word_count, to.control) =
                     (from.source, from.destination, from.word_count, from.control);
-                (to.latched_source, to.latched_destination) =
-                    (from.latched_source, from.latched_destination);
+                (to.latched_source, to.latched_destination, to.latched_word_count) =
+                    (from.latched_source, from.latched_destination, from.latched_word_count);
             }
             let access = Access {
                 address,
