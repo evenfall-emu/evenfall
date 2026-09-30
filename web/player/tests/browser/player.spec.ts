@@ -641,7 +641,7 @@ test("nonzero wave audio reaches the bounded browser output and sound can be mut
   const code = [0xe3a00301];
   const literals = (2 + writes.length * 2) * 4;
   for (let i = 0; i < writes.length; i++) {
-    const [offset, value] = writes[i];
+    const [offset] = writes[i];
     const pc = code.length * 4 + 8;
     code.push(
       (0xe59f1000 | (literals + i * 4 - pc)) >>> 0,

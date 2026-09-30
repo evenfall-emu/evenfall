@@ -95,7 +95,7 @@ export function PartyPanel() {
   // @ts-expect-error Decoder output, not a global registry, defines the fields.
   state.data.money;
   // @ts-expect-error A decoded number must not become any or unknown.
-  const hp: string = state.data.party[0].hp;
+  const _hp: string = state.data.party[0].hp;
   // @ts-expect-error Published view data is deeply read-only.
   state.data.party[0].hp = 100;
   // @ts-expect-error Published collections cannot be changed by a panel.

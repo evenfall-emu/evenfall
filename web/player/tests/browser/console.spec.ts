@@ -1,5 +1,4 @@
 import { test, expect, type Page } from "@playwright/test";
-import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import type { Emulator } from "@evenfall/gba";
 
@@ -12,20 +11,10 @@ const loop = {
 };
 const timelineRom = process.env.EVENFALL_TIMELINE_ROM ?? loop;
 const timelineFrames = process.env.EVENFALL_TIMELINE_ROM ? 240 : 24;
-const sha = (bytes: Uint8Array) =>
-  createHash("sha256").update(bytes).digest("hex");
 async function ready(page: Page) {
   await page.goto("/");
   await page.getByRole("button", { name: "Open player" }).click();
   await expect(page.getByLabel("Open ROM", { exact: true })).toBeEnabled();
-}
-async function importState(page: Page, path: string) {
-  await page.getByRole("button", { name: "More options" }).click();
-  await expect(page.getByLabel("Import state", { exact: true })).toBeEnabled();
-  await page.getByLabel("Import state", { exact: true }).setInputFiles(path);
-  await expect(
-    page.getByRole("dialog", { name: "Saves and options" }),
-  ).toHaveCount(0);
 }
 async function snapshotHash(page: Page) {
   return page.evaluate(async () => {
