@@ -329,10 +329,11 @@ fn run(args: &[String], stdout: &mut impl Write) -> Result<(), Box<dyn std::erro
 mod tests {
     use super::frame_wyhash;
 
-    /// Independent reference results for Wyhash final v4.1 with seed zero,
-    /// including either side of both the 16- and 48-byte block boundaries.
+    /// Reference results for Wyhash final v4.1 with seed zero, computed with
+    /// Zig 0.16's `std.hash.Wyhash`, including either side of both the 16-
+    /// and 48-byte block boundaries.
     #[test]
-    fn frame_hash_matches_zig_wyhash_vectors() {
+    fn frame_hash_matches_reference_wyhash_vectors() {
         assert_eq!(frame_wyhash(&[0, 1, 3, 8, 21, 55]), 0x85a2_09c1_31ba_b780);
         let pixels: Vec<u8> = (0..240 * 160 * 2).map(|i| (i * 37 + 11) as u8).collect();
         for (length, expected) in [
