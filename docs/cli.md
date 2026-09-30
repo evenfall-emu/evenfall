@@ -2,6 +2,7 @@
 
 `evenfall-gba` runs a GBA ROM without a window, for a fixed number of instructions, and prints what happened.
 It is meant for testing and debugging, not for playing: scripts use it to check that a ROM reaches a known frame, to trace the instructions around a bug, or to produce a save state for a bug report.
+Its `gdb` mode lets a debugger such as gdb, Ghidra or IDA stop, step and inspect the guest instead ([GDB remote debugging](#gdb-remote-debugging)).
 
 ```sh
 cargo run --release -p evenfall-gba --bin evenfall-gba -- run --steps 100 path/to/homebrew.gba
@@ -152,9 +153,79 @@ cargo run --release -p evenfall-gba --bin evenfall-gba -- run --steps 100 \
   --save-type eeprom8k --save-file game.sav game.gba
 ```
 
+## GDB remote debugging
+
+`evenfall-gba gdb` boots a ROM as `run` does and then waits for one debugger to connect over TCP.
+It speaks the GDB remote serial protocol, as mGBA does, so `gdb-multiarch`, an ARM-capable `gdb`, Ghidra's GDB connector and IDA's remote GDB debugger can all drive it.
+
+```text
+evenfall-gba gdb [--listen <address:port>] [run options other than --steps]
+          <rom.gba|rom.zip>
+```
+
+```sh
+cargo run --release -p evenfall-gba --bin evenfall-gba -- gdb game.gba
+gdb-multiarch -ex 'target remote 127.0.0.1:2345' game.elf
+```
+
+`--listen` defaults to `127.0.0.1:2345`, mGBA's port.
+Port 0 picks a free port.
+The runner prints `gdb listening=<address:port>` once it listens and `gdb connected=<peer>` when the debugger arrives.
+The session starts stopped at the first instruction, after `--state-in` if given.
+`--input` and `--trace` work as in `run`.
+
+The session ends when the debugger detaches, kills the target or disconnects.
+The runner then writes the battery save and `--state-out`, and prints the `--frame-hash` and `stop` lines, as at the end of `run`.
+It never prints instruction or wait lines, so `--quiet` changes nothing.
+
+### How it stays exact
+
+The debugger never changes what the guest computes.
+The runner executes whole instructions through the same step and sleep operations as `run`, and checks for breakpoints and for Ctrl-C only between instructions.
+Reads inspect memory without the side effects a CPU read would have.
+A session that only stops, steps and reads therefore ends in the same state, with the same trace and `stop` line, as `run --steps` with the number of instructions it executed.
+Register and memory writes are the only way a debugger changes the guest, and they take no emulated time.
+
+### What the debugger sees
+
+The target is one thread of an ARMv4T CPU.
+
+- **Registers.**
+  r0 to r12, `sp`, `lr` and `cpsr` are those of the current CPU mode.
+  `pc` is the address of the next instruction.
+  The CPSR's T bit tells the debugger whether to disassemble and step ARM or Thumb code.
+  `cpsr` is register 25 in gdb's ARM numbering and follows `pc` in the full register packet.
+- **Memory map.**
+  The runner describes the BIOS and cartridge ROM as read-only, and work RAM, I/O, palette, VRAM, OAM and cartridge save memory as writable.
+  Mirrors are left out of the map, so gdb refuses addresses in them.
+- **Breakpoints.**
+  Software and hardware breakpoints behave alike.
+  Both are addresses checked before each instruction, and neither patches guest memory.
+  gdb picks hardware breakpoints in the read-only regions by itself.
+- **Stepping and continuing.**
+  `stepi` runs one instruction.
+  `continue` runs until a breakpoint's address is the next instruction.
+  A sleeping CPU keeps advancing emulated time, as in `run`, until something wakes it.
+- **Ctrl-C.**
+  The runner looks for the interrupt every 16,384 instructions and after every frame of sleep, then stops with SIGINT.
+- **Faults.**
+  An emulation fault stops the session with SIGABRT and prints its fault line.
+  The machine can't run on, and `--state-out` is skipped.
+- **Register writes.**
+  Any register can be written, and a CPSR write must name a valid mode.
+  Writing `pc` or the T bit refills the instruction pipeline, as at power-on.
+- **Memory writes.**
+  Only EWRAM and IWRAM can be written.
+  Decoded code and prefetched instructions over the written bytes are refreshed, so patched code runs next.
+
 ## Known limits
 
 - Invalid arguments and load failures exit with status 0.
   Scripts have to check the output.
 - The runner has no window, sound or real-time pacing.
   The [SDK](sdk.md) is the way to play.
+- The GDB stub serves no watchpoints.
+  gdb's `watch` still works by single-stepping, slowly, and `rwatch` and `awatch` are unavailable.
+- The GDB stub can't write to BIOS, cartridge ROM, I/O, palette, VRAM, OAM or save memory.
+- The GDB stub refuses register writes while a BIOS routine that spans several steps is running.
+  `stepi` inside such a routine stops between its steps, with `pc` after its `SWI`.

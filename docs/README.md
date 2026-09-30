@@ -5,7 +5,7 @@ Then pick what you came for.
 
 ## Using Evenfall
 
-- [`cli.md`](cli.md): the headless GBA runner.
+- [`cli.md`](cli.md): the headless GBA runner and its GDB remote stub.
 - [`sdk.md`](sdk.md): the `@evenfall/gba` JavaScript and TypeScript SDK.
 - [`devtools.md`](devtools.md): deterministic scenarios, checkpoint assertions and failure replay.
 - [`game-bridges.md`](game-bridges.md): typed, read-only views of game memory.
