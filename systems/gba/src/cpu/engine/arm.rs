@@ -401,6 +401,7 @@ impl<const EW: bool> Ctx<'_, EW> {
     const LAST: u32 = Self::REGION << 24 | (0x00ff_ffff & !Self::MASK);
     const FETCH: i64 = if EW { 6 } else { 1 };
 
+    #[inline(always)]
     fn code_word(&self, address: u32) -> u32 {
         let index = (address & Self::MASK) as usize;
         if EW {
@@ -512,6 +513,7 @@ pub(super) fn run_bios(core: &mut Core, bus: &mut Bus, limit: u64) -> bool {
 
 /// The op array of a region, allocated the first time: RAM arrays end with
 /// sentinels for the next mirror, and the BIOS array with refusals.
+#[inline(always)]
 fn take_ops<const EW: bool>(code: &mut CodeCache, bios: bool) -> Box<[Op]> {
     if bios {
         return code.bios_arm.take().unwrap_or_else(|| {
@@ -753,6 +755,7 @@ fn complete_local<const EW: bool>(c: &mut Ctx<'_, EW>, h: Hot, access: &Mmio) ->
 /// Publishes a run's CPU state; returns the cycles it took, the open-bus
 /// latch and whether its last instruction ended with a data access that
 /// makes the next fetch nonsequential, or None if no instruction ran.
+#[inline(never)]
 fn finish<const EW: bool>(c: Ctx<'_, EW>, hot: Hot, budget: i64) -> Option<(u64, u32, bool)> {
     if hot.budget == budget {
         return None;
@@ -1488,6 +1491,7 @@ fn block_body(kind: u8, h: &mut Hot, regs: &mut Registers, op: &Op) -> bool {
 }
 
 /// Whether a decoded op may sit in a block.
+#[inline(never)]
 fn joins_block(op: &Op) -> bool {
     match op.kind {
         k::COND..=254 => in_block(op.inner),

@@ -56,8 +56,9 @@ On the benchmark workloads the core takes about 0.4× ZiGBA's loop time
 natively (half of mGBA 0.10.5's, and faster than mGBA on every workload) and
 under a third of it in WebAssembly, with every frame and state byte still
 identical to ZiGBA's. A pre-decoded execution engine runs ARM and Thumb code,
-and a layer-major compositor renders lines with SIMD lanes (SSE2 natively,
-`simd128` in the default WebAssembly build). Results, method and the
+and a layer-major compositor renders lines with SIMD lanes (the `wide`
+crate: SSE2 on x86-64, NEON on AArch64, `simd128` in the default WebAssembly
+build). Results, method and the
 remaining gaps are in [`performance.md`](performance.md).
 
 ## Deliberate differences from ZiGBA

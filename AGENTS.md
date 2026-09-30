@@ -102,6 +102,9 @@ The GBA core reads and writes ZiGBA's `ZIGBAST1` save states byte for byte.
 
 - Edition 2024; `cargo fmt` with the repository's `rustfmt.toml`;
   `cargo clippy --all-targets -- -D warnings` clean.
+- Hot paths pin inlining that LLVM would decide near its threshold. After
+  changing the CPU engine, bus device step, DMA, APU mixer or compositor, run
+  `node tools/bench/inline-stability.mjs`; it must exit 0.
 - Hot paths are monomorphized: no `dyn`, no allocation, no `Rc`/`RefCell`.
   A `Machine` allocates only at construction; arrays of 4 KiB or more live in
   boxes allocated without stack temporaries.

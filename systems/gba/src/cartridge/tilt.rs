@@ -53,6 +53,7 @@ impl Tilt {
             _ => unreachable!(),
         }
     }
+    #[inline(never)]
     pub fn write(&mut self, offset: u32, value: u8) {
         match offset {
             0x8000 => {

@@ -173,6 +173,7 @@ impl Mmio {
     }
 
     /// Whether the bus lets the run make this access itself.
+    #[inline(never)]
     pub(super) fn allowed(&self, bus: &Bus) -> bool {
         let (width, address) = self.access();
         if self.store.is_some() {
@@ -200,6 +201,7 @@ impl Mmio {
     /// Makes an access [`Self::local_at`] admits on the run's own view of
     /// the registers, its data cycle `elapsed` cycles after the view was
     /// taken, and writes the CPU registers. Returns the bus value.
+    #[inline(never)]
     fn perform_local(&self, mem: &mut Mem<'_>, registers: &mut [u32; 16], elapsed: u64) -> u32 {
         #[cfg(test)]
         LOCAL_ACCESSES.with(|count| count.set(count.get() + 1));
@@ -226,6 +228,7 @@ impl Mmio {
 
     /// Makes the access, whose data cycle follows the instruction's fetch
     /// ending at `fetched`, and writes the registers. Returns the bus value.
+    #[inline(never)]
     pub(super) fn perform(&self, bus: &mut Bus, registers: &mut [u32; 16], fetched: u64) -> u32 {
         #[cfg(test)]
         MMIO_ACCESSES.with(|count| count.set(count.get() + 1));
