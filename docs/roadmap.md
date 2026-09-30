@@ -186,13 +186,24 @@ suites must still pass.
   The ported test "execution region multiply keeps original alias timing
   and conditional effects" expects the model's C instead of the preserved
   flag.
-- **Block transfers on SRAM.** Present a misaligned `LDM`/`STM` address to the
-  8-bit SRAM bus instead of aligning it first, and do the same in HLE
-  `CpuSet`/`CpuFastSet`. Evidence: the `swi B 32` and `swi C 32` misaligned
-  SRAM rows fail under HLE and under the replacement BIOS, whose copies use
-  `LDMIA`/`STMIA`, while direct `LDR`/`STR` rows pass. Before changing the
-  CPU, confirm that the retail `CpuSet` word path uses block transfers; if it
-  uses `LDR`/`STR`, only the HLE services change.
+- **Decision: block transfers give the SRAM bus their exact addresses** (a
+  deliberate guest-visible difference from ZiGBA, which aligns every
+  block-transfer beat). `LDM`, `STM`, Thumb `LDMIA`, `STMIA`, `PUSH` and
+  `POP` beats on the 8-bit save bus keep the base's low bits and step by 4,
+  as single transfers already do; other regions still see aligned beats.
+  HLE word `CpuSet` and `CpuFastSet` copy the same way. Evidence: the mGBA
+  suite's memory table (`src/memory.c`, recorded on hardware) loads the
+  SRAM byte at an unaligned `CpuSet`/`CpuFastSet` source in all four lanes
+  and stores at an unaligned destination without touching the aligned
+  byte, in every `swi B 32` and `swi C 32` row; GBATEK's "BIOS Memory Copy"
+  confirms that the retail word loops are `LDMIA`/`STMIA` (`r3`, and
+  `r2`–`r9` for `CpuFastSet`), so the CPU's block transfers, not only the
+  HLE services, present those addresses
+  ([memory](gba/hardware/memory.md#region-behavior)). Compatibility effect:
+  block transfers on SRAM at an unaligned address, and word copies there
+  under HLE and any BIOS. No state-layout change; the HLE work state keeps
+  the exact addresses in its existing fields. The parity harness applies
+  [`sram-block.patch`](../tools/parity/patches/sram-block.patch).
 - **Decision: HLE halfword `CpuSet` loads and stores like `LDRH` and
   `STRH`** (a deliberate guest-visible difference from ZiGBA, whose HLE
   aligns both addresses). Each halfword unit loads the aligned halfword

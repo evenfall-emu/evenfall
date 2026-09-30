@@ -71,7 +71,13 @@ RAM and VRAM are two halfword beats, each visible after its own cycle.
 the SRAM wait states; how halfword and word accesses map onto its single
 byte lane is described in [`cartridge.md`](cartridge.md). The CPU passes
 unaligned addresses in this region to the bus unchanged, unlike every other
-region (`is_byte_wide_save_address`).
+region (`is_byte_wide_save_address`), for single transfers and for every
+beat of a block transfer, which steps by 4 from the unaligned base. The
+mGBA suite's memory table records this for the retail `CpuSet` and
+`CpuFastSet` word loops, which are `LDMIA`/`STMIA` (GBATEK, BIOS Memory
+Copy): an unaligned SRAM source loads the byte at that address in all four
+lanes. ZiGBA aligns block-transfer beats; this is a deliberate difference
+([`roadmap.md`](../../roadmap.md#mgba-suite-rom-findings)).
 
 **Unused Game Pak ROM.** A read past the end of the cartridge image returns
 the halfword the multiplexed address/data bus leaves behind: address bits

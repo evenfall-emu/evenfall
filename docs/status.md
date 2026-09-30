@@ -95,6 +95,9 @@ match:
 - **HLE halfword `CpuSet`** copies like the retail loop's `LDRH` and
   `STRH`, rotating a halfword read from an odd source; ZiGBA aligns it
   ([`gba/hardware/bios.md`](gba/hardware/bios.md#copies)).
+- **Block transfers on SRAM** present each beat's exact address to the
+  8-bit save bus, as single transfers do; ZiGBA aligns them
+  ([`gba/hardware/memory.md`](gba/hardware/memory.md#region-behavior)).
 
 The others change no emulated result:
 

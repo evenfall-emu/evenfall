@@ -1,0 +1,101 @@
+--- a/src/cpu.zig
++++ b/src/cpu.zig
+@@ -3197,7 +3197,7 @@ pub const Cpu = struct {
+         while (remaining_registers != 0) : (remaining_registers &= remaining_registers - 1) {
+             const register: u4 = @intCast(@ctz(remaining_registers));
+             const access = bus_module.Access{
+-                .address = address & ~@as(u32, 3),
++                .address = blockAddress(address),
+                 .width = .word,
+                 .kind = if (transfer_index == 0) .nonsequential else .sequential,
+                 .source = .cpu_data,
+@@ -3847,7 +3847,7 @@ pub const Cpu = struct {
+         if (register_list == 0) {
+             const base = self.registers[base_register];
+             const access = bus_module.Access{
+-                .address = base & ~@as(u32, 3),
++                .address = blockAddress(base),
+                 .width = .word,
+                 .kind = .nonsequential,
+                 .source = .cpu_data,
+@@ -3872,7 +3872,7 @@ pub const Cpu = struct {
+             const register: u3 = @intCast(register_index);
+             if (register_list & (@as(u8, 1) << register) == 0) continue;
+             const access = bus_module.Access{
+-                .address = address & ~@as(u32, 3),
++                .address = blockAddress(address),
+                 .width = .word,
+                 .kind = if (transfer_index == 0) .nonsequential else .sequential,
+                 .source = .cpu_data,
+@@ -3960,7 +3960,7 @@ pub const Cpu = struct {
+             const base = self.registers[13];
+             const address = if (pop) base else base -% 64;
+             const access = bus_module.Access{
+-                .address = address & ~@as(u32, 3),
++                .address = blockAddress(address),
+                 .width = .word,
+                 .kind = .nonsequential,
+                 .source = .cpu_data,
+@@ -3988,7 +3988,7 @@ pub const Cpu = struct {
+         while (remaining_registers != 0) : (remaining_registers &= remaining_registers - 1) {
+             const register: u3 = @intCast(@ctz(remaining_registers));
+             const access = bus_module.Access{
+-                .address = address & ~@as(u32, 3),
++                .address = blockAddress(address),
+                 .width = .word,
+                 .kind = if (transfer_index == 0) .nonsequential else .sequential,
+                 .source = .cpu_data,
+@@ -4006,7 +4006,7 @@ pub const Cpu = struct {
+         var branched = false;
+         if (include_extra) {
+             const access = bus_module.Access{
+-                .address = address & ~@as(u32, 3),
++                .address = blockAddress(address),
+                 .width = .word,
+                 .kind = if (transfer_index == 0) .nonsequential else .sequential,
+                 .source = .cpu_data,
+@@ -7696,11 +7696,11 @@ pub const Cpu = struct {
+         }
+ 
+         // Evenfall: halfword units keep bit 0 of each address; the retail
+-        // loop's LDRH and STRH see it.
+-        const alignment: u32 = if (word) 3 else 0;
++        // loop's LDRH and STRH see it. Its LDMIA and STMIA align word
++        // addresses, except on the 8-bit save bus.
+         var work: HleCpuSetWork = .{
+-            .source = self.registers[0] & ~alignment,
+-            .destination = self.registers[1] & ~alignment,
++            .source = if (word) blockAddress(self.registers[0]) else self.registers[0],
++            .destination = if (word) blockAddress(self.registers[1]) else self.registers[1],
+             .remaining = control & 0x001F_FFFF,
+             .fill_value = 0,
+             .fill = fill,
+@@ -7767,7 +7767,7 @@ pub const Cpu = struct {
+     fn beginHleCpuFastSet(self: *Cpu, bus: *Bus) ?HleBulkWork {
+         const control = self.registers[2];
+         const requested_words = control & 0x001F_FFFF;
+-        const source = self.registers[0] & ~@as(u32, 3);
++        const source = blockAddress(self.registers[0]);
+         if (source < 0x0200_0000) {
+             self.registers[2] = (self.registers[1] & ~@as(u32, 3)) +% requested_words * 4;
+             bus.elapse(1);
+@@ -7778,7 +7778,7 @@ pub const Cpu = struct {
+         return .{
+             .cpu_fast_set = .{
+                 .source = source,
+-                .destination = self.registers[1] & ~@as(u32, 3),
++                .destination = blockAddress(self.registers[1]),
+                 // Whole eight-word bursts: the count rounds up.
+                 .remaining_blocks = (requested_words + 7) / 8,
+                 .last_word = if (fill) bus.read(.{
+@@ -9147,3 +9147,10 @@ fn hleStoreHalfword(bus: *Bus, address: u32, value: u32) void {
+         .source = .cpu_data,
+     }, value);
+ }
++
++// Evenfall: the address a block-transfer beat at `address` presents to the
++// bus: aligned, except on the 8-bit save bus, which sees it exactly (the
++// mGBA suite's SRAM CpuSet/CpuFastSet rows).
++fn blockAddress(address: u32) u32 {
++    return if (bus_module.isByteWideSaveAddress(address)) address else address & ~@as(u32, 3);
++}

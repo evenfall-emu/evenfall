@@ -156,7 +156,7 @@ pass.
 
 | Suite                  | Fails under HLE                                                                                                                                                                                                                                       | Fails under Cult-of-GBA BIOS                                                                    | Causes                                                                                                                                                                                                      |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Memory tests           | SRAM loads and stores and their mirrors; BIOS load | SRAM loads and stores and their mirrors; BIOS load; BIOS out-of-bounds load; out-of-bounds load | [SRAM block transfers](#block-transfers-on-sram), [HLE `IntrWait` latch](#hle-intrwait-latch), [replacement BIOS](#hle-and-replacement-bios-effects) |
+| Memory tests           | BIOS load | SRAM mirror load; BIOS load; BIOS out-of-bounds load; out-of-bounds load | [HLE `IntrWait` latch](#hle-intrwait-latch), [replacement BIOS](#hle-and-replacement-bios-effects) |
 | I/O read tests         | pass | pass | |
 | Timing tests           | Calibration; BIOS Division, Division 2, Sqrt, Sqrt 2, Sqrt 3, ArcTan; CpuSet; Trivial and Short DMA (16 and 32/to ROM)                                                                                                                                | same, except BIOS ArcTan passes                                                                 | [timer and IRQ latency](#timer-and-irq-latency), [HLE and BIOS timing](#hle-and-replacement-bios-effects), [DMA residual](#known-residuals)                                                                 |
 | Timer count-up tests   | every test                                                                                                                                                                                                                                            | every test                                                                                      | [timer and IRQ latency](#timer-and-irq-latency)                                                                                                                                                             |
@@ -205,19 +205,6 @@ On hardware the first transfer copies 2 units and the repeat 4: the count is
 latched when the enable bit rises, like the addresses, and reloaded from
 `DMA3CNT_L` on repeat. The core reads `DMAxCNT_L` whenever a transfer
 starts, so the first transfer copies 4.
-
-#### Block transfers on SRAM
-
-`CpuSet` and `CpuFastSet` word copies from and to SRAM at a misaligned
-address read the byte at that exact address on hardware, repeated in all
-four lanes, and store accordingly; the memory table records this for every
-misalignment. The core's own `LDR` and `STR` rows at the same addresses
-pass. The copies fail under both boot modes: HLE aligns the addresses before
-copying, and the replacement BIOS copies words with `LDMIA`/`STMIA`
-(`bios_calls/cpu_set.s`), whose addresses the core aligns before they reach
-the bus. The hardware result implies that the 8-bit SRAM bus sees a
-misaligned block-transfer address, assuming the retail routines also use
-block transfers.
 
 #### HLE `IntrWait` latch
 

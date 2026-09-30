@@ -140,7 +140,10 @@ back. Each halfword unit is a load and a store as the retail loop's
 an odd source the loaded halfword is rotated right by 8, so the copy stores
 its high byte, and on the 8-bit save bus both use the exact address; the
 mGBA suite's memory table records `00DE00BEh` copied from `DEADBEEFh` this
-way. ZiGBA aligns both addresses first; this is a deliberate difference
+way. Word units, and `CpuFastSet`'s, are the retail loops' `LDMIA` and
+`STMIA` beats: aligned, except on the 8-bit save bus, which sees the exact
+address ([memory](memory.md#region-behavior)). ZiGBA aligns every address
+first; these are deliberate differences
 ([`roadmap.md`](../../roadmap.md#mgba-suite-rom-findings)). `CpuFastSet` copies or fills words in whole eight-word bursts, rounding
 the count up. Both return after one cycle without copying when the source
 starts below `02000000h`; GBATEK documents that the retail routines silently

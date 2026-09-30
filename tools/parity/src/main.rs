@@ -40,6 +40,7 @@ const ORACLE_PATCHES: &[&str] = &[
     "thumb-open-bus.patch",
     "multiply-carry.patch",
     "cpu-set-halfword.patch",
+    "sram-block.patch",
 ];
 
 fn build() -> Result<(), Box<dyn Error>> {

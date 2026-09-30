@@ -377,14 +377,17 @@ impl Core {
         if list == 0 {
             self.registers[rb] = base.wrapping_add(64);
             if load {
-                let value =
-                    bus.read_cpu_data(base & !3, AccessWidth::Word, AccessKind::Nonsequential);
+                let value = bus.read_cpu_data(
+                    crate::block_address(base),
+                    AccessWidth::Word,
+                    AccessKind::Nonsequential,
+                );
                 self.next_instruction_address = value & !1;
                 bus.elapse_cpu_internal(1);
                 return ExecuteResult { branched: true, ..ExecuteResult::default() };
             }
             bus.write_cpu_word(
-                base & !3,
+                crate::block_address(base),
                 self.registers[15].wrapping_add(2),
                 AccessKind::Nonsequential,
             );
@@ -400,7 +403,7 @@ impl Core {
                 let value = if block_cycles.is_some() {
                     bus.cpu_ram_word(address & !3)
                 } else {
-                    bus.read_cpu_data(address & !3, AccessWidth::Word, kind)
+                    bus.read_cpu_data(crate::block_address(address), AccessWidth::Word, kind)
                 };
                 last_word = value;
                 self.registers[register] = value;
@@ -413,7 +416,7 @@ impl Core {
                 if block_cycles.is_some() {
                     bus.set_cpu_ram_word(address & !3, value);
                 } else {
-                    bus.write_cpu_word(address & !3, value, kind);
+                    bus.write_cpu_word(crate::block_address(address), value, kind);
                 }
             }
             address = address.wrapping_add(4);
@@ -443,14 +446,17 @@ impl Core {
             let address = if pop { base } else { base.wrapping_sub(64) };
             self.registers[13] = if pop { base.wrapping_add(64) } else { address };
             if pop {
-                let value =
-                    bus.read_cpu_data(address & !3, AccessWidth::Word, AccessKind::Nonsequential);
+                let value = bus.read_cpu_data(
+                    crate::block_address(address),
+                    AccessWidth::Word,
+                    AccessKind::Nonsequential,
+                );
                 self.next_instruction_address = value & !1;
                 bus.elapse_cpu_internal(1);
                 return ExecuteResult { branched: true, ..ExecuteResult::default() };
             }
             bus.write_cpu_word(
-                address & !3,
+                crate::block_address(address),
                 self.registers[15].wrapping_add(2),
                 AccessKind::Nonsequential,
             );
@@ -469,14 +475,14 @@ impl Core {
                 let value = if block_cycles.is_some() {
                     bus.cpu_ram_word(address & !3)
                 } else {
-                    bus.read_cpu_data(address & !3, AccessWidth::Word, kind)
+                    bus.read_cpu_data(crate::block_address(address), AccessWidth::Word, kind)
                 };
                 last_word = value;
                 self.registers[register] = value;
             } else if block_cycles.is_some() {
                 bus.set_cpu_ram_word(address & !3, self.registers[register]);
             } else {
-                bus.write_cpu_word(address & !3, self.registers[register], kind);
+                bus.write_cpu_word(crate::block_address(address), self.registers[register], kind);
             }
             address = address.wrapping_add(4);
         }
@@ -486,13 +492,13 @@ impl Core {
                 last_word = if block_cycles.is_some() {
                     bus.cpu_ram_word(address & !3)
                 } else {
-                    bus.read_cpu_data(address & !3, AccessWidth::Word, kind)
+                    bus.read_cpu_data(crate::block_address(address), AccessWidth::Word, kind)
                 };
                 self.next_instruction_address = last_word & !1;
             } else if block_cycles.is_some() {
                 bus.set_cpu_ram_word(address & !3, self.registers[14]);
             } else {
-                bus.write_cpu_word(address & !3, self.registers[14], kind);
+                bus.write_cpu_word(crate::block_address(address), self.registers[14], kind);
             }
             address = address.wrapping_add(4);
         }

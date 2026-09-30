@@ -760,6 +760,13 @@ fn byte_wide_save_address(address: u32) -> bool {
     address >> 25 == 7
 }
 
+/// The address a block-transfer beat at `address` presents to the bus:
+/// aligned, except on the 8-bit save bus, which sees it exactly (the mGBA
+/// suite's SRAM `CpuSet`/`CpuFastSet` rows).
+fn block_address(address: u32) -> u32 {
+    if byte_wide_save_address(address) { address } else { address & !3 }
+}
+
 impl Core {
     pub fn execute_arm<B: Bus>(
         &mut self,
@@ -1183,7 +1190,7 @@ impl Core {
         {
             let kind = if index == 0 { AccessKind::Nonsequential } else { AccessKind::Sequential };
             if load {
-                let read = bus.read_cpu_data(address & !3, AccessWidth::Word, kind);
+                let read = bus.read_cpu_data(block_address(address), AccessWidth::Word, kind);
                 if register == 15 {
                     loaded_pc = Some(read);
                 } else if user_bank && !exception_return {
@@ -1201,7 +1208,7 @@ impl Core {
                 } else {
                     self.registers[register]
                 };
-                bus.write_cpu_word(address & !3, value, kind);
+                bus.write_cpu_word(block_address(address), value, kind);
             }
             address = address.wrapping_add(4);
         }
@@ -1668,6 +1675,51 @@ mod tests {
                 assert_eq!(carry, cpu.cpsr & (1 << 29) != 0, "Thumb {context}");
             }
         }
+    }
+
+    /// The mGBA suite's memory table (`swi B 32` and `swi C 32` rows,
+    /// recorded on hardware): the retail CpuSet and CpuFastSet, whose word
+    /// loops are `LDMIA`/`STMIA` (GBATEK, BIOS Memory Copy), load and store
+    /// the SRAM byte at an unaligned address itself. A block transfer gives
+    /// the 8-bit save bus its exact addresses, stepping by 4 from the base,
+    /// as a single transfer does; every other region sees them aligned.
+    #[test]
+    fn block_transfers_present_exact_addresses_to_the_save_bus() {
+        use AccessKind::{Nonsequential as N, Sequential as S};
+        use AccessWidth::Word;
+        let arm = |base: u32, instruction: u32| {
+            let mut cpu = Core::new(0x0800_0040, 0x1f);
+            (cpu.registers[0], cpu.registers[1], cpu.registers[2]) =
+                (base, 0x1111_1111, 0x2222_2222);
+            let mut bus = TraceBus::default();
+            cpu.execute_arm(&mut bus, instruction).unwrap();
+            (cpu.registers[0], bus.reads, bus.writes)
+        };
+        // LDMIA r0!, {r1, r2}
+        let (base, reads, _) = arm(0x0e00_0001, 0xe8b0_0006);
+        assert_eq!(reads, [(0x0e00_0001, Word, N), (0x0e00_0005, Word, S)]);
+        assert_eq!(base, 0x0e00_0009);
+        let (_, reads, _) = arm(0x0300_0001, 0xe8b0_0006);
+        assert_eq!(reads, [(0x0300_0000, Word, N), (0x0300_0004, Word, S)]);
+        // STMIA r0, {r1, r2}
+        let (_, _, writes) = arm(0x0e00_0003, 0xe880_0006);
+        assert_eq!(
+            writes,
+            [(0x0e00_0003, Word, N, 0x1111_1111), (0x0e00_0007, Word, S, 0x2222_2222)]
+        );
+
+        let thumb = |base: u32, instruction: u16| {
+            let mut cpu = Core::new(0x0800_0040, 0x3f);
+            (cpu.registers[0], cpu.registers[1], cpu.registers[13]) = (base, 0x1111_1111, base);
+            let mut bus = TraceBus::default();
+            cpu.execute_thumb(&mut bus, instruction);
+            (bus.reads, bus.writes)
+        };
+        // LDMIA r0!, {r1}; STMIA r0!, {r1}; POP {r1}; PUSH {r1}
+        assert_eq!(thumb(0x0e00_0002, 0xc802).0, [(0x0e00_0002, Word, N)]);
+        assert_eq!(thumb(0x0e00_0002, 0xc002).1, [(0x0e00_0002, Word, N, 0x1111_1111)]);
+        assert_eq!(thumb(0x0e00_0003, 0xbc02).0, [(0x0e00_0003, Word, N)]);
+        assert_eq!(thumb(0x0e00_0007, 0xb402).1, [(0x0e00_0003, Word, N, 0x1111_1111)]);
     }
 
     /// ZiGBA `executeThumb`: BX selects ARM only for an even target, without rounding a Thumb return to a word.

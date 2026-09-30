@@ -150,6 +150,7 @@ this order:
 | [`thumb-open-bus.patch`](../tools/parity/patches/thumb-open-bus.patch) | Thumb opcode fetches compose the open-bus word per region                  | unchanged      |
 | [`multiply-carry.patch`](../tools/parity/patches/multiply-carry.patch) | flag-setting multiplies set C from the multiplier model                    | unchanged      |
 | [`cpu-set-halfword.patch`](../tools/parity/patches/cpu-set-halfword.patch) | HLE halfword `CpuSet` loads and stores like `LDRH` and `STRH`              | unchanged      |
+| [`sram-block.patch`](../tools/parity/patches/sram-block.patch) | block transfers and HLE word copies give the SRAM bus exact addresses      | unchanged      |
 
 Each changes the Rust core and the oracle alike, so every scenario still
 compares byte for byte; none adds a durable field, so the schema check still
