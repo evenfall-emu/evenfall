@@ -1,4 +1,4 @@
-# Builds the zigba probe ROMs with any arm-none-eabi-gcc (ARMv4T, no libgba):
+# Builds the probe ROMs with any arm-none-eabi-gcc (ARMv4T, no libgba):
 # every *.c except report.c is one ROM. Output ROMs are gitignored build
 # artifacts (build/*.gba).
 

@@ -1,7 +1,7 @@
 import { wasm, wasmTest as test } from "./scripts/wasm-test.mjs";
 import assert from "node:assert/strict";
 import { Worker } from "node:worker_threads";
-import { Emulator, CYCLES_PER_FRAME as F } from "./zigba.js";
+import { Emulator, CYCLES_PER_FRAME as F } from "./emulator.js";
 
 // Only the browser transport is adapted. Exercise the real SDK, worker,
 // recorder and WASM, including structured clones and transferred output.
@@ -97,6 +97,44 @@ test("SDK bundle import requires pause, preserves failures and resets presentati
     assert.deepEqual(scenario.assets.state, live); // Never replay from cold boot.
     assert.deepEqual(scenario.manifest.inputs, []);
     assert.equal((await emulator.rewind(3)).frames, 2n);
+  } finally {
+    await emulator?.dispose();
+    globalThis.Worker = previousWorker;
+  }
+});
+
+test("a load awaiting its BIOS digest excludes other commands, so the recording matches the live session", async () => {
+  const previousWorker = globalThis.Worker;
+  globalThis.Worker = BrowserWorker;
+  let emulator;
+  try {
+    emulator = await Emulator.create({
+      wasmUrl: `data:application/wasm;base64,${wasm.toString("base64")}`,
+    });
+    const romA = new Uint8Array([0xfe, 0xff, 0xff, 0xea]);
+    const romB = new Uint8Array([0xfd, 0xff, 0xff, 0xea]);
+    const bios = new Uint8Array(16 * 1024);
+    for (let i = 0; i < bios.length; i += 4) bios.set(romA, i);
+    // B normally arrives while A awaits its BIOS digest and must be rejected,
+    // not publish its session only for A to overwrite the recording after.
+    // Whichever order the worker sees, the recording matches the live ROM.
+    const [a, b] = await Promise.allSettled([
+      emulator.load(romA, { bios }),
+      emulator.load(romB),
+    ]);
+    assert.equal(a.status, "fulfilled");
+    if (b.status === "rejected") assert.match(b.reason.message, /SessionBusy/);
+    const liveIsB = b.status === "fulfilled";
+    assert.deepEqual(await emulator.exportRom(), liveIsB ? romB : romA);
+    const { manifest } = await emulator.exportScenario("After load");
+    assert.equal(manifest.config.boot, liveIsB ? "hle" : "bios");
+
+    await emulator.load(romB);
+    assert.deepEqual(await emulator.exportRom(), romB);
+    assert.equal(
+      (await emulator.exportScenario("Reloaded")).manifest.config.boot,
+      "hle",
+    );
   } finally {
     await emulator?.dispose();
     globalThis.Worker = previousWorker;

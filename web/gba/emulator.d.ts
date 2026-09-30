@@ -29,7 +29,7 @@ export interface Snapshot {
   nextInstructionAddress: number;
   /** Lowercase hexadecimal SHA-1 of the raw ROM, after ZIP extraction. */
   romHash: string;
-  rtcEnabled?: boolean;
+  rtcEnabled: boolean;
   saveType: SaveType;
   fault: string | null;
 }
@@ -256,7 +256,7 @@ export interface RecordingStatus {
   checkpoints: { name: string; at: string }[];
 }
 export interface FailureBundle {
-  format: "zigba-failure";
+  format: "evenfall-failure";
   version: 2;
   identity: {
     romHash: string;

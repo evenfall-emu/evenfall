@@ -13,7 +13,13 @@ import { cpus, loadavg, release } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { detectTaskset, pickCpu, ROOT, sha256 } from "./common.mjs";
-import { buildRoms, EMULATORS, git, WORKLOADS } from "./emulators.mjs";
+import {
+  buildRoms,
+  DEFAULT_EMULATORS,
+  EMULATORS,
+  git,
+  WORKLOADS,
+} from "./emulators.mjs";
 import {
   formatTable,
   parseObservation,
@@ -23,7 +29,7 @@ import {
 
 const USAGE = `usage: node tools/bench/run.mjs [options]
 
-  --emulators LIST     comma-separated adapters (default: ${Object.keys(EMULATORS).join(",")})
+  --emulators LIST     comma-separated adapters (default: ${DEFAULT_EMULATORS.join(",")})
   --harness NAME=PATH  use a prebuilt harness binary for NAME instead of
                        building it; a NAME outside the registry adds an
                        emulator (repeatable)
@@ -81,7 +87,7 @@ if (opts.list) {
     );
   for (const [name, e] of Object.entries(EMULATORS))
     console.log(
-      `emulator  ${name.padEnd(12)} ${e.title}; boots: ${e.boots.join(", ")}`,
+      `emulator  ${name.padEnd(12)} ${e.title}; boots: ${e.boots.join(", ")}${DEFAULT_EMULATORS.includes(name) ? "" : "; not a default"}`,
     );
   process.exit(0);
 }
@@ -98,7 +104,7 @@ const prebuilt = Object.fromEntries(
 const emulators = opts.emulators
   ? opts.emulators.split(",").filter(Boolean)
   : [
-      ...Object.keys(EMULATORS),
+      ...DEFAULT_EMULATORS,
       ...Object.keys(prebuilt).filter((name) => !EMULATORS[name]),
     ];
 for (const name of emulators)

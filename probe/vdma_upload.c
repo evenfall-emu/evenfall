@@ -5,7 +5,7 @@
  * Mode 0, then programs a one-shot VBlank-timing DMA3 transfer of the
  * buffer into charblock tile 5. After two frames the tile must have arrived:
  * every pixel renders palette index 3. The validator asserts the full
- * framebuffer analytically (see test/probe_cases.zig). A missed
+ * framebuffer analytically (see validator/probe_cases.rs). A missed
  * VBlank trigger would leave zeroes (transparent) and show the backdrop.
  */
 

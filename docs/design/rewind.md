@@ -1,171 +1,212 @@
 # Rewind
 
-Rewind retains complete [`ZIGBAST1` save states](save-states.md) so restoring a
-checkpoint uses the ordinary transactional machine loader. `Session` owns
-capture timing, framebuffer reconstruction and post-restore host policy in
-[`systems/gba/src/session.rs`](../../systems/gba/src/session.rs);
-[`RewindBuffer`](../../crates/state/src/rewind.rs) owns storage, compression,
-retention, decoding and the import/export bundle. Neither rewind policy nor
-history changes guest execution or enters a portable save state.
+Rewind lets a player step back through recent play.
+While the game runs, the session saves a complete [`ZIGBAST1` save state](save-states.md) every second or so into an in-memory history.
+Rewinding picks one of those states and loads it with the same loader as any save state, so there is no separate restore path to keep correct.
+Rewind never changes how the guest runs, and none of its settings or history end up in a portable save state.
 
-## Capture and retention
+## How it works
 
-After a bounded `advance`, `run_slice_with_input` or `step`, `Session` checks
-the completed frame count. A due capture obtains a canonical state (including
-the exact framebuffer when selective video has skipped work) and pushes it
-with its frame and cycle. Failures do not fail emulation; recording a skipped
-attempt prevents repeated attempts at each subsequent frame. The default
-interval is 60 frames. Requested speed is a Q8 scale from 0.5× to 16×, so the
-capture interval is `ceil(interval × speed)`; changing speed does not change
-the guest or discard history.
+```text
+ Session                          RewindBuffer
+┌──────────────────────┐        ┌──────────────────────────────────┐
+│ frame done           │ state  │ encode as a delta from the       │
+│ capture due? ────────┼───────▶│ current anchor, or start a new   │
+│                      │        │ anchor                           │
+│                      │        │                                  │
+│                      │        │ over budget? drop the state with │
+│                      │        │ the lowest score                 │
+│                      │        │                                  │
+│ rewind(steps) ───────┼───────▶│ inflate anchor, apply delta      │
+│ load_state, reset    │◀───────┼──────────────────── state bytes  │
+│ host audio and video │        │ drop newer states                │
+└──────────────────────┘        └──────────────────────────────────┘
+```
 
-| Setting               | Value                      |
-| --------------------- | -------------------------- |
-| Default budget        | 15 MiB                     |
-| Maximum budget        | 64 MiB; 0 disables capture |
-| Entry cap             | 4,096                      |
-| Largest decoded state | 2 MiB                      |
+The work is split between two types.
+`Session` ([`systems/gba/src/session.rs`](../../systems/gba/src/session.rs)) decides when to capture and, after a restore, puts the host side back in order.
+[`RewindBuffer`](../../crates/state/src/rewind.rs) owns the history.
+It compresses states, decides which ones to keep, decodes them, and reads and writes rewind bundles.
+The buffer is shared code in `crates/state` and doesn't depend on the GBA core.
+It sees state bytes with a frame and cycle attached.
 
-The budget charges stored payloads, anchors and 64 bytes per entry, not the
-current decoded anchor, metadata or allocator overhead. When over budget or
-entry cap, the buffer keeps the newest and normally the oldest and removes
-the interior entry with the smallest age- and byte-weighted gap score. Two
-entries retain the newest; a sole newest entry remains even if it exceeds a
-very small budget. Ties prefer removing the older candidate. The default age
-exponent is 0.5; zero removes age bias and one weighs age linearly. A capture
-sequence, not host wall time, determines spacing.
+## Capturing
 
-## Anchored copy-delta storage
+After each `advance`, `run_slice_with_input` or `step`, `Session` checks how many frames have completed.
+When a capture is due, it writes a state and pushes it with its frame and cycle.
+If selective video skipped drawing the current frame, the session rebuilds the exact framebuffer first, because a state can only be written with the real framebuffer in it.
 
-| Mode              | Entry encoding                                          |
-| ----------------- | ------------------------------------------------------- |
-| `delta` (default) | copy/literal difference from an anchor, deflate level 3 |
-| `fast`            | independently deflated state, level 1                   |
-| `off`             | raw portable state                                      |
+By default a capture happens every 60 frames, which is about once a second at normal speed.
+When the player fast-forwards, the interval grows with the speed, so captures stay about one per second of wall time and the history doesn't fill up faster.
+The speed is a Q8 factor between 0.5x and 16x, and the interval becomes `ceil(interval * speed)` frames.
+Changing speed keeps the history.
 
-An anchor is a complete state compressed at level 6 and shared by its delta
-entries. The current anchor is also kept decoded, with an `AnchorIndex`: a
-128 Ki-slot table (512 KiB) of anchor positions keyed by the 8 bytes at every
-fourth offset. A copy delta (entry encoding 3) describes the target as
-literal runs and copies of at least 12 bytes from anywhere in the anchor. Its
-varint ops (literal length, copy length, zigzag change of the copy's
-displacement from the previous copy) precede the literals, and bytes after
-the last copy are trailing literals. At each position the encoder tries the
-previous displacement, the one before it, that of the last copy of 64 bytes
-or more, the same offset and one index candidate, keeping the longest. A
-field whose encoded length changes (an `Option` becoming `Some`) therefore
-costs one displacement change instead of rewriting everything after it, and
-data that moved within the state is still copied.
+A failed capture never stops emulation.
+The session treats it as a capture that happened and tries again one interval later, instead of retrying on every frame.
 
-ZiGBA's word-run delta (entry encoding 2) compares same-offset 32-bit words
-against an anchor zero-extended or truncated to the target size. It stores
-varint skip/copy run headers together, then changed words, then trailing
-partial-word bytes. Evenfall decodes it from imported bundles but no longer
-writes it. Both deltas follow `u32` target length and `u32` raw delta length
-with raw DEFLATE; complete compressed states use `u64` raw length followed by
-raw DEFLATE.
+## Choosing what to keep
 
-When a delta would exceed half the compressed anchor's size, the capture
-starts a new anchor. Eviction or branching can fold a lone dependent of an
-old anchor into a self-contained state. Deltas never chain through entries;
-restoration requires at most one anchor inflate and one patch. Decoding bounds
-the state at 2 MiB and raw delta at 4 MiB and checks every run, copy source
-and literal range.
-[`rewind_inflate`](../../crates/state/src/rewind_inflate.rs) decodes stored,
-fixed and dynamic raw-DEFLATE blocks with exact input/output consumption.
+| Setting               | Value                          |
+| --------------------- | ------------------------------ |
+| Default budget        | 15 MiB                         |
+| Maximum budget        | 64 MiB, and 0 disables capture |
+| Entry cap             | 4,096                          |
+| Largest decoded state | 2 MiB                          |
 
-Evenfall uses **miniz_oxide** to write raw DEFLATE. Evenfall reads ZiGBA's
-bundles and re-exports imported entries without recompression; ZiGBA reads
-Evenfall's bundles only when they hold no copy delta. A general-purpose
-compressor with an anchor dictionary (zstd) is not used: its C library would
-enlarge the WebAssembly module and require a C toolchain in its build
-([measurements](../research/rewind-compression.md#codec-choice)).
+The budget counts the stored payloads, the anchors and 64 bytes per entry.
+Real memory use is higher.
+The decoded current anchor (up to 2 MiB), its 512 KiB index, metadata and allocator overhead all come on top.
+
+When the history goes over its budget or its entry cap, the buffer removes states one at a time until it fits.
+It always keeps the newest state and normally the oldest, and among the states in between it removes the one with the lowest score:
+
+```text
+score = gap / (bytes freed * age^p)
+```
+
+Here `gap` is the distance between the state's two neighbours, `age` is how long ago the state was taken (both counted in captures), and `p` is the age exponent.
+In practice the buffer first drops states that are old, expensive to keep, or close to their neighbours.
+On a tie the older state goes.
+When only two states are left, the older one goes, and a lone newest state stays even if it alone exceeds a very small budget.
+
+The age exponent is the setting that most changes how rewind feels.
+At 1, age counts linearly.
+The last few minutes stay densely covered and gaps grow fast further back.
+Below 0.5, age quickly stops mattering, and at 0 the states end up evenly spaced over the whole session.
+The default of 0.5 keeps plenty of recent states for the first minutes, then spreads them out so that long sessions still have reasonable gaps.
+On small games, a 24-hour session in the default 15 MiB keeps gaps of about a minute.
+
+## Storing states
+
+Two states captured a second apart are almost identical, so storing each one in full would waste most of the budget.
+Rewind instead stores most states as a difference from a recent complete state, called an anchor.
+
+| Mode              | How each entry is stored                         |
+| ----------------- | ------------------------------------------------ |
+| `delta` (default) | a copy delta from an anchor, deflated at level 3 |
+| `fast`            | the complete state, deflated at level 1          |
+| `off`             | the raw state                                    |
+
+An anchor is a complete state deflated at level 6 and shared by the deltas that follow it.
+As the game moves on, the deltas grow.
+Once a new delta would be larger than half the compressed anchor, the capture starts a new anchor instead.
+
+Deltas are always taken against an anchor and never against the previous delta.
+That keeps restores cheap: any entry needs at most one anchor inflate and one patch.
+When removing entries leaves an old anchor with a single dependent, the buffer recompresses that entry on its own and frees the anchor.
+
+### Copy deltas
+
+A copy delta (entry encoding 3) describes the new state as a sequence of literal bytes and copies of at least 12 bytes from anywhere in the anchor.
+
+Copying from anywhere, and not only from the same offset, matters because a state's layout shifts.
+When a field's encoded length changes, for example an `Option` becoming `Some`, everything after it moves.
+A same-offset comparison would see every following byte as changed and store it again.
+A copy delta pays for one change of displacement and carries on copying.
+Data that moved elsewhere in the state is still found.
+
+To find copies, the buffer keeps the current anchor decoded, along with an `AnchorIndex`.
+The index is a 128 Ki-slot table (512 KiB) that maps the 8 bytes at every fourth offset of the anchor to their position.
+At each position of the new state, the encoder tries a handful of candidates and keeps the longest match.
+The candidates are the displacement of the previous copy, the one before it, the displacement of the last copy of 64 bytes or more, the same offset, and one hit from the index.
+
+The encoded delta starts with a list of varint ops (literal length, copy length, and the zigzag-encoded change of displacement since the previous copy).
+The literal bytes follow the ops.
+Bytes after the last copy are stored as trailing literals.
+
+### Word-run deltas
+
+Older bundles use a simpler delta (entry encoding 2).
+It compares the new state with the anchor 32-bit word by 32-bit word at the same offsets, after zero-extending or truncating the anchor to the new state's size.
+It stores varint skip and copy run headers, then the changed words, then any trailing partial word.
+Evenfall still reads this format but no longer writes it.
+
+### Framing and decoding
+
+Both kinds of delta start with the target length and the raw delta length as two `u32`, followed by raw DEFLATE.
+Complete compressed states start with the raw length as a `u64`, followed by raw DEFLATE.
+
+Stored bytes can come from an imported file, so decoding treats them as untrusted.
+It limits a state to 2 MiB and a raw delta to 4 MiB, and checks every run, copy source and literal range.
+[`rewind_inflate`](../../crates/state/src/rewind_inflate.rs) decodes stored, fixed and dynamic raw-DEFLATE blocks and checks that input and output are consumed exactly.
+
+### Compressor
+
+Evenfall writes raw DEFLATE with **miniz_oxide**.
+Imported entries are never recompressed, so an imported bundle exports with its entries unchanged.
+
+zstd with the anchor as a dictionary stores about 10% less during play.
+Its C library would add about 520 KB to the WebAssembly module (120 KB gzipped), against 14 KB for the copy delta, and would need a C toolchain in the build, which is why rewind doesn't use it.
 
 ## Restoring
 
-`Session::rewind(steps)` chooses a retained checkpoint strictly older than
-the current live frame, so it always moves back even immediately after a
-capture. It decodes the checkpoint, loads it with `Machine::load_state`,
-restores host audio/video preferences, rebases selective-video recovery,
-resets the resampler and discards newer checkpoints. A valid checkpoint can
-also recover from a terminal guest fault. Audio queued by the host from the
-discarded timeline must be dropped.
+`Session::rewind(steps)` goes back `steps` checkpoints.
+It only counts checkpoints strictly older than the current frame, so a rewind right after a capture still moves back.
+It then:
 
-`rewind_info` reads metadata and `rewind_framebuffer` previews a checkpoint in
-a scratch machine without consuming history. An explicit `load_state`, reset
-with battery save or successful rewind-configuration replacement starts a new
-timeline and clears history. An invalid configuration leaves history intact;
-a speed change does not clear it.
+1. decodes the checkpoint and loads it with `Machine::load_state`,
+2. restores the host's audio and video settings,
+3. rebases selective-video recovery and resets the resampler,
+4. drops every checkpoint newer than the one it loaded.
+
+Because it goes through the ordinary state loader, rewinding also works on a machine that stopped on a terminal guest fault.
+The host should drop any audio it queued from the abandoned timeline.
+
+To look at a checkpoint without going back, `rewind_info` returns its frame and cycle, and `rewind_framebuffer` renders its picture in a scratch machine.
+A host can use these to draw a timeline of previews.
+
+History is cleared when a new timeline starts, which happens on an explicit `load_state`, a reset with battery save, or a new rewind configuration.
+A configuration that fails validation leaves the history alone, and so does a speed change.
 
 ## Rewind bundles
 
-A bundle carries the exact live state, retention policy and retained history.
-`Session::write_rewind_bundle` does not advance time or take a checkpoint;
-`Session::load_rewind_bundle` validates the upload before replacing both live
-state and history. The owned-buffer variant adopts a successful upload and
-keeps stored payloads as views into it; later captures recycle freed bundle
-space. Unlike explicit state load, bundle load keeps its history.
+A bundle saves a whole rewind session to one file.
+It holds the exact live state, the retention settings and every retained checkpoint, so loading it brings back the history along with the game.
+Loading a plain save state clears the history instead.
 
-Bundles are little-endian and versioned independently of the save state.
-Version 2 adds entry encoding 3 (copy delta) to ZiGBA's version 1; the writer
-emits version 1 when no entry is a copy delta, and version 1 input with a copy
-delta is rejected.
+`Session::write_rewind_bundle` doesn't advance time or take a checkpoint.
+`Session::load_rewind_bundle` validates the whole upload before replacing anything, and a failed load keeps the previous live state and history.
+The owned-buffer variant keeps the uploaded bytes and uses them as storage.
+Stored payloads stay views into the upload, and later captures reuse the space freed in it.
 
-| Section               | Contents                                                                                                                                                                                                                                                                          |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Header                | magic `ZGBRWD\0\0` (8 bytes), version `u32` = 1 or 2                                                                                                                                                                                                                              |
-| Live state            | `u32` length, then a complete portable state of at most 2 MiB                                                                                                                                                                                                                     |
-| Policy                | budget `u32`, interval `u16`, compression `u8` (0 off, 1 fast, 2 delta), age exponent `f64` bits, Q8 speed `u16`, next sequence `u64`, last-capture flag `u8` and frame `u64`, current-anchor flag `u8` and id `u32`, next anchor id `u32`, anchor count `u32`, entry count `u32` |
-| Anchors               | each anchor: id `u32`, stored length `u32`, stored bytes                                                                                                                                                                                                                          |
-| Entries, oldest first | each entry: frame, cycle and sequence (`u64` each), encoding `u8` (0 raw, 1 deflate, 2 word-run delta, 3 copy delta), anchor id `u32`, stored length `u32`, stored bytes                                                                                                          |
-| Digest                | BLAKE3 of all preceding bytes (32 bytes)                                                                                                                                                                                                                                          |
+Bundles don't contain the ROM, the BIOS or host preferences.
+The states inside are bound to the ROM, BIOS and boot mode they were made with, and loading checks every one of them against the loaded media.
+Compressed bytes are copied verbatim, and the decoded anchors and reference counts are rebuilt on load.
 
-Stored compressed bytes are copied verbatim; decoded anchor caches and
-reference counts are rebuilt. Neither media bytes nor host preferences are in
-the bundle: the states inside bind the loaded ROM, BIOS and boot mode.
+Loading also rejects a bundle over 68 MiB, a bad magic, version or digest, malformed settings or counts, duplicate or unreferenced anchors, out-of-order entries, bad lengths, corrupt compressed data and trailing bytes.
+The digest only detects damage.
+It says nothing about who made the bundle.
 
-Import rejects bundles over 68 MiB, wrong magic or version, bad digest,
-malformed policy or counts, duplicate or unreferenced anchors, out-of-order
-entries, invalid lengths, corrupt compressed data, trailing bytes and any
-checkpoint whose decoded state or frame/cycle labels do not validate. The
-loader validates all states with the resident media before publishing the
-live machine and history together. A matching outer digest is not proof of
-authenticity or hardware validity; a failed import preserves the old live
-state and history.
+### Format
 
-## Verification
+Bundles are little-endian and versioned separately from save states.
+Version 2 adds copy deltas to the original version 1.
+The writer emits version 1 whenever no entry is a copy delta, so older readers can still load it.
+A version 1 bundle that contains a copy delta is rejected.
 
-ZiGBA's rewind verification areas map to the following Rust tests. Buffer
-checks are in [`crates/state/tests/rewind.rs`](../../crates/state/tests/rewind.rs)
-and private storage checks in [`crates/state/src/rewind.rs`](../../crates/state/src/rewind.rs).
-Session checks live in [`systems/gba/src/session.rs`](../../systems/gba/src/session.rs).
-The browser tests in `web/gba` exercise the SDK.
+| Section               | Contents                                                      |
+| --------------------- | ------------------------------------------------------------- |
+| Header                | magic `ZGBRWD\0\0` (8 bytes), version `u32` = 1 or 2          |
+| Live state            | `u32` length, then a complete portable state of at most 2 MiB |
+| Policy                | the retention settings and buffer counters, listed below      |
+| Anchors               | per anchor, its id `u32`, stored length `u32` and bytes       |
+| Entries, oldest first | per entry, the fields listed below                            |
+| Digest                | BLAKE3 of all preceding bytes (32 bytes)                      |
 
-| ZiGBA verification area                        | Rust coverage                                                                                                                                                                                                                                                                                                                                                |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Word runs, malformed deltas, length changes    | `word_run_diff_round_trips_length_changes_and_rejects_malformed_deltas`                                                                                                                                                                                                                                                                                      |
-| Copy deltas (Evenfall only)                    | `copy_diff_round_trips_shifted_moved_and_resized_targets_and_rejects_malformed_deltas`; bundle versions in `bundle_round_trip_and_corrupt_history_rejection`                                                                                                                                                                                                 |
-| Age selection, ties and byte-weighted eviction | `age_exponent_selects_exact_historical_states_with_oldest_first_ties`, `square_root_age_weighting_prefers_freeing_expensive_entries`, `budget_eviction_keeps_newest_and_oldest_and_coarsens_with_age`                                                                                                                                                        |
-| Entry cap, anchor release and adopted storage  | `entry_cap_bounds_history_that_never_reaches_the_byte_budget`, `truncate_newer_keeps_the_target_as_newest_and_releases_anchors`, `adopted_histories_survive_compaction_eviction_anchor_folding_and_branching`, `invalid_owned_bundle_returns_the_original_upload`, `delta_entries_are_small_share_one_anchor_and_decode_exactly` (buffer)                    |
-| Capture cadence and reconfiguration            | `capture_cadence_scales_with_speed_and_resets`; `invalid_rewind_reconfiguration_preserves_history` (session)                                                                                                                                                                                                                                                 |
-| Framing and bounded DEFLATE inflation          | `persisted_inflater_accepts_independent_stored_fixed_and_dynamic_vectors`, `deflate_framing_rejects_overlong_and_truncated_payloads`, `zig_frame_inflates_and_rust_frames_preserve_length_and_content`                                                                                                                                                       |
-| Bundle round trip and corrupt input            | `bundle_round_trip_and_corrupt_history_rejection`, `zigba_bundle_imports_and_reexports_original_compressed_entries`; `rewind_bundles_reject_corrupt_envelopes_metadata_codecs_and_foreign_media_atomically` (session)                                                                                                                                        |
-| Checkpoint restore, branching and previews     | `rewind_captures_per_frame_history_and_restores_earlier_frames`, `rewind_escapes_a_faulted_machine_with_the_last_good_state`, `explicit_loads_and_resets_start_a_new_rewind_timeline`, `rewind_framebuffer_observation_is_exact_and_does_not_consume_history` (session); `bundle_restores_empty_tiny_budget_and_evicted_histories_after_branching` (session) |
-| Allocation failures and WebAssembly bundles    | ZiGBA's injected allocation-failure and browser end-to-end checks are not yet ported to the Rust session and WebAssembly core.                                                                                                                                                                                                                               |
+The policy section holds, in order, the budget `u32`, interval `u16`, compression `u8` (0 off, 1 fast, 2 delta), age exponent as `f64` bits, Q8 speed `u16`, next sequence `u64`, last-capture flag `u8` and frame `u64`, current-anchor flag `u8` and id `u32`, next anchor id `u32`, anchor count `u32` and entry count `u32`.
 
-The committed [ZiGBA-produced bundle fixture](../../crates/state/tests/fixtures/zigba-rewind-bundle.bin)
-validates media-bound state envelopes and decoded checkpoint hashes before
-checking that Rust re-exports the imported entries unchanged. ZiGBA's raw
-DEFLATE decoder also accepts Rust's miniz_oxide frames. Byte-identical
-compressed output is deliberately not a compatibility requirement.
+Each entry holds its frame, cycle and sequence (`u64` each), its encoding `u8` (0 raw, 1 deflate, 2 word-run delta, 3 copy delta), its anchor id `u32`, its stored length `u32` and the stored bytes.
 
-## Limits and open questions
+## How it is checked
 
-- If the host cannot attain the requested playback speed, wall-clock capture
-  spacing increases. Capture and anchor folding run in the emulation thread.
-- Already-queued host audio is not continuous across a restore.
-- Decoded anchor storage, the anchor index, metadata and allocator overhead
-  exceed the configured history budget; imported bundles validate every
-  checkpoint.
-- Longer-session retention and copy-delta sizes
-  remain to be measured on representative states.
+The buffer's tests live in [`crates/state/tests/rewind.rs`](../../crates/state/tests/rewind.rs), with checks of private storage in [`crates/state/src/rewind.rs`](../../crates/state/src/rewind.rs).
+The session's tests live in [`systems/gba/src/session.rs`](../../systems/gba/src/session.rs), and the browser tests in `web/gba` exercise the SDK.
+No test yet covers rewind under allocation failure, or a full rewind session in a browser.
+
+A [bundle written by Evenfall's predecessor](../../crates/state/tests/fixtures/zigba-rewind-bundle.bin) checks that Evenfall imports it, decodes every checkpoint to the expected state, and exports the imported entries unchanged.
+
+## Known limits
+
+- If the host can't keep up with the requested speed, captures drift further apart in wall time.
+  Capture and anchor folding run on the emulation thread.
+- Audio the host has already queued doesn't carry across a restore.

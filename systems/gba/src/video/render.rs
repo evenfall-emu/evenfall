@@ -1,5 +1,5 @@
 //! Scanline dispatch: lines without raster history use the layer-major
-//! compositor in `compose.rs`; lines with history use ZiGBA's front-to-back
+//! compositor in `compose.rs`; lines with history use the front-to-back
 //! passes, which are also the reference for the layer-major compositor.
 
 use super::history::{BlendState, VideoHistoryView};
@@ -97,7 +97,7 @@ impl Bus {
         }
     }
 
-    /// ZiGBA's front-to-back compositor, which also fills the auxiliary
+    /// The front-to-back compositor, which also fills the auxiliary
     /// surfaces (priorities, layers, second surface, semi-transparency).
     pub(super) fn compose_scanline_reference(&mut self, line: usize) {
         let first = line * SCREEN_WIDTH;
@@ -293,8 +293,8 @@ impl Bus {
         }
     }
 
-    /// Fixed 16-lane chunks instead of Zig's `@Vector(16, u16)`; per-lane
-    /// window and target decisions keep this loop scalar on current LLVM.
+    /// Fixed 16-lane chunks. Per-lane window and target decisions keep this
+    /// loop scalar on current LLVM.
     pub(super) fn apply_color_effects_vector(&mut self, line: usize) {
         let effect = (self.bldcnt >> 6) & 3;
         let first_targets = self.bldcnt & 0x3F;

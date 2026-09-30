@@ -5,7 +5,7 @@
  * special-timing word transfers into FIFO A, and runs timer0 at one overflow
  * per 512 cycles so each pattern byte surfaces as exactly one DAC sample.
  * Then it spins and idles. The validator drains the stream and checks the
- * analytic result (see test/probe_cases.zig): 32768 Hz stereo
+ * analytic result (see validator/probe_cases.rs): 32768 Hz stereo
  * samples of exactly +256/-256 in runs of 16, i.e. FIFO bytes x 4 through
  * the unbiased part of the mixer. Pattern exhaustion would read zeroed
  * EWRAM, but the spin window ends first; any startup underrun zeros form a

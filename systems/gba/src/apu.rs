@@ -1,4 +1,4 @@
-//! Deterministic GBA sound hardware state, translated from ZiGBA `apu.zig`.
+//! Deterministic GBA sound hardware state.
 
 pub use evenfall_audio::StereoSample;
 use evenfall_state::{Codec, Error, Result, Sink, Source};
@@ -33,29 +33,34 @@ fn replace_byte(value: u16, address: u32, byte: u8) -> u16 {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
 pub struct SquareChannel {
     #[codec(bits = 2)]
-    duty: u8, // u2
+    duty: u8,
     #[codec(bits = 4)]
-    initial_volume: u8, // u4
+    initial_volume: u8,
     #[codec(bits = 4)]
-    current_volume: u8, // u4
+    current_volume: u8,
     #[codec(bits = 3)]
-    envelope_period: u8, // u3
+    envelope_period: u8,
     #[codec(bits = 3)]
-    envelope_counter: u8, // u3
+    envelope_counter: u8,
     envelope_increase: bool,
     dac_enabled: bool,
     #[codec(bits = 11)]
-    pub frequency: u16, // u11
+    pub frequency: u16,
     #[codec(bits = 7)]
-    length: u8, // u7
+    length: u8,
     length_enabled: bool,
     #[codec(bits = 3)]
-    phase_index: u8, // u3
+    phase_index: u8,
     pub phase_cycles: u64,
     pub enabled: bool,
 }
 
 impl SquareChannel {
+    /// The longest period, at frequency 0. An oscillator's phase stays below
+    /// the period it accumulated in, and a frequency change keeps it, so no
+    /// reachable phase reaches this.
+    const MAX_PERIOD: u64 = 16 * 2048;
+
     fn write_duty_envelope(&mut self, value: u16) {
         self.write_duty_length(value as u8);
         self.write_envelope((value >> 8) as u8);
@@ -160,14 +165,14 @@ impl SquareChannel {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
 struct FrequencySweep {
     #[codec(bits = 3)]
-    period: u8, // u3
+    period: u8,
     decrease: bool,
     #[codec(bits = 3)]
-    shift: u8, // u3
+    shift: u8,
     #[codec(bits = 4)]
-    counter: u8, // u4
+    counter: u8,
     #[codec(bits = 11)]
-    shadow_frequency: u16, // u11
+    shadow_frequency: u16,
     enabled: bool,
 }
 
@@ -242,21 +247,24 @@ pub struct WaveChannel {
     pub ram: [u8; 32],
     two_bank: bool,
     #[codec(bits = 1)]
-    selected_bank: u8, // u1
+    selected_bank: u8,
     dac_enabled: bool,
     enabled: bool,
     #[codec(bits = 2)]
-    volume: u8, // u2
+    volume: u8,
     force_75_percent: bool,
     #[codec(bits = 11)]
-    frequency: u16, // u11
+    frequency: u16,
     phase_cycles: u64,
     #[codec(bits = 9)]
-    length: u16, // u9
+    length: u16,
     length_enabled: bool,
 }
 
 impl WaveChannel {
+    /// The longest period, at frequency 0; see `SquareChannel::MAX_PERIOD`.
+    const MAX_PERIOD: u64 = 8 * 2048;
+
     fn write_bank_control(&mut self, value: u16) {
         self.two_bank = value & 0x20 != 0;
         self.selected_bank = u8::from(value & 0x40 != 0);
@@ -403,31 +411,35 @@ fn lfsr_jump(state: u16, tables: &[[u16; 256]; 8], steps: u64) -> u16 {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
 pub struct NoiseChannel {
     #[codec(bits = 4)]
-    initial_volume: u8, // u4
+    initial_volume: u8,
     #[codec(bits = 4)]
-    current_volume: u8, // u4
+    current_volume: u8,
     #[codec(bits = 3)]
-    envelope_period: u8, // u3
+    envelope_period: u8,
     #[codec(bits = 3)]
-    envelope_counter: u8, // u3
+    envelope_counter: u8,
     envelope_increase: bool,
     dac_enabled: bool,
     #[codec(bits = 7)]
-    length: u8, // u7
+    length: u8,
     length_enabled: bool,
     #[codec(bits = 3)]
-    divisor: u8, // u3
+    divisor: u8,
     #[codec(bits = 4)]
-    clock_shift: u8, // u4
+    clock_shift: u8,
     narrow: bool,
     #[codec(bits = 15)]
-    lfsr: u16, // u15
+    lfsr: u16,
     phase_cycles: u64,
     output_high: bool,
     enabled: bool,
 }
 
 impl NoiseChannel {
+    /// The longest period, divisor 7 and shift 15; see
+    /// `SquareChannel::MAX_PERIOD`.
+    const MAX_PERIOD: u64 = (14 << 15) * 32;
+
     fn write_length_envelope(&mut self, value: u16) {
         self.write_length(value as u8);
         self.write_envelope((value >> 8) as u8);
@@ -538,12 +550,12 @@ pub enum FifoId {
 pub struct DirectSoundFifo {
     words: [u32; 8],
     #[codec(bits = 3)]
-    pub read_index: u8, // u3
+    pub read_index: u8,
     #[codec(bits = 3)]
-    pub write_index: u8, // u3
+    pub write_index: u8,
     playback_word: u32,
     #[codec(bits = 3)]
-    playback_bytes_remaining: u8, // u3
+    playback_bytes_remaining: u8,
 }
 
 impl DirectSoundFifo {
@@ -615,7 +627,7 @@ impl Default for FifoClock {
     }
 }
 impl FifoClock {
-    #[allow(non_upper_case_globals)] // ZiGBA's public FifoClock.inactive name.
+    #[allow(non_upper_case_globals)] // Keeps the public `FifoClock::inactive` name.
     pub const inactive: u64 = u64::MAX;
     pub fn delegated(&self) -> bool {
         self.next[0].min(self.next[1]) != Self::inactive
@@ -624,7 +636,7 @@ impl FifoClock {
 
 /// Master-clock sound hardware and the downstream host sample queue.
 #[derive(Clone, Debug, PartialEq, Eq, Codec)]
-#[codec(module = "zigba.apu.state.v5")]
+#[codec(module = "evenfall.gba.apu")]
 pub struct Apu {
     pub sound1_control_l: u16,
     pub sound1_control_h: u16,
@@ -657,7 +669,7 @@ pub struct Apu {
     sample_phase: u64,
     frame_phase: u64,
     #[codec(bits = 3)]
-    frame_step: u8, // u3
+    frame_step: u8,
     #[codec(skip)]
     samples: [StereoSample; SAMPLE_QUEUE_CAPACITY],
     #[codec(skip)]
@@ -748,6 +760,12 @@ impl Apu {
             || (self.sweep1.enabled && !(1..=8).contains(&self.sweep1.counter))
             || self.fifo_a.playback_bytes_remaining > 4
             || self.fifo_b.playback_bytes_remaining > 4
+            // An unreachable oscillator phase would make the next advance
+            // run for years of host time.
+            || self.square1.phase_cycles >= SquareChannel::MAX_PERIOD
+            || self.square2.phase_cycles >= SquareChannel::MAX_PERIOD
+            || self.wave.phase_cycles >= WaveChannel::MAX_PERIOD
+            || self.noise.phase_cycles >= NoiseChannel::MAX_PERIOD
         {
             return Err(Error::InvalidSaveState);
         }

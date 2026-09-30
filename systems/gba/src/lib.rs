@@ -1,4 +1,4 @@
-//! A deterministic, cycle-aware Game Boy Advance core, ported from ZiGBA.
+//! A deterministic, cycle-aware Game Boy Advance core.
 //!
 //! `Machine` is the host-facing hardware seam and `Bus` owns time.
 
@@ -30,7 +30,7 @@ macro_rules! impl_clone_fields {
     };
 }
 
-// Module declarations, grouped by the part of the port that owns them. Add a
+// Module declarations, grouped by the part of the core that owns them. Add a
 // module directly under its group's marker so parallel work merges cleanly.
 
 // [devices]

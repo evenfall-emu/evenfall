@@ -5,7 +5,7 @@
  * master volume with the 100% PSG mix ratio; enables master sound. Then
  * spins ~100k loop iterations and idles. The validator drains the
  * deterministic DAC-rate stream and checks it against the analytic waveform
- * (see test/probe_cases.zig): samples quantize to exactly {0, 240}
+ * (see validator/probe_cases.rs): samples quantize to exactly {0, 240}
  * with 8/32/24-sample high/low/high runs repeating every 64 samples.
  */
 

@@ -1,9 +1,9 @@
-//! Byte-exact headless CLI fixtures from ZiGBA's `build.zig` test-host step.
+//! Byte-exact headless CLI fixtures.
 
 use std::process::Command;
 
 #[test]
-fn zigba_build_cli_fixtures() {
+fn headless_cli_output_matches_fixtures() {
     let directory = std::env::temp_dir().join(format!(
         "evenfall-cli-fixtures-{}-{}",
         std::process::id(),
@@ -68,7 +68,7 @@ fn zigba_build_cli_fixtures() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
-/// Evenfall's cheat flags, beyond ZiGBA's CLI: a loop loads the EWRAM word
+/// The cheat flags reach the guest: a loop loads the EWRAM word
 /// at 02000000 into r0, and the `--cheat` or `--cheats` value must reach it
 /// once the first VBlank has passed.
 #[test]

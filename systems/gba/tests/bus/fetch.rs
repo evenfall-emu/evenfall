@@ -89,7 +89,6 @@ fn assert_view_fetch_parity(
     assert_same_bus(reference, active);
 }
 
-/// ZiGBA: "scalar instruction fetches preserve RTC overlaps short ROM tails and exceptional regions"
 #[test]
 fn scalar_instruction_fetches_preserve_rtc_overlaps_short_rom_tails_and_exceptional_regions() {
     let mut rom = [0xa5; 0xcd];
@@ -144,7 +143,6 @@ fn scalar_instruction_fetches_preserve_rtc_overlaps_short_rom_tails_and_exceptio
     }
 }
 
-/// ZiGBA: "scalar instruction fetches retain full size RTC ROM and EEPROM address discrimination"
 #[test]
 fn scalar_instruction_fetches_retain_full_size_rtc_rom_and_eeprom_address_discrimination() {
     let rom = vec![0xa5; 32 * 1024 * 1024];
@@ -165,7 +163,6 @@ fn scalar_instruction_fetches_retain_full_size_rtc_rom_and_eeprom_address_discri
     }
 }
 
-/// ZiGBA: "active fetch views preserve GPIO tails EEPROM and mutable RAM"
 #[test]
 fn active_fetch_views_preserve_gpio_tails_eeprom_and_mutable_ram() {
     let rom = vec![0xa5; 32 * 1024 * 1024];
@@ -239,7 +236,6 @@ fn active_fetch_views_preserve_gpio_tails_eeprom_and_mutable_ram() {
     }
 }
 
-/// ZiGBA: "scalar CPU reads preserve values and complete bus effects across regions"
 #[test]
 fn scalar_cpu_reads_preserve_values_and_complete_bus_effects_across_regions() {
     for batched in [false, true] {
@@ -290,7 +286,6 @@ fn scalar_cpu_reads_preserve_values_and_complete_bus_effects_across_regions() {
     }
 }
 
-/// ZiGBA: "scalar CPU word stores preserve RAM timing and complete bus effects across regions"
 #[test]
 fn scalar_cpu_word_stores_preserve_ram_timing_and_complete_bus_effects_across_regions() {
     for batched in [false, true] {
@@ -368,7 +363,6 @@ fn scalar_cpu_word_stores_preserve_ram_timing_and_complete_bus_effects_across_re
     }
 }
 
-/// ZiGBA: "scalar ROM instruction fetches match general reads through every prefetch phase"
 #[test]
 fn scalar_rom_instruction_fetches_match_general_reads_through_every_prefetch_phase() {
     for batched in [false, true] {
@@ -474,7 +468,6 @@ fn scalar_rom_instruction_fetches_match_general_reads_through_every_prefetch_pha
     }
 }
 
-/// ZiGBA: "active IWRAM fetches preserve mirrors wrapping widths and complete bus effects"
 #[test]
 fn active_iwram_fetches_preserve_mirrors_wrapping_widths_and_complete_bus_effects() {
     for batched in [false, true] {
@@ -536,7 +529,6 @@ fn active_iwram_fetches_preserve_mirrors_wrapping_widths_and_complete_bus_effect
     }
 }
 
-/// ZiGBA: "scalar ROM fetches preserve DMA at buffered and in flight completion boundaries"
 #[test]
 fn scalar_rom_fetches_preserve_dma_at_buffered_and_in_flight_completion_boundaries() {
     for batched in [false, true] {
@@ -606,7 +598,6 @@ fn scalar_rom_fetches_preserve_dma_at_buffered_and_in_flight_completion_boundari
     }
 }
 
-/// ZiGBA: "active ROM fetches preserve DMA at buffered and in flight completion boundaries"
 #[test]
 fn active_rom_fetches_preserve_dma_at_buffered_and_in_flight_completion_boundaries() {
     for batched in [false, true] {
@@ -674,7 +665,6 @@ fn active_rom_fetches_preserve_dma_at_buffered_and_in_flight_completion_boundari
     }
 }
 
-/// ZiGBA: "active ROM views preserve live WAITCNT and every prefetch completion phase"
 #[test]
 fn active_rom_views_preserve_live_waitcnt_and_every_prefetch_completion_phase() {
     let rom: Vec<u8> = (0..0x20020).map(|index| (index * 17) as u8).collect();
@@ -788,7 +778,6 @@ fn active_rom_views_preserve_live_waitcnt_and_every_prefetch_completion_phase() 
     }
 }
 
-/// ZiGBA: "active IWRAM fetches latch before DMA and observe later writes"
 #[test]
 fn active_iwram_fetches_latch_before_dma_and_observe_later_writes() {
     for batched in [false, true] {
@@ -867,7 +856,6 @@ fn active_iwram_fetches_latch_before_dma_and_observe_later_writes() {
     }
 }
 
-/// ZiGBA: "write classification keeps RAM batched and MMIO flush ordering exact"
 #[test]
 fn write_classification_keeps_ram_batched_and_mmio_flush_ordering_exact() {
     let mut eager = Bus::init(&[]);
@@ -983,7 +971,6 @@ fn assert_thumb_refill_parity(
     assert_fetch_state(reference, active);
 }
 
-/// ZiGBA: "Thumb refills match two ordinary fetches in every queue phase and at deadlines"
 #[test]
 fn thumb_refills_match_two_ordinary_fetches_in_every_queue_phase_and_at_deadlines() {
     let rom: Vec<u8> = (0..0x20040).map(|index| (index * 29 + 3) as u8).collect();

@@ -1,4 +1,4 @@
-//! Native harness for the same contract as ZiGBA's emu-bench adapter.
+//! Native Evenfall harness for the benchmark runner's contract (see README.md).
 use evenfall_gba::cartridge::save::Type as SaveType;
 use evenfall_gba::machine::{BootMode, Config, Machine, StopReason};
 use std::fs;

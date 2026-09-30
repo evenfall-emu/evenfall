@@ -4,7 +4,7 @@
 //! A [`Cheat`] is parsed once into operations. The machine runs every active
 //! cheat at the first instruction boundary at or after each VBlank start, so
 //! applications depend only on emulated time. The active set is carried by
-//! portable states in an envelope around the unchanged `ZIGBAST1` state; see
+//! portable states in an envelope around the unchanged `EVENFALL` v7 state; see
 //! `docs/design/cheats.md`.
 
 mod crypt;
@@ -453,7 +453,7 @@ impl program::Memory for Bus {
     }
 }
 
-/// Magic of the envelope that carries a cheat set in front of a `ZIGBAST1`
+/// Magic of the envelope that carries a cheat set in front of an `EVENFALL`
 /// state.
 pub const STATE_MAGIC: &[u8; 8] = b"EVGBCHT1";
 const STATE_BLOCK_LIMIT: usize = 64 * 1024;
@@ -482,7 +482,7 @@ pub(crate) fn state_prefix(cheats: &[Cheat]) -> Vec<u8> {
 }
 
 /// Splits a state into its cheat set, if it has an envelope, and the inner
-/// `ZIGBAST1` bytes. `Err` means a malformed envelope or cheat.
+/// `EVENFALL` state bytes. `Err` means a malformed envelope or cheat.
 pub(crate) fn split_state(bytes: &[u8]) -> Result<(Option<Vec<Cheat>>, &[u8]), ()> {
     let Some(rest) = bytes.strip_prefix(STATE_MAGIC) else {
         return Ok((None, bytes));

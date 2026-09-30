@@ -1,4 +1,5 @@
-//! ZiGBA's padding-free, versioned state encoding.
+//! Evenfall's versioned state encoding: little-endian, minimal-width values in
+//! declaration order, with a fixed-size slot for every option and union.
 #![no_std]
 extern crate alloc;
 extern crate self as evenfall_state;
@@ -54,6 +55,17 @@ impl<'a> Sink<'a> {
         self.count = count;
         Ok(())
     }
+    /// Zero-fills a slot of `len` bytes that started at count `start`.
+    pub fn pad_slot(&mut self, start: u64, len: usize) -> Result<()> {
+        let written = self.count - start;
+        let mut rest = (len as u64).checked_sub(written).ok_or(Error::InvalidSaveState)? as usize;
+        while rest > 0 {
+            let chunk = rest.min(ZEROS.len());
+            self.write_all(&ZEROS[..chunk])?;
+            rest -= chunk;
+        }
+        Ok(())
+    }
     pub fn field(&mut self, name: &str, f: impl FnOnce(&mut Self) -> Result<()>) -> Result<()> {
         if self.trace.is_none() {
             return f(self);
@@ -97,9 +109,31 @@ impl<'a> Source<'a> {
         self.count = count;
         Ok(())
     }
+    /// Reads the rest of a slot of `len` bytes that started at count
+    /// `start`, which must be zero: an encoding has exactly one form.
+    pub fn skip_slot(&mut self, start: u64, len: usize) -> Result<()> {
+        let read = self.count - start;
+        let mut rest = (len as u64).checked_sub(read).ok_or(Error::InvalidSaveState)? as usize;
+        let mut buffer = [0; ZEROS.len()];
+        while rest > 0 {
+            let chunk = &mut buffer[..rest.min(ZEROS.len())];
+            self.read_all(chunk)?;
+            if chunk.iter().any(|&byte| byte != 0) {
+                return Err(Error::InvalidSaveState);
+            }
+            rest -= chunk.len();
+        }
+        Ok(())
+    }
 }
 
+const ZEROS: [u8; 64] = [0; 64];
+
 pub trait Codec {
+    /// The length of every value's encoding, or `None` when it depends on the
+    /// value. Options and unions pad their payloads to a fixed slot, so only
+    /// types with a fixed length may appear inside them.
+    const ENCODED_LEN: Option<usize>;
     fn encode(&self, sink: &mut Sink<'_>) -> Result<()>;
     fn decode(&mut self, source: &mut Source<'_>) -> Result<()>;
     fn schema(sink: &mut Sink<'_>) -> Result<()>;
@@ -118,7 +152,32 @@ pub fn schema_field<T: Codec>(sink: &mut Sink<'_>, name: &str) -> Result<()> {
     T::schema(sink)
 }
 
+/// Const arithmetic on encoded lengths, for derived impls.
+#[doc(hidden)]
+pub mod len {
+    pub const fn sum(a: Option<usize>, b: Option<usize>) -> Option<usize> {
+        match (a, b) {
+            (Some(a), Some(b)) => Some(a + b),
+            _ => None,
+        }
+    }
+    /// A payload's length, which must be fixed.
+    pub const fn fixed(len: Option<usize>) -> usize {
+        match len {
+            Some(len) => len,
+            None => panic!("an option or union payload needs a fixed encoded length"),
+        }
+    }
+    pub const fn max(a: usize, b: usize) -> usize {
+        if a > b { a } else { b }
+    }
+    pub const fn bytes(bits: u16) -> usize {
+        (bits as usize).div_ceil(8)
+    }
+}
+
 impl Codec for () {
+    const ENCODED_LEN: Option<usize> = Some(0);
     fn encode(&self, _: &mut Sink<'_>) -> Result<()> {
         Ok(())
     }
@@ -130,6 +189,7 @@ impl Codec for () {
     }
 }
 impl Codec for bool {
+    const ENCODED_LEN: Option<usize> = Some(1);
     fn encode(&self, s: &mut Sink<'_>) -> Result<()> {
         s.write_all(&[u8::from(*self)])
     }
@@ -148,15 +208,26 @@ impl Codec for bool {
     }
 }
 
-/// ZiGBA's narrow `uN`/`iN` representation applied recursively to a Rust field.
+/// Integers of `bits` bits in their smallest little-endian byte width,
+/// applied recursively to a Rust field.
 pub trait NarrowCodec: Codec {
+    /// Integers in a value, each encoded in `len::bytes(bits)` bytes.
+    const INTEGERS: usize;
+    /// Other bytes in a value: the presence flags of options.
+    const FLAGS: usize;
     fn encode_bits(&self, s: &mut Sink<'_>, bits: u16) -> Result<()>;
     fn decode_bits(&mut self, s: &mut Source<'_>, bits: u16) -> Result<()>;
     fn schema_bits(s: &mut Sink<'_>, bits: u16) -> Result<()>;
 }
+/// The encoded length of a `T` narrowed to `bits`.
+pub const fn narrow_len<T: NarrowCodec>(bits: u16) -> usize {
+    T::INTEGERS * len::bytes(bits) + T::FLAGS
+}
 macro_rules! integer {
     ($($ty:ty => $sign:literal),* $(,)?) => {$ (
         impl NarrowCodec for $ty {
+            const INTEGERS: usize = 1;
+            const FLAGS: usize = 0;
             fn encode_bits(&self, s: &mut Sink<'_>, bits: u16) -> Result<()> {
                 if bits > (core::mem::size_of::<Self>() * 8) as u16 { return Err(Error::InvalidSaveState); }
                 if bits < (core::mem::size_of::<Self>() * 8) as u16 {
@@ -186,6 +257,7 @@ macro_rules! integer {
             }
         }
         impl Codec for $ty {
+            const ENCODED_LEN: Option<usize> = Some(core::mem::size_of::<Self>());
             fn encode(&self, s: &mut Sink<'_>) -> Result<()> { self.encode_bits(s, (core::mem::size_of::<Self>() * 8) as u16) }
             fn decode(&mut self, s: &mut Source<'_>) -> Result<()> { self.decode_bits(s, (core::mem::size_of::<Self>() * 8) as u16) }
             fn schema(s: &mut Sink<'_>) -> Result<()> { Self::schema_bits(s, (core::mem::size_of::<Self>() * 8) as u16) }
@@ -196,6 +268,7 @@ integer!(u8 => b'u', u16 => b'u', u32 => b'u', u64 => b'u', u128 => b'u', i8 => 
 macro_rules! size_int {
     ($ty:ty, $wide:ty, $marker:literal) => {
         impl Codec for $ty {
+            const ENCODED_LEN: Option<usize> = Some(core::mem::size_of::<$wide>());
             fn encode(&self, s: &mut Sink<'_>) -> Result<()> {
                 (*self as $wide).encode(s)
             }
@@ -216,6 +289,7 @@ size_int!(isize, i64, b"Z");
 macro_rules! float {
     ($ty:ty,$bits:ty,$width:expr) => {
         impl Codec for $ty {
+            const ENCODED_LEN: Option<usize> = Some(core::mem::size_of::<$bits>());
             fn encode(&self, s: &mut Sink<'_>) -> Result<()> {
                 self.to_bits().encode(s)
             }
@@ -234,23 +308,27 @@ macro_rules! float {
 }
 float!(f32, u32, 32u16);
 float!(f64, u64, 64u16);
+/// A presence byte, then the value or zeros in a slot of the value's length.
 impl<T: Codec + Default> Codec for Option<T> {
+    const ENCODED_LEN: Option<usize> = Some(1 + len::fixed(T::ENCODED_LEN));
     fn encode(&self, s: &mut Sink<'_>) -> Result<()> {
+        let start = s.count;
         self.is_some().encode(s)?;
         if let Some(v) = self {
             v.encode(s)?;
         }
-        Ok(())
+        s.pad_slot(start, len::fixed(Self::ENCODED_LEN))
     }
     fn decode(&mut self, s: &mut Source<'_>) -> Result<()> {
+        let start = s.count;
         let mut present = false;
         present.decode(s)?;
         if present {
-            self.get_or_insert_with(T::default).decode(s)
+            self.get_or_insert_with(T::default).decode(s)?;
         } else {
             *self = None;
-            Ok(())
         }
+        s.skip_slot(start, len::fixed(Self::ENCODED_LEN))
     }
     fn schema(s: &mut Sink<'_>) -> Result<()> {
         s.write_all(b"?")?;
@@ -258,22 +336,26 @@ impl<T: Codec + Default> Codec for Option<T> {
     }
 }
 impl<T: NarrowCodec + Default> NarrowCodec for Option<T> {
+    const INTEGERS: usize = T::INTEGERS;
+    const FLAGS: usize = 1 + T::FLAGS;
     fn encode_bits(&self, s: &mut Sink<'_>, b: u16) -> Result<()> {
+        let start = s.count;
         self.is_some().encode(s)?;
         if let Some(v) = self {
             v.encode_bits(s, b)?;
         }
-        Ok(())
+        s.pad_slot(start, narrow_len::<Self>(b))
     }
     fn decode_bits(&mut self, s: &mut Source<'_>, b: u16) -> Result<()> {
+        let start = s.count;
         let mut present = false;
         present.decode(s)?;
         if present {
-            self.get_or_insert_with(T::default).decode_bits(s, b)
+            self.get_or_insert_with(T::default).decode_bits(s, b)?;
         } else {
             *self = None;
-            Ok(())
         }
+        s.skip_slot(start, narrow_len::<Self>(b))
     }
     fn schema_bits(s: &mut Sink<'_>, b: u16) -> Result<()> {
         s.write_all(b"?")?;
@@ -281,6 +363,10 @@ impl<T: NarrowCodec + Default> NarrowCodec for Option<T> {
     }
 }
 impl<T: Codec, const N: usize> Codec for [T; N] {
+    const ENCODED_LEN: Option<usize> = match T::ENCODED_LEN {
+        Some(len) => Some(len * N),
+        None => None,
+    };
     fn encode(&self, s: &mut Sink<'_>) -> Result<()> {
         for v in self {
             v.encode(s)?;
@@ -300,6 +386,8 @@ impl<T: Codec, const N: usize> Codec for [T; N] {
     }
 }
 impl<T: NarrowCodec, const N: usize> NarrowCodec for [T; N] {
+    const INTEGERS: usize = T::INTEGERS * N;
+    const FLAGS: usize = T::FLAGS * N;
     fn encode_bits(&self, s: &mut Sink<'_>, b: u16) -> Result<()> {
         for v in self {
             v.encode_bits(s, b)?;
@@ -319,6 +407,7 @@ impl<T: NarrowCodec, const N: usize> NarrowCodec for [T; N] {
     }
 }
 impl<T: Codec, const N: usize> Codec for Box<[T; N]> {
+    const ENCODED_LEN: Option<usize> = <[T; N]>::ENCODED_LEN;
     fn encode(&self, s: &mut Sink<'_>) -> Result<()> {
         (**self).encode(s)
     }
@@ -330,6 +419,8 @@ impl<T: Codec, const N: usize> Codec for Box<[T; N]> {
     }
 }
 impl<T: NarrowCodec, const N: usize> NarrowCodec for Box<[T; N]> {
+    const INTEGERS: usize = <[T; N]>::INTEGERS;
+    const FLAGS: usize = <[T; N]>::FLAGS;
     fn encode_bits(&self, s: &mut Sink<'_>, b: u16) -> Result<()> {
         (**self).encode_bits(s, b)
     }

@@ -407,11 +407,11 @@ fn state_envelope_round_trips_and_rejects_damage() {
     ];
     let mut bytes = state_prefix(&cheats);
     let header = bytes.len();
-    bytes.extend_from_slice(b"ZIGBAST1...");
+    bytes.extend_from_slice(b"EVENFALL...");
     let (decoded, rest) = split_state(&bytes).unwrap();
     assert_eq!(decoded.unwrap(), cheats);
-    assert_eq!(rest, b"ZIGBAST1...");
-    assert_eq!(split_state(b"ZIGBAST1...").unwrap(), (None, &b"ZIGBAST1..."[..]));
+    assert_eq!(rest, b"EVENFALL...");
+    assert_eq!(split_state(b"EVENFALL...").unwrap(), (None, &b"EVENFALL..."[..]));
     for index in [9, 13, header - 1] {
         let mut damaged = bytes.clone();
         damaged[index] ^= 1;

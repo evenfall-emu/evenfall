@@ -1,185 +1,184 @@
 # Save states
 
-A portable save state captures durable GBA hardware state at an instruction
-boundary. Evenfall keeps the `ZIGBAST1` version 6 format byte-compatible with
-ZiGBA: restoring a valid state with the same media resumes the same execution.
-States are for compatible builds, not long-term interchange; battery saves
-carry game progress across state-format changes.
+A save state is a snapshot of the whole emulated console at one instant: CPU registers, memory, video and sound state, timers, pending DMA, the cartridge's save chip, everything.
+Loading it puts the console back exactly where it was, and from there it runs exactly as it did the first time.
+Players use states for quick saves, rewind is built on them, and a state attached to a bug report reproduces the bug.
 
-[`Machine`](../../systems/gba/src/machine.rs) owns the GBA writer, loader,
-schema description and semantic validation. The independent, `no_std` codec in
-[`crates/state`](../../crates/state/src/lib.rs) provides `Codec`, counting and
-hashing `Sink`, bounded `Source` and the
-[`ZIGBAST1` envelope](../../crates/state/src/envelope.rs).
-[`crates/state-derive`](../../crates/state-derive/src/lib.rs) generates the
-encoders and schema writers used by the CPU, bus, APU and cartridge devices.
-[`Session`](../../systems/gba/src/session.rs) applies host policy around state
-loads and rewind ([`rewind.md`](rewind.md)).
+A state is different from the game's own save, the battery save, which is just the contents of the cartridge's save chip.
+A battery save works in any emulator and survives Evenfall updates.
+A save state is tied to the exact ROM and BIOS it was made with, and to this version of the state format.
+It is for picking up where you left off, not for long-term storage.
 
-## Properties
+The format is `ZIGBAST1` version 6.
+Its name comes from Evenfall's predecessor, and states saved there load here too.
 
-- Encoding has no pointers, padding or inactive union storage; integer widths
-  and byte order are independent of host architecture.
-- Timed CPU and device state, including pending work, survives a round trip.
-- A load validates its envelope and hardware invariants into a scratch machine
-  before replacing the running one. Invalid or incompatible bytes leave it
-  untouched.
-- Boot mode and exact ROM and BIOS contents bind the state to its media.
-- The format accepts only its current version and layout, with no implicit
-  migration for older states.
+## How it works
+
+```text
+ write                                   load
+┌──────────────────────────┐            ┌──────────────────────────────────┐
+│ check the machine can be │            │ check magic, version, schema,    │
+│ saved (no fault, no      │            │ media, length, digest            │
+│ half-built frame)        │            │                                  │
+│                          │   bytes    │ decode into a scratch machine    │
+│ encode cycle, CPU, bus   │──────────▶│                                  │
+│ in declaration order     │            │ check hardware invariants        │
+│                          │            │                                  │
+│ header + payload + digest│            │ swap the scratch machine in      │
+└──────────────────────────┘            └──────────────────────────────────┘
+```
+
+[`Machine`](../../systems/gba/src/machine.rs) writes and loads states, describes their layout, and checks that a loaded state makes sense for the hardware.
+The encoding itself lives in [`crates/state`](../../crates/state/src/lib.rs), a `no_std` crate that knows nothing about the GBA.
+It provides the `Codec` trait, a `Sink` that counts, hashes and optionally records what it writes, a bounded `Source`, and the [file envelope](../../crates/state/src/envelope.rs).
+[`crates/state-derive`](../../crates/state-derive/src/lib.rs) generates the encoders for the CPU, bus, sound chip and cartridge devices from their Rust types.
+[`Session`](../../systems/gba/src/session.rs) adds the host's side: it rebuilds skipped video before saving, and resets audio and rewind after loading ([`rewind.md`](rewind.md)).
+
+Every state has these properties:
+
+- **The same everywhere.** The encoding has no pointers, padding or unused union storage, and integer widths and byte order don't depend on the host.
+  A state written by the native build loads in the browser and the other way round.
+- **Exact.** Everything the CPU and devices were in the middle of, including pending work, survives a round trip.
+- **All or nothing.** A load checks the file and the hardware state in a scratch machine before replacing the running one.
+  A bad or incompatible file leaves the running game untouched.
+- **Bound to its media.** The boot mode and the exact ROM and BIOS contents are part of the state.
+- **One version.** The format accepts only its current version and layout, and doesn't migrate older states.
 
 ## File layout
 
 All integers are little-endian.
 
-|  Offset | Size | Field                                          |
-| ------: | ---: | ---------------------------------------------- |
-|       0 |    8 | magic `ZIGBAST1`                               |
-|       8 |    4 | version `u32` (6)                              |
-|      12 |   32 | BLAKE3 schema digest                           |
-|      44 |    8 | payload length `u64`, at most 1 MiB            |
-|      52 |    1 | boot mode: 0 HLE, 1 skip-BIOS, 2 external BIOS |
-|      53 |    8 | ROM length `u64`                               |
-|      61 |   32 | ROM BLAKE3 digest                              |
-|      93 |    8 | BIOS length `u64` (0 under HLE)                |
-|     101 |   32 | BIOS BLAKE3 digest                             |
-|     133 |    n | payload                                        |
-| 133 + n |   32 | payload BLAKE3 digest                          |
+|  Offset | Size | Field                                      |
+| ------: | ---: | ------------------------------------------ |
+|       0 |    8 | magic `ZIGBAST1`                           |
+|       8 |    4 | version `u32` (6)                          |
+|      12 |   32 | BLAKE3 digest of the layout description    |
+|      44 |    8 | payload length `u64`, at most 1 MiB        |
+|      52 |    1 | boot mode: 0 HLE, 1 skip-BIOS, 2 real BIOS |
+|      53 |    8 | ROM length `u64`                           |
+|      61 |   32 | ROM BLAKE3 digest                          |
+|      93 |    8 | BIOS length `u64` (0 under HLE)            |
+|     101 |   32 | BIOS BLAKE3 digest                         |
+|     133 |    n | payload                                    |
+| 133 + n |   32 | payload BLAKE3 digest                      |
 
-No bytes may follow the digest. The payload is the master cycle (`u64`), CPU,
-then bus, with each durable field in ZiGBA declaration order. The bus includes
-memories, I/O, video histories, timers, DMA, serial, cartridge and audio state;
-the save medium and APU encode their own fields in place. ROM and BIOS bytes
-themselves are not stored.
+Nothing may follow the final digest.
+The payload is the master cycle (`u64`), then the CPU, then the bus, each field in the format's declaration order.
+The bus includes memory, I/O registers, video histories, timers, DMA, the serial port, the cartridge and the sound chip.
+The ROM and BIOS themselves aren't stored, only their digests.
 
-## Canonical codec and layout parity
+## How the payload is encoded
 
-| Type             | Encoding                                                                |
-| ---------------- | ----------------------------------------------------------------------- |
-| integer          | little-endian, `ceil(bit width / 8)` bytes; narrow widths are validated |
-| `usize`, `isize` | widened to 64 bits, checked on decode                                   |
-| `bool`           | one byte, 0 or 1                                                        |
-| float            | raw IEEE bit pattern                                                    |
-| enum             | integer tag; unknown tags rejected                                      |
-| optional         | presence `bool`, then value when present                                |
-| array            | elements in order; byte arrays verbatim                                 |
-| struct           | durable fields in declaration order without padding                     |
-| tagged union     | tag followed by the active payload only                                 |
+| Type             | Encoding                                                                    |
+| ---------------- | --------------------------------------------------------------------------- |
+| integer          | little-endian, `ceil(bit width / 8)` bytes, narrow widths checked on decode |
+| `usize`, `isize` | widened to 64 bits, checked on decode                                       |
+| `bool`           | one byte, 0 or 1                                                            |
+| float            | raw IEEE bit pattern                                                        |
+| enum             | integer tag, unknown tags rejected                                          |
+| optional         | presence `bool`, then the value if present                                  |
+| array            | elements in order, byte arrays verbatim                                     |
+| struct           | fields in declaration order, no padding                                     |
+| tagged union     | tag, then only the active variant                                           |
 
-`#[derive(Codec)]` emits the same value encoding and static schema for the
-GBA's Rust fields. `#[codec(bits = N)]` captures Zig's non-byte integer widths;
-`#[codec(skip)]` excludes transient fields from both value and schema;
-`#[codec(flatten)]` splices the split Rust CPU into ZiGBA's flat CPU layout.
-Module schema prefixes, field renames and custom field encoders preserve Zig's
-field names and canonicalize unused array slots. Decode writes into existing
-storage so skipped fields are not overwritten. `Box<[T; N]>` is wire-transparent.
+Nobody writes an encoder by hand.
+`#[derive(Codec)]` generates both the encoding and a description of the layout from each Rust type, with a few attributes:
 
-The value-independent schema description includes codec and payload identities,
-then the CPU and bus schemas, with every durable field name, type, integer
-width, array extent and enum or union alternative. Its BLAKE3 digest is stored
-in the header. Evenfall's complete Rust description must equal the ZiGBA v6
-[`schema-v6.bin`](../../tools/parity/fixtures/schema-v6.bin) fixture and its
-[`digest`](../../tools/parity/fixtures/schema-v6.blake3), not merely hash to a
-plausible value. `Machine::schema_description` and the
-`schema_matches_zigba_version_six` test compare the bytes. A layout change
-that does not bump the version is rejected by `SaveStateSchemaMismatch`.
+- `#[codec(bits = N)]` stores a field that is narrower than its Rust type, such as a 4-bit volume in a `u8`.
+- `#[codec(skip)]` leaves out a field that isn't hardware state, such as a cache.
+  Decoding writes into existing storage, so skipped fields keep their values.
+- `#[codec(flatten)]` lays a nested struct's fields out as if they belonged to the parent, which keeps the CPU's layout flat.
 
-Schema equality cannot detect changed _values_ under unchanged types. The
-locked-byte `save_state_v6_byte_schema_is_locked_by_a_deterministic_fixture`
-test pins a deterministic whole state against ZiGBA's independent oracle;
-[`tools/parity`](../../tools/parity/README.md) compares complete save-state
-blobs at checkpoints across host slicing schedules. Both are needed for byte
-parity, in addition to schema equality.
+Field renames and custom encoders keep the format's field names stable and give unused array slots a fixed value.
 
-With tracing enabled, `Sink::field` records nested field paths and half-open
-byte ranges in `Sink.trace`; `Machine::state_field_ranges` covers cycle, CPU
-and bus using one payload sink. Ranges start at the first payload byte; add the
-133-byte header offset when mapping a whole-file difference. A differing byte
-may have both a parent and child span; choose the narrowest span. This is
-optional diagnostics, not part of the serialized format.
+### The layout digest
 
-## Media, integrity and loading
+Because the encoding follows the types, a change to any hardware struct changes the format.
+The layout description catches that.
+It lists the codec and payload identities, then every stored field of the CPU and bus with its name, type, width, array length and enum variants, and its BLAKE3 digest goes in the header.
 
-The header stores boot mode and the lengths and BLAKE3 digests of the ROM and
-BIOS. Evenfall copies borrowed input or adopts an owned ROM into immutable shared
-media and computes its digests once; ZiGBA's live borrowed-mutable-media identity
-mode has no Rust equivalent. The media handles expose no mutable bytes; replacing
-an entire public `Machine.bus` or `Session.machine` is outside the supported
-media-binding lifecycle. The reader checks magic, version, schema, payload bound,
-boot mode, ROM and BIOS in that order, then validates the payload length,
-checksum and absence of trailing data. It reports the specific version,
-schema or media mismatch. The checksum detects corruption, not forgery:
-hardware values and invariants must still be checked even when it matches.
+The description Evenfall produces must equal the version 6 [fixture](../../tools/parity/fixtures/schema-v6.bin) byte for byte, not just hash to a plausible value, so an accidental layout change fails a test.
+A state whose digest doesn't match is rejected with `SaveStateSchemaMismatch`.
 
-`Machine::write_state` counts and then writes the canonical payload with its
-header and digest; the writer-facing Rust implementation currently buffers
-the payload before sending it to the caller's `Write`. `write_state_alloc`
-encodes once and fills the header afterward. Both produce the same bytes.
-The codec envelope also exposes `write_streaming` and `write_buffered` for
-callers using its `Sink` API. A terminal fault, a noncanonical framebuffer,
-a busy state or invalid subsystem state cannot be saved. `Session::write_state`
-first reconstructs selectively skipped video.
+A matching layout doesn't prove the values are right.
+A test also pins the exact bytes of a whole state produced by a fixed sequence, against a stored fixture.
 
-`Machine::load_state` checks the envelope, decodes the cycle, CPU and bus into
-a heap-allocated scratch machine with the resident media, validates their
-invariants and publishes it only after all checks pass. Semantic checks cover
-CPU mode and continuations, PPU position, timer prescaler alignment, future
-DMA and serial deadlines, bounded raster histories, prefetch, cartridge and
-APU state. A failed load leaves the running machine unchanged. `Session`
-rejects oversized input, reapplies host audio/video policy, resets the audio
-resampler and clears rewind history after a successful explicit load.
+## Writing a state
 
-Durable state includes CPU registers and in-flight work, the master cycle,
-memories, timed I/O and device deadlines, cartridge save command state, and
-APU phases and FIFOs. Skipped/transient state includes host audio already
-produced, rendering and timing caches, host input cursors, the ROM and BIOS
-bytes, resampler, video recovery cache and rewind history. The latter are
-recomputed, reset or kept as host policy, not serialized as hardware.
+A few machines can't be saved: one stopped on a fault, one whose current picture was skipped and not yet rebuilt, and one with device state the encoder rejects as invalid.
+`Session::write_state` rebuilds skipped video first, so a session only refuses to save a faulted or invalid machine.
+
+- `Machine::write_state` encodes the payload twice, once to count its length for the header and once to write it, so the header can go out before the payload.
+  It currently buffers the payload before handing it to the caller's `Write`.
+- `Machine::write_state_alloc` encodes once and fills in the header afterwards.
+
+Both produce the same bytes.
+The envelope also offers `write_streaming` and `write_buffered` for code that uses the `Sink` API directly.
+
+## Loading a state
+
+The loader checks the header in order: magic, version, layout digest, payload length limit, boot mode, ROM, then BIOS.
+It then checks the payload length, the payload digest, and that nothing follows it.
+Each failure names what didn't match, so a host can tell the player "this state is from another ROM" rather than "invalid file".
+The digest detects damage, not tampering, which is why the hardware checks below still run on a file whose digest matches.
+
+`Machine::load_state` then decodes the cycle, CPU and bus into a scratch machine on the heap, sharing the loaded ROM and BIOS, and checks that the result is a state real hardware could be in:
+
+- a valid CPU mode, and a valid state for any BIOS routine still running,
+- a possible display position, and timers on the shared prescaler grid,
+- DMA and serial deadlines in the future,
+- raster histories and the prefetch buffer within their bounds,
+- valid cartridge and sound chip state.
+
+Two checks protect the host from crafted files.
+A sound oscillator's phase must be less than its channel's longest period, and the real-time clock can't be set past 9999-12-31T23:59:59Z, the same limit sessions and the CLI accept.
+A running machine never reaches either value, and either would make the next oscillator step or date read take years.
+
+Only when every check passes does the scratch machine replace the running one.
+A failed load leaves the running game exactly as it was.
+After a successful load, `Session` also rejects oversized input, reapplies the host's audio and video settings, resets the audio resampler, and clears rewind history.
+
+The ROM and BIOS are shared, immutable buffers, hashed once when loaded.
+Nothing can change them behind the state's back.
+
+## What is saved and what isn't
+
+A state holds everything that affects what the console does next: CPU registers and instructions in flight, the master cycle, all memory, I/O registers and device deadlines, the save chip and any command it is in the middle of, and sound phases and queues.
+
+It leaves out what the host owns or can rebuild: audio samples already produced, rendering and timing caches, input cursors, the ROM and BIOS bytes, the resampler, the skipped-video cache and rewind history.
+These are reset, recomputed, or kept as host settings.
 
 ## Battery saves, states and rewind
 
-|                          | Battery save                   | Portable state                     | Rewind bundle                           |
-| ------------------------ | ------------------------------ | ---------------------------------- | --------------------------------------- |
-| Contents                 | cartridge save memory only     | entire machine, including save     | live state, retained history and policy |
-| Bound to                 | compatible save size and type  | ROM, BIOS, boot mode and v6 schema | the same media through its states       |
-| Survives a format change | yes                            | no                                 | no                                      |
-| RTC state                | not included                   | included                           | included                                |
-| Rust owner               | `Machine::save_data` / session | `Machine` / `Session`              | `Session` and `RewindBuffer`            |
+|                          | Battery save                  | Save state                            | Rewind bundle                        |
+| ------------------------ | ----------------------------- | ------------------------------------- | ------------------------------------ |
+| Contains                 | the save chip only            | the whole machine, save chip included | the live state, history and settings |
+| Bound to                 | the save type and size        | ROM, BIOS, boot mode and format v6    | the same media, through its states   |
+| Survives a format change | yes                           | no                                    | no                                   |
+| Real-time clock          | not included                  | included                              | included                             |
+| Owned by                 | `Machine::save_data`, session | `Machine`, `Session`                  | `Session`, `RewindBuffer`            |
 
-Loading a state restores its save medium to that moment; resetting with a
-battery save instead boots fresh with those bytes. Rewind checkpoints are
-complete portable states; restoring one uses the same machine loader.
+Loading a state also restores the save chip to that moment.
+Resetting with a battery save instead boots fresh with those bytes.
+Rewind checkpoints are ordinary save states, restored with the same loader.
 
-## Verification
+## Finding which field differs
 
-The names below map ZiGBA's machine verification table to Rust. The
-`tests-machine-b` integration tests live at
-[`systems/gba/tests/machine_b.rs`](../../systems/gba/tests/machine_b.rs) while
-that test port is being merged; the rows do not claim those tests run on this
-branch. The two remaining scenario ports are listed explicitly.
+When two states that should match don't, tracing says which field the difference is in.
+With tracing on, `Sink` records the path and byte range of every field it writes, and `Machine::state_field_ranges` returns them for the whole payload.
+Ranges start at the first payload byte, so add the 133-byte header to map a difference in the whole file.
+A byte falls in both a struct's range and its field's range, and the narrowest range is the useful one.
+Tracing is only a diagnostic and doesn't change the format.
 
-| Rust test (`tests-machine-b` unless noted)                                                  | Pins                                          |
-| ------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| `save_state_v6_byte_schema_is_locked_by_a_deterministic_fixture`                            | exact v6 state bytes                          |
-| `canonical_save_state_round_trip_resumes_bit_identical_execution`                           | continuation and canonical re-encoding        |
-| `save_state_restores_an_in_flight_prefetch_across_waitcnt_and_boundary_repricing` (pending) | durable prefetch state                        |
-| `save_state_envelope_rejects_wrong_media_version_corruption_truncation_and_trailing_data`   | envelope, checksum and framing                |
-| `save_state_envelope_binds_bios_and_boot_mode`                                              | media binding                                 |
-| `save_state_load_transactionally_rejects_a_digest_valid_impossible_ppu_phase`               | semantic validation and transactional failure |
-| `save_state_round_trip_keeps_the_prescaler_counter_and_rejects_a_timer_phase_off_it`        | timer invariants                              |
-| `save_state_writer_rejects_impossible_ppu_phases_past_deadlines_and_incomplete_joy_bus`     | writer-side validation                        |
-| `save_state_load_drops_already_produced_host_audio_samples`                                 | host audio is not durable                     |
-| `a_state_saved_inside_a_multi_step_hle_service_resumes_identically` (pending)               | HLE continuations                             |
+## How it is checked
 
-[`crates/state/tests/codec.rs`](../../crates/state/tests/codec.rs) locks
-primitive, derive, schema, envelope, validation-order and tracer rules.
-`buffered_snapshots_match_streamed_state_bytes_for_owned_media` in
-[`Session`](../../systems/gba/src/session.rs) compares the two machine writers.
-The `tools/parity` schema fixture is checked independently when the Zig oracle
-is built; the Rust whole-machine schema check comes from the machine branch.
+- [`tests/machine_b.rs`](../../systems/gba/tests/machine_b.rs) pins the exact bytes of a version 6 state, checks that a round trip resumes bit-identical execution, and covers the envelope's digest and framing, media binding, rejected states with the running machine untouched, timer and display invariants, and host audio not being saved.
+- `schema_matches_zigba_version_six` compares `Machine::schema_description` with the layout fixture byte for byte.
+- [`crates/state/tests/codec.rs`](../../crates/state/tests/codec.rs) locks the encoding of every type, the derive attributes, the layout description, the envelope, the order of checks and tracing.
+- `buffered_snapshots_match_streamed_state_bytes_for_owned_media` in [`session.rs`](../../systems/gba/src/session.rs) checks that the two writers produce the same bytes.
 
-## Open questions
+## Known limits
 
-- No converter exists for older format versions.
-- Battery saves do not carry RTC registers or game-written clock offsets.
-- The payload digest provides integrity checking, not authentication.
+- States from older format versions can't be converted.
+- Battery saves don't carry the real-time clock or a clock the game has set.
+- The digests detect damage, but don't prove who made a file.

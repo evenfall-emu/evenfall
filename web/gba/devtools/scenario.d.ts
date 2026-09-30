@@ -1,8 +1,8 @@
 import type { WasmCore } from "../core.js";
-import type { FailureBundle, Scenario, StopReason } from "../zigba.js";
+import type { FailureBundle, Scenario, StopReason } from "../emulator.js";
 import type { RecorderOptions } from "./capture.js";
 
-export type { Scenario } from "../zigba.js";
+export type { Scenario } from "../emulator.js";
 
 /** JSON-compatible copy: bigints become strings, typed arrays plain arrays. */
 export function jsonSafe(value: unknown): any;

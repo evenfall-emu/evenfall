@@ -18,7 +18,7 @@ const config = {
 test("gameplay journal reproduces machine state and both CLI formats", async () => {
   const core = await WasmCore.create(wasm),
     replay = await WasmCore.create(wasm);
-  const dir = await mkdtemp(join(tmpdir(), "zigba-player-"));
+  const dir = await mkdtemp(join(tmpdir(), "evenfall-player-"));
   try {
     core.load(rom, config);
     const recording = new GameplayRecording(core, {

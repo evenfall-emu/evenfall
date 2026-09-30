@@ -5,7 +5,7 @@
  * MOSAIC 0x00 (1x1) mid-line, so the left half renders 4-wide blocks and
  * the right half renders sharp columns; other lines use the 1x1 end state.
  * The validator checks that run structure (see
- * test/probe_cases.zig). Covers horizontal mosaic sizing per
+ * validator/probe_cases.rs). Covers horizontal mosaic sizing per
  * pixel; vertical sizing stays end-of-line by construction (a mid-line
  * write cannot change which source line a line samples). HLE boot only.
  */

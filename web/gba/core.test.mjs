@@ -36,6 +36,11 @@ function zip(image) {
   return Buffer.concat([local, name, image, central, name, end]);
 }
 
+test("a module without the ef_ ABI is rejected by name", () => {
+  for (const exports of [{}, { zb_version: () => 2 }, { ef_version: () => 1 }])
+    assert.throws(() => new WasmCore(exports), /Unsupported WASM ABI/);
+});
+
 test("WASM ABI: bounded execution, zero-cycle inspection, input, and isolation", async () => {
   const a = await WasmCore.create(wasm),
     b = await WasmCore.create(wasm);
@@ -460,8 +465,8 @@ test("STOP and unsupported guest code remain explicit terminal results", async (
   }
 });
 
-const extra = process.env.ZIGBA_TEST_ROMS
-  ? JSON.parse(process.env.ZIGBA_TEST_ROMS)
+const extra = process.env.EVENFALL_TEST_ROMS
+  ? JSON.parse(process.env.EVENFALL_TEST_ROMS)
   : [];
 test("native/WASM canonical state, pixels, audio, memory, and save parity", async (t) => {
   const root = new URL("../..", import.meta.url);

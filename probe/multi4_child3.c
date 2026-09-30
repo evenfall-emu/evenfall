@@ -2,7 +2,7 @@
  *
  * Sends 0x4444 without starting; after the parent-started transfer the
  * child reads the parent's word from SIOMULTI0 (expected 0x1111) and reports
- * it. See multi4_parent.c and test/probe_cases.zig.
+ * it. See multi4_parent.c and validator/probe_cases.rs.
  */
 
 #include "gba.h"

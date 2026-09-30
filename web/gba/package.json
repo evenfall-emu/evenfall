@@ -14,12 +14,12 @@
   ],
   "license": "AGPL-3.0-or-later",
   "type": "module",
-  "main": "./zigba.js",
-  "types": "./zigba.d.ts",
+  "main": "./emulator.js",
+  "types": "./emulator.d.ts",
   "exports": {
     ".": {
-      "types": "./zigba.d.ts",
-      "default": "./zigba.js"
+      "types": "./emulator.d.ts",
+      "default": "./emulator.js"
     },
     "./core": {
       "types": "./core.d.ts",
@@ -38,12 +38,12 @@
       "default": "./audio-worklet.js"
     },
     "./bridge": {
-      "zigba-source": "./src/bridge/index.ts",
+      "evenfall-source": "./src/bridge/index.ts",
       "types": "./bridge/index.d.ts",
       "default": "./bridge/index.js"
     },
     "./bridge/react": {
-      "zigba-source": "./src/bridge/react.ts",
+      "evenfall-source": "./src/bridge/react.ts",
       "types": "./bridge/react.d.ts",
       "default": "./bridge/react.js"
     },
@@ -52,8 +52,8 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "zigba.js",
-    "zigba.d.ts",
+    "emulator.js",
+    "emulator.d.ts",
     "core.js",
     "core.d.ts",
     "worker.js",

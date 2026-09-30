@@ -61,7 +61,6 @@ fn has_any_region(code: &[u8], prefix: &[u8; 3]) -> bool {
 mod tests {
     use super::*;
 
-    /// Zig: RTC feature detection uses known game codes without broad Pokemon guesses
     #[test]
     fn rtc_feature_detection_uses_known_game_codes_without_broad_pokemon_guesses() {
         let mut rom = [0; 0xb0];
@@ -92,7 +91,6 @@ mod tests {
         assert!(detect_features(&rom).tilt);
     }
 
-    /// Zig: RTC feature detection falls back to the RTC_V hardware string
     #[test]
     fn rtc_feature_detection_falls_back_to_the_rtc_v_hardware_string() {
         let mut rom = [0; 0x100];

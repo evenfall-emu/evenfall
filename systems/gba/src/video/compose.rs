@@ -424,11 +424,11 @@ struct LineInputs<'a> {
 
 /// Compose a line, `V::WIDTH` pixels at a time. Each visible background,
 /// back to front, becomes the top surface and pushes the previous top to the
-/// second. Objects follow ZiGBA's compositor: once any admitted object is at
-/// or above the top background, the front object (lowest OAM index) becomes
-/// the top surface whatever its priority, and the background moves to
-/// second; otherwise the minimum-priority object can only take the second
-/// surface. Then color effects apply. `surfaces` receives the final top and
+/// second. Objects resolve as in the front-to-back reference passes: once
+/// any admitted object is at or above the top background, the front object
+/// (lowest OAM index) becomes the top surface whatever its priority, and the
+/// background moves to second; otherwise the minimum-priority object can
+/// only take the second surface. Then color effects apply. `surfaces` receives the final top and
 /// second surfaces (the second only when `MODE` alpha-blends).
 #[inline(never)]
 fn compose_line<V: Lanes, const OBJECTS: bool, const MODE: u8>(

@@ -125,7 +125,6 @@ pub struct InvalidSaveState;
 mod tests {
     use super::*;
 
-    /// Zig: timer state rejects an active phase off the shared prescaler grid
     #[test]
     fn timer_state_rejects_an_active_phase_off_the_shared_prescaler_grid() {
         let mut timer = Timer::default();
@@ -146,7 +145,6 @@ mod tests {
         assert_eq!(timer.validate_state(700), Ok(()));
     }
 
-    /// Zig: timer prescalers preserve phase and overflow counts across chunk boundaries
     #[test]
     fn timer_prescalers_preserve_phase_and_overflow_counts_across_chunk_boundaries() {
         for (select, divisor) in [1_u64, 64, 256, 1024].into_iter().enumerate() {
@@ -181,7 +179,6 @@ mod tests {
         }
     }
 
-    /// Zig: timer control writes take the phase from the shared prescaler counter
     #[test]
     fn timer_control_writes_take_the_phase_from_the_shared_prescaler_counter() {
         let mut timer = Timer { reload: 0xffff, ..Timer::default() };

@@ -6,9 +6,9 @@ import type {
   RunResult,
   Snapshot,
   TimedInput,
-} from "../zigba.js";
+} from "../emulator.js";
 
-export type { FailureBundle } from "../zigba.js";
+export type { FailureBundle } from "../emulator.js";
 
 export interface RecorderOptions {
   /** Build/boot identity stored in every bundle and checked on replay. */

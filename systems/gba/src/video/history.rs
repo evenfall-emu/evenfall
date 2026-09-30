@@ -1,5 +1,5 @@
 //! Mid-scanline register, palette and BG VRAM histories. The compact mixed
-//! palette/VRAM representation is part of ZiGBA's durable bus state.
+//! palette/VRAM representation is part of the durable bus state.
 
 use crate::bus::{
     AccessWidth, AffineSegment, BackdropSegment, BlendSegment, Bus, MosaicSegment, ScrollSegment,
