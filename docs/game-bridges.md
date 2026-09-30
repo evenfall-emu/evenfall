@@ -20,7 +20,7 @@ Applications write their own game definitions and supply their own ROMs.
  Emulator (Worker)         BridgeHost (page)              React
 ┌──────────────────┐      ┌────────────────────────┐     ┌──────────────────┐
 │ captureMemory(): │─────▶│ match the ROM hash to  │     │ useBridge(game,  │
-│ EWRAM + IWRAM at │ copy  │ a build of the game    │     │   "party")       │
+│ EWRAM + IWRAM at │ copy │ a build of the game    │     │   "party")       │
 │ one instruction  │      │                        │     │                  │
 │ boundary         │      │ decode each watched    │────▶│ re-render with   │
 └──────────────────┘      │ view from the copy     │     │ typed data       │
