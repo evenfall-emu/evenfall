@@ -251,6 +251,7 @@ fn run(args: &[String], stdout: &mut impl Write) -> Result<(), Box<dyn std::erro
                         match reason {
                             evenfall_gba::cpu::WaitReason::Halted => "halted",
                             evenfall_gba::cpu::WaitReason::Stopped => "stopped",
+                            evenfall_gba::cpu::WaitReason::DmaStall => "dma_stall",
                         }
                     )?;
                 }

@@ -338,8 +338,12 @@ pub extern "C" fn zb_step() -> i32 {
     call(|state| {
         Ok(match active(state)?.step().map_err(session_error)? {
             StepOutcome::Executed(_) => 0,
-            StepOutcome::Waiting(evenfall_gba::cpu::WaitReason::Halted) => 1,
-            StepOutcome::Waiting(_) => 2,
+            // The SDK's step reasons are ZiGBA's; a DMA stall, like HALT,
+            // waits for time to pass with the CPU at an instruction boundary.
+            StepOutcome::Waiting(
+                evenfall_gba::cpu::WaitReason::Halted | evenfall_gba::cpu::WaitReason::DmaStall,
+            ) => 1,
+            StepOutcome::Waiting(evenfall_gba::cpu::WaitReason::Stopped) => 2,
             StepOutcome::Faulted(_) => 3,
         })
     })

@@ -2295,8 +2295,14 @@ fn audio_dma_refill_timing_is_invariant_to_elapsed_cycle_chunking() {
 }
 
 /// ZiGBA: "a DMA burst that never releases the bus latches a livelock and returns"
+///
+/// A deliberate divergence (`docs/roadmap.md`, "DMA that never releases the
+/// bus"): ZiGBA latches a terminal livelock at the limit and turns DMA off.
+/// Here the burst yields at the same limit but keeps the bus: the access it
+/// interrupted completes without DMA, as ZiGBA's does, and the burst then
+/// resumes where it stopped and runs to whatever deadline its host sets.
 #[test]
-fn a_dma_burst_that_never_releases_the_bus_latches_a_livelock_and_returns() {
+fn a_dma_burst_that_never_releases_the_bus_yields_at_the_limit_and_resumes() {
     let mut bus = Bus::init(&[]);
     write_half(&mut bus, 0x0400_0084, 0x0080);
     write_half(&mut bus, 0x0400_0082, 0xfb00);
@@ -2310,13 +2316,21 @@ fn a_dma_burst_that_never_releases_the_bus_latches_a_livelock_and_returns() {
     write_word(&mut bus, 0x0400_0104, 0x0080_ffff);
     let started_at = bus.now();
     bus.elapse(1);
-    let livelock = bus.dma_livelock().expect("DMA livelock");
-    assert!(livelock.channel == 1 || livelock.channel == 2);
-    assert!(livelock.started_at >= started_at);
-    assert!(bus.now() - livelock.started_at >= Bus::MAX_DMA_BURST_CYCLES);
+    assert!(bus.dma_stalled());
+    assert!(bus.dma_burst_start >= started_at);
+    assert!(bus.now() - bus.dma_burst_start >= Bus::MAX_DMA_BURST_CYCLES);
     let after = bus.now();
+    let transfers = bus.dma_epoch;
     bus.elapse(100);
     assert_eq!(after + 100, bus.now());
+    assert_eq!(transfers, bus.dma_epoch, "the interrupted access completes without DMA");
+    assert!(bus.dma_stalled());
+    for deadline in [bus.now() + 1, bus.now() + 1000, bus.now() + 70_224] {
+        bus.continue_dma_stall(deadline);
+        assert!(bus.dma_stalled());
+        assert!(bus.now() >= deadline && bus.now() < deadline + 16, "{} {deadline}", bus.now());
+    }
+    assert!(bus.dma_epoch.wrapping_sub(transfers) > 70_224 / 64, "the burst runs on");
 }
 
 /// ZiGBA: "batched STOP serial time does not accrue system device clocks"
