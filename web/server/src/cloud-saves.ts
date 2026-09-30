@@ -15,11 +15,26 @@ const QUICK_SLOT = /^[1-9][0-9]?$/;
 // checked again, so states in an older format still list, download, delete
 // and erase like any other object; the player decides what it can load.
 const STATE_MAGIC = new TextEncoder().encode("EVENFALL");
-/**
- * Deployed identifier: the cloud protocol's headers, shared with players
- * already in use. Renaming one needs a coordinated player and Worker change.
- */
+/** The cloud protocol's headers, on requests and responses. */
 const HEADER = {
+  account: "X-Evenfall-Account",
+  rom: "X-Evenfall-Rom",
+  revision: "X-Evenfall-Revision",
+  capturedAt: "X-Evenfall-Captured-At",
+  digest: "X-Evenfall-Digest",
+  title: "X-Evenfall-Title",
+  playthroughName: "X-Evenfall-Playthrough-Name",
+  uploadedAt: "X-Evenfall-Uploaded-At",
+  romIncluded: "X-Evenfall-Rom-Included",
+} as const;
+type HeaderName = keyof typeof HEADER;
+/**
+ * Deployed identifier: the same headers under the names earlier players use.
+ * Cached offline players and open tabs keep running that code for a while,
+ * so requests may carry either name and responses carry both. Remove once no
+ * earlier player remains in use.
+ */
+const LEGACY_HEADER: Record<HeaderName, string> = {
   account: "X-Zigba-Account",
   rom: "X-Zigba-Rom",
   revision: "X-Zigba-Revision",
@@ -29,7 +44,27 @@ const HEADER = {
   playthroughName: "X-Zigba-Playthrough-Name",
   uploadedAt: "X-Zigba-Uploaded-At",
   romIncluded: "X-Zigba-Rom-Included",
-} as const;
+};
+
+/** A request header by its current name, else its legacy name. */
+function readHeader(c: Context<Env>, name: HeaderName): string | undefined {
+  return c.req.header(HEADER[name]) ?? c.req.header(LEGACY_HEADER[name]);
+}
+
+/** Response headers under both their current and legacy names. */
+function cloudHeaders(
+  values: Partial<Record<HeaderName, string>>,
+): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(values) as [
+    HeaderName,
+    string,
+  ][]) {
+    headers[HEADER[name]] = value;
+    headers[LEGACY_HEADER[name]] = value;
+  }
+  return headers;
+}
 const BATTERY_SIZES = new Set([
   512,
   8 * 1024,
@@ -286,8 +321,8 @@ export function registerCloudSaveRoutes(app: Hono<Env>): void {
     const { userId, baseURL } = account;
     const rejected = uploadRejected(c, baseURL);
     if (rejected) return rejected;
-    const hash = c.req.header(HEADER.rom);
-    const expectedDigest = c.req.header(HEADER.digest);
+    const hash = readHeader(c, "rom");
+    const expectedDigest = readHeader(c, "digest");
     if (
       !hash ||
       !HASH.test(hash) ||
@@ -300,11 +335,11 @@ export function registerCloudSaveRoutes(app: Hono<Env>): void {
         "invalid_metadata",
         "ROM hash or digest is invalid",
       );
-    const title = readLabel(c, HEADER.title, "invalid_title", "Title");
+    const title = readLabel(c, "title", "invalid_title", "Title");
     if (title instanceof Response) return title;
     const playthroughName = readLabel(
       c,
-      HEADER.playthroughName,
+      "playthroughName",
       "invalid_playthrough_name",
       "Playthrough name",
     );
@@ -396,7 +431,7 @@ export function registerCloudSaveRoutes(app: Hono<Env>): void {
         "share_not_found",
         "This shared state has expired or does not exist",
       );
-    const expectedDigest = c.req.header(HEADER.digest);
+    const expectedDigest = readHeader(c, "digest");
     if (!expectedDigest || !DIGEST.test(expectedDigest))
       return failure(c, 400, "invalid_metadata", "Digest is invalid");
     // One attempt from the request budget; ROM bytes bypass the byte budget,
@@ -488,7 +523,7 @@ export function registerCloudSaveRoutes(app: Hono<Env>): void {
         "Cache-Control": "no-store",
         "Content-Type": "application/octet-stream",
         "Referrer-Policy": "no-referrer",
-        [HEADER.digest]: rom.customMetadata?.digest ?? "",
+        ...cloudHeaders({ digest: rom.customMetadata?.digest ?? "" }),
       },
     });
   });
@@ -534,13 +569,15 @@ export function registerCloudSaveRoutes(app: Hono<Env>): void {
         "Cache-Control": "no-store",
         "Content-Type": "application/octet-stream",
         "Referrer-Policy": "no-referrer",
-        ...(romIncluded ? { [HEADER.romIncluded]: "1" } : {}),
-        [HEADER.rom]: metadata.hash,
-        [HEADER.title]: encodeURIComponent(title),
-        [HEADER.playthroughName]: encodeURIComponent(
-          metadata.playthroughName ?? "Playthrough",
-        ),
-        [HEADER.digest]: metadata.digest ?? "",
+        ...cloudHeaders({
+          ...(romIncluded ? { romIncluded: "1" } : {}),
+          rom: metadata.hash,
+          title: encodeURIComponent(title),
+          playthroughName: encodeURIComponent(
+            metadata.playthroughName ?? "Playthrough",
+          ),
+          digest: metadata.digest ?? "",
+        }),
       },
     });
   });
@@ -602,7 +639,7 @@ async function saveAccount(c: Context<Env>, allowDeleting = false) {
   const session = await auth.api.getSession({ headers: c.req.raw.headers });
   if (!session)
     return failure(c, 401, "unauthorized", "A valid session is required");
-  if (c.req.header(HEADER.account) !== session.user.id)
+  if (readHeader(c, "account") !== session.user.id)
     return failure(
       c,
       403,
@@ -719,11 +756,11 @@ function uploadRejected(
  */
 function readLabel(
   c: Context<Env>,
-  header: string,
+  header: HeaderName,
   code: string,
   noun: string,
 ): string | undefined | Response {
-  const encoded = c.req.header(header);
+  const encoded = readHeader(c, header);
   if (encoded === undefined) return undefined;
   try {
     const value = decodeURIComponent(encoded);
@@ -839,9 +876,9 @@ async function putSave(
   const rejected = uploadRejected(c, baseURL);
   if (rejected) return rejected;
 
-  const revision = c.req.header(HEADER.revision);
-  const capturedAt = c.req.header(HEADER.capturedAt);
-  const expectedDigest = c.req.header(HEADER.digest);
+  const revision = readHeader(c, "revision");
+  const capturedAt = readHeader(c, "capturedAt");
+  const expectedDigest = readHeader(c, "digest");
   if (
     !revision ||
     !UUID.test(revision) ||
@@ -858,11 +895,11 @@ async function putSave(
       "Revision, captured timestamp, or digest is invalid",
     );
 
-  const titleLabel = readLabel(c, HEADER.title, "invalid_title", "Title");
+  const titleLabel = readLabel(c, "title", "invalid_title", "Title");
   if (titleLabel instanceof Response) return titleLabel;
   const nameLabel = readLabel(
     c,
-    HEADER.playthroughName,
+    "playthroughName",
     "invalid_playthrough_name",
     "Playthrough name",
   );
@@ -1246,10 +1283,12 @@ function saveHeaders(object: R2Object): Headers {
     "Cache-Control": "no-store",
     "Content-Type": "application/octet-stream",
     ETag: object.httpEtag,
-    [HEADER.revision]: object.customMetadata?.revision ?? "",
-    [HEADER.capturedAt]: object.customMetadata?.capturedAt ?? "",
-    [HEADER.digest]: object.customMetadata?.digest ?? "",
-    [HEADER.uploadedAt]: object.uploaded.toISOString(),
+    ...cloudHeaders({
+      revision: object.customMetadata?.revision ?? "",
+      capturedAt: object.customMetadata?.capturedAt ?? "",
+      digest: object.customMetadata?.digest ?? "",
+      uploadedAt: object.uploaded.toISOString(),
+    }),
   });
 }
 

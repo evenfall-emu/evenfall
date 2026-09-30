@@ -35,16 +35,3 @@ export const LEGACY = {
   volumeKey: "zigba-volume",
   offlineCachePrefix: "zigba-player-",
 } as const;
-
-/** Deployed identifier: the cloud protocol's headers, shared with the Worker. */
-export const HEADER = {
-  account: "X-Zigba-Account",
-  rom: "X-Zigba-Rom",
-  revision: "X-Zigba-Revision",
-  capturedAt: "X-Zigba-Captured-At",
-  digest: "X-Zigba-Digest",
-  title: "X-Zigba-Title",
-  playthroughName: "X-Zigba-Playthrough-Name",
-  uploadedAt: "X-Zigba-Uploaded-At",
-  romIncluded: "X-Zigba-Rom-Included",
-} as const;

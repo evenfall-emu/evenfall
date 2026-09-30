@@ -161,7 +161,9 @@ test("account deletion needs one confirmation, signs out, and keeps local progre
   );
   await page.route("**/api/account", async (route) => {
     expect(route.request().method()).toBe("DELETE");
-    expect(route.request().headers()["x-zigba-account"]).toBe("delete-player");
+    expect(route.request().headers()["x-evenfall-account"]).toBe(
+      "delete-player",
+    );
     attempts++;
     deleted = true;
     await route.fulfill({

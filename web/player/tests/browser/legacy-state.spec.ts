@@ -217,9 +217,9 @@ test("a cloud resume point from the previous core restores the cloud battery sav
       body,
       headers: {
         ETag: `"${kind}"`,
-        "X-Zigba-Captured-At": "1",
-        "X-Zigba-Uploaded-At": "2026-09-22T18:31:00Z",
-        "X-Zigba-Digest": createHash("sha256").update(body).digest("hex"),
+        "X-Evenfall-Captured-At": "1",
+        "X-Evenfall-Uploaded-At": "2026-09-22T18:31:00Z",
+        "X-Evenfall-Digest": createHash("sha256").update(body).digest("hex"),
       },
     });
   });

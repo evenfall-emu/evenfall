@@ -63,10 +63,10 @@ async function serveShare(
       body,
       headers: {
         "Content-Type": "application/octet-stream",
-        "X-Zigba-Rom": shared.hash,
-        "X-Zigba-Title": encodeURIComponent(shared.title),
-        "X-Zigba-Playthrough-Name": encodeURIComponent(playthroughName),
-        "X-Zigba-Digest": createHash("sha256").update(body).digest("hex"),
+        "X-Evenfall-Rom": shared.hash,
+        "X-Evenfall-Title": encodeURIComponent(shared.title),
+        "X-Evenfall-Playthrough-Name": encodeURIComponent(playthroughName),
+        "X-Evenfall-Digest": createHash("sha256").update(body).digest("hex"),
         ...headers,
       },
     });
@@ -85,7 +85,7 @@ async function serveRom(page: Page, bytes: Buffer) {
       body,
       headers: {
         "Content-Type": "application/octet-stream",
-        "X-Zigba-Digest": createHash("sha256").update(body).digest("hex"),
+        "X-Evenfall-Digest": createHash("sha256").update(body).digest("hex"),
       },
     });
   });
@@ -174,14 +174,14 @@ test("Share uploads the exact live state and hands back a copyable link", async 
   await expect(dialog).toContainText("It works for at least 24 hours.");
   expect(posts).toHaveLength(1);
   const [{ headers, body }] = posts;
-  expect(headers["x-zigba-account"]).toBe("test-player");
-  expect(headers["x-zigba-rom"]).toBe(hash);
+  expect(headers["x-evenfall-account"]).toBe("test-player");
+  expect(headers["x-evenfall-rom"]).toBe(hash);
   expect(headers["content-type"]).toBe("application/octet-stream");
-  expect(decodeURIComponent(headers["x-zigba-playthrough-name"])).toBe(
+  expect(decodeURIComponent(headers["x-evenfall-playthrough-name"])).toBe(
     "Playthrough 1",
   );
-  expect(decodeURIComponent(headers["x-zigba-title"])).toBe("Share source");
-  expect(headers["x-zigba-digest"]).toBe(
+  expect(decodeURIComponent(headers["x-evenfall-title"])).toBe("Share source");
+  expect(headers["x-evenfall-digest"]).toBe(
     createHash("sha256").update(body).digest("hex"),
   );
   // Sharing paused play; the upload is the machine as it stands now.
@@ -257,9 +257,9 @@ test("An admin can include the game's ROM with a share link", async ({
   await expect(include).toHaveCount(0);
   expect(puts).toHaveLength(2);
   const { headers, body } = puts[1];
-  expect(headers["x-zigba-account"]).toBe("test-player");
+  expect(headers["x-evenfall-account"]).toBe("test-player");
   expect(headers["content-type"]).toBe("application/octet-stream");
-  expect(headers["x-zigba-digest"]).toBe(
+  expect(headers["x-evenfall-digest"]).toBe(
     createHash("sha256").update(body).digest("hex"),
   );
   expect(gunzipSync(body)).toEqual(rom);
@@ -491,7 +491,7 @@ test("A share link that includes the game starts at once on a device without it"
 }) => {
   const state = await farState(page);
   await serveShare(page, state.data, "Friend run", undefined, {
-    "X-Zigba-Rom-Included": "1",
+    "X-Evenfall-Rom-Included": "1",
   });
   const downloads = await serveRom(page, rom);
 
@@ -515,7 +515,7 @@ test("An included ROM that is not the shared game is refused and not stored", as
 }) => {
   const state = await farState(page);
   await serveShare(page, state.data, "Friend run", undefined, {
-    "X-Zigba-Rom-Included": "1",
+    "X-Evenfall-Rom-Included": "1",
   });
   await serveRom(page, loop(45, "Unrelated").buffer);
 

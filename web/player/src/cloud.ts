@@ -11,8 +11,25 @@ import {
   type QuickSlot,
   type SaveKind,
 } from "./library";
-import { CLOUD_SYNC_LOCK, HEADER } from "./storage-names";
+import { CLOUD_SYNC_LOCK } from "./storage-names";
 import { isLegacyState, isState, LegacyStateError } from "./state-format";
+
+/**
+ * The cloud protocol's headers. The Worker also accepts and sends the names
+ * earlier players used, while their tabs remain in use; this player sends
+ * and reads only these.
+ */
+export const HEADER = {
+  account: "X-Evenfall-Account",
+  rom: "X-Evenfall-Rom",
+  revision: "X-Evenfall-Revision",
+  capturedAt: "X-Evenfall-Captured-At",
+  digest: "X-Evenfall-Digest",
+  title: "X-Evenfall-Title",
+  playthroughName: "X-Evenfall-Playthrough-Name",
+  uploadedAt: "X-Evenfall-Uploaded-At",
+  romIncluded: "X-Evenfall-Rom-Included",
+} as const;
 
 export type CloudResume = {
   accountId: string;

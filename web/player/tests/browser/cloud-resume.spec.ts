@@ -74,7 +74,7 @@ async function remote(page: Page, backup: Backup, playthroughId = "default") {
       control.uploads++;
       return route.fulfill({ status: 500 });
     }
-    expect(route.request().headers()["x-zigba-account"]).toBe("test-player");
+    expect(route.request().headers()["x-evenfall-account"]).toBe("test-player");
     if (
       route.request().method() === "HEAD" &&
       new URL(route.request().url()).pathname !==
@@ -88,8 +88,8 @@ async function remote(page: Page, backup: Backup, playthroughId = "default") {
       return route.fulfill({
         headers: {
           ETag: control.etag,
-          "X-Zigba-Captured-At": "1",
-          "X-Zigba-Uploaded-At": "2026-09-22T18:31:00Z",
+          "X-Evenfall-Captured-At": "1",
+          "X-Evenfall-Uploaded-At": "2026-09-22T18:31:00Z",
         },
       });
     control.downloads++;
@@ -98,7 +98,7 @@ async function remote(page: Page, backup: Backup, playthroughId = "default") {
       headers: {
         "Content-Type": "application/octet-stream",
         ETag: control.etag,
-        "X-Zigba-Digest": createHash("sha256").update(bytes).digest("hex"),
+        "X-Evenfall-Digest": createHash("sha256").update(bytes).digest("hex"),
       },
     });
   });

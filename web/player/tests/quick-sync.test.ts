@@ -88,7 +88,7 @@ class FakeCloud {
     if (url.startsWith("/api/saves?") || url === "/api/saves")
       return Response.json({ saves: [], cursor: null });
     const headers = new Headers(init.headers);
-    const account = headers.get("X-Zigba-Account")!;
+    const account = headers.get("X-Evenfall-Account")!;
     const listing = /^\/api\/saves\/[0-9a-f]{40}\/default\/quick$/.test(url);
     if (listing)
       return Response.json({
@@ -113,9 +113,9 @@ class FakeCloud {
         {
           headers: {
             ETag: current.etag,
-            "X-Zigba-Digest": current.digest,
-            "X-Zigba-Revision": current.revision,
-            "X-Zigba-Uploaded-At": new Date().toISOString(),
+            "X-Evenfall-Digest": current.digest,
+            "X-Evenfall-Revision": current.revision,
+            "X-Evenfall-Uploaded-At": new Date().toISOString(),
           },
         },
       );
@@ -130,10 +130,10 @@ class FakeCloud {
     const body = new Uint8Array(init.body as Uint8Array);
     const stored = {
       body,
-      digest: headers.get("X-Zigba-Digest")!,
+      digest: headers.get("X-Evenfall-Digest")!,
       etag: `"etag-${++this.etags}"`,
-      revision: headers.get("X-Zigba-Revision")!,
-      capturedAt: Number(headers.get("X-Zigba-Captured-At")),
+      revision: headers.get("X-Evenfall-Revision")!,
+      capturedAt: Number(headers.get("X-Evenfall-Captured-At")),
     };
     this.slots(account).set(slot, stored);
     return Response.json({

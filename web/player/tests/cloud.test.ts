@@ -35,7 +35,7 @@ afterEach(() => {
 it("discovers across every page while uploads are off, using upload time rather than device clocks", async () => {
   await library.setCloudIdentity("alice", false);
   const fetcher = vi.fn(async (url: string, init: RequestInit) => {
-    expect(init.headers).toEqual({ "X-Zigba-Account": "alice" });
+    expect(init.headers).toEqual({ "X-Evenfall-Account": "alice" });
     expect(init.cache).toBe("no-store");
     if (url === "/api/saves")
       return Response.json({
@@ -117,7 +117,7 @@ it("discards an old account's delayed listing after switching accounts", async (
     release = resolve;
   });
   const fetcher = vi.fn(async (_url: string, init: RequestInit) =>
-    new Headers(init.headers).get("X-Zigba-Account") === "alice"
+    new Headers(init.headers).get("X-Evenfall-Account") === "alice"
       ? delayed
       : Response.json({
           saves: [listing("b", "2026-09-21T10:00:00Z")],
@@ -188,7 +188,7 @@ it("downloads the selected playthrough rather than another run of the same game"
       `/api/saves/${target.hash}/${target.playthroughId}/resume`,
     );
     return new Response(bytes, {
-      headers: { ETag: '"second-run"', "X-Zigba-Digest": digest },
+      headers: { ETag: '"second-run"', "X-Evenfall-Digest": digest },
     });
   });
   await cloud.setIdentity("alice");
@@ -238,7 +238,7 @@ it.each(["success", "offline", "signed-out", "failure", "account-changed"])(
         });
       expect(url).toBe(`/api/saves/${ref.hash}/default`);
       expect(init?.method).toBe("DELETE");
-      expect(init?.headers).toEqual({ "X-Zigba-Account": "alice" });
+      expect(init?.headers).toEqual({ "X-Evenfall-Account": "alice" });
       expect(locked).toBe(true);
       expect(await library.getSave(ref)).toEqual(new Uint8Array([17]));
       if (mode === "failure") return new Response(null, { status: 503 });
@@ -325,7 +325,9 @@ it("forgets only cloud metadata after a confirmed account deletion, preserving t
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
     if (url === "/api/account") {
       expect(init?.method).toBe("DELETE");
-      expect(new Headers(init?.headers).get("X-Zigba-Account")).toBe("alice");
+      expect(new Headers(init?.headers).get("X-Evenfall-Account")).toBe(
+        "alice",
+      );
       expect((await library.cloudIdentity()).enabled).toBe(false);
       return Response.json(
         { accountDeleted: confirmed, cloudDeletion: "pending" },
@@ -376,12 +378,17 @@ it("uploads only the selected run with bounded private labels, without sending R
       expect(url).toBe(`/api/saves/${hash}/${ref.playthroughId}/resume`);
       expect(init?.method).toBe("PUT");
       const headers = new Headers(init?.headers);
-      expect(decodeURIComponent(headers.get("X-Zigba-Title")!)).toBe(
+      // Only the current header names; the Worker still accepts the legacy
+      // ones from earlier players.
+      expect(
+        [...headers.keys()].filter((name) => name.startsWith("x-zigba-")),
+      ).toEqual([]);
+      expect(decodeURIComponent(headers.get("X-Evenfall-Title")!)).toBe(
         "🌙".repeat(160),
       );
-      expect(decodeURIComponent(headers.get("X-Zigba-Playthrough-Name")!)).toBe(
-        "Challenge run",
-      );
+      expect(
+        decodeURIComponent(headers.get("X-Evenfall-Playthrough-Name")!),
+      ).toBe("Challenge run");
       const decoded = await new Response(
         new Blob([init!.body as BlobPart])
           .stream()
@@ -390,7 +397,7 @@ it("uploads only the selected run with bounded private labels, without sending R
       expect(new Uint8Array(decoded)).toEqual(new Uint8Array([21, 32, 43]));
       uploaded = true;
       return Response.json({
-        revision: headers.get("X-Zigba-Revision"),
+        revision: headers.get("X-Evenfall-Revision"),
         etag: '"confirmed"',
         uploadedAt: new Date().toISOString(),
       });
@@ -449,7 +456,7 @@ it("keeps an over-quota run local while continuing backups of existing playthrou
     expect(new Headers(init?.headers).get("If-Match")).toBe('"existing"');
     return Response.json({
       etag: '"updated"',
-      revision: new Headers(init?.headers).get("X-Zigba-Revision"),
+      revision: new Headers(init?.headers).get("X-Evenfall-Revision"),
       uploadedAt: new Date().toISOString(),
     });
   });
@@ -509,7 +516,7 @@ it("explains a shared state from the previous core and accepts a current one", a
       vi.fn(
         async () =>
           new Response(body, {
-            headers: { "X-Zigba-Digest": digest, "X-Zigba-Rom": hash },
+            headers: { "X-Evenfall-Digest": digest, "X-Evenfall-Rom": hash },
           }),
       ),
     );

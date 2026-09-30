@@ -47,7 +47,7 @@ async function cloud(page: Page) {
   );
   await page.route("**/api/saves/*/*/quick/*", async (route) => {
     const request = route.request();
-    expect(request.headers()["x-zigba-account"]).toBe("quick-player");
+    expect(request.headers()["x-evenfall-account"]).toBe("quick-player");
     const slot = Number(new URL(request.url()).pathname.split("/").at(-1));
     const current = slots.get(slot);
     if (request.method() !== "PUT") {
@@ -56,7 +56,7 @@ async function cloud(page: Page) {
         body: current.body,
         headers: {
           ETag: current.etag,
-          "X-Zigba-Digest": createHash("sha256")
+          "X-Evenfall-Digest": createHash("sha256")
             .update(current.body)
             .digest("hex"),
         },
@@ -76,8 +76,8 @@ async function cloud(page: Page) {
     const stored = {
       body: request.postDataBuffer()!,
       etag: `"quick-${++etags}"`,
-      revision: headers["x-zigba-revision"],
-      capturedAt: Number(headers["x-zigba-captured-at"]),
+      revision: headers["x-evenfall-revision"],
+      capturedAt: Number(headers["x-evenfall-captured-at"]),
     };
     slots.set(slot, stored);
     return route.fulfill({

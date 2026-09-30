@@ -674,7 +674,7 @@ describe("private cloud resume discovery", () => {
   const knownHash = "f1323126bc043f3ce931bcc670957930559eb515";
   const hiddenHash = "16d772195bd3b6a561595ecb71be7bef1185e7ea";
   const otherHash = "f".repeat(40);
-  let owner: { Cookie: string; "X-Zigba-Account": string };
+  let owner: { Cookie: string; "X-Evenfall-Account": string };
   let other: typeof owner;
 
   beforeAll(async () => {
@@ -689,7 +689,7 @@ describe("private cloud resume discovery", () => {
       const session = (await (
         await request("/api/auth/get-session", { headers: { Cookie } })
       ).json()) as { user: { id: string } };
-      return { Cookie, "X-Zigba-Account": session.user.id };
+      return { Cookie, "X-Evenfall-Account": session.user.id };
     }
     owner = await login("cloud-owner@example.com", "192.0.2.170");
     other = await login("cloud-other@example.com", "192.0.2.171");
@@ -712,35 +712,35 @@ describe("private cloud resume discovery", () => {
     await Promise.all(
       Array.from({ length: 101 }, (_, index) =>
         saves.put(
-          `${owner["X-Zigba-Account"]}/${index.toString(16).padStart(40, "0")}/resume`,
+          `${owner["X-Evenfall-Account"]}/${index.toString(16).padStart(40, "0")}/resume`,
           "private checkpoint bytes",
           metadata,
         ),
       ),
     );
     await saves.put(
-      `${owner["X-Zigba-Account"]}/${knownHash}/resume`,
+      `${owner["X-Evenfall-Account"]}/${knownHash}/resume`,
       "known checkpoint",
       metadata,
     );
     await saves.put(
-      `${owner["X-Zigba-Account"]}/${hiddenHash}/resume`,
+      `${owner["X-Evenfall-Account"]}/${hiddenHash}/resume`,
       "hidden release checkpoint",
       metadata,
     );
     // Keyed by a ROM SHA-256, before games were identified by SHA-1: unlisted.
     await saves.put(
-      `${owner["X-Zigba-Account"]}/${"e".repeat(64)}/resume`,
+      `${owner["X-Evenfall-Account"]}/${"e".repeat(64)}/resume`,
       "SHA-256-keyed checkpoint",
       metadata,
     );
     await saves.put(
-      `${owner["X-Zigba-Account"]}/${otherHash}/battery`,
+      `${owner["X-Evenfall-Account"]}/${otherHash}/battery`,
       "private battery",
       metadata,
     );
     await saves.put(
-      `${other["X-Zigba-Account"]}/${otherHash}/resume`,
+      `${other["X-Evenfall-Account"]}/${otherHash}/resume`,
       "another user's checkpoint",
       metadata,
     );
@@ -750,7 +750,7 @@ describe("private cloud resume discovery", () => {
     for (const [headers, status] of [
       [{}, 401],
       [{ Cookie: owner.Cookie }, 403],
-      [{ ...owner, "X-Zigba-Account": other["X-Zigba-Account"] }, 403],
+      [{ ...owner, "X-Evenfall-Account": other["X-Evenfall-Account"] }, 403],
     ] as const) {
       const response = await miniflare.dispatchFetch(`${origin}/api/saves`, {
         headers,
@@ -773,7 +773,7 @@ describe("private cloud resume discovery", () => {
     let pages = 0;
     do {
       const response = await miniflare.dispatchFetch(
-        `${origin}/api/saves?accountId=${other["X-Zigba-Account"]}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+        `${origin}/api/saves?accountId=${other["X-Evenfall-Account"]}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
         { headers: owner },
       );
       expect(response.status).toBe(200);
@@ -835,15 +835,15 @@ describe("private cloud resume discovery", () => {
           ...other,
           Origin: origin,
           "Content-Type": "application/octet-stream",
-          "X-Zigba-Revision": crypto.randomUUID(),
-          "X-Zigba-Captured-At": "12345",
-          "X-Zigba-Digest": digest,
+          "X-Evenfall-Revision": crypto.randomUUID(),
+          "X-Evenfall-Captured-At": "12345",
+          "X-Evenfall-Digest": digest,
           ...headers,
         },
       });
     const created = await put({
       "If-None-Match": "*",
-      "X-Zigba-Title": encodeURIComponent(title),
+      "X-Evenfall-Title": encodeURIComponent(title),
     });
     expect(created.status).toBe(200);
     const { etag } = (await created.json()) as { etag: string };
@@ -854,7 +854,7 @@ describe("private cloud resume discovery", () => {
     ]) {
       const rejected = await put({
         "If-Match": etag,
-        "X-Zigba-Title": invalid,
+        "X-Evenfall-Title": invalid,
       });
       expect(rejected.status).toBe(400);
       expect(await rejected.json()).toMatchObject({
@@ -881,7 +881,7 @@ describe("playthrough quota and account erasure", () => {
   const hash = "a".repeat(40);
   const body = gzipSync(Buffer.from("EVENFALLcheckpoint"));
   const digest = createHash("sha256").update(body).digest("hex");
-  let owner: { Cookie: string; "X-Zigba-Account": string };
+  let owner: { Cookie: string; "X-Evenfall-Account": string };
   let other: typeof owner;
 
   beforeAll(async () => {
@@ -902,7 +902,7 @@ describe("playthrough quota and account erasure", () => {
           headers: { Cookie },
         })
       ).json()) as { user: { id: string } };
-      return { Cookie, "X-Zigba-Account": session.user.id };
+      return { Cookie, "X-Evenfall-Account": session.user.id };
     }
     owner = await login("runs-owner@example.com", "192.0.2.180");
     other = await login("runs-other@example.com", "192.0.2.181");
@@ -925,13 +925,13 @@ describe("playthrough quota and account erasure", () => {
           ...account,
           Origin: origin,
           "Content-Type": "application/octet-stream",
-          "X-Zigba-Revision": revision,
-          "X-Zigba-Captured-At": "42",
-          "X-Zigba-Digest":
+          "X-Evenfall-Revision": revision,
+          "X-Evenfall-Captured-At": "42",
+          "X-Evenfall-Digest":
             kind === "resume"
               ? digest
               : createHash("sha256").update(bytes).digest("hex"),
-          "X-Zigba-Playthrough-Name": encodeURIComponent(name),
+          "X-Evenfall-Playthrough-Name": encodeURIComponent(name),
           ...(etag ? { "If-Match": etag } : { "If-None-Match": "*" }),
         },
         body: bytes,
@@ -941,7 +941,7 @@ describe("playthrough quota and account erasure", () => {
 
   it("deletes only the selected account's playthrough, including legacy saves and quick slots, and frees its quota", async () => {
     const game = "d".repeat(40);
-    const user = owner["X-Zigba-Account"];
+    const user = owner["X-Evenfall-Account"];
     const sibling = crypto.randomUUID();
     const removed = [
       `${user}/${game}/resume`,
@@ -953,7 +953,7 @@ describe("playthrough quota and account erasure", () => {
     ];
     const kept = [
       `${user}/${game}/${sibling}/resume`,
-      `${other["X-Zigba-Account"]}/${game}/default/resume`,
+      `${other["X-Evenfall-Account"]}/${game}/default/resume`,
       `${user}/${"e".repeat(40)}/default/resume`,
     ];
     for (const key of [...removed, ...kept]) await saves.put(key, "save");
@@ -969,7 +969,7 @@ describe("playthrough quota and account erasure", () => {
       [
         {
           Cookie: owner.Cookie,
-          "X-Zigba-Account": other["X-Zigba-Account"],
+          "X-Evenfall-Account": other["X-Evenfall-Account"],
           Origin: origin,
         },
         403,
@@ -1048,9 +1048,9 @@ describe("playthrough quota and account erasure", () => {
           Origin: origin,
           "Content-Type": "application/octet-stream",
           "If-None-Match": "*",
-          "X-Zigba-Revision": crypto.randomUUID(),
-          "X-Zigba-Captured-At": "42",
-          "X-Zigba-Digest": digest,
+          "X-Evenfall-Revision": crypto.randomUUID(),
+          "X-Evenfall-Captured-At": "42",
+          "X-Evenfall-Digest": digest,
         },
       },
     );
@@ -1089,10 +1089,10 @@ describe("playthrough quota and account erasure", () => {
             Origin: origin,
             "Content-Type": "application/octet-stream",
             "If-None-Match": "*",
-            "X-Zigba-Revision": crypto.randomUUID(),
-            "X-Zigba-Captured-At": "42",
-            "X-Zigba-Digest": digest,
-            "X-Zigba-Playthrough-Name": name,
+            "X-Evenfall-Revision": crypto.randomUUID(),
+            "X-Evenfall-Captured-At": "42",
+            "X-Evenfall-Digest": digest,
+            "X-Evenfall-Playthrough-Name": name,
           },
         },
       );
@@ -1122,7 +1122,7 @@ describe("playthrough quota and account erasure", () => {
   });
 
   it("requires cookie, matching account, and exact Origin to delete; purges all pages and revokes auth", async () => {
-    const id = owner["X-Zigba-Account"];
+    const id = owner["X-Evenfall-Account"];
     await saves.put(`${id}/${hash}/resume`, "legacy backup");
     await saves.put(`${id}/miscellaneous/old-format`, "unknown old object");
     await request(
@@ -1160,7 +1160,7 @@ describe("playthrough quota and account erasure", () => {
         "/api/account",
         {
           method: "DELETE",
-          headers: { ...other, "X-Zigba-Account": id, Origin: origin },
+          headers: { ...other, "X-Evenfall-Account": id, Origin: origin },
         },
         { SAVES: saves },
       ),
@@ -1228,7 +1228,7 @@ describe("playthrough quota and account erasure", () => {
     expect(
       (
         await upload(
-          { Cookie: newCookie, "X-Zigba-Account": newSession.user.id },
+          { Cookie: newCookie, "X-Evenfall-Account": newSession.user.id },
           crypto.randomUUID(),
         )
       ).status,
@@ -1249,7 +1249,7 @@ describe("playthrough quota and account erasure", () => {
       ).status,
     ).toBe(200);
     expect(
-      (await saves.list({ prefix: `${other["X-Zigba-Account"]}/` })).objects
+      (await saves.list({ prefix: `${other["X-Evenfall-Account"]}/` })).objects
         .length,
     ).toBeGreaterThan(0);
   });
@@ -1268,7 +1268,7 @@ describe("playthrough quota and account erasure", () => {
     const session = (await (
       await request("/api/auth/get-session", { headers: { Cookie } })
     ).json()) as { user: { id: string } };
-    const headers = { Cookie, "X-Zigba-Account": session.user.id };
+    const headers = { Cookie, "X-Evenfall-Account": session.user.id };
     let entered!: () => void;
     let release!: () => void;
     const atPut = new Promise<void>((resolve) => {
@@ -1300,9 +1300,9 @@ describe("playthrough quota and account erasure", () => {
           ...headers,
           Origin: origin,
           "Content-Type": "application/octet-stream",
-          "X-Zigba-Revision": crypto.randomUUID(),
-          "X-Zigba-Captured-At": "42",
-          "X-Zigba-Digest": digest,
+          "X-Evenfall-Revision": crypto.randomUUID(),
+          "X-Evenfall-Captured-At": "42",
+          "X-Evenfall-Digest": digest,
           "If-None-Match": "*",
         },
       },
@@ -1372,7 +1372,7 @@ describe("playthrough quota and account erasure", () => {
   });
 
   it("keeps the tombstone when R2 purge fails and retries on the scheduled sweep", async () => {
-    const id = other["X-Zigba-Account"];
+    const id = other["X-Evenfall-Account"];
     const key = `${id}/unknown-layout/backup`;
     await saves.put(key, "private data");
     const failingBucket = new Proxy(saves, {
@@ -1448,7 +1448,7 @@ describe("playthrough quota and account erasure", () => {
       .bind(id, Date.now())
       .run();
     expect(
-      (await upload({ Cookie, "X-Zigba-Account": id }, crypto.randomUUID()))
+      (await upload({ Cookie, "X-Evenfall-Account": id }, crypto.randomUUID()))
         .status,
     ).toBe(503);
     expect(
@@ -1476,7 +1476,7 @@ describe("cloud quick slots", () => {
   const hash = "d".repeat(40);
   const state = (marker: number) =>
     gzipSync(Buffer.from([...Buffer.from("EVENFALL"), marker]));
-  let owner: { Cookie: string; "X-Zigba-Account": string };
+  let owner: { Cookie: string; "X-Evenfall-Account": string };
   let other: typeof owner;
 
   beforeAll(async () => {
@@ -1489,7 +1489,7 @@ describe("cloud quick slots", () => {
       const session = (await (
         await request("/api/auth/get-session", { headers: { Cookie } })
       ).json()) as { user: { id: string } };
-      return { Cookie, "X-Zigba-Account": session.user.id };
+      return { Cookie, "X-Evenfall-Account": session.user.id };
     }
     owner = await login("quick-owner@example.com", "192.0.2.200");
     other = await login("quick-other@example.com", "192.0.2.201");
@@ -1512,10 +1512,10 @@ describe("cloud quick slots", () => {
           ...account,
           Origin: origin,
           "Content-Type": "application/octet-stream",
-          "X-Zigba-Revision": revision,
-          "X-Zigba-Captured-At": "77",
-          "X-Zigba-Digest": createHash("sha256").update(bytes).digest("hex"),
-          "X-Zigba-Playthrough-Name": encodeURIComponent("Quick run"),
+          "X-Evenfall-Revision": revision,
+          "X-Evenfall-Captured-At": "77",
+          "X-Evenfall-Digest": createHash("sha256").update(bytes).digest("hex"),
+          "X-Evenfall-Playthrough-Name": encodeURIComponent("Quick run"),
           ...precondition,
         },
       },
@@ -1577,7 +1577,7 @@ describe("cloud quick slots", () => {
       { headers: owner },
     );
     expect(body.status).toBe(200);
-    expect(body.headers.get("X-Zigba-Digest")).toBe(
+    expect(body.headers.get("X-Evenfall-Digest")).toBe(
       listing.body.slots[0].digest,
     );
     expect(Buffer.from(await body.arrayBuffer())).toEqual(state(3));
@@ -1615,9 +1615,11 @@ describe("cloud quick slots", () => {
           Origin: origin,
           "Content-Type": "application/octet-stream",
           "If-None-Match": "*",
-          "X-Zigba-Revision": crypto.randomUUID(),
-          "X-Zigba-Captured-At": "78",
-          "X-Zigba-Digest": createHash("sha256").update(resume).digest("hex"),
+          "X-Evenfall-Revision": crypto.randomUUID(),
+          "X-Evenfall-Captured-At": "78",
+          "X-Evenfall-Digest": createHash("sha256")
+            .update(resume)
+            .digest("hex"),
         },
       },
     );
@@ -1686,7 +1688,7 @@ describe("cloud quick slots", () => {
 
   it("applies per-account D1 overrides and the code default before spending upload budget", async () => {
     const run = crypto.randomUUID();
-    const id = other["X-Zigba-Account"];
+    const id = other["X-Evenfall-Account"];
     await database
       .prepare(
         "INSERT INTO account_limits (user_id, quick_slots) VALUES (?, ?)",
@@ -1728,7 +1730,7 @@ describe("cloud quick slots", () => {
 
   it("erases quick slots and the account override with the account", async () => {
     const run = crypto.randomUUID();
-    const id = other["X-Zigba-Account"];
+    const id = other["X-Evenfall-Account"];
     expect((await putQuick(other, run, 1)).status).toBe(200);
     expect(
       (await saves.list({ prefix: `${id}/${hash}/${run}/quick/` })).objects,
@@ -1756,7 +1758,7 @@ describe("state shares", () => {
   const unknownHash = "9".repeat(40);
   const state = (marker: string) => gzipSync(Buffer.from(`EVENFALL${marker}`));
   const name = "Route 1 · Pokémon 🌙";
-  let owner: { Cookie: string; "X-Zigba-Account": string };
+  let owner: { Cookie: string; "X-Evenfall-Account": string };
   let other: typeof owner;
 
   beforeAll(async () => {
@@ -1769,7 +1771,7 @@ describe("state shares", () => {
       const session = (await (
         await request("/api/auth/get-session", { headers: { Cookie } })
       ).json()) as { user: { id: string } };
-      return { Cookie, "X-Zigba-Account": session.user.id };
+      return { Cookie, "X-Evenfall-Account": session.user.id };
     }
     owner = await login("share-owner@example.com", "192.0.2.210");
     other = await login("share-other@example.com", "192.0.2.211");
@@ -1846,9 +1848,9 @@ describe("state shares", () => {
         ...account,
         Origin: origin,
         "Content-Type": "application/octet-stream",
-        "X-Zigba-Rom": hash,
-        "X-Zigba-Digest": createHash("sha256").update(body).digest("hex"),
-        "X-Zigba-Playthrough-Name": encodeURIComponent(name),
+        "X-Evenfall-Rom": hash,
+        "X-Evenfall-Digest": createHash("sha256").update(body).digest("hex"),
+        "X-Evenfall-Playthrough-Name": encodeURIComponent(name),
         ...headers,
       },
     });
@@ -1864,7 +1866,7 @@ describe("state shares", () => {
     expect(
       (
         await share(
-          { ...owner, "X-Zigba-Account": other["X-Zigba-Account"] },
+          { ...owner, "X-Evenfall-Account": other["X-Evenfall-Account"] },
           catalogHash,
           body,
         )
@@ -1890,8 +1892,8 @@ describe("state shares", () => {
         ...owner,
         Origin: origin,
         "Content-Type": "application/octet-stream",
-        "X-Zigba-Rom": catalogHash,
-        "X-Zigba-Digest": createHash("sha256").update(body).digest("hex"),
+        "X-Evenfall-Rom": catalogHash,
+        "X-Evenfall-Digest": createHash("sha256").update(body).digest("hex"),
       },
     });
     expect(unnamed.status).toBe(400);
@@ -1904,7 +1906,7 @@ describe("state shares", () => {
   it("serves the exact bytes publicly with the catalog title, never the account", async () => {
     const body = state("catalog");
     const created = await share(owner, catalogHash, body, {
-      "X-Zigba-Title": encodeURIComponent("my rom dump (1)"),
+      "X-Evenfall-Title": encodeURIComponent("my rom dump (1)"),
     });
     expect(created.status).toBe(201);
     const { id, url } = (await created.json()) as Created;
@@ -1916,24 +1918,24 @@ describe("state shares", () => {
     expect(read.status).toBe(200);
     const bytes = Buffer.from(await read.arrayBuffer());
     expect(bytes).toEqual(body);
-    expect(read.headers.get("X-Zigba-Digest")).toBe(
+    expect(read.headers.get("X-Evenfall-Digest")).toBe(
       createHash("sha256").update(bytes).digest("hex"),
     );
-    expect(read.headers.get("X-Zigba-Rom")).toBe(catalogHash);
-    expect(decodeURIComponent(read.headers.get("X-Zigba-Title")!)).toBe(
+    expect(read.headers.get("X-Evenfall-Rom")).toBe(catalogHash);
+    expect(decodeURIComponent(read.headers.get("X-Evenfall-Title")!)).toBe(
       "Share Test · 1.0",
     );
     expect(
-      decodeURIComponent(read.headers.get("X-Zigba-Playthrough-Name")!),
+      decodeURIComponent(read.headers.get("X-Evenfall-Playthrough-Name")!),
     ).toBe(name);
     expect(read.headers.get("Cache-Control")).toBe("no-store");
     expect(read.headers.get("Referrer-Policy")).toBe("no-referrer");
     for (const [, value] of read.headers)
-      expect(value).not.toContain(owner["X-Zigba-Account"]);
+      expect(value).not.toContain(owner["X-Evenfall-Account"]);
 
     // Shares never occupy the account's prefix or playthrough quota.
     expect(
-      (await saves.list({ prefix: `${owner["X-Zigba-Account"]}/` })).objects,
+      (await saves.list({ prefix: `${owner["X-Evenfall-Account"]}/` })).objects,
     ).toHaveLength(0);
     const listing = (await (
       await miniflare.dispatchFetch(`${origin}/api/saves`, { headers: owner })
@@ -1944,7 +1946,7 @@ describe("state shares", () => {
   it("keeps each share separate and labels unknown ROMs by upload or hash", async () => {
     const labelled = (await (
       await share(owner, unknownHash, state("a"), {
-        "X-Zigba-Title": encodeURIComponent("Homebrew demo"),
+        "X-Evenfall-Title": encodeURIComponent("Homebrew demo"),
       })
     ).json()) as Created;
     const bare = (await (
@@ -1957,11 +1959,11 @@ describe("state shares", () => {
     const second = await miniflare.dispatchFetch(
       `${origin}/api/shares/${bare.id}`,
     );
-    expect(decodeURIComponent(first.headers.get("X-Zigba-Title")!)).toBe(
+    expect(decodeURIComponent(first.headers.get("X-Evenfall-Title")!)).toBe(
       "Homebrew demo",
     );
     expect(Buffer.from(await first.arrayBuffer())).toEqual(state("a"));
-    expect(decodeURIComponent(second.headers.get("X-Zigba-Title")!)).toBe(
+    expect(decodeURIComponent(second.headers.get("X-Evenfall-Title")!)).toBe(
       "Game 99999999",
     );
     expect(Buffer.from(await second.arrayBuffer())).toEqual(state("b"));
@@ -1982,7 +1984,7 @@ describe("state shares", () => {
         `INSERT INTO account_limits (user_id, admin) VALUES (?, ?)
         ON CONFLICT(user_id) DO UPDATE SET admin = excluded.admin`,
       )
-      .bind(account["X-Zigba-Account"], admin ? 1 : 0)
+      .bind(account["X-Evenfall-Account"], admin ? 1 : 0)
       .run();
   }
   function attachRom(
@@ -1998,7 +2000,7 @@ describe("state shares", () => {
         ...account,
         Origin: origin,
         "Content-Type": "application/octet-stream",
-        "X-Zigba-Digest": createHash("sha256").update(body).digest("hex"),
+        "X-Evenfall-Digest": createHash("sha256").update(body).digest("hex"),
         ...headers,
       },
     });
@@ -2008,7 +2010,7 @@ describe("state shares", () => {
   const romIncluded = async (id: string) => {
     const read = await miniflare.dispatchFetch(`${origin}/api/shares/${id}`);
     await read.arrayBuffer();
-    return read.headers.get("X-Zigba-Rom-Included");
+    return read.headers.get("X-Evenfall-Rom-Included");
   };
   type Shared = Created & { canIncludeRom: boolean };
 
@@ -2040,7 +2042,7 @@ describe("state shares", () => {
       const othersId = "B".repeat(22);
       await saves.put(`share/state/${othersId}`, state("not yours"), {
         customMetadata: {
-          userId: other["X-Zigba-Account"],
+          userId: other["X-Evenfall-Account"],
           hash: unknownHash,
           playthroughName: name,
         },
@@ -2056,7 +2058,7 @@ describe("state shares", () => {
       ).toBe(403);
       expect((await attachRom({}, created.id, rom)).status).toBe(401);
       const tampered = await attachRom(owner, created.id, rom, {
-        "X-Zigba-Digest": "0".repeat(64),
+        "X-Evenfall-Digest": "0".repeat(64),
       });
       expect(tampered.status).toBe(400);
       expect(await tampered.json()).toMatchObject({
@@ -2076,13 +2078,13 @@ describe("state shares", () => {
       const read = await readRom(created.id);
       expect(read.status).toBe(200);
       expect(Buffer.from(await read.arrayBuffer())).toEqual(rom);
-      expect(read.headers.get("X-Zigba-Digest")).toBe(
+      expect(read.headers.get("X-Evenfall-Digest")).toBe(
         createHash("sha256").update(rom).digest("hex"),
       );
       expect(read.headers.get("Cache-Control")).toBe("no-store");
       expect(read.headers.get("Referrer-Policy")).toBe("no-referrer");
       for (const [, value] of read.headers)
-        expect(value).not.toContain(owner["X-Zigba-Account"]);
+        expect(value).not.toContain(owner["X-Evenfall-Account"]);
 
       // Clearing the flag withdraws every ROM the account attached at once.
       await setAdmin(owner, false);
@@ -2101,7 +2103,7 @@ describe("state shares", () => {
   });
 
   it("silently caps new links per day like the upload budget", async () => {
-    const userId = owner["X-Zigba-Account"];
+    const userId = owner["X-Evenfall-Account"];
     const key = `cloud-save:shares:${userId}:${24 * 60 * 60_000}`;
     const count = async () =>
       (
@@ -2148,7 +2150,7 @@ describe("state shares", () => {
   });
 
   it("spends the account's upload budget", async () => {
-    const userId = other["X-Zigba-Account"];
+    const userId = other["X-Evenfall-Account"];
     const key = `cloud-save:requests:${userId}:${60 * 60_000}`;
     await database
       .prepare(
@@ -2203,7 +2205,7 @@ describe("states saved by the previous core", () => {
   const legacy = (marker: string) => gzipSync(Buffer.from(`ZIGBAST1${marker}`));
   const digest = (bytes: Buffer) =>
     createHash("sha256").update(bytes).digest("hex");
-  let owner: { Cookie: string; "X-Zigba-Account": string };
+  let owner: { Cookie: string; "X-Evenfall-Account": string };
 
   beforeAll(async () => {
     const email = "legacy-owner@example.com";
@@ -2216,7 +2218,7 @@ describe("states saved by the previous core", () => {
     const session = (await (
       await request("/api/auth/get-session", { headers: { Cookie } })
     ).json()) as { user: { id: string } };
-    owner = { Cookie, "X-Zigba-Account": session.user.id };
+    owner = { Cookie, "X-Evenfall-Account": session.user.id };
   });
 
   function upload(path: string, method: "PUT" | "POST", body: Buffer) {
@@ -2227,11 +2229,11 @@ describe("states saved by the previous core", () => {
         ...owner,
         Origin: origin,
         "Content-Type": "application/octet-stream",
-        "X-Zigba-Revision": crypto.randomUUID(),
-        "X-Zigba-Captured-At": "5",
-        "X-Zigba-Digest": digest(body),
-        "X-Zigba-Rom": hash,
-        "X-Zigba-Playthrough-Name": encodeURIComponent("Old run"),
+        "X-Evenfall-Revision": crypto.randomUUID(),
+        "X-Evenfall-Captured-At": "5",
+        "X-Evenfall-Digest": digest(body),
+        "X-Evenfall-Rom": hash,
+        "X-Evenfall-Playthrough-Name": encodeURIComponent("Old run"),
         "If-None-Match": "*",
       },
     });
@@ -2270,7 +2272,7 @@ describe("states saved by the previous core", () => {
   });
 
   it("lists, serves, deletes and erases old-format objects", async () => {
-    const id = owner["X-Zigba-Account"];
+    const id = owner["X-Evenfall-Account"];
     const run = crypto.randomUUID();
     const kept = crypto.randomUUID();
     const resume = legacy("resume");
@@ -2309,7 +2311,7 @@ describe("states saved by the previous core", () => {
         headers: path.startsWith("/api/shares") ? {} : owner,
       });
       expect(read.status).toBe(200);
-      expect(read.headers.get("X-Zigba-Digest")).toBe(digest(body));
+      expect(read.headers.get("X-Evenfall-Digest")).toBe(digest(body));
       expect(Buffer.from(await read.arrayBuffer())).toEqual(body);
     }
 
@@ -2332,5 +2334,95 @@ describe("states saved by the previous core", () => {
     expect(
       (await miniflare.dispatchFetch(`${origin}/api/shares/${shareId}`)).status,
     ).toBe(404);
+  });
+});
+
+describe("legacy cloud header names", () => {
+  // Cached offline players and open tabs keep sending the X-Zigba-* names
+  // after a deploy. Until they are gone, requests may use either name and
+  // responses carry both.
+  const hash = "6".repeat(40);
+  const body = gzipSync(Buffer.from("EVENFALLlegacy-client"));
+  const digest = createHash("sha256").update(body).digest("hex");
+  let cookie: string;
+  let account: string;
+
+  beforeAll(async () => {
+    const email = "legacy-headers@example.com";
+    const ip = "192.0.2.230";
+    await request("/api/auth/sign-in/magic-link", post({ email }, ip));
+    expect(messages.at(-1)?.to).toBe(email);
+    cookie = sessionCookie(
+      await request(messageLink(), { headers: { "CF-Connecting-IP": ip } }),
+    );
+    account = (
+      (await (
+        await request("/api/auth/get-session", { headers: { Cookie: cookie } })
+      ).json()) as { user: { id: string } }
+    ).user.id;
+  });
+
+  it("accepts saves and shares from an earlier player and answers under both names", async () => {
+    const upload = await miniflare.dispatchFetch(
+      `${origin}/api/saves/${hash}/default/resume`,
+      {
+        method: "PUT",
+        body,
+        headers: {
+          Cookie: cookie,
+          "X-Zigba-Account": account,
+          Origin: origin,
+          "Content-Type": "application/octet-stream",
+          "X-Zigba-Revision": crypto.randomUUID(),
+          "X-Zigba-Captured-At": "9",
+          "X-Zigba-Digest": digest,
+          "X-Zigba-Title": encodeURIComponent("Old tab"),
+          "If-None-Match": "*",
+        },
+      },
+    );
+    expect(upload.status).toBe(200);
+    const read = await miniflare.dispatchFetch(
+      `${origin}/api/saves/${hash}/default/resume`,
+      { headers: { Cookie: cookie, "X-Zigba-Account": account } },
+    );
+    expect(read.status).toBe(200);
+    for (const prefix of ["X-Evenfall-", "X-Zigba-"]) {
+      expect(read.headers.get(`${prefix}Digest`)).toBe(digest);
+      expect(read.headers.get(`${prefix}Captured-At`)).toBe("9");
+      expect(read.headers.get(`${prefix}Uploaded-At`)).toBeTruthy();
+    }
+    await read.arrayBuffer();
+    const mismatched = await miniflare.dispatchFetch(
+      `${origin}/api/saves/${hash}/default/resume`,
+      { headers: { Cookie: cookie, "X-Zigba-Account": "someone-else" } },
+    );
+    expect(mismatched.status).toBe(403);
+
+    const shared = await miniflare.dispatchFetch(`${origin}/api/shares`, {
+      method: "POST",
+      body,
+      headers: {
+        Cookie: cookie,
+        "X-Zigba-Account": account,
+        Origin: origin,
+        "Content-Type": "application/octet-stream",
+        "X-Zigba-Rom": hash,
+        "X-Zigba-Digest": digest,
+        "X-Zigba-Playthrough-Name": encodeURIComponent("Old run"),
+      },
+    });
+    expect(shared.status).toBe(201);
+    const { id } = (await shared.json()) as { id: string };
+    const link = await miniflare.dispatchFetch(`${origin}/api/shares/${id}`);
+    expect(link.status).toBe(200);
+    for (const prefix of ["X-Evenfall-", "X-Zigba-"]) {
+      expect(link.headers.get(`${prefix}Rom`)).toBe(hash);
+      expect(link.headers.get(`${prefix}Digest`)).toBe(digest);
+      expect(
+        decodeURIComponent(link.headers.get(`${prefix}Playthrough-Name`)!),
+      ).toBe("Old run");
+    }
+    await link.arrayBuffer();
   });
 });
