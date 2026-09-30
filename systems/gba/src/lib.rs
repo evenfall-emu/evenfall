@@ -30,7 +30,7 @@ macro_rules! impl_clone_fields {
     };
 }
 
-// Module declarations, grouped by the part of the port that owns them. Add a
+// Module declarations, grouped by the part of the core that owns them. Add a
 // module directly under its group's marker so parallel work merges cleanly.
 
 // [devices]

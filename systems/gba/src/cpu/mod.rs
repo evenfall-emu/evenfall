@@ -966,7 +966,7 @@ impl Cpu {
         }
     }
 
-    /// The engine entry the ported ARM kernel tests exercise.
+    /// The engine entry the ARM kernel tests exercise.
     #[cfg(test)]
     fn run_arm_iwram_kernel(&mut self, bus: &mut Bus, yield_at: u64) -> bool {
         self.run_engine(bus, yield_at)
