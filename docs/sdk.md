@@ -267,12 +267,12 @@ small pool and detaches them; it is optional.
   `instruction_boundary_after_deadline` with a cycle beyond the request. The
   bound is emulated time, **not a hard wall-time guarantee** for an unusually
   expensive instruction or HLE call.
-- `step()` distinguishes `executed`, `halted`, `power_stopped` and `faulted`.
-  Bounded running advances eligible devices while HALTed; STOP freezes time.
-  A CPU stalled by a DMA burst that holds the bus also reports `halted`:
-  it executes nothing until bounded running lets the burst end, and snapshot
-  writes fail meanwhile
-  ([roadmap](roadmap.md#dma-that-never-releases-the-bus)).
+- `step()` distinguishes `executed`, `halted`, `power_stopped`, `faulted`
+  and `dma_stall`. Bounded running advances eligible devices while HALTed;
+  STOP freezes time. `dma_stall` means a DMA burst holds the bus: the CPU
+  executes nothing and `step()` does not advance, bounded running advances
+  the burst and every other device until it ends, and snapshot writes fail
+  meanwhile ([roadmap](roadmap.md#dma-that-never-releases-the-bus)).
 - Invalid ROM, BIOS, configuration or snapshot imports leave the previous
   machine intact. Guest compatibility faults are sticky diagnostics:
   `play()` on a faulted machine fails, and snapshot writes from it fail.

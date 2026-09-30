@@ -53,8 +53,9 @@ limit and makes only the burst resumable:
   runs on.
 - `Machine::step` during a stall returns `Waiting(WaitReason::DmaStall)`
   without advancing; `wait_until` accepts the stall and continues it; linked
-  runs continue a stalled machine as they idle a halted one. The web ABI
-  reports the stall as the SDK's `halted` step reason.
+  runs continue a stalled machine as they idle a halted one. The SDK's
+  `step()` reports it as its own reason, `dma_stall`
+  ([`sdk.md`](sdk.md)).
 
 **Consequences.**
 
@@ -84,11 +85,16 @@ limit and makes only the burst resumable:
   limit overflows the sample queue differently under each slicing; emulated
   sound is unaffected.
 
-**Open questions.** Whether a shorter in-access limit (a smaller one-time
-overrun, at the cost of diverging from ZiGBA on the rare burst between the
-new and old limit that then ends) is worth it; whether the SDK should report
-a distinct `dma_stall` step reason; and whether stalls should become durable
-in a future state version.
+**Decisions.**
+
+- The in-access limit stays at 2^24 cycles, with its one-time overrun of
+  about a second. A lower limit would shorten it but diverge from ZiGBA on a
+  burst that runs between the two limits and then ends; revisit only with
+  measurements from real games.
+- The SDK reports the stall as `dma_stall`, distinct from `halted`.
+- Durable stalls are deferred: saves stay refused during a stall and the
+  state version is unchanged. Saving one needs per-channel transfer
+  progress in a new state version.
 
 ## Player and Cloudflare server migration
 
