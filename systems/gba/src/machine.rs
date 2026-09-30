@@ -1014,6 +1014,7 @@ impl Machine {
         self.cpu.read_state(&mut payload_source, cycle)?;
         self.bus.current_cycle = cycle;
         self.bus.read_state(&mut payload_source)?;
+        self.bus.bios_code_active = self.cpu.last_fetch_in_bios();
         if !payload_source.input.is_empty()
             || blake3::hash(payload).as_bytes() != digest
             || self.cpu.hle_bios != (self.boot_mode == BootMode::Hle)

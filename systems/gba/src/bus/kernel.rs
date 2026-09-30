@@ -746,6 +746,9 @@ pub fn begin_arm_iwram_slice(bus: &mut Bus) {
 
 pub fn fetch_arm_iwram_in_slice(bus: &mut Bus, address: u32) -> u32 {
     debug_assert!(is_arm_iwram_slice_fetch(address));
+    // Code leaves the BIOS only through a refill, which fetches through
+    // `Bus::read`; a slice fetch never follows a BIOS fetch.
+    debug_assert!(!bus.bios_code_active);
     bus.fetch_kind = AccessKind::Sequential;
     let value = bus.read_iwram(address, AccessWidth::Word);
     bus.complete_read(value, 1).value

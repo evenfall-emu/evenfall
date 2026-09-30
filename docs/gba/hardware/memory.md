@@ -153,9 +153,44 @@ the BIOS, a latch that changes as the BIOS boots, runs services and
 dispatches interrupts ([GBATEK, Unpredictable Things: Reading from BIOS
 Memory][gbatek-unpredictable]).
 
-ZiGBA models this latch in HLE mode, where no BIOS bytes exist at all: every
-read of `00000000h`–`00003FFFh` returns `Bus.bios_latch`, which the HLE BIOS
-sets at the points where the retail BIOS would have fetched those opcodes.
+With a BIOS image, the bus applies the protection itself
+(`Bus::read_protected_bios`):
+
+- **Opcode fetches** from the BIOS read the image and replace the latch with
+  the aligned 32-bit word they fetched, for Thumb fetches too: the BIOS sits
+  on a 32-bit bus, and GBATEK's open-bus rules for Thumb code in the BIOS
+  show both halfwords of that word. With the CPU fetching two instructions
+  ahead, a branch out of the BIOS at address A leaves the opcode at A+8
+  (ARM), or the BIOS word holding A+4 (Thumb), in the latch.
+- **CPU data reads** see the image while the most recent opcode fetch was
+  from the BIOS (`Bus.bios_code_active`), so BIOS code reads its own tables;
+  otherwise they return the latch, shifted to the accessed lane. Data reads
+  never change the latch.
+- **DMA** never reads the BIOS: a source below `02000000h` presents the DMA
+  controller's own data latch ([`timers-dma-interrupts.md`](timers-dma-interrupts.md#shared-data-latch-and-source-zero)),
+  wherever the CPU runs.
+- The debugger's side-effect-free view (`inspect_byte`) shows the image.
+
+The gate follows the CPU's fetch address, the prefetch two instructions
+ahead of the one executing, as NanoBoyAdvance's `r15` check does; pinned
+mGBA 0.10.5 gates on the region of the active fetch. The latch takes opcode
+fetches only, as GBATEK words it and as mGBA's `biosPrefetch` does;
+NanoBoyAdvance also latches data reads that BIOS code makes of itself.
+`bios_code_active` is not part of the `ZIGBAST1` layout: every instruction's
+prefetch through `Bus::read` sets it before the instruction executes, and a
+state load derives it from the restored CPU (`Cpu::last_fetch_in_bios`).
+The pre-decoded engine, which runs BIOS code without bus fetches, sets the
+latch when a run branches from the BIOS to IWRAM and sets the latch and the
+gate when a run ends. Tests in
+[`tests/bios_protection.rs`](../../../systems/gba/tests/bios_protection.rs)
+pin these rules with synthetic images, and the engine differential
+`bios_and_indirect_branches_run_like_stepping` compares the latch and gate
+with stepping.
+
+In HLE mode no BIOS bytes exist: every read of `00000000h`–`00003FFFh`
+returns `Bus.bios_latch`, which the HLE BIOS sets at the points where the
+retail BIOS would have fetched those opcodes. Skip-BIOS boot starts with the
+post-boot value.
 
 | Moment                                      | Latch value |
 | ------------------------------------------- | ----------- |
@@ -166,12 +201,16 @@ sets at the points where the retail BIOS would have fetched those opcodes.
 | after an HLE sound jump-list helper returns | `E12FFF1Eh` |
 
 The jsmolka BIOS test ROM checks the latch around startup, `Sqrt` and the IRQ
-trampoline and passes under HLE boot.
+trampoline and passes under HLE boot. The values are those of Nintendo's
+BIOS; a replacement BIOS leaves its own opcodes. The pinned Cult-of-GBA
+image leaves boot with `BX lr` at `94h`, so the ROM's first check reads
+`01000020h`, the halfword pair at `9Ch` in its I/O table, and fails
+([compatibility](../../compatibility.md#known-divergences)).
 
-With an external BIOS image, the bus returns the image's bytes to every read,
-including reads by code running outside the BIOS; the protection latch is not
-applied on that path. The same jsmolka ROM therefore fails its first check
-under external boot ([ZiGBA compatibility](../../../refs/zigba/docs/compatibility.md)).
+This is a deliberate difference from ZiGBA, which returns the image's bytes
+to every read; the parity harness applies the same rule to its ZiGBA oracle
+([`parity.md`](../../parity.md#oracle-source-and-fixture),
+[`roadmap.md`](../../roadmap.md)).
 
 ## WAITCNT and Game Pak wait states
 
@@ -314,9 +353,11 @@ that any change is visible.
 
 ## Open questions
 
-- **External-BIOS read protection.** With a BIOS image, ZiGBA returns raw
-  BIOS bytes to reads made from outside the BIOS; GBATEK's protection latch
-  is modeled only in HLE mode.
+- **BIOS latch sources.** Whether a data read that BIOS code makes of the
+  BIOS replaces the protection latch, and whether a Thumb fetch latches the
+  whole BIOS word, are untested on hardware; the core follows GBATEK's
+  "opcode" wording and the 32-bit BIOS bus. Distinguishing them needs a
+  Nintendo BIOS and a probe that reads the latch after such accesses.
 - **Open-bus composition.** ZiGBA returns the last value read, and a Thumb
   fetch stores only its halfword. How the prefetched opcodes compose the
   open-bus word in Thumb state, per region (GBATEK, Unpredictable Things), is

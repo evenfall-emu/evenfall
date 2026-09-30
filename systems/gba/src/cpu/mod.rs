@@ -3,8 +3,9 @@
 pub(crate) mod engine;
 
 use crate::bus::{
-    Access, AccessKind, AccessSource, AccessWidth, Bus, InstructionFetchRegion, PowerState,
-    ThumbStream, begin_arm_iwram_slice, fetch_arm_iwram_in_slice, is_arm_iwram_slice_fetch,
+    Access, AccessKind, AccessSource, AccessWidth, BIOS_SIZE, Bus, InstructionFetchRegion,
+    PowerState, ThumbStream, begin_arm_iwram_slice, fetch_arm_iwram_in_slice,
+    is_arm_iwram_slice_fetch,
 };
 pub use crate::multiboot::{
     Encoder as MultiBootEncoder, Mode as MultiBootMode, Parameters as MultiBootParameters,
@@ -684,6 +685,20 @@ impl Cpu {
 
     pub fn read_cpsr(&self) -> u32 {
         self.cpsr
+    }
+
+    /// Whether the most recent opcode fetch was from the BIOS: at an
+    /// instruction boundary, the second pipeline slot's, or without a
+    /// pipeline the instruction just executed.
+    pub fn last_fetch_in_bios(&self) -> bool {
+        let width = if self.is_thumb() { 2 } else { 4 };
+        let address = self.core.next_instruction_address;
+        let last = if self.pipeline.is_some() {
+            address.wrapping_add(width)
+        } else {
+            address.wrapping_sub(width)
+        };
+        last < BIOS_SIZE as u32
     }
 
     pub(crate) fn refill_pipeline(&mut self, bus: &mut Bus) {

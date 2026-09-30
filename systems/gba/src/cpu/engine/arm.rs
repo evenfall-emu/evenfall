@@ -598,7 +598,12 @@ fn drive<const EW: bool>(
         if let Some((target, hot)) = c.switch.take() {
             #[cfg(test)]
             super::SWITCHES.with(|count| count.set(count.get() + 1));
+            // Leaving the BIOS, the branch fetched the opcode two slots on.
+            let latch = c.bios.then(|| c.code_word(c.pc(hot.idx).wrapping_add(8)));
             saved = c.save();
+            if let Some(latch) = latch {
+                bus.bios_latch = latch;
+            }
             put_ops::<EW>(&mut bus.code, saved.bios, ops);
             saved.bios = target >> 24 == 0;
             saved.base = if saved.bios { 0 } else { target & !Ctx::<EW>::MASK };
@@ -617,6 +622,11 @@ fn drive<const EW: bool>(
         return false;
     };
     bus.engine_finish(start + cycle, open_bus, data_last);
+    // A run that ends in the BIOS last fetched the pipeline's second opcode.
+    bus.bios_code_active = saved.bios;
+    if saved.bios {
+        bus.bios_latch = core.pipeline.expect("a finished run's pipeline").instructions[1];
+    }
     true
 }
 

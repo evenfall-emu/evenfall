@@ -603,7 +603,15 @@ pub struct Bus {
     pub active_dma_channel: Option<u8>,
     pub dma_transfer_latch: u32,
     pub open_bus_value: u32,
+    /// The word of the most recent opcode fetch from the BIOS image, which
+    /// reads of the BIOS return while the CPU runs elsewhere; in HLE mode,
+    /// the value the HLE BIOS sets.
     pub bios_latch: u32,
+    /// Whether the most recent opcode fetch was from the BIOS, which opens
+    /// the image to data reads. Not in ZiGBA's durable layout: a state load
+    /// derives it from the CPU ([`crate::cpu::Cpu::last_fetch_in_bios`]).
+    #[codec(skip)]
+    pub bios_code_active: bool,
     #[codec(skip)]
     pub current_cycle: Cycle,
     #[codec(skip)]
@@ -790,6 +798,7 @@ impl Bus {
             dma_transfer_latch: 0,
             open_bus_value: 0,
             bios_latch: 0xe129_f000,
+            bios_code_active: false,
             current_cycle: 0,
             batch_active: false,
             batch_device_cycle: 0,
@@ -936,9 +945,9 @@ impl Bus {
                 joy_control, joy_receive, joy_transmit, joy_status, joy_pending_command,
                 joy_completion_cycle, joy_response, dma_start_cycles, pending_dma,
                 servicing_dma, dma_burst_start, dma_livelock, active_dma_channel,
-                dma_transfer_latch, open_bus_value, bios_latch, current_cycle, batch_active,
-                batch_device_cycle, batch_deadline, devices_deferred, apu_cycle, timer_cycle,
-                timer_deadline, fifo_clock, dma_epoch,
+                dma_transfer_latch, open_bus_value, bios_latch, bios_code_active, current_cycle,
+                batch_active, batch_device_cycle, batch_deadline, devices_deferred, apu_cycle,
+                timer_cycle, timer_deadline, fifo_clock, dma_epoch,
             ],
             keep [code, rom, bios]
         );
@@ -1043,7 +1052,10 @@ impl Bus {
             }
         }
         match access.source {
-            AccessSource::CpuCode => self.fetch_kind = AccessKind::Sequential,
+            AccessSource::CpuCode => {
+                self.fetch_kind = AccessKind::Sequential;
+                self.bios_code_active = access.address < BIOS_SIZE as u32;
+            }
             AccessSource::CpuData => {
                 self.fetch_kind = if access.address >> 24 == 4 {
                     AccessKind::Sequential
@@ -1061,7 +1073,8 @@ impl Bus {
         let width = access.width;
         match address >> 24 {
             0 if address < BIOS_SIZE as u32 => {
-                self.complete_read(self.read_bios(address, width), 1)
+                let value = self.read_protected_bios(address, width, access.source);
+                self.complete_read(value, 1)
             }
             2 => self.complete_read(self.read_ewram(address, width), ewram_cycles(width)),
             3 => self.complete_read(self.read_iwram(address, width), 1),
@@ -1441,6 +1454,7 @@ impl Bus {
         let second =
             u32::from(u16::from_le_bytes(self.rom[index + 2..index + 4].try_into().unwrap()));
         self.fetch_kind = AccessKind::Sequential;
+        self.bios_code_active = false;
         self.game_pak_code_active = true;
         self.prefetch_disabled_bug_pending = false;
         self.prefetch_buffer_was_disabled = false;
@@ -2060,19 +2074,47 @@ impl Bus {
         (self.timer_cycle.wrapping_sub(u64::from(self.prescaler_origin)) as u16) & 1023
     }
 
+    /// A bus read of the BIOS with its read protection (GBATEK,
+    /// Unpredictable Things: Reading from BIOS Memory). The image answers an
+    /// opcode fetch, whose aligned word it latches, and a data read while the
+    /// most recent opcode fetch was from the BIOS; any other read returns the
+    /// latch. Without an image every read returns the HLE BIOS's latch.
+    fn read_protected_bios(
+        &mut self,
+        address: u32,
+        width: AccessWidth,
+        source: AccessSource,
+    ) -> u32 {
+        if self.bios.len() != BIOS_SIZE
+            || (source != AccessSource::CpuCode && !self.bios_code_active)
+        {
+            return self.bios_latch_lane(address, width);
+        }
+        if source == AccessSource::CpuCode {
+            self.bios_latch = self.read_bios(address & !3, AccessWidth::Word);
+        }
+        self.read_bios(address, width)
+    }
+
+    fn bios_latch_lane(&self, address: u32, width: AccessWidth) -> u32 {
+        let shift = match width {
+            AccessWidth::Byte => (address & 3) * 8,
+            AccessWidth::Half => (address & 2) * 8,
+            AccessWidth::Word => 0,
+        };
+        let mask = match width {
+            AccessWidth::Byte => 0xff,
+            AccessWidth::Half => 0xffff,
+            AccessWidth::Word => u32::MAX,
+        };
+        (self.bios_latch >> shift) & mask
+    }
+
+    /// The image's bytes, unprotected, as the debugger sees them; the latch
+    /// without an image.
     fn read_bios(&self, address: u32, width: AccessWidth) -> u32 {
         if self.bios.len() != BIOS_SIZE {
-            let shift = match width {
-                AccessWidth::Byte => (address & 3) * 8,
-                AccessWidth::Half => (address & 2) * 8,
-                AccessWidth::Word => 0,
-            };
-            let mask = match width {
-                AccessWidth::Byte => 0xff,
-                AccessWidth::Half => 0xffff,
-                AccessWidth::Word => u32::MAX,
-            };
-            return (self.bios_latch >> shift) & mask;
+            return self.bios_latch_lane(address, width);
         }
         (0..width.bytes())
             .map(|offset| u32::from(self.bios[address as usize + offset]) << (offset * 8))

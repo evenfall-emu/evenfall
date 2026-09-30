@@ -112,6 +112,8 @@ impl Pair {
         assert_eq!(a.pending_dma, b.pending_dma, "{context}: pending DMA");
         assert_eq!(a.batch_deadline, b.batch_deadline, "{context}: device horizon");
         assert_eq!(a.open_bus_value, b.open_bus_value, "{context}: open bus");
+        assert_eq!(a.bios_latch, b.bios_latch, "{context}: BIOS latch");
+        assert_eq!(a.bios_code_active, b.bios_code_active, "{context}: BIOS gate");
         assert_eq!(a.fetch_kind, b.fetch_kind, "{context}: fetch kind");
         assert_eq!(a.game_pak_prefetch, b.game_pak_prefetch, "{context}: prefetch");
         assert_eq!(a.game_pak_code_active, b.game_pak_code_active, "{context}: code active");

@@ -40,10 +40,15 @@ fn build() -> Result<(), Box<dyn Error>> {
         &root,
     )?;
     fs::copy(root.join("tools/parity/oracle/schema.zig"), scratch.join("src/parity_schema.zig"))?;
-    let patch = fs::File::open(root.join("tools/parity/patches/schema-root.patch"))?;
-    let status = Command::new("patch").args(["-p1", "-d"]).arg(&scratch).stdin(patch).status()?;
-    if !status.success() {
-        return Err("oracle scratch patch failed".into());
+    // The schema export, and Evenfall's deliberate differences from ZiGBA's
+    // guest behavior (docs/parity.md).
+    for name in ["schema-root.patch", "bios-protection.patch"] {
+        let patch = fs::File::open(root.join("tools/parity/patches").join(name))?;
+        let status =
+            Command::new("patch").args(["-p1", "-d"]).arg(&scratch).stdin(patch).status()?;
+        if !status.success() {
+            return Err(format!("oracle scratch patch {name} failed").into());
+        }
     }
     command(
         "zig",

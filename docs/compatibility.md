@@ -150,14 +150,19 @@ build passes.
 
 ## Known divergences
 
-**External BIOS protection latch.** `jsmolka-bios` test 1 expects Nintendo's
-boot code to leave `0xE129F000` in the protected BIOS read latch. With an
-external BIOS image, ZiGBA and the Rust port read that image's bytes instead;
-the Cult-of-GBA replacement also leaves boot with different code. The
-replacement-BIOS case fails at test 1 while every other jsmolka case passes.
-Only a user-supplied Nintendo BIOS, together with an implementation of the
-external-boot latch, could establish the retail expectation. HLE seeds the
-post-boot value and passes the case.
+**External BIOS protection latch.** `jsmolka-bios` checks the protected BIOS
+read latch against Nintendo's BIOS: test 1 expects `0xE129F000`, the opcode
+at `0xE4` that Nintendo's boot code fetches as it branches to the cartridge.
+With an external image the core models the protection
+([memory](gba/hardware/memory.md#bios-read-protection)), so the ROM reads the
+opcode the replacement BIOS fetched last. The pinned Cult-of-GBA image
+leaves boot with `BX lr` at `0x94`, and test 1 reads `0x01000020`, the word
+at `0x9C`, so the replacement-BIOS case fails at test 1 as the image
+dictates; its later checks cannot run. Of the ROM's four values, the image's
+IRQ trampoline would reproduce the last two (`0xE25EF004`, `0xE55EC002`);
+its SWI return leaves `0xEAFFFFFE` where Nintendo's leaves `0xE3A02004`.
+Only a user-supplied Nintendo BIOS can check the retail values under
+external boot. HLE seeds the post-boot value and passes the case.
 
 ## Guest faults in user-supplied games
 

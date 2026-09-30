@@ -14,8 +14,10 @@ cargo run -p evenfall-parity -- run --all
 cargo run -p evenfall-parity -- compare target/parity/traces/probe-timer_irq/oracle.trace OTHER.trace
 ```
 
-`oracle build` copies ZiGBA `src/` into `target/parity/zigba`, adds only the
-schema-export hook there, builds a Zig 0.16 ReleaseFast native executable in
+`oracle build` copies ZiGBA `src/` into `target/parity/zigba`, adds the
+schema-export hook there and applies `patches/bios-protection.patch`, the
+deliberate BIOS read-protection difference ([parity](../../docs/parity.md#oracle-source-and-fixture)),
+then builds a Zig 0.16 ReleaseFast native executable in
 `target/parity/bin`, and checks the exported schema against
 `fixtures/schema-v6.bin` (its BLAKE3 digest is `fixtures/schema-v6.blake3`).
 `refs/zigba` is never modified. `oracle run` writes

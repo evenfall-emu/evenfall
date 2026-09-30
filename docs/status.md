@@ -3,7 +3,8 @@
 Evenfall has one system so far: a Game Boy Advance core ported from ZiGBA.
 The port is exact. On every workload the parity harness runs, it produces
 the same frames, audio samples, battery-save bytes and save-state bytes as
-ZiGBA at the pinned commit, however execution is sliced. It therefore
+ZiGBA at the pinned commit, however execution is sliced, apart from one
+deliberate guest-visible difference that the harness applies to ZiGBA too. It therefore
 inherits ZiGBA's compatibility, and its limits: the core implements every
 major GBA subsystem, but evidence across real games is thin and nothing has
 been checked against captures from physical hardware. What complete would
@@ -30,8 +31,9 @@ mean is defined in [`methodology.md`](methodology.md#goals).
 
 ## Validation
 
-- **Parity with ZiGBA.** Every scenario of the harness matches ZiGBA byte
-  for byte at every checkpoint: the jsmolka gba-tests, every probe ROM, the
+- **Parity with ZiGBA.** Every scenario of the harness matches ZiGBA, with
+  the deliberate differences below patched into its copy, byte for byte at
+  every checkpoint: the jsmolka gba-tests, every probe ROM, the
   benchmark ROMs, the HLE, skip-BIOS and external-BIOS boot paths, and
   linked two- to four-machine cable runs, each under several host slicing
   schedules ([`parity.md`](parity.md)).
@@ -41,9 +43,10 @@ mean is defined in [`methodology.md`](methodology.md#goals).
   ([`design/save-states.md`](design/save-states.md)).
 - **ROM validators.** All 71 cases pass under HLE boot: 13 pinned
   `jsmolka/gba-tests` ROMs and 58 project probe ROMs. Under the open
-  Cult-of-GBA BIOS, 12 of the 13 jsmolka ROMs pass and the BIOS
-  read-protection case fails, exactly as in ZiGBA
-  ([`compatibility.md`](compatibility.md)).
+  Cult-of-GBA BIOS, 12 of the 13 jsmolka ROMs pass; the BIOS
+  read-protection case fails at its first check because that BIOS leaves
+  boot through other opcodes than Nintendo's
+  ([`compatibility.md`](compatibility.md#known-divergences)).
 - **Ported tests.** ZiGBA's unit and integration tests are ported with their
   oracles, and the SDK's JavaScript tests run against the Rust WebAssembly
   build. Every optimized path is checked against its reference path, and
@@ -63,8 +66,15 @@ remaining gaps are in [`performance.md`](performance.md).
 
 ## Deliberate differences from ZiGBA
 
-These change no emulated result; each is recorded with its evidence in
-[`roadmap.md`](roadmap.md):
+Each is recorded with its evidence in [`roadmap.md`](roadmap.md). One changes
+guest behavior:
+
+- With a BIOS image, reads of the BIOS from outside it return the last
+  opcode the BIOS fetched, as on hardware; ZiGBA returns the image's bytes
+  ([`gba/hardware/memory.md`](gba/hardware/memory.md#bios-read-protection)).
+  The parity harness patches its ZiGBA copy to match.
+
+These change no emulated result:
 
 - Compressed rewind entries use a different DEFLATE encoder, so their bytes
   differ while ZiGBA and Evenfall read each other's bundles and decode
@@ -76,7 +86,7 @@ These change no emulated result; each is recorded with its evidence in
 
 ## Known issues
 
-Because the port is exact, ZiGBA's known issues are also Evenfall's:
+These known issues of ZiGBA are also Evenfall's:
 
 - **DMA that never releases the bus** ends in a terminal `dma_livelock`
   fault after about one second of guest time. On hardware the CPU stalls
@@ -85,9 +95,6 @@ Because the port is exact, ZiGBA's known issues are also Evenfall's:
   or a track that jumps without waiting, would hold the host call. This is
   inferred from the code and has not been reproduced
   ([`gba/hardware/bios.md`](gba/hardware/bios.md)).
-- **BIOS read protection is modeled only in HLE mode.** With a BIOS image,
-  reads from outside the BIOS return the image's bytes instead of the last
-  opcode the BIOS fetched ([`gba/hardware/memory.md`](gba/hardware/memory.md)).
 - **Timing residuals** remain against the mGBA suite's recorded results for
   DMA with prefetch enabled, mixed wait states and DMA from EWRAM code
   ([`compatibility.md`](compatibility.md)).

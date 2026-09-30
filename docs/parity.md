@@ -45,9 +45,10 @@ benchmark workloads. The jsmolka ROMs have both HLE and `external_bios`
 variants; bench ROMs have HLE and `skip_bios` variants. The latter use the
 pinned Cult-of-GBA replacement image through a path under `refs/`; nothing is
 vendored in the manifests. External boot checkpoints include the BIOS startup
-before the cartridge reaches its endpoint. The replacement BIOS is known to
-produce a failing protected-BIOS-read test in the jsmolka BIOS ROM; parity
-still compares what **both emulators** do. Some key, STOP, audio and bench
+before the cartridge reaches its endpoint. The replacement BIOS leaves boot through other
+opcodes than Nintendo's, so the jsmolka BIOS ROM fails its first
+protected-read check under it; parity still compares what **both
+emulators** do. Some key, STOP, audio and bench
 scenarios add an odd, small slice size alongside quarter- and full-frame
 slices. Linked probes run two to four machines on one cable timeline in
 validator cable order, using the standard two-player or multiplayer cable.
@@ -112,8 +113,18 @@ of an earlier guest divergence.
 `oracle build` copies ZiGBA's `src/` to `target/parity/zigba`, copies the
 schema exporter into that scratch tree and applies
 [`schema-root.patch`](../tools/parity/patches/schema-root.patch) there to
-export it from `root.zig`. The pinned `refs/zigba` checkout stays read-only.
+export it from `root.zig`. It then applies
+[`bios-protection.patch`](../tools/parity/patches/bios-protection.patch), the
+one deliberate guest-visible difference from ZiGBA
+([`roadmap.md`](roadmap.md)): with a BIOS image, reads of the BIOS while the
+CPU's latest opcode fetch was elsewhere return the last fetched BIOS opcode
+([memory](gba/hardware/memory.md#bios-read-protection)). The patch adds the
+transient `bios_code_active` gate to ZiGBA's bus, sets it on every fetch
+through `Bus.read` and clears it where a refill fetches outside `Bus.read`.
+It changes no HLE behavior and no durable layout. The pinned `refs/zigba`
+checkout stays read-only.
 Zig 0.16 builds the native oracle and exports ZiGBA's version-six schema
 description; the build compares it byte for byte with the committed
-[`schema-v6.bin`](../tools/parity/fixtures/schema-v6.bin) fixture. The only
-patch is for that export, not guest behavior.
+[`schema-v6.bin`](../tools/parity/fixtures/schema-v6.bin) fixture. The
+external-BIOS and skip-BIOS scenarios therefore compare Evenfall with the
+patched oracle; HLE scenarios are unaffected by the patch.
