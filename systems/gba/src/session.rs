@@ -951,7 +951,7 @@ mod tests {
             session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
         }
         let info = session.rewind_info(1).unwrap();
-        assert_eq!(info.encoding, rewind::Encoding::Delta);
+        assert_eq!(info.encoding, rewind::Encoding::CopyDelta);
         let previous_frame = session.rewind_info(0).unwrap().frame;
         session.rewind(1).unwrap();
         assert_eq!(session.machine.completed_frames(), previous_frame);
@@ -1078,7 +1078,7 @@ mod tests {
         let payload = entry + 33;
         let cases = [
             (0, 0),
-            (8, 2),
+            (8, 3),
             (16, 0),
             (history + 3, 255),
             (history + 6, 255),

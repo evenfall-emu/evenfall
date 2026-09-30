@@ -150,6 +150,170 @@ pub fn decode_delta(base: &[u8], stored: &[u8]) -> Result<Vec<u8>> {
     patch(base, &delta, target_len)
 }
 
+const INDEX_BITS: u32 = 17;
+const MIN_COPY: usize = 12;
+/// A copy this long at the previous displacement is taken without searching.
+const LONG_COPY: usize = 64;
+
+/// Positions of 8-byte keys at every fourth byte of an anchor, built once
+/// per anchor so `copy_diff` finds data that moved within the state.
+#[derive(Debug)]
+pub struct AnchorIndex(Vec<u32>);
+fn index_slot(bytes: &[u8]) -> usize {
+    let key = u64::from_le_bytes(bytes[..8].try_into().unwrap());
+    (key.wrapping_mul(0x9E37_79B1_85EB_CA87) >> (64 - INDEX_BITS)) as usize
+}
+impl AnchorIndex {
+    pub fn new(base: &[u8]) -> Self {
+        let mut slots = alloc::vec![u32::MAX; 1 << INDEX_BITS];
+        for at in (0..base.len().saturating_sub(7)).step_by(4) {
+            slots[index_slot(&base[at..])] = at as u32;
+        }
+        Self(slots)
+    }
+    fn lookup(&self, bytes: &[u8]) -> Option<usize> {
+        let at = self.0[index_slot(bytes)];
+        (at != u32::MAX).then_some(at as usize)
+    }
+}
+fn common_prefix(a: &[u8], b: &[u8]) -> usize {
+    let len = a.len().min(b.len());
+    let mut n = 0;
+    while n + 16 <= len && a[n..n + 16] == b[n..n + 16] {
+        n += 16;
+    }
+    while n < len && a[n] == b[n] {
+        n += 1;
+    }
+    n
+}
+fn longer(a: (usize, usize), b: (usize, usize)) -> (usize, usize) {
+    if a.1 > b.1 { a } else { b }
+}
+fn zigzag(value: i64) -> usize {
+    ((value << 1) ^ (value >> 63)) as usize
+}
+fn unzigzag(value: usize) -> i64 {
+    let value = value as u64;
+    (value >> 1) as i64 ^ -((value & 1) as i64)
+}
+
+/// Copy/literal difference against `base`, which must be the base `index`
+/// was built from. Ops (literal length, copy length, zigzag change of the
+/// copy's displacement from the previous copy) precede the literals; bytes
+/// after the last copy are trailing literals. At each position the previous
+/// displacement is tried first, then the same offset, then the index, so a
+/// field that changes length shifts only one displacement.
+pub fn copy_diff(base: &[u8], index: &AnchorIndex, target: &[u8]) -> Vec<u8> {
+    let mut ops = Vec::new();
+    let mut literals = Vec::new();
+    let (mut at, mut literal_start) = (0usize, 0usize);
+    // The last two distinct displacements and that of the last long copy:
+    // short index matches inside changed data do not lose the displacement
+    // of a region shifted by a field that changed length.
+    let mut recent = [0i64; 2];
+    let mut settled = 0i64;
+    while at + MIN_COPY <= target.len() {
+        let copy_from = |displacement: i64| {
+            at.checked_add_signed(displacement as isize)
+                .filter(|&s| s < base.len())
+                .map_or((0, 0), |s| (s, common_prefix(&base[s..], &target[at..])))
+        };
+        // The longest candidate wins; ties keep the cheaper, earlier one.
+        let mut best = copy_from(recent[0]);
+        if best.1 < LONG_COPY {
+            for displacement in [recent[1], settled, 0] {
+                best = longer(copy_from(displacement), best);
+            }
+            if let Some(source) = index.lookup(&target[at..]) {
+                best = longer(copy_from(source as i64 - at as i64), best);
+            }
+        }
+        if best.1 < MIN_COPY {
+            at += 1;
+            continue;
+        }
+        varint(&mut ops, at - literal_start);
+        literals.extend_from_slice(&target[literal_start..at]);
+        varint(&mut ops, best.1);
+        let next = best.0 as i64 - at as i64;
+        varint(&mut ops, zigzag(next - recent[0]));
+        if next != recent[0] {
+            recent = [next, recent[0]];
+        }
+        if best.1 >= LONG_COPY {
+            settled = next;
+        }
+        at += best.1;
+        literal_start = at;
+    }
+    let mut out = Vec::with_capacity(ops.len() + literals.len() + target.len() - literal_start + 5);
+    varint(&mut out, ops.len());
+    out.extend_from_slice(&ops);
+    out.extend_from_slice(&literals);
+    out.extend_from_slice(&target[literal_start..]);
+    out
+}
+pub fn copy_patch(base: &[u8], delta: &[u8], target_len: usize) -> Result<Vec<u8>> {
+    if target_len > MAX_DECODED_BYTES {
+        return Err(INVALID);
+    }
+    let mut pos = 0;
+    let ops_len = get_varint(delta, &mut pos)?;
+    if ops_len > delta.len() - pos {
+        return Err(INVALID);
+    }
+    let ops = &delta[pos..pos + ops_len];
+    let mut literals = &delta[pos + ops_len..];
+    let mut out = Vec::with_capacity(target_len);
+    let (mut op, mut displacement) = (0, 0i64);
+    while op < ops.len() {
+        let literal = get_varint(ops, &mut op)?;
+        let copy = get_varint(ops, &mut op)?;
+        let change = unzigzag(get_varint(ops, &mut op)?);
+        if literal > literals.len() || literal > target_len - out.len() {
+            return Err(INVALID);
+        }
+        out.extend_from_slice(&literals[..literal]);
+        literals = &literals[literal..];
+        displacement = displacement.checked_add(change).ok_or(INVALID)?;
+        let source = (out.len() as i64)
+            .checked_add(displacement)
+            .and_then(|source| usize::try_from(source).ok())
+            .ok_or(INVALID)?;
+        if copy > target_len - out.len() || source > base.len() || copy > base.len() - source {
+            return Err(INVALID);
+        }
+        out.extend_from_slice(&base[source..source + copy]);
+    }
+    if literals.len() != target_len - out.len() {
+        return Err(INVALID);
+    }
+    out.extend_from_slice(literals);
+    Ok(out)
+}
+
+/// `u32` target length, `u32` raw copy-delta length, then level-3 raw DEFLATE.
+pub fn encode_copy_delta(base: &[u8], index: &AnchorIndex, target: &[u8]) -> Vec<u8> {
+    let delta = copy_diff(base, index, target);
+    let mut out = Vec::new();
+    out.extend_from_slice(&(target.len() as u32).to_le_bytes());
+    out.extend_from_slice(&(delta.len() as u32).to_le_bytes());
+    out.extend_from_slice(&miniz_oxide::deflate::compress_to_vec(&delta, 3));
+    out
+}
+pub fn decode_copy_delta(base: &[u8], stored: &[u8]) -> Result<Vec<u8>> {
+    let header = stored.get(..8).ok_or(INVALID)?;
+    let target_len = u32::from_le_bytes(header[..4].try_into().map_err(|_| INVALID)?) as usize;
+    let delta_len = u32::from_le_bytes(header[4..].try_into().map_err(|_| INVALID)?) as usize;
+    if target_len > MAX_DECODED_BYTES || delta_len > MAX_DECODED_BYTES * 2 {
+        return Err(INVALID);
+    }
+    let mut delta = alloc::vec![0; delta_len];
+    rewind_inflate::decode(&stored[8..], &mut delta)?;
+    copy_patch(base, &delta, target_len)
+}
+
 pub const DEFAULT_BUDGET_BYTES: u32 = 15 * 1024 * 1024;
 pub const MAX_BUDGET_BYTES: u32 = 64 * 1024 * 1024;
 pub const MAX_ENTRIES: usize = 4096;
@@ -169,7 +333,15 @@ fn product3(a: u64, b: u64, c: u64) -> (u64, u64, u64) {
 pub enum Encoding {
     Raw = 0,
     Deflate = 1,
+    /// Word runs against an anchor; read from ZiGBA and version 1 bundles.
     Delta = 2,
+    /// Copy/literal difference against an anchor; written by `Compression::Delta`.
+    CopyDelta = 3,
+}
+impl Encoding {
+    fn uses_anchor(self) -> bool {
+        matches!(self, Self::Delta | Self::CopyDelta)
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -263,6 +435,7 @@ pub struct RewindBuffer {
     bundle: Option<Vec<u8>>,
     bundle_end: usize,
     current_anchor_raw: Option<Vec<u8>>,
+    current_anchor_index: Option<AnchorIndex>,
     current_anchor: u32,
     next_anchor: u32,
     next_sequence: u64,
@@ -280,6 +453,7 @@ impl RewindBuffer {
             bundle: None,
             bundle_end: 0,
             current_anchor_raw: None,
+            current_anchor_index: None,
             current_anchor: 0,
             next_anchor: 0,
             next_sequence: 0,
@@ -307,6 +481,7 @@ impl RewindBuffer {
         self.bundle = None;
         self.bundle_end = 0;
         self.current_anchor_raw = None;
+        self.current_anchor_index = None;
         self.stored_bytes = 0;
         self.last_capture_frame = None;
     }
@@ -346,7 +521,8 @@ impl RewindBuffer {
     }
     fn encode_against_anchor(&mut self, raw: &[u8]) -> Vec<u8> {
         if let Some(base) = &self.current_anchor_raw {
-            let stored = encode_delta(base, raw);
+            let index = self.current_anchor_index.get_or_insert_with(|| AnchorIndex::new(base));
+            let stored = encode_copy_delta(base, index, raw);
             if self
                 .anchor_index(self.current_anchor)
                 .is_some_and(|i| stored.len() * 2 <= self.anchors[i].stored.len())
@@ -355,8 +531,10 @@ impl RewindBuffer {
             }
         }
         let anchor_stored = deflate(raw, 6);
-        let stored = encode_delta(raw, raw);
+        let index = AnchorIndex::new(raw);
+        let stored = encode_copy_delta(raw, &index, raw);
         self.current_anchor_raw = Some(raw.to_vec());
+        self.current_anchor_index = Some(index);
         while self.anchor_index(self.next_anchor).is_some() {
             self.next_anchor = self.next_anchor.wrapping_add(1);
         }
@@ -388,7 +566,7 @@ impl RewindBuffer {
                 let id = self.current_anchor;
                 let i = self.anchor_index(id).expect("newly created anchor exists");
                 self.anchors[i].refs += 1;
-                (state, Encoding::Delta, id)
+                (state, Encoding::CopyDelta, id)
             }
         };
         self.stored_bytes += state.len() + ENTRY_OVERHEAD_BYTES;
@@ -415,14 +593,19 @@ impl RewindBuffer {
         match entry.encoding {
             Encoding::Raw => Ok(stored.to_vec()),
             Encoding::Deflate => inflate(stored),
-            Encoding::Delta => {
+            Encoding::Delta | Encoding::CopyDelta => {
+                let decode = if entry.encoding == Encoding::Delta {
+                    decode_delta
+                } else {
+                    decode_copy_delta
+                };
                 if entry.anchor == self.current_anchor
                     && let Some(raw) = &self.current_anchor_raw
                 {
-                    return decode_delta(raw, stored);
+                    return decode(raw, stored);
                 }
                 let i = self.anchor_index(entry.anchor).ok_or(INVALID)?;
-                decode_delta(&inflate(self.anchors[i].stored.bytes(bundle))?, stored)
+                decode(&inflate(self.anchors[i].stored.bytes(bundle))?, stored)
             }
         }
     }
@@ -453,7 +636,7 @@ impl RewindBuffer {
     }
     fn bytes_freed_by(&self, entry: &Entry) -> usize {
         let mut bytes = entry.state.len() + ENTRY_OVERHEAD_BYTES;
-        if entry.encoding == Encoding::Delta
+        if entry.encoding.uses_anchor()
             && entry.anchor != self.current_anchor
             && let Some(a) = self.anchors.iter().find(|a| a.id == entry.anchor && a.refs == 1)
         {
@@ -502,7 +685,7 @@ impl RewindBuffer {
     fn remove_at(&mut self, index: usize) {
         let entry = self.entries.remove(index);
         self.stored_bytes -= entry.state.len() + ENTRY_OVERHEAD_BYTES;
-        if entry.encoding == Encoding::Delta {
+        if entry.encoding.uses_anchor() {
             self.release_anchor(entry.anchor);
         }
     }
@@ -511,6 +694,7 @@ impl RewindBuffer {
         self.stored_bytes -= anchor.stored.len();
         if anchor.id == self.current_anchor {
             self.current_anchor_raw = None;
+            self.current_anchor_index = None;
         }
     }
     fn release_anchor(&mut self, id: u32) {
@@ -523,7 +707,7 @@ impl RewindBuffer {
         } else if self.anchors[index].refs == 1
             && id != self.current_anchor
             && let Some(i) =
-                self.entries.iter().position(|e| e.encoding == Encoding::Delta && e.anchor == id)
+                self.entries.iter().position(|e| e.encoding.uses_anchor() && e.anchor == id)
             && let Ok(raw) = self.decode(i)
         {
             let stored = deflate(&raw, 1);
@@ -610,7 +794,9 @@ impl RewindBuffer {
         {
             let mut sink = Sink::new(Some(&mut out), None);
             sink.write_all(b"ZGBRWD\0\0")?;
-            1u32.encode(&mut sink)?;
+            // Version 2 only when needed, so ZiGBA still reads other bundles.
+            let copy_delta = self.entries.iter().any(|e| e.encoding == Encoding::CopyDelta);
+            (if copy_delta { 2u32 } else { 1 }).encode(&mut sink)?;
             (live.len() as u32).encode(&mut sink)?;
             sink.write_all(live)?;
             self.write_history(&mut sink)?;
@@ -700,7 +886,8 @@ impl RewindBuffer {
         if &magic != b"ZGBRWD\0\0" {
             return Err(Error::InvalidRewindBundle);
         }
-        if read_value::<u32>(&mut source)? != 1 {
+        let version: u32 = read_value(&mut source)?;
+        if !(1..=2).contains(&version) {
             return Err(Error::UnsupportedRewindBundleVersion);
         }
         let live = read_bytes(&mut source, MAX_DECODED_BYTES)?.to_vec();
@@ -777,7 +964,10 @@ impl RewindBuffer {
                 },
                 copy_payloads,
             )?;
-            if encoding == Encoding::Delta {
+            if encoding == Encoding::CopyDelta && version == 1 {
+                return Err(Error::InvalidRewindBundle);
+            }
+            if encoding.uses_anchor() {
                 let i = history.anchor_index(anchor).ok_or(Error::InvalidRewindBundle)?;
                 history.anchors[i].refs += 1;
             }
@@ -852,6 +1042,7 @@ fn encoding(raw: u8) -> Result<Encoding> {
         0 => Ok(Encoding::Raw),
         1 => Ok(Encoding::Deflate),
         2 => Ok(Encoding::Delta),
+        3 => Ok(Encoding::CopyDelta),
         _ => Err(Error::InvalidRewindBundle),
     }
 }
@@ -990,7 +1181,7 @@ mod tests {
         let anchor_bytes = buffer.anchors[0].stored.len();
         for index in 1..20 {
             let info = buffer.info(index).unwrap();
-            assert_eq!(info.encoding, Encoding::Delta);
+            assert_eq!(info.encoding, Encoding::CopyDelta);
             assert!(info.bytes * 2 <= anchor_bytes);
         }
         for index in 0..20 {
@@ -1012,10 +1203,15 @@ mod tests {
         assert!(buffer.depth() < 400);
         assert_eq!(buffer.info(0).unwrap().frame, 60);
         assert_eq!(buffer.newest().unwrap().frame, 400 * 60);
+        // Recent history is denser than old history. Copy deltas make the
+        // capture right after an anchor much cheaper than the rest, so byte
+        // weighting keeps it; compare the oldest and newest quarters' spans.
         let items = &buffer.entries;
-        let recent_gap = items[items.len() - 1].sequence - items[items.len() - 2].sequence;
-        let old_gap = items[1].sequence - items[0].sequence;
-        assert!(recent_gap < old_gap);
+        let quarter = items.len() / 4;
+        let recent_span =
+            items[items.len() - 1].sequence - items[items.len() - 1 - quarter].sequence;
+        let old_span = items[quarter].sequence - items[0].sequence;
+        assert!(recent_span < old_span);
         for index in 0..buffer.depth() {
             expect_decodes(&buffer, index, len);
         }
@@ -1066,7 +1262,7 @@ mod tests {
     fn invalid_owned_bundle_returns_the_original_upload() {
         let mut bundle =
             RewindBuffer::new(RewindConfig::default()).unwrap().write_bundle(b"live").unwrap();
-        bundle[8] = 2;
+        bundle[8] = 3;
         let digest = blake3::hash(&bundle[..bundle.len() - 32]);
         let end = bundle.len() - 32;
         bundle[end..].copy_from_slice(digest.as_bytes());

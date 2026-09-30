@@ -35,36 +35,51 @@ very small budget. Ties prefer removing the older candidate. The default age
 exponent is 0.5; zero removes age bias and one weighs age linearly. A capture
 sequence, not host wall time, determines spacing.
 
-## Anchored word-run storage
+## Anchored copy-delta storage
 
-| Mode              | Entry encoding                                      |
-| ----------------- | --------------------------------------------------- |
-| `delta` (default) | word-run difference from an anchor, deflate level 1 |
-| `fast`            | independently deflated state, level 1               |
-| `off`             | raw portable state                                  |
+| Mode              | Entry encoding                                          |
+| ----------------- | ------------------------------------------------------- |
+| `delta` (default) | copy/literal difference from an anchor, deflate level 3 |
+| `fast`            | independently deflated state, level 1                   |
+| `off`             | raw portable state                                      |
 
 An anchor is a complete state compressed at level 6 and shared by its delta
-entries. The current anchor is also kept decoded. A delta compares same-offset
-32-bit words against an anchor zero-extended or truncated to the target size.
-It stores varint skip/copy run headers together, then changed words, then
-trailing partial-word bytes. A single equal word between changes joins a run.
-The deflated delta follows `u32` target length and `u32` raw delta length;
-complete compressed states use `u64` raw length followed by raw DEFLATE.
+entries. The current anchor is also kept decoded, with an `AnchorIndex`: a
+128 Ki-slot table (512 KiB) of anchor positions keyed by the 8 bytes at every
+fourth offset. A copy delta (entry encoding 3) describes the target as
+literal runs and copies of at least 12 bytes from anywhere in the anchor. Its
+varint ops (literal length, copy length, zigzag change of the copy's
+displacement from the previous copy) precede the literals, and bytes after
+the last copy are trailing literals. At each position the encoder tries the
+previous displacement, the one before it, that of the last copy of 64 bytes
+or more, the same offset and one index candidate, keeping the longest. A
+field whose encoded length changes (an `Option` becoming `Some`) therefore
+costs one displacement change instead of rewriting everything after it, and
+data that moved within the state is still copied.
+
+ZiGBA's word-run delta (entry encoding 2) compares same-offset 32-bit words
+against an anchor zero-extended or truncated to the target size. It stores
+varint skip/copy run headers together, then changed words, then trailing
+partial-word bytes. Evenfall decodes it from imported bundles but no longer
+writes it. Both deltas follow `u32` target length and `u32` raw delta length
+with raw DEFLATE; complete compressed states use `u64` raw length followed by
+raw DEFLATE.
 
 When a delta would exceed half the compressed anchor's size, the capture
 starts a new anchor. Eviction or branching can fold a lone dependent of an
 old anchor into a self-contained state. Deltas never chain through entries;
 restoration requires at most one anchor inflate and one patch. Decoding bounds
-the state at 2 MiB and raw delta at 4 MiB and checks all word-run ranges.
+the state at 2 MiB and raw delta at 4 MiB and checks every run, copy source
+and literal range.
 [`rewind_inflate`](../../crates/state/src/rewind_inflate.rs) decodes stored,
 fixed and dynamic raw-DEFLATE blocks with exact input/output consumption.
 
-Evenfall uses **miniz_oxide** to write raw DEFLATE; ZiGBA uses Zig's standard
-library compressor. Compressed rewind entries can therefore differ byte-wise,
-but framing, deltas, decoded save-state bytes and the bundle format remain
-compatible: each side reads the other's bundles. Imported entries are exported
-without recompression. The measurement follow-up for compression ratio and
-speed is in the [roadmap](../roadmap.md).
+Evenfall uses **miniz_oxide** to write raw DEFLATE. Evenfall reads ZiGBA's
+bundles and re-exports imported entries without recompression; ZiGBA reads
+Evenfall's bundles only when they hold no copy delta. A general-purpose
+compressor with an anchor dictionary (zstd) is not used: its C library would
+enlarge the WebAssembly module and require a C toolchain in its build
+([measurements](../research/rewind-compression.md#codec-choice)).
 
 ## Restoring
 
@@ -91,15 +106,18 @@ state and history. The owned-buffer variant adopts a successful upload and
 keeps stored payloads as views into it; later captures recycle freed bundle
 space. Unlike explicit state load, bundle load keeps its history.
 
-Bundle version 1 is little-endian and independent of the save-state version:
+Bundles are little-endian and versioned independently of the save state.
+Version 2 adds entry encoding 3 (copy delta) to ZiGBA's version 1; the writer
+emits version 1 when no entry is a copy delta, and version 1 input with a copy
+delta is rejected.
 
 | Section               | Contents                                                                                                                                                                                                                                                                          |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Header                | magic `ZGBRWD\0\0` (8 bytes), version `u32` = 1                                                                                                                                                                                                                                   |
+| Header                | magic `ZGBRWD\0\0` (8 bytes), version `u32` = 1 or 2                                                                                                                                                                                                                              |
 | Live state            | `u32` length, then a complete portable state of at most 2 MiB                                                                                                                                                                                                                     |
 | Policy                | budget `u32`, interval `u16`, compression `u8` (0 off, 1 fast, 2 delta), age exponent `f64` bits, Q8 speed `u16`, next sequence `u64`, last-capture flag `u8` and frame `u64`, current-anchor flag `u8` and id `u32`, next anchor id `u32`, anchor count `u32`, entry count `u32` |
 | Anchors               | each anchor: id `u32`, stored length `u32`, stored bytes                                                                                                                                                                                                                          |
-| Entries, oldest first | each entry: frame, cycle and sequence (`u64` each), encoding `u8` (0 raw, 1 deflate, 2 delta), anchor id `u32`, stored length `u32`, stored bytes                                                                                                                                 |
+| Entries, oldest first | each entry: frame, cycle and sequence (`u64` each), encoding `u8` (0 raw, 1 deflate, 2 word-run delta, 3 copy delta), anchor id `u32`, stored length `u32`, stored bytes                                                                                                          |
 | Digest                | BLAKE3 of all preceding bytes (32 bytes)                                                                                                                                                                                                                                          |
 
 Stored compressed bytes are copied verbatim; decoded anchor caches and
@@ -126,6 +144,7 @@ The browser tests in `web/gba` exercise the SDK.
 | ZiGBA verification area                        | Rust coverage                                                                                                                                                                                                                                                                                                                                                |
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Word runs, malformed deltas, length changes    | `word_run_diff_round_trips_length_changes_and_rejects_malformed_deltas`                                                                                                                                                                                                                                                                                      |
+| Copy deltas (Evenfall only)                    | `copy_diff_round_trips_shifted_moved_and_resized_targets_and_rejects_malformed_deltas`; bundle versions in `bundle_round_trip_and_corrupt_history_rejection`                                                                                                                                                                                                 |
 | Age selection, ties and byte-weighted eviction | `age_exponent_selects_exact_historical_states_with_oldest_first_ties`, `square_root_age_weighting_prefers_freeing_expensive_entries`, `budget_eviction_keeps_newest_and_oldest_and_coarsens_with_age`                                                                                                                                                        |
 | Entry cap, anchor release and adopted storage  | `entry_cap_bounds_history_that_never_reaches_the_byte_budget`, `truncate_newer_keeps_the_target_as_newest_and_releases_anchors`, `adopted_histories_survive_compaction_eviction_anchor_folding_and_branching`, `invalid_owned_bundle_returns_the_original_upload`, `delta_entries_are_small_share_one_anchor_and_decode_exactly` (buffer)                    |
 | Capture cadence and reconfiguration            | `capture_cadence_scales_with_speed_and_resets`; `invalid_rewind_reconfiguration_preserves_history` (session)                                                                                                                                                                                                                                                 |
@@ -145,7 +164,8 @@ compressed output is deliberately not a compatibility requirement.
 - If the host cannot attain the requested playback speed, wall-clock capture
   spacing increases. Capture and anchor folding run in the emulation thread.
 - Already-queued host audio is not continuous across a restore.
-- Decoded anchor storage, metadata and allocator overhead exceed the configured
-  history budget; imported bundles validate every checkpoint.
-- Longer-session retention and the level-1 compression ratio/speed comparison
-  against Zig remain to be measured on representative states.
+- Decoded anchor storage, the anchor index, metadata and allocator overhead
+  exceed the configured history budget; imported bundles validate every
+  checkpoint.
+- Longer-session retention and copy-delta sizes
+  remain to be measured on representative states.

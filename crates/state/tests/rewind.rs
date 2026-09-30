@@ -30,6 +30,40 @@ fn word_run_diff_round_trips_length_changes_and_rejects_malformed_deltas() {
     assert_eq!(rewind::patch(base, &[0xff], 20), Err(Error::InvalidSaveState));
 }
 
+#[test]
+fn copy_diff_round_trips_shifted_moved_and_resized_targets_and_rejects_malformed_deltas() {
+    let base: Vec<u8> = (0..4096u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8).collect();
+    let index = rewind::AnchorIndex::new(&base);
+    let mut shifted = base.clone();
+    shifted.splice(100..100, [1, 2]);
+    shifted[3000..3010].fill(9);
+    let mut moved = base[2048..].to_vec();
+    moved.extend_from_slice(&base[..2048]);
+    for target in [&base[..], &shifted, &moved, &base[..100], b"", b"short"] {
+        let delta = rewind::copy_diff(&base, &index, target);
+        assert_eq!(rewind::copy_patch(&base, &delta, target.len()).unwrap(), target);
+        let stored = rewind::encode_copy_delta(&base, &index, target);
+        assert_eq!(rewind::decode_copy_delta(&base, &stored).unwrap(), target);
+    }
+    // A two-byte insertion costs one displacement change, not a rewrite.
+    assert!(rewind::copy_diff(&base, &index, &shifted).len() < 40);
+    assert!(rewind::copy_diff(&base, &index, &moved).len() < 20);
+
+    let delta = rewind::copy_diff(&base, &index, &shifted);
+    assert_eq!(rewind::copy_patch(&base, &delta, shifted.len() + 1), Err(Error::InvalidSaveState));
+    assert_eq!(rewind::copy_patch(&base, &delta, shifted.len() - 1), Err(Error::InvalidSaveState));
+    assert_eq!(
+        rewind::copy_patch(&base, &delta[..delta.len() - 1], shifted.len()),
+        Err(Error::InvalidSaveState)
+    );
+    // Copies before the base, past its end, or with truncated op fields.
+    let huge = [11, 0, 12, 0xfe, 0xff, 0xff, 0xff, 0x0f, 0, 12, 0xfe, 0xff, 0xff, 0xff, 0x0f];
+    for bad in [&[3, 0, 12, 1][..], &[3, 0, 12, 0x7f], &[4, 0, 0x80, 0x40, 0], &[2, 0, 12], &huge] {
+        assert_eq!(rewind::copy_patch(&base, bad, 12), Err(Error::InvalidSaveState));
+    }
+    assert_eq!(rewind::copy_patch(&base, &[0xff], 0), Err(Error::InvalidSaveState));
+}
+
 /// "persisted inflater accepts independent stored fixed and dynamic vectors and rejects bad framing"
 #[test]
 fn persisted_inflater_accepts_independent_stored_fixed_and_dynamic_vectors() {
@@ -183,8 +217,22 @@ fn bundle_round_trip_and_corrupt_history_rejection() {
             RewindBuffer::read_bundle(&corrupt, validate).err(),
             Some(Error::InvalidRewindBundle)
         );
+        // Copy deltas need version 2; other bundles stay ZiGBA's version 1.
+        let version = u32::from_le_bytes(serialized[8..12].try_into().unwrap());
+        assert_eq!(version, if compression == Compression::Delta { 2 } else { 1 });
+        if compression == Compression::Delta {
+            corrupt = serialized.clone();
+            corrupt[8..12].copy_from_slice(&1u32.to_le_bytes());
+            let len = corrupt.len() - 32;
+            let digest = blake3::hash(&corrupt[..len]);
+            corrupt[len..].copy_from_slice(digest.as_bytes());
+            assert_eq!(
+                RewindBuffer::read_bundle(&corrupt, validate).err(),
+                Some(Error::InvalidRewindBundle)
+            );
+        }
         corrupt = serialized.clone();
-        corrupt[8..12].copy_from_slice(&2u32.to_le_bytes());
+        corrupt[8..12].copy_from_slice(&3u32.to_le_bytes());
         let len = corrupt.len() - 32;
         let digest = blake3::hash(&corrupt[..len]);
         corrupt[len..].copy_from_slice(digest.as_bytes());

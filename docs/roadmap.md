@@ -1,7 +1,7 @@
 # Roadmap
 
 - Color effects use exact scalar lanes; evaluate stable-Rust SIMD alternatives against the per-dot reference and measure before replacing the hot path.
-- Compressed rewind entries differ byte-wise from ZiGBA's while remaining mutually decodable; measure miniz_oxide level 1 against Zig `level_1` on representative ~0.5 MB states for compression ratio and encoding speed.
+- Rewind copy deltas are measured on two ROM hacks with synthetic input ([research](research/rewind-compression.md#codec-choice)); human play, menus and other games remain unmeasured. Game B's walker session reaches an unpredictable ARM encoding fault in IWRAM after 82 emulated minutes; whether the guest or the core is at fault is unknown.
 - Machine, Session and Bus share read-only `bus::Media` handles across reset, state-load scratch, rewind bundle validation and video recovery; media digests are cached at construction. The private Vec backing preserves an owned ROM upload's allocation, and release codegen hoists the ROM data pointer before scalar byte reads. Pinned-core uncached ROM reads, ROM-to-RAM DMA and full thumb-logic, arm-mixer and bitmap-DMA workloads show no consistent speed advantage from `Arc<[u8]>`; keep the Vec-backed zero-copy upload path unless a repeatable gain justifies a different upload allocator.
 - `Machine::write_state` buffers its bounded payload before writing to the caller's `Write`, unlike ZiGBA's direct streaming writer. The bytes are identical, but this adds a payload allocation and copy; consider a writer-backed codec sink if streaming cost matters.
 
