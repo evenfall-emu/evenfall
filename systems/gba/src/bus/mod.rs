@@ -1768,6 +1768,18 @@ impl Bus {
         }
     }
 
+    /// A debugger's zero-time byte write. Only work RAM is writable: it has no
+    /// raster history or device side effects, and the write clears decoded
+    /// code it covers as a CPU store would. Returns false elsewhere.
+    pub fn poke_byte(&mut self, address: u32, value: u8) -> bool {
+        match address >> 24 {
+            2 => self.write_ewram(address, AccessWidth::Byte, value.into()),
+            3 => self.write_iwram(address, AccessWidth::Byte, value.into()),
+            _ => return false,
+        }
+        true
+    }
+
     pub fn now(&self) -> Cycle {
         self.current_cycle
     }

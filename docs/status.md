@@ -23,7 +23,7 @@ mean is defined in [`methodology.md`](methodology.md#goals).
   (`crates/host`), the canonical state codec and envelope (`crates/state`),
   the ARM7TDMI interpreter (`crates/cpu-arm`), the resampler
   (`crates/audio`), and scenarios and traces (`crates/replay`).
-- **Hosts**: the headless runner ([`cli.md`](cli.md)); a WebAssembly module
+- **Hosts**: the headless runner, with a GDB remote stub ([`cli.md`](cli.md)); a WebAssembly module
   with the `@evenfall/gba` JavaScript and TypeScript SDK ([`sdk.md`](sdk.md)),
   whose public API is ZiGBA's; the parity harness ([`parity.md`](parity.md));
   and the benchmark runner ([`performance.md`](performance.md)).

@@ -1,12 +1,26 @@
-//! ZiGBA's headless CLI, with file policy separated from the machine.
+//! ZiGBA's headless CLI, with file policy separated from the machine, and
+//! Evenfall's GDB remote debugging mode.
 
 use evenfall_gba::bus::{KeyState, TimedInput, TimedInputChange};
 use evenfall_gba::cpu::InstructionSet;
+use evenfall_gba::host::gdb::{self, Command, Decoder, Event, Resume, Stop, Stub};
 use evenfall_gba::host::host_save;
-use evenfall_gba::machine::{BootMode, Config, Machine, StepOutcome};
-use std::io::{self, Write};
+use evenfall_gba::machine::{BootMode, Config, Fault, Machine, StepOutcome};
+use std::collections::VecDeque;
+use std::io::{self, Read, Write};
+use std::net::{TcpListener, TcpStream};
 
-const USAGE: &str = "usage: evenfall-gba run --steps <count> [--bios <path>] [--save-type <type>] [--save-file <path>] [--state-in <path>] [--state-out <path>] [--trace <path>] [--trace-from <steps>] [--input <movie>] [--quiet] [--frame-hash] [--no-rtc | --rtc-epoch <seconds>] [--no-solar | --solar-level <0..255>] [--no-gyro | --gyro-sample <0..4095>] [--rumble | --no-rumble] [--no-tilt | --tilt <x> <y>] <rom.gba|rom.zip>\n";
+const USAGE: &str = "usage: evenfall-gba run --steps <count> [--bios <path>] [--save-type <type>] [--save-file <path>] [--state-in <path>] [--state-out <path>] [--trace <path>] [--trace-from <steps>] [--input <movie>] [--quiet] [--frame-hash] [--no-rtc | --rtc-epoch <seconds>] [--no-solar | --solar-level <0..255>] [--no-gyro | --gyro-sample <0..4095>] [--rumble | --no-rumble] [--no-tilt | --tilt <x> <y>] <rom.gba|rom.zip>\n       evenfall-gba gdb [--listen <address:port>] [run options other than --steps] <rom.gba|rom.zip>\n";
+
+const DEFAULT_GDB_ADDRESS: &str = "127.0.0.1:2345";
+
+/// Executed instructions between checks for the client's interrupt byte.
+const GDB_POLL_INTERVAL: u32 = 1 << 14;
+
+enum Mode<'a> {
+    Run { steps: usize },
+    Gdb { listen: &'a str },
+}
 
 fn main() {
     let stdout = io::stdout();
@@ -103,16 +117,33 @@ fn frame_wyhash(input: &[u8]) -> u64 {
     mix(a ^ SECRET[0] ^ len as u64, b ^ SECRET[1])
 }
 
-fn run(args: &[String], stdout: &mut impl Write) -> Result<(), Box<dyn std::error::Error>> {
-    if args.len() < 5 || args[1] != "run" || args[2] != "--steps" {
-        stdout.write_all(USAGE.as_bytes())?;
-        return Ok(());
+/// `run --steps <count> ...` or `gdb [--listen <address>] ...`, with the
+/// arguments left for the shared option parser.
+fn parse_mode(args: &[String]) -> Option<(Mode<'_>, Vec<&str>)> {
+    let mut tail: Vec<&str> = args.get(2..)?.iter().map(String::as_str).collect();
+    match args[1].as_str() {
+        "run" if args.len() >= 5 && args[2] == "--steps" => {
+            let steps = args[3].parse().ok()?;
+            tail.drain(..2);
+            Some((Mode::Run { steps }, tail))
+        }
+        "gdb" => {
+            let mut listen = DEFAULT_GDB_ADDRESS;
+            if let Some(index) = tail.iter().position(|&arg| arg == "--listen") {
+                listen = *tail.get(index + 1)?;
+                tail.drain(index..index + 2);
+            }
+            (!tail.contains(&"--listen")).then_some((Mode::Gdb { listen }, tail))
+        }
+        _ => None,
     }
-    let Ok(step_count) = args[3].parse::<usize>() else {
+}
+
+fn run(args: &[String], stdout: &mut impl Write) -> Result<(), Box<dyn std::error::Error>> {
+    let Some((mode, tail)) = parse_mode(args) else {
         stdout.write_all(USAGE.as_bytes())?;
         return Ok(());
     };
-    let tail: Vec<&str> = args[4..].iter().map(String::as_str).collect();
     let options = match host_save::parse_options(&tail) {
         Ok(options) => options,
         Err(_) => {
@@ -174,7 +205,7 @@ fn run(args: &[String], stdout: &mut impl Write) -> Result<(), Box<dyn std::erro
             return Ok(());
         }
     }
-    let mut trace = match options.trace_path {
+    let trace = match options.trace_path {
         Some(path) => Some(io::BufWriter::new(std::fs::File::create(path)?)),
         None => None,
     };
@@ -201,98 +232,26 @@ fn run(args: &[String], stdout: &mut impl Write) -> Result<(), Box<dyn std::erro
         machine.set_keys(initial_keys);
     }
 
-    let mut executed_count = 0;
-    let mut terminal_fault = None;
-    'execution: while executed_count < step_count {
-        let outcome = if input_index < inputs.len() {
-            let result = machine
-                .step_with_input(&inputs[input_index..input_index + 1])
-                .map_err(|error| format!("{error:?}"))?;
-            input_index += result.inputs_consumed;
-            result.outcome
-        } else {
-            machine.step()
-        };
-        let step = match outcome {
-            StepOutcome::Executed(step) => step,
-            StepOutcome::Waiting(reason) => {
-                let mut woke = false;
-                loop {
-                    let waiting_at = machine.now();
-                    let frame_deadline = waiting_at.saturating_add(Machine::CYCLES_PER_FRAME);
-                    let deadline = inputs
-                        .get(input_index)
-                        .map_or(frame_deadline, |event| frame_deadline.min(event.at));
-                    let waiting_inputs =
-                        inputs.get(input_index).map_or(&[][..], std::slice::from_ref);
-                    let progress = machine
-                        .wait_until_with_input(deadline, waiting_inputs)
-                        .map_err(|error| format!("{error:?}"))?;
-                    input_index += progress.inputs_consumed;
-                    if progress.woke {
-                        woke = true;
-                        break;
-                    }
-                    if input_index < inputs.len()
-                        && (machine.now() != waiting_at || progress.inputs_consumed != 0)
-                    {
-                        continue;
-                    }
-                    break;
-                }
-                if woke {
-                    continue 'execution;
-                }
-                if !options.quiet {
-                    writeln!(
-                        stdout,
-                        "wait cycle={} power={}",
-                        machine.now(),
-                        match reason {
-                            evenfall_gba::cpu::WaitReason::Halted => "halted",
-                            evenfall_gba::cpu::WaitReason::Stopped => "stopped",
-                        }
-                    )?;
-                }
-                break 'execution;
+    let mut execution = Execution {
+        machine,
+        inputs,
+        input_index,
+        trace,
+        trace_from: options.trace_from,
+        executed_count: 0,
+    };
+    let terminal_fault = match mode {
+        Mode::Run { steps } => {
+            let fault = run_steps(&mut execution, steps, options.quiet, stdout)?;
+            if let Some(fault) = fault {
+                fault.write_diagnostic(stdout)?;
             }
-            StepOutcome::Faulted(fault) => {
-                terminal_fault = Some(fault);
-                break 'execution;
-            }
-        };
-        if let Some(trace) = trace.as_mut().filter(|_| executed_count >= options.trace_from) {
-            let mut record = [0; 16];
-            record[0..4].copy_from_slice(&step.instruction_address.to_le_bytes());
-            record[4..8].copy_from_slice(&step.instruction.to_le_bytes());
-            record[8..12].copy_from_slice(&machine.read_cpsr().to_le_bytes());
-            record[12] = match step.instruction_set {
-                InstructionSet::Arm => 0,
-                InstructionSet::Thumb => 1,
-            };
-            trace.write_all(&record)?;
+            fault
         }
-        if !options.quiet {
-            writeln!(
-                stdout,
-                "{}..{} pc={:08x} {}={:0width$x}",
-                step.started_at,
-                step.stopped_at,
-                step.instruction_address,
-                match step.instruction_set {
-                    InstructionSet::Arm => "arm",
-                    InstructionSet::Thumb => "thumb",
-                },
-                step.instruction,
-                width = if step.instruction_set == InstructionSet::Arm { 8 } else { 4 }
-            )?;
-        }
-        executed_count += 1;
-    }
-    if let Some(fault) = terminal_fault {
-        fault.write_diagnostic(stdout)?;
-    }
-    if let Some(mut trace) = trace {
+        Mode::Gdb { listen } => debug(&mut execution, listen, stdout)?,
+    };
+    let machine = execution.machine;
+    if let Some(mut trace) = execution.trace {
         trace.flush()?;
     }
     host_save::write_atomic(&prepared.save_path, machine.save_data())
@@ -323,6 +282,286 @@ fn run(args: &[String], stdout: &mut impl Write) -> Result<(), Box<dyn std::erro
         machine.read_register(0)
     )?;
     Ok(())
+}
+
+/// The machine with its scheduled input and trace. Both modes advance it
+/// through the same two operations, so a debugger's stops never change what
+/// the guest computes.
+struct Execution {
+    machine: Box<Machine>,
+    inputs: Vec<TimedInput>,
+    input_index: usize,
+    trace: Option<io::BufWriter<std::fs::File>>,
+    trace_from: usize,
+    executed_count: usize,
+}
+
+impl Execution {
+    /// One instruction, receiving input scheduled during it.
+    fn step(&mut self) -> Result<StepOutcome, Box<dyn std::error::Error>> {
+        let outcome = if self.input_index < self.inputs.len() {
+            let result = self
+                .machine
+                .step_with_input(&self.inputs[self.input_index..self.input_index + 1])
+                .map_err(|error| format!("{error:?}"))?;
+            self.input_index += result.inputs_consumed;
+            result.outcome
+        } else {
+            self.machine.step()
+        };
+        if let StepOutcome::Executed(step) = outcome {
+            if let Some(trace) =
+                self.trace.as_mut().filter(|_| self.executed_count >= self.trace_from)
+            {
+                let mut record = [0; 16];
+                record[0..4].copy_from_slice(&step.instruction_address.to_le_bytes());
+                record[4..8].copy_from_slice(&step.instruction.to_le_bytes());
+                record[8..12].copy_from_slice(&self.machine.read_cpsr().to_le_bytes());
+                record[12] = match step.instruction_set {
+                    InstructionSet::Arm => 0,
+                    InstructionSet::Thumb => 1,
+                };
+                trace.write_all(&record)?;
+            }
+            self.executed_count += 1;
+        }
+        Ok(outcome)
+    }
+
+    /// Sleeps until a wake event, the next scheduled input or one frame,
+    /// whichever comes first. Returns whether the CPU woke and whether time
+    /// passed or input arrived.
+    fn wait(&mut self) -> Result<(bool, bool), Box<dyn std::error::Error>> {
+        let waiting_at = self.machine.now();
+        let frame_deadline = waiting_at.saturating_add(Machine::CYCLES_PER_FRAME);
+        let next_input = self.inputs.get(self.input_index);
+        let deadline = next_input.map_or(frame_deadline, |event| frame_deadline.min(event.at));
+        let waiting_inputs = next_input.map_or(&[][..], std::slice::from_ref);
+        let progress = self
+            .machine
+            .wait_until_with_input(deadline, waiting_inputs)
+            .map_err(|error| format!("{error:?}"))?;
+        self.input_index += progress.inputs_consumed;
+        Ok((progress.woke, self.machine.now() != waiting_at || progress.inputs_consumed != 0))
+    }
+}
+
+/// ZiGBA's `run`: a fixed instruction count, ending early when the CPU
+/// sleeps with nothing left to wake it.
+fn run_steps(
+    execution: &mut Execution,
+    steps: usize,
+    quiet: bool,
+    stdout: &mut impl Write,
+) -> Result<Option<Fault>, Box<dyn std::error::Error>> {
+    while execution.executed_count < steps {
+        match execution.step()? {
+            StepOutcome::Executed(step) => {
+                if !quiet {
+                    writeln!(
+                        stdout,
+                        "{}..{} pc={:08x} {}={:0width$x}",
+                        step.started_at,
+                        step.stopped_at,
+                        step.instruction_address,
+                        match step.instruction_set {
+                            InstructionSet::Arm => "arm",
+                            InstructionSet::Thumb => "thumb",
+                        },
+                        step.instruction,
+                        width = if step.instruction_set == InstructionSet::Arm { 8 } else { 4 }
+                    )?;
+                }
+            }
+            StepOutcome::Waiting(reason) => {
+                let woke = loop {
+                    let (woke, progressed) = execution.wait()?;
+                    if woke || !progressed || execution.input_index == execution.inputs.len() {
+                        break woke;
+                    }
+                };
+                if woke {
+                    continue;
+                }
+                if !quiet {
+                    writeln!(
+                        stdout,
+                        "wait cycle={} power={}",
+                        execution.machine.now(),
+                        match reason {
+                            evenfall_gba::cpu::WaitReason::Halted => "halted",
+                            evenfall_gba::cpu::WaitReason::Stopped => "stopped",
+                        }
+                    )?;
+                }
+                return Ok(None);
+            }
+            StepOutcome::Faulted(fault) => return Ok(Some(fault)),
+        }
+    }
+    Ok(None)
+}
+
+/// Serves one GDB client until it detaches, kills or disconnects. Returns
+/// the machine's latched fault, if any.
+fn debug(
+    execution: &mut Execution,
+    listen: &str,
+    stdout: &mut impl Write,
+) -> Result<Option<Fault>, Box<dyn std::error::Error>> {
+    let listener = TcpListener::bind(listen)?;
+    writeln!(stdout, "gdb listening={}", listener.local_addr()?)?;
+    stdout.flush()?;
+    let (stream, peer) = listener.accept()?;
+    drop(listener);
+    stream.set_nodelay(true)?;
+    writeln!(stdout, "gdb connected={peer}")?;
+    stdout.flush()?;
+
+    let mut connection =
+        Connection { stream, decoder: Decoder::default(), events: VecDeque::new() };
+    let mut stub = Stub::default();
+    let mut last_packet = Vec::new();
+    while let Some(event) = connection.next_event()? {
+        match event {
+            Event::Packet(packet) => {
+                if !stub.no_ack() {
+                    connection.stream.write_all(b"+")?;
+                }
+                let reply = match stub.handle(&mut execution.machine, &packet) {
+                    Command::Reply(reply) => reply,
+                    Command::Resume(resume) => {
+                        let faulted_before = execution.machine.fault().is_some();
+                        let Some(stop) =
+                            resume_until_stop(execution, &stub, resume, &mut connection)?
+                        else {
+                            break;
+                        };
+                        if let (Stop::Faulted, false, Some(fault)) =
+                            (stop, faulted_before, execution.machine.fault())
+                        {
+                            fault.write_diagnostic(stdout)?;
+                            stdout.flush()?;
+                        }
+                        stub.stop_reply(stop)
+                    }
+                    Command::End(reply) => {
+                        if let Some(reply) = reply {
+                            connection.stream.write_all(&gdb::frame(&reply))?;
+                        }
+                        break;
+                    }
+                };
+                last_packet = gdb::frame(&reply);
+                connection.stream.write_all(&last_packet)?;
+            }
+            Event::Corrupt if !stub.no_ack() => connection.stream.write_all(b"-")?,
+            Event::Nack if !stub.no_ack() => connection.stream.write_all(&last_packet)?,
+            _ => {}
+        }
+    }
+    writeln!(stdout, "gdb disconnected")?;
+    Ok(execution.machine.fault())
+}
+
+/// Executes whole instructions until one completes (a step), a breakpoint
+/// is next, the machine faults or the client interrupts. `None` means the
+/// client disconnected.
+fn resume_until_stop(
+    execution: &mut Execution,
+    stub: &Stub,
+    resume: Resume,
+    connection: &mut Connection,
+) -> Result<Option<Stop>, Box<dyn std::error::Error>> {
+    let mut since_poll = 0;
+    loop {
+        match execution.step()? {
+            StepOutcome::Executed(_) => {
+                if resume == Resume::Step
+                    || stub.breakpoint_at(execution.machine.next_instruction_address())
+                {
+                    return Ok(Some(Stop::Trap));
+                }
+                since_poll += 1;
+                if since_poll < GDB_POLL_INTERVAL {
+                    continue;
+                }
+                since_poll = 0;
+                if let Some(stop) = connection.poll_interrupt()? {
+                    return Ok(stop);
+                }
+            }
+            StepOutcome::Waiting(_) => loop {
+                if execution.wait()?.0 {
+                    break;
+                }
+                if execution.machine.fault().is_some() {
+                    return Ok(Some(Stop::Faulted));
+                }
+                if let Some(stop) = connection.poll_interrupt()? {
+                    return Ok(stop);
+                }
+            },
+            StepOutcome::Faulted(_) => return Ok(Some(Stop::Faulted)),
+        }
+    }
+}
+
+struct Connection {
+    stream: TcpStream,
+    decoder: Decoder,
+    events: VecDeque<Event>,
+}
+
+impl Connection {
+    /// The next client event, blocking; `None` once the client disconnects.
+    fn next_event(&mut self) -> io::Result<Option<Event>> {
+        let mut buffer = [0; 4096];
+        while self.events.is_empty() {
+            let count = match self.stream.read(&mut buffer) {
+                Ok(0) => return Ok(None),
+                Ok(count) => count,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            };
+            self.events.extend(buffer[..count].iter().filter_map(|&byte| self.decoder.feed(byte)));
+        }
+        Ok(self.events.pop_front())
+    }
+
+    /// Reads what the client sent while the machine ran, without waiting.
+    /// `Some(Some(Interrupted))` for the interrupt byte, `Some(None)` for a
+    /// disconnect; other events wait for the stop.
+    fn poll_interrupt(&mut self) -> io::Result<Option<Option<Stop>>> {
+        self.stream.set_nonblocking(true)?;
+        let mut buffer = [0; 4096];
+        let mut result = None;
+        loop {
+            match self.stream.read(&mut buffer) {
+                Ok(0) => {
+                    result = Some(None);
+                    break;
+                }
+                Ok(count) => {
+                    for &byte in &buffer[..count] {
+                        match self.decoder.feed(byte) {
+                            Some(Event::Interrupt) => result = Some(Some(Stop::Interrupted)),
+                            Some(event) => self.events.push_back(event),
+                            None => {}
+                        }
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(error) => {
+                    self.stream.set_nonblocking(false)?;
+                    return Err(error);
+                }
+            }
+        }
+        self.stream.set_nonblocking(false)?;
+        Ok(result)
+    }
 }
 
 #[cfg(test)]

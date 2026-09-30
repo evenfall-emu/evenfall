@@ -168,6 +168,17 @@ pub struct CpuSnapshot {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AddressOverflow;
 
+/// Why a debugger write was refused; the machine is unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DebugWriteError {
+    /// A multi-step HLE BIOS service owns the CPU state until it returns.
+    HleServiceActive,
+    /// The CPSR mode bits name no processor mode.
+    InvalidMode,
+    /// The bytes leave work RAM (EWRAM and IWRAM).
+    Unwritable,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LinkedFault {
     pub machine_index: usize,
@@ -635,6 +646,85 @@ impl Machine {
             *byte = self.bus.inspect_byte(address + offset as u32);
         }
         Ok(())
+    }
+
+    /// A debugger's write to r0–r15 of the current mode; no cycles pass.
+    /// Writing r15 moves the next instruction, aligned to the current
+    /// instruction set, and empties the pipeline as at power-on.
+    pub fn write_register(&mut self, index: u8, value: u32) -> Result<(), DebugWriteError> {
+        assert!(index < 16, "r{index} is not a register");
+        self.check_debug_write()?;
+        if index == 15 {
+            self.redirect(value);
+        } else {
+            self.cpu.registers[usize::from(index)] = value;
+        }
+        Ok(())
+    }
+
+    /// A debugger's CPSR write: flags, interrupt masks, T bit and mode, with
+    /// the mode's banked registers switched in. A T-bit change realigns the
+    /// next instruction and empties the pipeline; no cycles pass.
+    pub fn write_cpsr(&mut self, value: u32) -> Result<(), DebugWriteError> {
+        self.check_debug_write()?;
+        if evenfall_cpu_arm::ProcessorMode::parse(value).is_none() {
+            return Err(DebugWriteError::InvalidMode);
+        }
+        let set_changed = (value ^ self.cpu.cpsr) & (1 << 5) != 0;
+        self.cpu.switch_banked_mode(value & 0x1f);
+        self.cpu.cpsr = (self.cpu.cpsr & 0x0fff_ff00) | (value & 0xf000_00ff);
+        if set_changed {
+            self.redirect(self.cpu.next_instruction_address());
+        }
+        Ok(())
+    }
+
+    /// A debugger's write to work RAM (EWRAM and IWRAM), all or nothing; no
+    /// cycles pass. Decoded code over the bytes is forgotten, and prefetched
+    /// instructions they overlap are reread, so patched code runs next.
+    pub fn poke_memory(&mut self, address: u32, bytes: &[u8]) -> Result<(), DebugWriteError> {
+        let Some(last) = (bytes.len() as u32).checked_sub(1) else { return Ok(()) };
+        let writable = |address: u32| matches!(address >> 24, 2 | 3);
+        if bytes.len() as u64 > u64::from(u32::MAX) - u64::from(address) + 1
+            || !writable(address)
+            || !writable(address + last)
+        {
+            return Err(DebugWriteError::Unwritable);
+        }
+        for (offset, &byte) in bytes.iter().enumerate() {
+            let written = self.bus.poke_byte(address + offset as u32, byte);
+            debug_assert!(written);
+        }
+        if let Some(mut pipeline) = self.cpu.pipeline {
+            let width: u32 = if self.cpu.is_thumb() { 2 } else { 4 };
+            for (slot, instruction) in pipeline.instructions.iter_mut().enumerate() {
+                let at = self.cpu.next_instruction_address().wrapping_add(slot as u32 * width);
+                if at.wrapping_sub(address) <= last || address.wrapping_sub(at) < width {
+                    *instruction = (0..width).fold(0, |value, offset| {
+                        value
+                            | u32::from(self.bus.inspect_byte(at.wrapping_add(offset)))
+                                << (8 * offset)
+                    });
+                }
+            }
+            self.cpu.pipeline = Some(pipeline);
+        }
+        Ok(())
+    }
+
+    fn check_debug_write(&self) -> Result<(), DebugWriteError> {
+        match self.cpu.hle_service {
+            Some(_) => Err(DebugWriteError::HleServiceActive),
+            None => Ok(()),
+        }
+    }
+
+    fn redirect(&mut self, address: u32) {
+        let width: u32 = if self.cpu.is_thumb() { 2 } else { 4 };
+        let address = address & !(width - 1);
+        self.cpu.core.next_instruction_address = address;
+        self.cpu.pipeline = None;
+        self.cpu.registers[15] = address.wrapping_add(2 * width);
     }
 
     pub fn set_keys(&mut self, keys: KeyState) {

@@ -4,8 +4,8 @@
 a fixed number of instructions and prints cycles, instructions, faults and an
 optional framebuffer hash. It uses the HLE BIOS unless given an external BIOS.
 The runner lives in [`systems/gba/src/bin/evenfall-gba.rs`](../systems/gba/src/bin/evenfall-gba.rs).
-Its flags and output are ZiGBA's `zigba` CLI's; only the program name
-differs.
+Its `run` flags and output are ZiGBA's `zigba` CLI's; only the program name
+differs. The [`gdb` mode](#gdb-remote-debugging) is an Evenfall addition.
 
 ```sh
 cargo run -p evenfall-gba --bin evenfall-gba -- run --steps 100 path/to/homebrew.gba
@@ -147,3 +147,57 @@ cargo run -p evenfall-gba --bin evenfall-gba -- run --steps 100 --no-rtc game.gb
 cargo run -p evenfall-gba --bin evenfall-gba -- run --steps 100 \
   --save-type eeprom8k --save-file game.sav game.gba
 ```
+
+## GDB remote debugging
+
+`evenfall-gba gdb` serves the GDB remote serial protocol over TCP for GDB
+clients such as `gdb-multiarch` or an ARM-capable `gdb`, Ghidra's GDB
+connector and IDA's remote GDB debugger:
+
+```text
+evenfall-gba gdb [--listen <address:port>] [run options other than --steps]
+          <rom.gba|rom.zip>
+```
+
+The runner boots the ROM as `run` does, including `--state-in`, `--input` and
+`--trace`, then listens on `--listen` (default `127.0.0.1:2345`, mGBA's port)
+and prints `gdb listening=<address:port>`. Port 0 picks a free port. It serves
+one client, stopped at the first instruction, and ends when the client
+detaches, kills or disconnects; then it writes the battery save and
+`--state-out` and prints the final `stop` line as `run` does, after
+`--frame-hash`'s line if requested. Instruction and wait lines are never
+printed, so `--quiet` has no effect.
+
+```sh
+cargo run --release -p evenfall-gba --bin evenfall-gba -- gdb game.gba
+gdb-multiarch -ex 'target remote 127.0.0.1:2345' game.elf
+```
+
+The target is one all-stop thread with an ARMv4T target description:
+
+| Feature         | Behavior                                                                                                                                               |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Registers       | r0–r12, `sp`, `lr` and CPSR of the current mode; `pc` is the next instruction's address. CPSR is gdb register 25 and follows `pc` in `g`.              |
+| Thumb state     | The CPSR T bit, from which gdb disassembles and steps Thumb code.                                                                                      |
+| Memory reads    | Side-effect-free inspection; gdb limits requests to the memory map.                                                                                    |
+| Memory map      | BIOS and cartridge ROM are `rom`; work RAM, I/O, palette, VRAM, OAM and cartridge save memory are `ram`. Mirrors are outside the map.                  |
+| Register writes | Any register; CPSR needs a valid mode. Writing `pc` or the T bit empties the pipeline as at power-on. Refused during a multi-step HLE BIOS service.    |
+| Memory writes   | EWRAM and IWRAM only; decoded code and prefetched instructions over the bytes are refreshed. Other regions report an error.                            |
+| Breakpoints     | Software (`Z0`) and hardware (`Z1`) breakpoints alike, checked before each instruction; guest memory is never patched. gdb uses `Z1` in `rom` regions. |
+| Stepping        | `stepi` executes one instruction; on a sleeping CPU it first waits for the wake event.                                                                 |
+| Continue        | Runs whole instructions until a breakpoint address is next, emulated time passing through sleep as in `run`.                                           |
+| Interrupt       | Ctrl-C (byte 0x03) stops within 16,384 instructions or one frame of sleep and reports SIGINT.                                                          |
+| Faults          | An emulation fault stops with SIGABRT and prints its diagnostic; the machine cannot run on, and `--state-out` is skipped.                              |
+| Watchpoints     | Not served; gdb falls back to software watchpoints by single-stepping (`watch`), slower but exact. `rwatch` and `awatch` are unavailable.              |
+| Detach and kill | `detach`, `kill` and disconnecting all end the session.                                                                                                |
+
+The debugger never changes what the guest computes: stops fall between
+instructions, reads are inspections, and both modes advance the machine
+through the same step and sleep operations. A session that stops, steps and
+inspects ends in the same state, trace and final line as `run --steps` with
+its executed instruction count. Only register and memory writes change the
+guest, and they spend no emulated cycles.
+
+Execution runs as fast as the host allows; there is no frame pacing, video or
+audio output. An HLE BIOS service that spans several steps stops between
+them under `stepi`, with `pc` after its SWI.
