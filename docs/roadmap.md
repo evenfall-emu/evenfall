@@ -193,10 +193,22 @@ suites must still pass.
   `LDMIA`/`STMIA`, while direct `LDR`/`STR` rows pass. Before changing the
   CPU, confirm that the retail `CpuSet` word path uses block transfers; if it
   uses `LDR`/`STR`, only the HLE services change.
-- **HLE `CpuSet` halfword source.** Read a halfword copy's odd source with
-  `LDRH`'s misaligned result instead of aligning it. Evidence: `swi B 16
-(unaligned)` in the memory load tests under HLE; the replacement BIOS
-  passes.
+- **Decision: HLE halfword `CpuSet` loads and stores like `LDRH` and
+  `STRH`** (a deliberate guest-visible difference from ZiGBA, whose HLE
+  aligns both addresses). Each halfword unit loads the aligned halfword
+  rotated right by 8 at an odd address, so a copy from an odd source stores
+  the high bytes, and on the 8-bit save bus both the load and the store use
+  the exact address. Evidence: GBATEK's "BIOS Memory Copy" names the retail
+  loop's `LDRH`/`STRH r3,[r0,r5]`, and the mGBA suite's memory table
+  (`src/memory.c`, recorded on hardware) reads `00DE00BEh` from `DEADBEEFh`
+  and `00650061h` from SRAM in every `swi B 16 (unaligned)` row; the
+  replacement BIOS, which uses `LDRH`, already passes them
+  ([bios](gba/hardware/bios.md#copies)). A halfword fill loads its value the
+  same way. The word forms are unchanged here. Compatibility effect:
+  halfword `CpuSet` calls with an odd source or an SRAM address. The HLE
+  work state keeps bit 0 of both addresses in its existing fields; no
+  state-layout change. The parity harness applies
+  [`cpu-set-halfword.patch`](../tools/parity/patches/cpu-set-halfword.patch).
 - **HLE `IntrWait` latch.** Leave the post-SWI latch `E3A02004h` when an
   `IntrWait` completes after its IRQ returns. Evidence: "BIOS load" under
   HLE.

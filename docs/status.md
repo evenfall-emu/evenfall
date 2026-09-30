@@ -92,6 +92,9 @@ match:
 - **Flag-setting multiplies** set C as the ARM7TDMI's multiplier does,
   where ZiGBA leaves it unchanged
   ([`gba/hardware/cpu.md`](gba/hardware/cpu.md#the-carry-flag-after-a-multiply)).
+- **HLE halfword `CpuSet`** copies like the retail loop's `LDRH` and
+  `STRH`, rotating a halfword read from an odd source; ZiGBA aligns it
+  ([`gba/hardware/bios.md`](gba/hardware/bios.md#copies)).
 
 The others change no emulated result:
 

@@ -4,7 +4,7 @@
 //! caller retains `HleBulkWork` without changing the BIOS latch or taking an
 //! interrupt until the loop finishes.
 
-use crate::bus::{Access, AccessKind, AccessSource, AccessWidth, Bus};
+use crate::bus::{Access, AccessKind, AccessSource, AccessWidth, Bus, is_byte_wide_save_address};
 use crate::cpu::{
     Cpu, FaultReason, HleBgAffineSetWork, HleBitUnpackWork, HleBulkWork, HleCpuFastSetWork,
     HleCpuSetWork, HleDifferentialFilterWork, HleHuffmanWork, HleLz77Work, HleMemoryOperation,
@@ -85,7 +85,9 @@ impl Cpu {
             return None;
         }
 
-        let alignment = if word { 3 } else { 1 };
+        // Halfword units keep bit 0 of each address: the retail loop's
+        // LDRH and STRH see it.
+        let alignment = if word { 3 } else { 0 };
         let mut work = HleCpuSetWork {
             source: self.registers[0] & !alignment,
             destination: self.registers[1] & !alignment,
@@ -95,13 +97,11 @@ impl Cpu {
             word,
         };
         if fill {
-            work.fill_value = bus
-                .read(access(
-                    work.source,
-                    if word { AccessWidth::Word } else { AccessWidth::Half },
-                    AccessKind::Nonsequential,
-                ))
-                .value;
+            work.fill_value = if word {
+                bus.read(access(work.source, AccessWidth::Word, AccessKind::Nonsequential)).value
+            } else {
+                load_halfword(bus, work.source)
+            };
         }
         Some(HleBulkWork::CpuSet(work))
     }
@@ -120,12 +120,20 @@ impl Cpu {
             }
             let value = if work.fill {
                 work.fill_value
-            } else {
+            } else if work.word {
                 let copied = bus.read(access(work.source, width, AccessKind::Nonsequential)).value;
                 work.source = work.source.wrapping_add(unit);
                 copied
+            } else {
+                let copied = load_halfword(bus, work.source);
+                work.source = work.source.wrapping_add(unit);
+                copied
             };
-            bus.write(access(work.destination, width, AccessKind::Nonsequential), value);
+            if work.word {
+                bus.write(access(work.destination, width, AccessKind::Nonsequential), value);
+            } else {
+                store_halfword(bus, work.destination, value);
+            }
             work.destination = work.destination.wrapping_add(unit);
             work.remaining -= 1;
         }
@@ -747,6 +755,23 @@ impl Cpu {
     }
 }
 
+/// What the retail CpuSet loop's `LDRH` loads from `address`: the aligned
+/// halfword (on the 8-bit save bus, the byte at the address itself),
+/// rotated right by 8 at an odd address, as the CPU's `LDRH` does.
+fn load_halfword(bus: &mut Bus, address: u32) -> u32 {
+    let bus_address = if is_byte_wide_save_address(address) { address } else { address & !1 };
+    bus.read(access(bus_address, AccessWidth::Half, AccessKind::Nonsequential))
+        .value
+        .rotate_right((address & 1) * 8)
+}
+
+/// The retail CpuSet loop's `STRH` of `value` at `address`: aligned, except
+/// on the 8-bit save bus.
+fn store_halfword(bus: &mut Bus, address: u32, value: u32) {
+    let bus_address = if is_byte_wide_save_address(address) { address } else { address & !1 };
+    bus.write(access(bus_address, AccessWidth::Half, AccessKind::Nonsequential), value);
+}
+
 fn read_lz77_byte(bus: &mut Bus, address: u32, vram_output: bool) -> u8 {
     if !vram_output {
         return hle_read_u8(bus, address);
@@ -834,6 +859,49 @@ mod tests {
             assert_eq!(interrupted_cpu.registers[1], 0x0300_0000 + if word { 8 } else { 0 });
             assert_eq!(interrupted_cpu.registers[3], 0x170);
         }
+    }
+
+    /// A halfword CpuSet copies with the retail loop's `LDRH` and `STRH`
+    /// (GBATEK, BIOS Memory Copy): from an odd source each unit is the
+    /// aligned halfword rotated right by 8, so its low half holds the
+    /// halfword's high byte, and the 8-bit save bus sees the exact address
+    /// on both sides (GBATEK, Accessing SRAM Area by 16bit/32bit). The mGBA
+    /// suite's memory table (`swi B 16 (unaligned)`, recorded on hardware)
+    /// reads `00DE00BEh` from `DEADBEEFh` and `00650061h` from SRAM bytes
+    /// `61h` and `65h`.
+    #[test]
+    fn hle_cpu_set_halfwords_load_and_store_like_ldrh_and_strh() {
+        let run = |bus: &mut Bus, source: u32, destination: u32, control: u32| {
+            let mut cpu = Cpu::init(0x0800_0000, 0x1F, true);
+            cpu.registers[..3].copy_from_slice(&[source, destination, control]);
+            if let Some(HleBulkWork::CpuSet(mut work)) = cpu.begin_hle_cpu_set(bus) {
+                assert!(cpu.resume_hle_cpu_set(bus, &mut work, u64::MAX));
+            }
+        };
+        let mut bus = Bus::init_with_save(&[], crate::cartridge::save::Type::Sram);
+        bus.ewram[..8].copy_from_slice(&[0xEF, 0xBE, 0xAD, 0xDE, 0xBE, 0xBA, 0xFE, 0xCA]);
+        run(&mut bus, 0x0200_0001, 0x0300_0000, 4);
+        assert_eq!(&bus.iwram[..8], &[0xBE, 0, 0xDE, 0, 0xBA, 0, 0xCA, 0]);
+        // A fill loads its one unit the same way.
+        run(&mut bus, 0x0200_0003, 0x0300_0010, 2 | 1 << 24);
+        assert_eq!(&bus.iwram[0x10..0x14], &[0xDE, 0, 0xDE, 0]);
+
+        for (offset, byte) in [0x47_u32, 0x61, 0x6D, 0x65].into_iter().enumerate() {
+            bus.write(
+                access(0x0E00_0000 + offset as u32, AccessWidth::Byte, AccessKind::Nonsequential),
+                byte,
+            );
+        }
+        run(&mut bus, 0x0E00_0001, 0x0300_0020, 2);
+        assert_eq!(&bus.iwram[0x20..0x24], &[0x61, 0, 0x65, 0]);
+        // STRH at an odd SRAM address stores the halfword's high byte there.
+        bus.iwram[0x30..0x32].copy_from_slice(&[0x34, 0x12]);
+        run(&mut bus, 0x0300_0030, 0x0E00_0011, 1);
+        let sram = |bus: &mut Bus, address: u32| {
+            bus.read(access(address, AccessWidth::Byte, AccessKind::Nonsequential)).value
+        };
+        assert_eq!(0x12, sram(&mut bus, 0x0E00_0011));
+        assert_eq!(0xFF, sram(&mut bus, 0x0E00_0010));
     }
 
     /// ZiGBA machine_test: "HLE HuffUnComp traverses nested 8-bit nodes from the bitstream MSB".

@@ -156,7 +156,7 @@ pass.
 
 | Suite                  | Fails under HLE                                                                                                                                                                                                                                       | Fails under Cult-of-GBA BIOS                                                                    | Causes                                                                                                                                                                                                      |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Memory tests           | ROM, ROM out-of-bounds, IWRAM, EWRAM, palette, VRAM, VRAM OBJ and OAM loads and their mirrors; SRAM loads and stores and their mirrors; BIOS load                                                                                                     | SRAM loads and stores and their mirrors; BIOS load; BIOS out-of-bounds load; out-of-bounds load | [HLE `CpuSet` halfwords](#hle-cpuset-halfword-copies), [SRAM block transfers](#block-transfers-on-sram), [HLE `IntrWait` latch](#hle-intrwait-latch), [replacement BIOS](#hle-and-replacement-bios-effects) |
+| Memory tests           | SRAM loads and stores and their mirrors; BIOS load | SRAM loads and stores and their mirrors; BIOS load; BIOS out-of-bounds load; out-of-bounds load | [SRAM block transfers](#block-transfers-on-sram), [HLE `IntrWait` latch](#hle-intrwait-latch), [replacement BIOS](#hle-and-replacement-bios-effects) |
 | I/O read tests         | pass | pass | |
 | Timing tests           | Calibration; BIOS Division, Division 2, Sqrt, Sqrt 2, Sqrt 3, ArcTan; CpuSet; Trivial and Short DMA (16 and 32/to ROM)                                                                                                                                | same, except BIOS ArcTan passes                                                                 | [timer and IRQ latency](#timer-and-irq-latency), [HLE and BIOS timing](#hle-and-replacement-bios-effects), [DMA residual](#known-residuals)                                                                 |
 | Timer count-up tests   | every test                                                                                                                                                                                                                                            | every test                                                                                      | [timer and IRQ latency](#timer-and-irq-latency)                                                                                                                                                             |
@@ -218,13 +218,6 @@ copying, and the replacement BIOS copies words with `LDMIA`/`STMIA`
 the bus. The hardware result implies that the 8-bit SRAM bus sees a
 misaligned block-transfer address, assuming the retail routines also use
 block transfers.
-
-#### HLE `CpuSet` halfword copies
-
-A halfword `CpuSet` from an odd source address stores, on hardware, the low
-half of `LDRH`'s rotated result: `00BEh` and `00DEh` from `DEADBEEFh`. The
-HLE service aligns the source first and copies the aligned halfwords. The
-replacement BIOS, which uses `LDRH` on the odd address, passes these checks.
 
 #### HLE `IntrWait` latch
 

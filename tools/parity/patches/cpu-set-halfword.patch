@@ -1,0 +1,93 @@
+--- a/src/cpu.zig
++++ b/src/cpu.zig
+@@ -7695,7 +7695,9 @@ pub const Cpu = struct {
+             return null;
+         }
+ 
+-        const alignment: u32 = if (word) 3 else 1;
++        // Evenfall: halfword units keep bit 0 of each address; the retail
++        // loop's LDRH and STRH see it.
++        const alignment: u32 = if (word) 3 else 0;
+         var work: HleCpuSetWork = .{
+             .source = self.registers[0] & ~alignment,
+             .destination = self.registers[1] & ~alignment,
+@@ -7705,12 +7707,12 @@ pub const Cpu = struct {
+             .word = word,
+         };
+         if (fill) {
+-            work.fill_value = bus.read(.{
++            work.fill_value = if (word) bus.read(.{
+                 .address = work.source,
+-                .width = if (word) .word else .half,
++                .width = .word,
+                 .kind = .nonsequential,
+                 .source = .cpu_data,
+-            }).value;
++            }).value else hleLoadHalfword(bus, work.source);
+         }
+         return .{ .cpu_set = work };
+     }
+@@ -7721,21 +7723,25 @@ pub const Cpu = struct {
+         while (work.remaining != 0) : (work.remaining -= 1) {
+             if (bus.now() >= stop_at) return false;
+             const value = if (work.fill) work.fill_value else value: {
+-                const copied = bus.read(.{
++                const copied = if (work.word) bus.read(.{
+                     .address = work.source,
+                     .width = width,
+                     .kind = .nonsequential,
+                     .source = .cpu_data,
+-                }).value;
++                }).value else hleLoadHalfword(bus, work.source);
+                 work.source +%= unit;
+                 break :value copied;
+             };
+-            _ = bus.write(.{
+-                .address = work.destination,
+-                .width = width,
+-                .kind = .nonsequential,
+-                .source = .cpu_data,
+-            }, value);
++            if (work.word) {
++                _ = bus.write(.{
++                    .address = work.destination,
++                    .width = width,
++                    .kind = .nonsequential,
++                    .source = .cpu_data,
++                }, value);
++            } else {
++                hleStoreHalfword(bus, work.destination, value);
++            }
+             work.destination +%= unit;
+         }
+ 
+@@ -9115,3 +9121,29 @@ fn multiplyShift33(value: u64, shift: u6) u64 {
+     const extended: i64 = @as(i64, @bitCast(value << 31)) >> 31;
+     return @as(u64, @bitCast(extended >> shift)) & low_33;
+ }
++
++// Evenfall: what the retail CpuSet loop's LDRH loads from `address`: the
++// aligned halfword (on the 8-bit save bus, the byte at the address itself),
++// rotated right by 8 at an odd address, as the CPU's LDRH does.
++fn hleLoadHalfword(bus: *Bus, address: u32) u32 {
++    const bus_address = if (bus_module.isByteWideSaveAddress(address)) address else address & ~@as(u32, 1);
++    const value = bus.read(.{
++        .address = bus_address,
++        .width = .half,
++        .kind = .nonsequential,
++        .source = .cpu_data,
++    }).value;
++    return std.math.rotr(u32, value, (address & 1) * 8);
++}
++
++// Evenfall: the retail CpuSet loop's STRH of `value` at `address`: aligned,
++// except on the 8-bit save bus.
++fn hleStoreHalfword(bus: *Bus, address: u32, value: u32) void {
++    const bus_address = if (bus_module.isByteWideSaveAddress(address)) address else address & ~@as(u32, 1);
++    _ = bus.write(.{
++        .address = bus_address,
++        .width = .half,
++        .kind = .nonsequential,
++        .source = .cpu_data,
++    }, value);
++}
