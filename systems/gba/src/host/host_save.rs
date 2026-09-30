@@ -1,7 +1,7 @@
 //! Host-only save-file selection, loading, and atomic persistence.
 
 use crate::{
-    cartridge::{self, save::Type, tilt},
+    cartridge::{self, gpio::Rtc, save::Type, tilt},
     rom_image,
     types::{CYCLES_PER_FRAME, Cycle},
 };
@@ -218,9 +218,12 @@ pub fn parse_options<'a>(args: &[&'a str]) -> Result<Options<'a>, Error> {
                 options.input_movie = Some(value.ok_or(Error::InvalidArguments)?)
             }
             "--rtc-epoch" if !have_rtc => {
-                options.rtc = RtcOption::Epoch(
-                    value.ok_or(Error::InvalidArguments)?.parse().map_err(integer_error)?,
-                );
+                let epoch: u64 =
+                    value.ok_or(Error::InvalidArguments)?.parse().map_err(integer_error)?;
+                if epoch > Rtc::MAX_EPOCH_SECONDS {
+                    return Err(Error::InvalidArguments);
+                }
+                options.rtc = RtcOption::Epoch(epoch);
                 have_rtc = true;
             }
             "--solar-level" if !have_solar => {
@@ -477,6 +480,7 @@ mod tests {
             &["--bios", "a.bin", "--bios", "b.bin", "game.gba"],
             &["one.gba", "two.gba"],
             &["--no-rtc", "--rtc-epoch", "1", "game.gba"],
+            &["--rtc-epoch", "253402300800", "game.gba"],
         ] {
             assert!(matches!(parse_options(args), Err(Error::InvalidArguments)));
         }

@@ -432,6 +432,10 @@ enum InvalidStateCase {
     SweepCounterAbovePeriod,
     FifoATooManyPlaybackBytes,
     FifoBTooManyPlaybackBytes,
+    Square1PhasePastLongestPeriod,
+    Square2PhasePastLongestPeriod,
+    WavePhasePastLongestPeriod,
+    NoisePhasePastLongestPeriod,
 }
 
 fn invalid_state(case: InvalidStateCase) -> Apu {
@@ -449,18 +453,47 @@ fn invalid_state(case: InvalidStateCase) -> Apu {
         }
         InvalidStateCase::FifoATooManyPlaybackBytes => apu.fifo_a.playback_bytes_remaining = 5,
         InvalidStateCase::FifoBTooManyPlaybackBytes => apu.fifo_b.playback_bytes_remaining = 5,
+        InvalidStateCase::Square1PhasePastLongestPeriod => apu.square1.phase_cycles = 16 * 2048,
+        InvalidStateCase::Square2PhasePastLongestPeriod => apu.square2.phase_cycles = 16 * 2048,
+        InvalidStateCase::WavePhasePastLongestPeriod => apu.wave.phase_cycles = 8 * 2048,
+        InvalidStateCase::NoisePhasePastLongestPeriod => {
+            // The digest-valid hang: 2^58 noise steps at the shortest period.
+            apu.noise.enabled = true;
+            apu.noise.phase_cycles = 1 << 63;
+        }
     }
     apu
 }
 
-const INVALID_CASES: [InvalidStateCase; 6] = [
+const INVALID_CASES: [InvalidStateCase; 10] = [
     InvalidStateCase::SampleDeadline,
     InvalidStateCase::FrameDeadline,
     InvalidStateCase::SweepCounterZero,
     InvalidStateCase::SweepCounterAbovePeriod,
     InvalidStateCase::FifoATooManyPlaybackBytes,
     InvalidStateCase::FifoBTooManyPlaybackBytes,
+    InvalidStateCase::Square1PhasePastLongestPeriod,
+    InvalidStateCase::Square2PhasePastLongestPeriod,
+    InvalidStateCase::WavePhasePastLongestPeriod,
+    InvalidStateCase::NoisePhasePastLongestPeriod,
 ];
+
+/// Evenfall-only: a phase left from a longer period after a frequency change
+/// is reachable, so the bound is the longest period, not the current one.
+#[test]
+fn apu_state_accepts_oscillator_phases_left_from_a_longer_period() {
+    let mut apu = Apu::default();
+    apu.square1.frequency = 2047;
+    apu.square1.phase_cycles = 16 * 2048 - 1;
+    apu.wave.frequency = 2047;
+    apu.wave.phase_cycles = 8 * 2048 - 1;
+    apu.noise.phase_cycles = (14 << 15) * 32 - 1;
+    let mut bytes = Vec::new();
+    apu.write_state(&mut Sink::new(Some(&mut bytes), None)).unwrap();
+    let mut restored = Apu::default();
+    restored.read_state(&mut Source::new(&bytes)).unwrap();
+    assert_eq!(restored.noise.phase_cycles, (14 << 15) * 32 - 1);
+}
 
 /// "APU state writer rejects unreachable counters and deferred debt past the frame phase"
 #[test]

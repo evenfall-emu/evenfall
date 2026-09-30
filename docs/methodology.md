@@ -81,9 +81,9 @@ Porting does not provide a license to fix a suspected ZiGBA bug or replace
 its behavior for speed. Record a deliberate divergence with evidence and a
 follow-up in [`docs/roadmap.md`](roadmap.md), decide its compatibility effect,
 then change behavior only with that recorded decision and discriminating
-tests. For example, rewind's miniz_oxide compressor produces different
-compressed bytes but preserves mutually decodable bundles and byte-identical
-decoded states; this does not change guest behavior
+tests. For example, rewind's copy/literal deltas change the bundle format
+(ZiGBA reads Evenfall's bundles only when they hold no copy delta) but decode
+byte-identical states; this does not change guest behavior
 ([`rewind.md`](design/rewind.md)). A durable-layout change requires an explicit
 state-version and compatibility decision, not just a passing round trip.
 

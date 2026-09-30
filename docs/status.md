@@ -66,9 +66,14 @@ remaining gaps are in [`performance.md`](performance.md).
 These change no emulated result; each is recorded with its evidence in
 [`roadmap.md`](roadmap.md):
 
-- Compressed rewind entries use a different DEFLATE encoder, so their bytes
-  differ while ZiGBA and Evenfall read each other's bundles and decode
-  identical states.
+- Rewind stores copy/literal deltas and writes version 2 bundles when it
+  holds any. Evenfall reads ZiGBA's bundles and decodes identical states;
+  ZiGBA reads Evenfall's only when they hold no copy delta
+  ([`rewind.md`](design/rewind.md)).
+- State loading also rejects APU oscillator phases at or past the channel's
+  longest period and RTC epochs past 9999-12-31, which no running machine
+  reaches and which would make the next oscillator advance or date read run
+  for years of host time ([`save-states.md`](design/save-states.md)).
 - ROM and BIOS media are shared and immutable; ZiGBA's borrowed, mutable
   media mode does not exist.
 - The WebAssembly build keeps Rust's default allocator, which reuses freed
