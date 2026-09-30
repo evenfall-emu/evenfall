@@ -35,7 +35,7 @@ without a wake event it ends early.
 | Option                 | Effect                                                                    |
 | ---------------------- | ------------------------------------------------------------------------- |
 | `--bios <path>`        | Boot a user-supplied BIOS of exactly 16 KiB instead of HLE.               |
-| `--save-type <type>`   | Override cartridge save detection (see [Saves](#saves)).                  |
+| `--save-type <type>`   | Override cartridge save detection (see [Saves](#saves-and-states)).       |
 | `--save-file <path>`   | Use this battery save path instead of the ROM path with `.sav` extension. |
 | `--state-in <path>`    | Restore a portable state after boot, before the instruction run.          |
 | `--state-out <path>`   | Write a portable state after the run unless the machine faulted.          |

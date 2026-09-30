@@ -3,7 +3,7 @@
 Build source ROMs first (`make -C probe && make -C tools/bench/roms`); the
 jsmolka ROMs live in the pinned, gitignored `refs/gba-tests` checkout. The BIOS
 variants use the pinned Cult-of-GBA replacement image under `refs/`; no media
-or initial save is vendored. See [GBA differential parity](../../docs/parity.md)
+or initial save is vendored. See [GBA differential parity](../../internal-docs/parity.md)
 for the evidence boundary and trace interpretation.
 
 ```sh

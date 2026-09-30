@@ -140,9 +140,7 @@ stored as trailing literals.
 
 ### Word-run deltas
 
-Bundles written by our previous implementation,
-[ZiGBA](https://github.com/evenfall-emu/zigba), use a simpler delta (entry
-encoding 2). It compares the new state
+Older bundles use a simpler delta (entry encoding 2). It compares the new state
 with the anchor 32-bit word by 32-bit word at the same offsets, after
 zero-extending or truncating the anchor to the new state's size. It stores
 varint skip and copy run headers, then the changed words, then any trailing
@@ -164,13 +162,13 @@ consumed exactly.
 ### Compressor
 
 Evenfall writes raw DEFLATE with **miniz_oxide**. Imported entries are
-never recompressed, so a bundle from ZiGBA exports with its entries
+never recompressed, so an imported bundle exports with its entries
 unchanged.
 
-zstd with the anchor as a dictionary stores a little less during play. Its C
-library would grow the WebAssembly module and need a C toolchain in the
-build, which is why rewind doesn't use it
-([measurements](../research/rewind-compression.md#codec-choice)).
+zstd with the anchor as a dictionary stores about 10% less during play. Its
+C library would add about 520 KB to the WebAssembly module (120 KB gzipped),
+against 14 KB for the copy delta, and would need a C toolchain in the build,
+which is why rewind doesn't use it.
 
 ## Restoring
 
@@ -258,7 +256,7 @@ session's tests live in
 browser tests in `web/gba` exercise the SDK. No test yet covers rewind
 under allocation failure, or a full rewind session in a browser.
 
-A [bundle written by ZiGBA](../../crates/state/tests/fixtures/zigba-rewind-bundle.bin)
+A [bundle in the older format](../../crates/state/tests/fixtures/zigba-rewind-bundle.bin)
 checks that Evenfall imports it, decodes every checkpoint to the expected
 state, and exports the imported entries unchanged.
 

@@ -10,15 +10,6 @@ reconstructs exact pixels for saves and reads between published frames.
 browser. The scanline memo receives change marks across skipped frames
 ([`scanline-memo.md`](scanline-memo.md)).
 
-## Motivation and evidence
-
-On ZiGBA's measured commercial-game outdoor scene, disabling only pixel
-production saves 19.5% of native frame time; selective rendering at interval
-16 saves 15.3% in ReleaseSafe WebAssembly on a performance core. These Zig
-measurements justify skipping unpresented frames but are **not** Evenfall
-benchmarks or a promise of 16× playback. A diagnostic renderer that simply
-omits all pixels is not correct: its framebuffer and saved states differ.
-
 ## Selection and publication
 
 `Session::set_video_interval` accepts 1–16. Above 2× playback the browser

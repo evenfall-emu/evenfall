@@ -113,32 +113,6 @@ priority, layer and second-surface arrays; those arrays belong to the
 reference passes. The scanline memo's check mode recomposes kept lines and
 compares their colors.
 
-## Measurements
-
-Native x86-64, pinned CPU 3, HLE boot, release-LTO harnesses, 1,200 frames
-(`perf stat`); host instructions and cycles, ZiGBA against Evenfall before
-and after this design:
-
-| Workload   | ZiGBA            | Before           | After            |
-| ---------- | ---------------- | ---------------- | ---------------- |
-| tiles      | 11.91 G / 3.00 G | 19.98 G / 4.65 G | 8.17 G / 1.30 G  |
-| affine     | 13.04 G / 2.59 G | 18.59 G / 3.08 G | 14.16 G / 2.36 G |
-| bitmap-dma | 21.64 G / 4.00 G | 27.20 G / 4.49 G | 18.15 G / 2.75 G |
-| idle       | 0.19 G / 0.08 G  | 0.38 G / 0.08 G  | 0.26 G / 0.04 G  |
-
-Loop-time ratios from the benchmark runner are in
-[`performance.md`](../performance.md).
-
-What did not pay:
-
-- Passes over surface arrays, one per background, relying on
-  auto-vectorization: 13.56 G instructions on tiles against 10.76 G with the
-  explicit lane kernel at the time, and a later variant with double-buffered
-  16-bit planes was worse still (15.53 G).
-- The content-keyed 4bpp row cache inside the new rows: the tiles ROM uses
-  every palette bank with flips, so its 1,024 entries missed constantly; the
-  pair tables cut tiles from 10.76 G to 9.28 G instructions.
-
 ## Tests
 
 - [`video/tests.rs`](../../systems/gba/src/video/tests.rs): "layer major lines

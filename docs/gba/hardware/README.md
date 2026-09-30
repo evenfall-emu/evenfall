@@ -19,8 +19,7 @@ implementing a GBA emulator.
 ## Sources
 
 Nintendo has not published a programming manual for the GBA. Each claim here
-names its source, ranked as described in
-[`methodology.md`](../../methodology.md#evidence-and-the-gba-oracle):
+names its source. When sources disagree, the higher one wins:
 
 - **Arm's manuals** decide CPU behavior: the
   [ARM7TDMI Technical Reference Manual (DDI 0029G)](https://documentation-service.arm.com/static/5e8e1323fd977155116a3129),

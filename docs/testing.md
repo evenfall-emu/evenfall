@@ -1,9 +1,9 @@
 # Testing
 
-Evenfall uses focused unit and integration tests, independent ROM oracles,
-and byte-exact parity against ZiGBA. [`methodology.md`](methodology.md) explains
-what each layer establishes; [`compatibility.md`](compatibility.md) records the
-current GBA validator coverage and limitations.
+Evenfall is tested in layers. Unit and integration tests check each part of
+the core, test ROMs check the whole machine against independent results, and
+recorded hardware tables check timing. [`compatibility.md`](compatibility.md)
+lists what the ROM validators cover and what still fails.
 
 ## Rust core
 
@@ -89,13 +89,6 @@ instruction and DMA timing through `Machine` with suite-style calibration;
 source and latch behavior through `Bus`. The recorded numbers come from the
 suite, not Rust output. Known residuals and limits are in
 [`compatibility.md`](compatibility.md#mgba-suite-hardware-tables).
-
-## Parity traces
-
-The ZiGBA/Rust trace workflow, required reference setup and comparison
-commands live in [`tools/parity/README.md`](../tools/parity/README.md).
-Its scenarios compare frames, audio, battery saves and complete state bytes
-across host slice schedules; linked probes use the ROM validator instead.
 
 ## JavaScript SDK and documentation
 

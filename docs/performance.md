@@ -39,11 +39,10 @@ the mean, so the table doesn't predict how fast a particular game runs.
 
 ### WebAssembly
 
-In Node 24, the shipped WebAssembly module takes 0.31x the loop time of the
-module of our previous implementation,
-[ZiGBA](https://github.com/evenfall-emu/zigba), on the same ROMs with HLE
-boot. Built without SIMD lanes it takes 0.35x. The lanes matter most for
-drawing tiles, where they bring the ratio from 0.41x down to 0.23x.
+The shipped WebAssembly module uses SIMD lanes (`simd128`) in the
+compositor. In Node 24 on the same ROMs, a build without them takes about
+13% longer overall, and 80% longer on tiles, the workload that draws the
+most.
 
 ### Skipping frames
 
@@ -108,9 +107,6 @@ hands over to the ordinary path, which stays in the tree as the reference.
 
 Every fast path has a test that runs it and its reference side by side and
 compares what the guest would see (state bytes, pixels, samples and timing).
-The [parity traces](parity.md) check the same thing end to end. The whole
-core, fast paths included, must produce the same bytes as our previous
-implementation however the host slices execution.
 
 ### Deferred devices
 
@@ -330,7 +326,8 @@ lines, and idle took 17% more cycles.
 ## Measuring
 
 ```sh
-node tools/bench/run.mjs --emulators zigba,evenfall --boot hle
+node tools/bench/run.mjs --list
+node tools/bench/run.mjs --boot hle
 cargo bench -p evenfall-gba --bench hot_paths
 cargo build --profile profiling -p evenfall-bench --bin evenfall-harness
 perf record --call-graph dwarf -- \
@@ -354,13 +351,9 @@ The runner checks that all emulators used the same boot mode, frame count,
 video and audio settings, and stopped within a scanline of the requested
 frame. It then compares a hash of each emulator's final frame. The hash
 catches an emulator that went off the rails, but it doesn't check
-correctness. That is the job of the [parity harness](../tools/parity/README.md)
-and the tests.
+correctness. That is the job of the [tests](testing.md).
 
-The runner has adapters for Evenfall and for ZiGBA. The mGBA figures above
-come from ZiGBA's own cross-emulator runner (`tools/emu-bench` in
-`refs/zigba`), with Evenfall's harness plugged in through its `--harness`
-option. The [benchmark README](../tools/bench/README.md) documents the
+The [benchmark README](../tools/bench/README.md) documents the
 runner, the harness protocol and
 [`wasm.mjs`](../tools/bench/README.md#webassembly), which measures
 WebAssembly modules the same way in Node.

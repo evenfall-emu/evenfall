@@ -153,59 +153,6 @@ The Thumb ROM, ARM IWRAM and runner tests in
 ZiGBA's kernel tests, drive the engine too, and the parity harness runs
 every scenario through it under several slice schedules.
 
-## Measurements
-
-Host instructions per guest instruction on the dispatch diagnostics
-([`tools/bench/diag`](../../tools/bench/diag/README.md)), release-LTO,
-pinned CPU 1, the difference between 330 and 30 frames:
-
-| Loop                               | Interpreter kernels | Engine |
-| ---------------------------------- | ------------------: | -----: |
-| ARM ALU operations from IWRAM      |                 192 |   19.8 |
-| ARM IWRAM loads and stores         |                 235 |   38.1 |
-| Thumb ALU operations from Game Pak |                 479 |   35.0 |
-
-ZiGBA's threaded kernels take 47, 103 and 184.
-
-**What did not pay.** A first block loop that tested for conditional and NOP
-kinds before a range-checked table ran slower than the per-op loop it
-replaced (27.9 against 25.2 on the ARM ALU loop): the block loop has to be a
-single full-width table dispatch to win. Rust lowers an exhaustive match on
-a `u8` by making one arm the switch default, and LLVM merges every arm with
-the same body into it, so the non-block kinds keep a range check before the
-table whatever their order; giving kind 255 a distinct body did not remove
-it. Returning to the dispatch loop for each iteration's branch cost about
-0.3 instructions per op; following branches inside the block loop saved it.
-Inlining the generic transfer path (video memory, ROM, code pages) into the
-dispatch loop cost the ARM memory loop about 7 instructions per op through
-register pressure; an inline RAM path with the rest out of line recovered
-it.
-
-Code size is a cost of its own. Inlining the 128-way block body into each
-conditional kind of each unrolled copy of the block loop, for both RAM
-regions, made a wasm-release one-line rebuild take 94 s and a dev one 18 s;
-one out-of-line body for conditional ops, reached only when a condition
-passes, costs nothing measurable and brings them to 7.7 s and 3.6 s. A
-closure defined inside a macro that expands once per dispatch arm is a new
-type each time: passing one to a generic block loop instantiated that loop
-132 times in debug builds. One ARM dispatch loop for both RAM regions, with
-the region's fetch cost, mask and slots as values, would save about 85 KB of
-WebAssembly, but it retired 3% more instructions in the ARM mixer's loop and
-took 2% longer; the loop stays specialized per region.
-
-Thumb blocks were built and not kept. With the prefetch buffer a block's
-cost is not static, but it is bounded: after the first fetch each waits at
-most one duty, so a budget covering the first fetch and a duty per further op
-covers the block, and the loop charges each op exactly without checking.
-Chained through branches, blocks took the Thumb ROM diagnostic loop from 37.1
-to 31.6 host instructions per guest instruction. On the thumb-logic
-workload, whose runs of ALU ops average three ops, they cost 26% more
-instructions; counting only runs of 16 or more, still 4% more: the block
-checks in every ALU arm of the dispatch loop cost more than blocks recover.
-Returning the 48-byte Thumb run state by value from the out-of-line block
-loop also kept it in memory, costing 80% more cycles on thumb-logic, until
-the loop worked on a local copy.
-
 ## Open questions
 
 Thumb code runs without blocks (see above); a design that costs nothing per

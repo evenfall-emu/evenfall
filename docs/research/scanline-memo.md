@@ -166,15 +166,6 @@ the palette changes (a fade invalidates every line), or when a game changes
 the tiles or maps its lines read every frame. There every line is composed and
 the memo costs only its bookkeeping, which measures as zero within noise.
 
-## Measurements
-
-In ZiGBA, change marks reduced loop time by about 9–12% on static-scene
-workloads compared with no memo. In forced-miss runs their bookkeeping cost
-was within measurement noise, while snapshot comparison added about 1.4%.
-These measurements motivate the choice of change marks; they are not Evenfall
-performance measurements. The final state, cycle and image agreed with the
-no-memo reference in ZiGBA's comparison.
-
 ## Tests and reproduction
 
 - [`video/scanline_memo.rs`](../../systems/gba/src/video/scanline_memo.rs): "marked memory

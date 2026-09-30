@@ -49,20 +49,6 @@ Lines with palette or VRAM raster history use the per-dot reference, which
 resolves the value visible at each dot; historical values are never replaced
 by decoded live ones.
 
-## Measurements
-
-The earlier design kept 1,024 content-keyed entries, each a whole row's
-colors for one source word and bank. The tiles benchmark ROM spreads its 64
-tiles over all 16 banks with flips, so its rows missed that cache constantly.
-Replacing the cache lookup with pair tables in the layer-major text rows took
-the tiles workload from 10.76 G to 9.28 G host instructions per 1,200 frames
-and from 2.16 G to 1.49 G cycles (release-LTO, pinned CPU 3).
-
-The word-wise palette comparison made the WebAssembly build's idle workload
-twice as fast in Node (loop time 0.54 of the build before it), because every
-line compared the palette with a byte loop. It adds about 0.02 G native
-instructions per 1,200 idle frames and no cycles.
-
 ## Tests
 
 - [`video/tile_row_cache.rs`](../../systems/gba/src/video/tile_row_cache.rs): "expanded rows
