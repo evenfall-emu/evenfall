@@ -1,8 +1,8 @@
 # Save states
 
 A portable save state captures durable GBA hardware state at an instruction
-boundary. Evenfall keeps the `ZIGBAST1` version 6 format byte-compatible with
-ZiGBA: restoring a valid state with the same media resumes the same execution.
+boundary. The format is `ZIGBAST1` version 6. Restoring a valid state with
+the same media resumes exactly the same execution.
 States are for compatible builds, not long-term interchange; battery saves
 carry game progress across state-format changes.
 
@@ -47,7 +47,7 @@ All integers are little-endian.
 | 133 + n |   32 | payload BLAKE3 digest                          |
 
 No bytes may follow the digest. The payload is the master cycle (`u64`), CPU,
-then bus, with each durable field in ZiGBA declaration order. The bus includes
+then bus, with each durable field in the format's declaration order. The bus includes
 memories, I/O, video histories, timers, DMA, serial, cartridge and audio state;
 the save medium and APU encode their own fields in place. ROM and BIOS bytes
 themselves are not stored.
@@ -67,17 +67,17 @@ themselves are not stored.
 | tagged union     | tag followed by the active payload only                                 |
 
 `#[derive(Codec)]` emits the same value encoding and static schema for the
-GBA's Rust fields. `#[codec(bits = N)]` captures Zig's non-byte integer widths;
+GBA's Rust fields. `#[codec(bits = N)]` captures non-byte integer widths;
 `#[codec(skip)]` excludes transient fields from both value and schema;
-`#[codec(flatten)]` splices the split Rust CPU into ZiGBA's flat CPU layout.
-Module schema prefixes, field renames and custom field encoders preserve Zig's
+`#[codec(flatten)]` splices the split Rust CPU into the format's flat CPU layout.
+Module schema prefixes, field renames and custom field encoders preserve the format's
 field names and canonicalize unused array slots. Decode writes into existing
 storage so skipped fields are not overwritten. `Box<[T; N]>` is wire-transparent.
 
 The value-independent schema description includes codec and payload identities,
 then the CPU and bus schemas, with every durable field name, type, integer
 width, array extent and enum or union alternative. Its BLAKE3 digest is stored
-in the header. Evenfall's complete Rust description must equal the ZiGBA v6
+in the header. Evenfall's complete Rust description must equal the version 6
 [`schema-v6.bin`](../../tools/parity/fixtures/schema-v6.bin) fixture and its
 [`digest`](../../tools/parity/fixtures/schema-v6.blake3), not merely hash to a
 plausible value. `Machine::schema_description` and the
@@ -86,7 +86,7 @@ that does not bump the version is rejected by `SaveStateSchemaMismatch`.
 
 Schema equality cannot detect changed _values_ under unchanged types. The
 locked-byte `save_state_v6_byte_schema_is_locked_by_a_deterministic_fixture`
-test pins a deterministic whole state against ZiGBA's independent oracle;
+test pins a deterministic whole state against an independent fixture;
 [`tools/parity`](../../tools/parity/README.md) compares complete save-state
 blobs at checkpoints across host slicing schedules. Both are needed for byte
 parity, in addition to schema equality.
@@ -102,8 +102,7 @@ optional diagnostics, not part of the serialized format.
 
 The header stores boot mode and the lengths and BLAKE3 digests of the ROM and
 BIOS. Evenfall copies borrowed input or adopts an owned ROM into immutable shared
-media and computes its digests once; ZiGBA's live borrowed-mutable-media identity
-mode has no Rust equivalent. The media handles expose no mutable bytes; replacing
+media and computes its digests once. The media handles expose no mutable bytes; replacing
 an entire public `Machine.bus` or `Session.machine` is outside the supported
 media-binding lifecycle. The reader checks magic, version, schema, payload bound,
 boot mode, ROM and BIOS in that order, then validates the payload length,
@@ -152,31 +151,17 @@ complete portable states; restoring one uses the same machine loader.
 
 ## Verification
 
-The names below map ZiGBA's machine verification table to Rust. The
-`tests-machine-b` integration tests live at
-[`systems/gba/tests/machine_b.rs`](../../systems/gba/tests/machine_b.rs) while
-that test port is being merged; the rows do not claim those tests run on this
-branch. The two remaining scenario ports are listed explicitly.
-
-| Rust test (`tests-machine-b` unless noted)                                                  | Pins                                          |
-| ------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| `save_state_v6_byte_schema_is_locked_by_a_deterministic_fixture`                            | exact v6 state bytes                          |
-| `canonical_save_state_round_trip_resumes_bit_identical_execution`                           | continuation and canonical re-encoding        |
-| `save_state_restores_an_in_flight_prefetch_across_waitcnt_and_boundary_repricing` (pending) | durable prefetch state                        |
-| `save_state_envelope_rejects_wrong_media_version_corruption_truncation_and_trailing_data`   | envelope, checksum and framing                |
-| `save_state_envelope_binds_bios_and_boot_mode`                                              | media binding                                 |
-| `save_state_load_transactionally_rejects_a_digest_valid_impossible_ppu_phase`               | semantic validation and transactional failure |
-| `save_state_round_trip_keeps_the_prescaler_counter_and_rejects_a_timer_phase_off_it`        | timer invariants                              |
-| `save_state_writer_rejects_impossible_ppu_phases_past_deadlines_and_incomplete_joy_bus`     | writer-side validation                        |
-| `save_state_load_drops_already_produced_host_audio_samples`                                 | host audio is not durable                     |
-| `a_state_saved_inside_a_multi_step_hle_service_resumes_identically` (pending)               | HLE continuations                             |
-
-[`crates/state/tests/codec.rs`](../../crates/state/tests/codec.rs) locks
-primitive, derive, schema, envelope, validation-order and tracer rules.
+The machine's save-state tests live in
+[`systems/gba/tests/machine_b.rs`](../../systems/gba/tests/machine_b.rs). They
+pin the exact version 6 bytes, check that a round trip resumes bit-identical
+execution, and cover the envelope's checksum and framing, media binding,
+semantic validation with transactional failure, timer and PPU invariants,
+and host audio, which is not durable.
+[`crates/state/tests/codec.rs`](../../crates/state/tests/codec.rs) locks the
+primitive, derive, schema, envelope, validation-order and tracer rules, and
 `buffered_snapshots_match_streamed_state_bytes_for_owned_media` in
-[`Session`](../../systems/gba/src/session.rs) compares the two machine writers.
-The `tools/parity` schema fixture is checked independently when the Zig oracle
-is built; the Rust whole-machine schema check comes from the machine branch.
+[`Session`](../../systems/gba/src/session.rs) compares the two machine
+writers.
 
 ## Open questions
 

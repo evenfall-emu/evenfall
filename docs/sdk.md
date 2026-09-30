@@ -1,12 +1,10 @@
 # JavaScript and TypeScript SDK
 
 `@evenfall/gba` is Evenfall's Rust WebAssembly GBA core with a JavaScript
-interface ported from ZiGBA. It runs the same deterministic emulator as the
+interface. It runs the same deterministic emulator as the
 native build, in a browser Worker or synchronously in Node. It has no runtime
 dependencies and creates no canvas or audio device. The package is private and
 consumed from this repository's `web/*` npm workspace, not published to npm.
-Its JS API, entry points, events, options, errors and types retain their ZiGBA
-names and behavior.
 
 The SDK is experimental and versioned 0.x: minor releases can change the
 interface (see [Versioning](#versioning)).

@@ -92,7 +92,7 @@ guessing guest behavior.
 
 ## State and host interfaces
 
-`Machine::write_state` and `write_state_alloc` produce ZiGBA's `ZIGBAST1`
+`Machine::write_state` and `write_state_alloc` produce the `ZIGBAST1`
 version 6 envelope, bound to the exact ROM, BIOS, boot mode and durable
 schema. `load_state` checks the envelope and hardware invariants in a
 heap-allocated scratch machine before swapping it into service; failed loads
@@ -106,9 +106,7 @@ save file belongs to [`host_save`](../systems/gba/src/host/host_save.rs).
 
 [`evenfall-gba`](../systems/gba/src/bin/evenfall-gba.rs) is the headless native CLI
 ([usage](cli.md)); [`session_probe`](../systems/gba/src/bin/session_probe.rs)
-is the native side of session parity. The
-[`tools/parity`](../tools/parity/README.md) oracle and scenario runner compare
-Rust observations against ZiGBA. The
+is the native side of the native-against-WebAssembly comparison. The
 [`web/gba`](../web/gba/README.md) WebAssembly ABI and JS host adapter call
 Session rather than implementing hardware. Broader game compatibility remains
 open; the source map describes the code present now.
@@ -127,10 +125,9 @@ open; the source map describes the code present now.
 | [`systems/gba/src/session.rs`](../systems/gba/src/session.rs), [`systems/gba/src/video_recovery.rs`](../systems/gba/src/video_recovery.rs)                                                   | Bounded host session, rewind and skipped-frame recovery    |
 | [`crates/state`](../crates/state/src/lib.rs), [`crates/state-derive`](../crates/state-derive/src/lib.rs)                                                                                     | Portable codec, envelope, schema and rewind                |
 | [`crates/audio`](../crates/audio/src/lib.rs), [`systems/gba/src/rom_image.rs`](../systems/gba/src/rom_image.rs), [`systems/gba/src/host/host_save.rs`](../systems/gba/src/host/host_save.rs) | Resampling, ROM import and native save-file policy         |
-| [`systems/gba/src/bin`](../systems/gba/src/bin/evenfall-gba.rs), [`tools/parity`](../tools/parity/README.md)                                                                                 | Native hosts and differential checks                       |
+| [`systems/gba/src/bin`](../systems/gba/src/bin/evenfall-gba.rs)                                                                                                                              | Native hosts                                               |
 | [`web/gba`](../web/gba/README.md)                                                                                                                                                            | GBA WebAssembly ABI, JS SDK and Worker host                |
 
 Unit tests live next to their modules. Ported integration suites exercise the
-Machine and Bus independently; parity scenarios compare whole-machine
-checkpoints against ZiGBA rather than deriving their expected bytes from Rust.
+Machine and Bus independently.
 The checking layers and commands are in [`testing.md`](testing.md).

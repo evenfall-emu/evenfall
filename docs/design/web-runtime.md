@@ -66,8 +66,8 @@ versions. Applications use the JavaScript API rather than the private ABI:
 
 Each WASM instance contains at most one [`Session`](../../systems/gba/src/session.rs).
 Creating another `WasmCore` or Worker creates independent memory and machine
-state. Portable [`ZIGBAST1` states](save-states.md) remain byte-compatible with
-ZiGBA and do not serialize host pacing or presentation policy.
+state. Portable [`ZIGBAST1` states](save-states.md) don't serialize host pacing or
+presentation policy.
 
 ### Allocation and ownership
 
@@ -76,10 +76,8 @@ allocations. An isolated large-buffer probe and the shipped-module
 [`allocator tests`](../../web/gba/allocator.test.mjs) show near-request-size
 growth for a request just over 32 MiB, repeated reuse of its freed address
 without memory growth, and live bytes surviving memory growth. A released
-bundle export can also supply the next bundle upload. ZiGBA's custom 64 KiB
-page-run allocator solves power-of-two waste in its Zig allocator; its bitmap
-and in-place-resize rules are not Rust ABI requirements, so Evenfall does not
-port it.
+bundle export can also supply the next bundle upload, so no custom
+allocator is needed.
 
 A raw ROM upload becomes the session's `Arc<Vec<u8>>` storage without moving
 its bytes. The Bus and scratch/reset machines clone that immutable handle,
@@ -207,5 +205,5 @@ CPSR, and SHA-256 hashes of complete portable state, EWRAM, framebuffer,
 audio stream and battery save. Locally supplied ROMs can extend the schedule
 through `ZIGBA_TEST_ROMS`; games and BIOS files are never committed. The two
 sides are the same Rust implementation on different targets: this proves
-portability of the runtime, not hardware accuracy. ZiGBA parity and ROM
-validators are separate checks ([`testing.md`](../testing.md)).
+portability of the runtime, not hardware accuracy. The ROM validators check
+accuracy ([`testing.md`](../testing.md)).
