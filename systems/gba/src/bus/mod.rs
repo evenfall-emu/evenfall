@@ -2239,6 +2239,109 @@ impl Bus {
         self.bios_latch = value;
     }
 
+    /// The HLE IRQ entry's accesses in one step: the BIOS opcode fetches
+    /// at 18h, 1Ch, 20h, 128h, 12Ch and 130h, the six word stores of
+    /// `saved` from `stack` up, the fetches at 134h, 138h and 13Ch, the load
+    /// of the handler address from 3007FFCh and its internal cycle. Returns
+    /// the handler address, or `None` without effect where the result could
+    /// differ from making the accesses one by one (`Cpu::charge_hle_irq_entry`,
+    /// the reference): outside the device batch, with DMA pending, when a
+    /// device event falls inside the sequence, or with the stack outside
+    /// IWRAM and EWRAM.
+    pub(crate) fn fused_hle_irq_entry(&mut self, stack: u32, saved: [u32; 6]) -> Option<u32> {
+        let word = hle_stack_word_cycles(stack)?;
+        if !self.fuses_hle_trampoline(6 + 6 * word + 3 + 1 + 1) {
+            return None;
+        }
+        self.begin_hle_bios_fetches();
+        for (index, value) in saved.into_iter().enumerate() {
+            let address = stack.wrapping_add(4 * index as u32);
+            if word == 1 {
+                self.write_iwram(address, AccessWidth::Word, value);
+            } else {
+                self.write_ewram(address, AccessWidth::Word, value);
+            }
+        }
+        let handler = self.read_iwram(0x0300_7ffc, AccessWidth::Word);
+        self.open_bus_value = handler;
+        self.fetch_kind = AccessKind::Nonsequential;
+        self.current_cycle += 6 + 6 * word + 3 + 1 + 1;
+        Some(handler)
+    }
+
+    /// The HLE IRQ return's accesses in one step, from a full pipeline: the
+    /// BIOS opcode fetch at 140h, the six word loads from `stack` up, one
+    /// internal cycle and the fetch at 144h. Returns whether it made them;
+    /// it declines as [`Self::fused_hle_irq_entry`] does, and
+    /// `Cpu::complete_hle_irq` then makes them one by one.
+    pub(crate) fn fused_hle_irq_return(&mut self, stack: u32) -> bool {
+        let Some(word) = hle_stack_word_cycles(stack) else {
+            return false;
+        };
+        if !self.fuses_hle_trampoline(1 + 6 * word + 1 + 1) {
+            return false;
+        }
+        // The loads leave only their time. The last access is the fetch,
+        // which leaves the latch on the data bus without an image.
+        self.begin_hle_bios_fetches();
+        self.open_bus_value = self.bios_latch;
+        self.fetch_kind = AccessKind::Sequential;
+        self.current_cycle += 1 + 6 * word + 1 + 1;
+        true
+    }
+
+    /// Whether `cycles` of CPU accesses to the BIOS, IWRAM and EWRAM starting
+    /// now meet no device event and no DMA: each access then only moves the
+    /// clock, as [`Self::advance`] does inside the batch. HLE runs without a
+    /// BIOS image, whose fetches would latch its words instead.
+    fn fuses_hle_trampoline(&self, cycles: Cycle) -> bool {
+        #[cfg(test)]
+        if !tests::FUSED_HLE.get() {
+            return false;
+        }
+        let fused = self.bios.len() != BIOS_SIZE
+            && self.batch_active
+            && self.pending_dma == 0
+            && self.current_cycle + cycles < self.batch_deadline;
+        #[cfg(test)]
+        {
+            let counter = if fused { &tests::FUSED_HLE_TAKEN } else { &tests::FUSED_HLE_DECLINED };
+            counter.set(counter.get() + 1);
+        }
+        fused
+    }
+
+    /// What the first BIOS opcode fetch of a fused sequence leaves: the
+    /// Game Pak is no longer the code source, and its prefetch buffer is
+    /// discarded before any of the sequence's cycles pass, so they don't
+    /// advance it.
+    fn begin_hle_bios_fetches(&mut self) {
+        self.bios_code_active = true;
+        self.game_pak_code_active = false;
+        self.game_pak_prefetch = GamePakPrefetch::default();
+    }
+
+    /// Records the bus where an HLE IRQ entry or return ends its accesses,
+    /// fused or not, for the test that compares the two.
+    #[cfg(test)]
+    pub(crate) fn trace_hle_trampoline(&self) {
+        let trace = format!(
+            "{} {:08x} {:?} {:08x} {} {} {:?} {} {} {} {}",
+            self.current_cycle,
+            self.open_bus_value,
+            self.fetch_kind,
+            self.bios_latch,
+            self.bios_code_active,
+            self.game_pak_code_active,
+            self.game_pak_prefetch,
+            self.batch_active,
+            self.batch_device_cycle,
+            self.batch_deadline,
+            self.pending_dma,
+        );
+        tests::HLE_TRACE.with_borrow_mut(|traces| traces.push(trace));
+    }
+
     pub fn prescaler_counter(&self) -> u16 {
         (self.timer_cycle.wrapping_sub(u64::from(self.prescaler_origin)) as u16) & 1023
     }
@@ -4555,6 +4658,16 @@ fn game_pak_timing(waitcnt: u16) -> ([u8; 3], [u8; 3]) {
     (n, s)
 }
 
+/// The cycles of each word access to an HLE IRQ stack whose six words
+/// start at `stack`, when all of them are in IWRAM or all in EWRAM.
+fn hle_stack_word_cycles(stack: u32) -> Option<Cycle> {
+    match (stack >> 24, stack.wrapping_add(20) >> 24) {
+        (3, 3) => Some(1),
+        (2, 2) => Some(ewram_cycles(AccessWidth::Word)),
+        _ => None,
+    }
+}
+
 fn ewram_cycles(width: AccessWidth) -> Cycle {
     if width == AccessWidth::Word { 6 } else { 3 }
 }
@@ -4804,6 +4917,15 @@ mod tests {
         /// at a time.
         pub(super) static BULK_BEATS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
         pub(super) static VRAM_RUN_BEATS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        /// Whether the HLE IRQ trampoline may run fused; the per-access
+        /// sequence is its reference.
+        pub(super) static FUSED_HLE: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+        /// Fused trampoline sequences run and declined on this thread.
+        pub(super) static FUSED_HLE_TAKEN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        pub(super) static FUSED_HLE_DECLINED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        /// The bus after each HLE IRQ entry's and return's accesses.
+        pub(super) static HLE_TRACE: std::cell::RefCell<Vec<String>> =
+            const { std::cell::RefCell::new(Vec::new()) };
     }
 
     fn dma_half(bus: &mut Bus, address: u32, value: u16) -> Cycle {
@@ -5760,5 +5882,149 @@ mod tests {
         }
         let beats = VRAM_RUN_BEATS.get();
         assert!(beats > 50_000, "only {beats} beats ran to VRAM a page at a time");
+    }
+
+    /// State bytes, frame and audio samples at a host slice end.
+    type SliceSnapshot = (Vec<u8>, Vec<u16>, Vec<u32>);
+
+    /// A machine under HLE that takes IRQs from HBlank, VCount, VBlank and
+    /// a 301-cycle timer while its ARM ROM loop divides through the BIOS,
+    /// multiplies and halts. HBlank DMA copies the six words below the IRQ
+    /// stack pointer into the palette and sound FIFO DMA plays them, so
+    /// both see the stack between the trampoline's stores. Its snapshots at
+    /// host slice ends (state bytes, the frame, the audio samples), and the
+    /// bus after each entry's and return's accesses.
+    fn hle_irq_machine_snapshots(irq_stack: u32) -> (Vec<SliceSnapshot>, Vec<String>) {
+        use crate::machine::{Config, Machine};
+        HLE_TRACE.with_borrow_mut(Vec::clear);
+        // `add r4, r4, #1; mov r0, r4, lsl #9; and r1, r4, #1f; add r1, r1,
+        // #3; swi 60000h; muls r5, r0, r4; tst r4, #7; swieq 20000h; b rom`.
+        let program = [
+            0xe284_4001,
+            0xe1a0_0484,
+            0xe204_101f,
+            0xe281_1003,
+            0xef06_0000,
+            0xe015_0490,
+            0xe314_0007,
+            0x0f02_0000,
+            0xeaff_fff6,
+        ];
+        // At 3001000h: `mov r0, #4000000h; ldr r1, [r0, #200h]; and r1, r1,
+        // r1, lsr #16; add r2, r0, #200h; strh r1, [r2, #2]; ldrh r3, [r0,
+        // #-8]; orr r3, r3, r1; strh r3, [r0, #-8]; bx lr`: acknowledge IF,
+        // and mirror it for the BIOS.
+        let handler = [
+            0xe3a0_0301,
+            0xe590_1200,
+            0xe001_1821,
+            0xe280_2c02,
+            0xe1c2_10b2,
+            0xe150_30b8,
+            0xe183_3001,
+            0xe140_30b8,
+            0xe12f_ff1e,
+        ];
+        let rom: Vec<u8> = program.iter().flat_map(|word: &u32| word.to_le_bytes()).collect();
+        let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
+        machine.cpu.irq_r13 = irq_stack;
+        let mut next = xorshift(0x1a2b_3c4d);
+        machine.bus.vram.iter_mut().for_each(|byte| *byte = next() as u8);
+        machine.bus.palette.iter_mut().for_each(|byte| *byte = next() as u8);
+        machine.bus.scanline_memo.invalidate();
+        for (index, word) in handler.into_iter().enumerate() {
+            machine.bus.write_iwram(0x0300_1000 + 4 * index as u32, AccessWidth::Word, word);
+        }
+        machine.bus.write_iwram(0x0300_7ffc, AccessWidth::Word, 0x0300_1000);
+        let stack = irq_stack.wrapping_sub(24);
+        for (address, width, value) in [
+            (0x0400_0204, AccessWidth::Half, 0x4317), // WAITCNT: Game Pak prefetch on
+            (0x0400_0000, AccessWidth::Half, 0x0100), // DISPCNT: mode 0, BG0
+            (0x0400_0004, AccessWidth::Half, 0x6438), // DISPSTAT: all IRQs, LYC 100
+            (0x0400_0084, AccessWidth::Half, 0x0080), // Sound on, FIFO A on timer 0
+            (0x0400_0082, AccessWidth::Half, 0x0b04),
+            (0x0400_0100, AccessWidth::Half, 0xfe0c), // TM0: 500 cycles
+            (0x0400_0102, AccessWidth::Half, 0x0080),
+            (0x0400_0108, AccessWidth::Half, 0xfed3), // TM2: 301 cycles, IRQ
+            (0x0400_010a, AccessWidth::Half, 0x00c0),
+            // DMA0 copies the stack words into the palette every HBlank.
+            (0x0400_00b0, AccessWidth::Word, stack),
+            (0x0400_00b4, AccessWidth::Word, 0x0500_0000),
+            (0x0400_00b8, AccessWidth::Half, 6),
+            (0x0400_00ba, AccessWidth::Half, 0xa660),
+            // DMA1 feeds them to FIFO A.
+            (0x0400_00bc, AccessWidth::Word, stack),
+            (0x0400_00c0, AccessWidth::Word, 0x0400_00a0),
+            (0x0400_00c6, AccessWidth::Half, 0xb640),
+            (0x0400_0200, AccessWidth::Half, 0x0027), // IE: LCD and timer 2
+            (0x0400_0208, AccessWidth::Half, 1),
+        ] {
+            let access = Access {
+                address,
+                width,
+                kind: AccessKind::Nonsequential,
+                source: AccessSource::CpuData,
+            };
+            machine.bus.write(access, value);
+        }
+        let mut snapshots = Vec::new();
+        let mut deadline = 0;
+        for slice in 0..14 {
+            deadline += 61_111 + slice * 13_337;
+            machine.run_until(deadline).unwrap();
+            let mut samples = vec![evenfall_audio::StereoSample::default(); 8192];
+            let count = machine.drain_audio_samples(&mut samples);
+            let samples = samples[..count]
+                .iter()
+                .map(|sample| u32::from(sample.left as u16) | u32::from(sample.right as u16) << 16)
+                .collect();
+            snapshots.push((
+                machine.write_state_alloc().unwrap(),
+                machine.framebuffer().to_vec(),
+                samples,
+            ));
+        }
+        (snapshots, HLE_TRACE.take())
+    }
+
+    /// The fused HLE IRQ entry and return leave the machine as their
+    /// per-access reference does: the bus where each sequence ends (clock,
+    /// open bus, BIOS latch, fetch and prefetch state, device batch), and at
+    /// every host slice end the state bytes, frame and audio. The stack is
+    /// in IWRAM, in EWRAM, and across the two, where nothing fuses. Timer,
+    /// HBlank and FIFO DMA events land inside the sequences, and those
+    /// sequences take the reference.
+    #[test]
+    fn fused_hle_irq_trampolines_match_the_per_access_sequence() {
+        for (irq_stack, fuses) in [(0x0300_7fa0, true), (0x0200_0200, true), (0x0300_0010, false)] {
+            FUSED_HLE_TAKEN.set(0);
+            FUSED_HLE_DECLINED.set(0);
+            let (fused, fused_trace) = hle_irq_machine_snapshots(irq_stack);
+            let (taken, declined) = (FUSED_HLE_TAKEN.get(), FUSED_HLE_DECLINED.get());
+            FUSED_HLE.set(false);
+            let (reference, reference_trace) = hle_irq_machine_snapshots(irq_stack);
+            FUSED_HLE.set(true);
+            assert!(reference_trace.len() > 10_000, "{irq_stack:08x}: {}", reference_trace.len());
+            for (index, (fused, reference)) in fused_trace.iter().zip(&reference_trace).enumerate()
+            {
+                assert_eq!(fused, reference, "{irq_stack:08x}: sequence {index}");
+            }
+            assert_eq!(fused_trace.len(), reference_trace.len(), "{irq_stack:08x}");
+            for (slice, (fused, reference)) in fused.iter().zip(&reference).enumerate() {
+                let first = fused.0.iter().zip(&reference.0).position(|(a, b)| a != b);
+                assert!(
+                    fused.0 == reference.0,
+                    "{irq_stack:08x} slice {slice}: state byte {first:?}"
+                );
+                assert!(fused.1 == reference.1, "{irq_stack:08x} slice {slice}: frame");
+                assert!(fused.2 == reference.2, "{irq_stack:08x} slice {slice}: audio");
+            }
+            if fuses {
+                assert!(taken > 5_000, "{irq_stack:08x}: only {taken} fused sequences");
+                assert!(declined > 200, "{irq_stack:08x}: only {declined} declined sequences");
+            } else {
+                assert_eq!(taken + declined, 0, "{irq_stack:08x}");
+            }
+        }
     }
 }

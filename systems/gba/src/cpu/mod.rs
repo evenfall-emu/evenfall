@@ -780,9 +780,9 @@ impl Cpu {
         self.registers[15] = self.core.next_instruction_address.wrapping_add(8);
     }
 
-    /// The bus cycles of the retail BIOS IRQ trampoline up to its load of
-    /// the handler address (GBATEK, BIOS Interrupt handling), which HLE
-    /// stands in for:
+    /// The bus cycles of the retail BIOS IRQ trampoline, which HLE stands
+    /// in for, up to its load of the handler address, which it returns
+    /// (GBATEK, BIOS Interrupt handling):
     ///
     /// ```text
     /// 018h  b      128h
@@ -795,12 +795,10 @@ impl Cpu {
     /// The refill at the vector, the branch and its refill, and each
     /// instruction's opcode fetch come from the 32-bit BIOS; `stmfd` stores
     /// the six registers below the IRQ stack pointer, which HLE keeps.
-    fn charge_hle_irq_entry(&mut self, bus: &mut Bus) {
+    /// `Bus::fused_hle_irq_entry` makes the same accesses in one step when
+    /// nothing can observe them in between; this is its reference.
+    fn charge_hle_irq_entry(&mut self, bus: &mut Bus) -> u32 {
         use AccessKind::{Nonsequential as N, Sequential as S};
-        for (address, kind) in [(0x18, N), (0x1c, S), (0x20, S), (0x128, N), (0x12c, S), (0x130, S)]
-        {
-            hle_bios_fetch(bus, address, kind);
-        }
         let saved = [
             self.registers[0],
             self.registers[1],
@@ -810,6 +808,15 @@ impl Cpu {
             self.registers[14],
         ];
         let base = self.registers[13].wrapping_sub(24);
+        if let Some(handler) = bus.fused_hle_irq_entry(base, saved) {
+            #[cfg(test)]
+            bus.trace_hle_trampoline();
+            return handler;
+        }
+        for (address, kind) in [(0x18, N), (0x1c, S), (0x20, S), (0x128, N), (0x12c, S), (0x130, S)]
+        {
+            hle_bios_fetch(bus, address, kind);
+        }
         for (index, value) in saved.into_iter().enumerate() {
             bus.write(
                 Access {
@@ -824,6 +831,19 @@ impl Cpu {
         for (address, kind) in [(0x134, N), (0x138, S), (0x13c, S)] {
             hle_bios_fetch(bus, address, kind);
         }
+        let handler = bus
+            .read(Access {
+                address: 0x0300_7ffc,
+                width: AccessWidth::Word,
+                kind: N,
+                source: AccessSource::CpuData,
+            })
+            .value;
+        // The load's internal cycle.
+        bus.elapse(1);
+        #[cfg(test)]
+        bus.trace_hle_trampoline();
+        handler
     }
 
     pub(crate) fn enter_irq(&mut self, bus: &mut Bus) -> Result<(), FaultReason> {
@@ -847,17 +867,7 @@ impl Cpu {
                 saved_r12: self.registers[12],
             };
             self.hle_irq_depth += 1;
-            self.charge_hle_irq_entry(bus);
-            let handler = bus
-                .read(Access {
-                    address: 0x0300_7ffc,
-                    width: AccessWidth::Word,
-                    kind: AccessKind::Nonsequential,
-                    source: AccessSource::CpuData,
-                })
-                .value;
-            // The load's internal cycle.
-            bus.elapse(1);
+            let handler = self.charge_hle_irq_entry(bus);
             self.registers[14] = HLE_IRQ_RETURN_STUB;
             self.irq_r14 = HLE_IRQ_RETURN_STUB;
             if handler & 1 != 0 {
