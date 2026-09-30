@@ -383,69 +383,111 @@ test("Choose file stores only a ROM the game wants, then plays it", async ({
   ).toBeVisible();
 });
 
-test("Update adds the latest ROM, then copies the in-game save to a new run", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  await mockCatalog(page);
-  await importRoms(page, [[42, "Birch"]]);
-  // A 32 KiB SRAM image.
-  const save = Array.from({ length: 32768 }, (_, index) => index & 0xff);
-  await page.evaluate(
-    async ({ hash, save }) => {
-      const request = indexedDB.open("evenfall-local");
-      const db = await new Promise<IDBDatabase>((resolve, reject) => {
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
+for (const hostedPatch of [false, true]) {
+  test(`Update ${hostedPatch ? "installs the hosted patch" : "adds the latest ROM"}, then copies the in-game save to a new run`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await mockCatalog(page);
+    const roms: [number, string][] = [[42, "Birch"]];
+    if (hostedPatch) roms.push([50, "Shared source"]);
+    await importRoms(page, roms);
+    // A 32 KiB SRAM image.
+    const save = Array.from({ length: 32768 }, (_, index) => index & 0xff);
+    await page.evaluate(
+      async ({ hash, save }) => {
+        const request = indexedDB.open("evenfall-local");
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        const tx = db.transaction("saves", "readwrite");
+        tx.objectStore("saves").put(
+          { data: new Uint8Array(save), updatedAt: Date.now() },
+          [hash, "default"],
+        );
+        await new Promise((resolve) => (tx.oncomplete = resolve));
+        db.close();
+      },
+      { hash: sha1(42), save },
+    );
+
+    await page.getByRole("button", { name: "View Birch Quest" }).click();
+    await page.getByRole("button", { name: "Update…" }).click();
+    const update = page.getByRole("dialog", { name: "Birch Quest · v2" });
+    if (hostedPatch) {
+      await expect(
+        update.getByRole("button", { name: "Choose file…" }),
+      ).toHaveCount(0);
+    } else {
+      await expect(update).toContainText("Add the v2 ROM to this device first");
+      await chooseFile(page, "Choose file…", loop(43, "birch-v2"));
+    }
+    const copy = update.getByRole("button", { name: "Copy save & play" });
+    await expect(copy).toBeDisabled();
+    await update
+      .getByRole("checkbox", {
+        name: "I understand compatibility is unverified.",
+      })
+      .click();
+    await update.screenshot({
+      path: `../../.amp/in/artifacts/update-${hostedPatch ? "patch" : "rom"}.png`,
+    });
+    if (hostedPatch) {
+      await page.setViewportSize({ width: 390, height: 1000 });
+      await copy.scrollIntoViewIfNeeded();
+      await update.screenshot({
+        path: "../../.amp/in/artifacts/update-patch-mobile.png",
       });
-      const tx = db.transaction("saves", "readwrite");
-      tx.objectStore("saves").put(
-        { data: new Uint8Array(save), updatedAt: Date.now() },
-        [hash, "default"],
+      let failDownload = true;
+      await page.route("https://example.invalid/birch-quest-2.bps", (route) =>
+        failDownload ? route.fulfill({ status: 503 }) : route.fallback(),
       );
-      await new Promise((resolve) => (tx.oncomplete = resolve));
-      db.close();
-    },
-    { hash: sha1(42), save },
-  );
+      await copy.click();
+      const error = update.getByRole("alert");
+      await expect(error).toContainText("(HTTP 503)");
+      await expect(error).toBeVisible();
+      expect(await stored(page, "games", sha1(43))).toEqual([]);
+      expect(await stored(page, "playthroughs", sha1(43), true)).toEqual([]);
+      expect(await stored(page, "saves", [sha1(42), "default"])).toMatchObject([
+        { data: save },
+      ]);
+      await expect(update).toBeVisible();
+      await copy.scrollIntoViewIfNeeded();
+      await update.screenshot({
+        path: "../../.amp/in/artifacts/update-patch-error-mobile.png",
+      });
+      failDownload = false;
+    }
+    await copy.click();
+    await expect(page.getByLabel(/^Game screen/)).toBeVisible();
 
-  await page.getByRole("button", { name: "View Birch Quest" }).click();
-  await page.getByRole("button", { name: "Update…" }).click();
-  const update = page.getByRole("dialog", { name: "Birch Quest · v2" });
-  await expect(update).toContainText("Add the v2 ROM to this device first");
-  await chooseFile(page, "Choose file…", loop(43, "birch-v2"));
-  const copy = update.getByRole("button", { name: "Copy save & play" });
-  await expect(copy).toBeDisabled();
-  await update
-    .getByRole("checkbox", {
-      name: "I understand compatibility is unverified.",
-    })
-    .click();
-  await update.screenshot({ path: "../../artifacts/library/update.png" });
-  await copy.click();
-  await expect(page.getByLabel(/^Game screen/)).toBeVisible();
-
-  const runs = await stored(page, "playthroughs", sha1(43), true);
-  expect(runs).toMatchObject([{ name: "Playthrough 1" }]);
-  expect(
-    await stored(page, "saves", [sha1(43), runs[0].id as string]),
-  ).toMatchObject([{ data: save }]);
-  expect(
-    await page.evaluate(async () =>
-      Array.from(
-        await (
-          window as unknown as { emulator: Emulator }
-        ).emulator.exportSave(),
+    const runs = await stored(page, "playthroughs", sha1(43), true);
+    expect(runs).toMatchObject([{ name: "Playthrough 1" }]);
+    expect(
+      await stored(page, "saves", [sha1(43), runs[0].id as string]),
+    ).toMatchObject([{ data: save }]);
+    expect(
+      await page.evaluate(async () =>
+        Array.from(
+          await (
+            window as unknown as { emulator: Emulator }
+          ).emulator.exportSave(),
+        ),
       ),
-    ),
-  ).toEqual(save);
+    ).toEqual(save);
+    expect(await stored(page, "saves", [sha1(42), "default"])).toMatchObject([
+      { data: save },
+    ]);
 
-  await page.getByRole("button", { name: "Library", exact: true }).click();
-  const details = page.getByRole("region", { name: "Game details" });
-  await expect(runsIn(details)).toHaveCount(2);
-  await expect(runsIn(details).first()).toContainText("v2 ·");
-  await expect(runsIn(details).last()).toContainText("v1 ·");
-});
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.getByRole("button", { name: "Library", exact: true }).click();
+    const details = page.getByRole("region", { name: "Game details" });
+    await expect(runsIn(details)).toHaveCount(2);
+    await expect(runsIn(details).first()).toContainText("v2 ·");
+    await expect(runsIn(details).last()).toContainText("v1 ·");
+  });
+}
 
 test("playthrough menus rename, and delete after confirmation", async ({
   page,

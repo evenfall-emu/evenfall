@@ -84,10 +84,12 @@ function Confirm({
 export function UpdateDialog({
   game,
   busy,
+  error,
   onClose,
   onConfirm,
   onAddFile,
 }: DialogProps & {
+  error: string;
   onConfirm: (run: PlaythroughEntry) => void;
   /** Chooses the latest release's ROM when this device lacks it. */
   onAddFile: () => void;
@@ -96,7 +98,8 @@ export function UpdateDialog({
   const [understood, setUnderstood] = useState(false);
   const run = game.updatable.find((item) => item.id === runId);
   const verified = run ? saveCompatible(run.release, game.latest) : false;
-  const { installed } = game.latest;
+  const { installed, installable } = game.latest;
+  const ready = installed || installable;
   return (
     <Dialog
       open
@@ -139,6 +142,13 @@ export function UpdateDialog({
         </Warning>
       )}
       <ul className="mt-5 space-y-4">
+        {!installed && installable && (
+          <Fact
+            icon="download"
+            title={`Install ${game.latest.label} from the hosted patch.`}
+            detail="Uses the base ROM already on this device."
+          />
+        )}
         <Fact
           icon="copy"
           title="Copy the in-game save."
@@ -146,19 +156,24 @@ export function UpdateDialog({
         />
         <Fact icon="history" title="Old progress remains available." />
       </ul>
-      {!verified && installed && (
+      {!verified && ready && (
         <Confirm checked={understood} onChange={setUnderstood}>
           I understand compatibility is unverified.
         </Confirm>
       )}
-      {!installed && (
+      {!ready && (
         <p className="mt-5 flex items-start gap-3 text-1x5">
           <Icon name="filePlus" className="size-6 shrink-0 text-warning" />
           Add the {game.latest.label} ROM to this device first. It stays on this
           device.
         </p>
       )}
-      <DialogActions>
+      {error && (
+        <p role="alert" className="mt-5 text-1x5 text-danger">
+          {error}
+        </p>
+      )}
+      <DialogActions className="max-sm:grid-cols-1">
         <button
           className={button("outline", "lg")}
           disabled={busy}
@@ -166,7 +181,7 @@ export function UpdateDialog({
         >
           Cancel
         </button>
-        {installed ? (
+        {ready ? (
           <button
             className={button("primary", "lg")}
             disabled={busy || !run || (!verified && !understood)}

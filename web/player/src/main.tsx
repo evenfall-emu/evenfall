@@ -904,12 +904,17 @@ function App() {
         });
       }
       case "update": {
-        const game = storedGame(action.toHash);
         return exclusive(async () => {
           if (isActive(action.from)) await player.pause();
           const save = await player.library.getSave(action.from);
           if (!save?.length)
             throw new Error("This playthrough has no in-game save to copy.");
+          if (!romStored(action.toHash)) {
+            const release = patchedRelease(catalog.versions, action.toHash);
+            if (release)
+              await libraryAction({ type: "install", versionId: release.id });
+          }
+          const game = storedGame(action.toHash);
           const run = await player.library.createPlaythrough(
             game.hash,
             action.name,

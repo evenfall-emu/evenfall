@@ -101,11 +101,12 @@ export function bps(source: Buffer, target: Buffer) {
 }
 
 export const maplePatch = bps(romBytes(40), romBytes(41));
+const birchPatch = bps(romBytes(50), romBytes(43));
 
 /**
  * Serves a catalog whose ROMs are loop ROMs: Birch Quest v1 is marker 42 and
- * v2 marker 43, Cedar Saga marker 44, and Maple Remix is marker 41, patched
- * from marker 40 by `maplePatch`.
+ * v2 marker 43, patched from marker 50. Cedar Saga is marker 44, and Maple
+ * Remix is marker 41, patched from marker 40 by `maplePatch`.
  */
 export async function mockCatalog(
   page: Page,
@@ -131,6 +132,11 @@ export async function mockCatalog(
     version("birch-quest", "2", sha1(43), "2026-06-01T00:00:00.000Z", {
       releaseNotes: "Faster text.",
       sourceRepositoryUrl: "https://creator.example/birch-quest/release",
+      patch: {
+        url: "https://example.invalid/birch-quest-2.bps",
+        format: "bps",
+        size: birchPatch.length,
+      },
     }),
     version("cedar-saga", "1", sha1(44), "2026-03-01T00:00:00.000Z", {
       visibility: experimental ? "experimental" : "normal",
@@ -162,6 +168,12 @@ export async function mockCatalog(
   await page.route("https://example.invalid/maple.bps", (route) =>
     route.fulfill({
       body: maplePatch,
+      headers: { "access-control-allow-origin": "*" },
+    }),
+  );
+  await page.route("https://example.invalid/birch-quest-2.bps", (route) =>
+    route.fulfill({
+      body: birchPatch,
       headers: { "access-control-allow-origin": "*" },
     }),
   );

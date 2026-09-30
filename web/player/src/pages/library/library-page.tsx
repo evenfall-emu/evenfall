@@ -248,7 +248,10 @@ export function LibraryPage({
             onPlay={(entry) => play(selected, entry)}
             onInstall={() => install(selected)}
             onAddFile={() => addFile(selected)}
-            onUpdate={() => setDialog({ kind: "update" })}
+            onUpdate={() => {
+              setError("");
+              setDialog({ kind: "update" });
+            }}
             onReleaseNotes={() => setDialog({ kind: "notes" })}
             onDescription={() => setDialog({ kind: "description" })}
             onNewPlaythrough={() => setDialog({ kind: "new" })}
@@ -265,7 +268,7 @@ export function LibraryPage({
           <p className="p-8 text-muted">Choose a game to see its details.</p>
         )}
       </section>
-      {error && (
+      {error && dialog?.kind !== "update" && (
         <div
           role="alert"
           className="fixed bottom-4 left-1/2 z-60 flex w-max max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-panel border border-danger/60 bg-danger-surface py-2 pr-2 pl-4 text-danger shadow-popover"
@@ -301,6 +304,7 @@ export function LibraryPage({
         <UpdateDialog
           game={selected}
           busy={working}
+          error={error}
           onClose={() => setDialog(null)}
           onAddFile={() => addFile(selected)}
           onConfirm={(entry) =>

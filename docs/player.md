@@ -148,6 +148,8 @@ A catalog base keeps the catalog's name, and any other ROM takes its No-Intro du
 
 A game's details show the project page, the latest release's notes and each playthrough's release, last play time and cloud state.
 **Update…** copies one playthrough's in-game save to a new playthrough on the latest release.
+If that release's ROM is not installed, it first uses **Install** when the hosted patch and its base ROM are available.
+Otherwise it asks for the release ROM.
 Unless the catalog declares the saves compatible, it asks the player to acknowledge the risk first.
 Playing a run whose cloud copy changed since this device last synced asks which progress to continue.
 

@@ -21,6 +21,8 @@ export type Release = {
   /** "v2.6"; empty for a ROM the catalog does not know. */
   label: string;
   installed: boolean;
+  /** A hosted patch can build this release from a base ROM on this device. */
+  installable: boolean;
   /** Milliseconds since the epoch; null when the catalog has no date. */
   releasedAt: number | null;
   releaseNotes: string | null;
@@ -116,6 +118,11 @@ function release(version: CatalogVersion, roms: Set<string>): Release {
       ? `v${version.displayName}`
       : version.displayName,
     installed: roms.has(version.outputSha1),
+    installable: Boolean(
+      version.patch &&
+      version.requiredBase &&
+      roms.has(version.requiredBase.sha1),
+    ),
     releasedAt: version.releasedAt ? Date.parse(version.releasedAt) : null,
     releaseNotes: version.releaseNotes,
     sourceUrl: version.sourceRepositoryUrl,
@@ -132,6 +139,7 @@ function unlisted(hash: string, installed: boolean): Release {
     hash,
     label: "",
     installed,
+    installable: false,
     releasedAt: null,
     releaseNotes: null,
     sourceUrl: null,

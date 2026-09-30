@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import { Icon } from "./icons";
-import { button } from "./styles";
+import { button, cx } from "./styles";
 
 /**
  * A modal panel with a title row and a close button. While `busy`, the dialog
@@ -67,6 +67,16 @@ export function Dialog({
 }
 
 /** Two equal-width actions at the foot of a dialog: dismissal, then the main action. */
-export function DialogActions({ children }: { children: ReactNode }) {
-  return <div className="mt-6 grid grid-cols-2 gap-4">{children}</div>;
+export function DialogActions({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cx("mt-6 grid grid-cols-2 gap-4", className)}>
+      {children}
+    </div>
+  );
 }
