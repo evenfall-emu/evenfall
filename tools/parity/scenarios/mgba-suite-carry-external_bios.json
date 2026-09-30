@@ -1,0 +1,136 @@
+{
+  "name": "mgba-suite-carry-external_bios",
+  "assets": {
+    "rom": "../../../tools/mgba-suite/build/suite.gba",
+    "bios": "../../../refs/cult-gba-bios/bios.bin"
+  },
+  "config": {
+    "boot": "external_bios",
+    "saveType": "auto"
+  },
+  "inputs": [
+    {
+      "at": "50561280",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "51403968",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "52246656",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "53089344",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "53932032",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "54774720",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "55617408",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "56460096",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "57302784",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "58145472",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "58988160",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "59830848",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "60673536",
+      "change": {
+        "keys": 1
+      }
+    },
+    {
+      "at": "61516224",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "146908608",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "147751296",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "148874880",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "149717568",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "150841152",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "151683840",
+      "change": {
+        "keys": 0
+      }
+    }
+  ],
+  "endCycle": "152526528",
+  "checkpoints": ["146627712", "148593984", "150560256", "152526528"],
+  "sliceCycles": ["70224", "280896", "1232"]
+}

@@ -4,6 +4,7 @@
 !/refs/README.md
 /probe/build/
 /tools/bench/roms/build/
+/tools/mgba-suite/build/
 .zig-cache/
 zig-out/
 

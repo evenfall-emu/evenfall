@@ -1,3 +1,4 @@
+mod mgba_suite;
 mod rust_backend;
 
 use evenfall_replay::{Difference, InputChange, Scenario, Trace, compare};
@@ -320,6 +321,26 @@ fn run_all() -> Result<(), Box<dyn Error>> {
     if failures > 0 { Err("parity run failed".into()) } else { Ok(()) }
 }
 
+/// Runs every mGBA suite scenario through the parity check, then reports the
+/// suite's own results from both cores' traces.
+fn run_mgba_suite() -> Result<(), Box<dyn Error>> {
+    let mut failures = 0;
+    for boot in mgba_suite::BOOTS {
+        for suite in &mgba_suite::SUITES {
+            let path = mgba_suite::scenario_path(&root(), suite, boot);
+            if let Err(error) = run_parity(&path) {
+                eprintln!("{}: {error}", path.display());
+                failures += 1;
+            }
+        }
+    }
+    mgba_suite::report(&root(), &output().join("traces"), false)?;
+    if failures > 0 {
+        return Err(format!("{failures} mGBA suite scenarios failed parity").into());
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = env::args_os().collect();
     match args.get(1).and_then(|v| v.to_str()) {
@@ -331,6 +352,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             _ => Err("usage: evenfall-parity oracle build | oracle run SCENARIO [OUTPUT]".into()),
         },
         Some("run") if args.len() == 3 && args[2] == "--all" => run_all(),
+        Some("mgba-suite") => match args.get(2).and_then(|v| v.to_str()) {
+            Some("scenarios") if args.len() == 3 => mgba_suite::write_scenarios(&root()),
+            Some("run") if args.len() == 3 => run_mgba_suite(),
+            Some("report") if args.len() == 3 => {
+                mgba_suite::report(&root(), &output().join("traces"), false)
+            }
+            Some("report") if args.len() == 4 && args[3] == "--log" => {
+                mgba_suite::report(&root(), &output().join("traces"), true)
+            }
+            _ => Err("usage: evenfall-parity mgba-suite scenarios | run | report [--log]".into()),
+        },
         Some("run") if args.len() == 3 => run_parity(Path::new(&args[2])),
         Some("compare") if args.len() == 4 => {
             let differences = compare(&trace(Path::new(&args[2]))?, &trace(Path::new(&args[3]))?);
@@ -345,7 +377,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         _ => {
-            Err("usage: evenfall-parity oracle build | oracle run SCENARIO [OUTPUT] | run SCENARIO | run --all | compare A B"
+            Err("usage: evenfall-parity oracle build | oracle run SCENARIO [OUTPUT] | run SCENARIO | run --all | mgba-suite scenarios|run|report [--log] | compare A B"
                 .into())
         }
     }

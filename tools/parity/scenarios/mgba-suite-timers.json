@@ -1,0 +1,99 @@
+{
+  "name": "mgba-suite-timers",
+  "assets": {
+    "rom": "../../../tools/mgba-suite/build/suite.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "inputs": [
+    {
+      "at": "8426880",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "9269568",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "10112256",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "10954944",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "11797632",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "12640320",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "13483008",
+      "change": {
+        "keys": 1
+      }
+    },
+    {
+      "at": "14325696",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "99718080",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "100560768",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "101684352",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "102527040",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "103650624",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "104493312",
+      "change": {
+        "keys": 0
+      }
+    }
+  ],
+  "endCycle": "105336000",
+  "checkpoints": ["99437184", "101403456", "103369728", "105336000"],
+  "sliceCycles": ["70224", "280896", "1232"]
+}

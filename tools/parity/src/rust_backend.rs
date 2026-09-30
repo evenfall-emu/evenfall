@@ -108,7 +108,7 @@ pub fn run(
     Ok((trace, machine))
 }
 
-fn make_machine(
+pub(crate) fn make_machine(
     path: &Path,
     assets: &Assets,
     config: &Config,
