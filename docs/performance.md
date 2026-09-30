@@ -16,19 +16,20 @@ The last column compares Evenfall with VBA-M directly.
 
 | Workload                                              | Frames | Evenfall / mGBA | VBA-M / mGBA | Evenfall / VBA-M |
 | ----------------------------------------------------- | -----: | --------------: | -----------: | ---------------: |
-| Idle: HALT and an empty mode-0 frame                  |  3,600 |           0.35x |        4.95x |            0.07x |
-| ARM mixer: ARM code from IWRAM                        |    600 |           0.40x |        1.57x |            0.26x |
-| Thumb logic: Thumb code from Game Pak ROM             |    600 |           0.52x |        1.28x |            0.41x |
-| Tiles: text backgrounds, sprites, effects and windows |    600 |           0.33x |        1.52x |            0.22x |
-| Affine: affine backgrounds, sprites and HBlank DMA    |    600 |           0.78x |        1.24x |            0.63x |
-| Bitmap DMA: page flips and small transfers            |    600 |           0.65x |        0.52x |            1.23x |
-| Audio: Direct Sound FIFO DMA and PSG                  |    600 |           0.40x |        0.99x |            0.41x |
-| **Geometric mean**                                    |        |       **0.47x** |    **1.39x** |        **0.34x** |
+| Idle: HALT and an empty mode-0 frame                  |  3,600 |           0.36x |        5.04x |            0.07x |
+| ARM mixer: ARM code from IWRAM                        |    600 |           0.42x |        1.61x |            0.26x |
+| Thumb logic: Thumb code from Game Pak ROM             |    600 |           0.53x |        1.30x |            0.41x |
+| Tiles: text backgrounds, sprites, effects and windows |    600 |           0.34x |        1.52x |            0.22x |
+| Affine: affine backgrounds, sprites and HBlank DMA    |    600 |           0.85x |        1.25x |            0.68x |
+| Bitmap DMA: page flips and small transfers            |    600 |           0.67x |        0.53x |            1.28x |
+| Audio: Direct Sound FIFO DMA and PSG                  |    600 |           0.43x |        1.01x |            0.42x |
+| **Geometric mean**                                    |        |       **0.49x** |    **1.40x** |        **0.35x** |
 
 Evenfall is faster than mGBA on every workload.
 It is faster than VBA-M on every workload but bitmap DMA, where VBA-M is the fastest of the three.
 
-With skip-BIOS boot the means are 0.48x, 1.39x and 0.35x, and no Evenfall ratio moves by more than 0.04.
+With skip-BIOS boot the means are 0.50x, 1.39x and 0.36x.
+Affine, which takes an interrupt on every line, moves the most, to 0.93x of mGBA's time, and no other Evenfall ratio moves by more than 0.04.
 Skip-BIOS boot maps the open Cult-of-GBA replacement BIOS and runs its interrupt dispatcher, which the execution engine runs like any other ARM code.
 HLE boot handles interrupts without any BIOS code.
 
@@ -36,7 +37,7 @@ How the three emulators were built and run:
 
 - All three draw every frame, emulate audio, run one frame at a time with no input and no save media, and reach the same final picture on every workload.
 - The host is an Intel Core Ultra X7 358H, pinned to one performance core, with five measured rounds after one warmup.
-  Per-round ratios stay within 3%, and a repeat run gives the same means.
+  Per-round ratios stay within 4% of their mean, and a repeat run gives the same means.
 - mGBA is its headless release build, with idle-loop detection at its default.
 - VBA-M is built from Delta's own core configuration, with Clang at `-Os` as Xcode's release build does.
   At `-O3` it is about 3% faster.
@@ -144,6 +145,30 @@ On the dispatch diagnostics in [`tools/bench/diag`](../tools/bench/diag/README.m
 - Reference: `Cpu::step`, `Core::execute_arm` and `execute_thumb`.
 - Checked by: randomized comparisons in [`engine/tests.rs`](../systems/gba/src/cpu/engine/tests.rs) and [`cpu/mod.rs`](../systems/gba/src/cpu/mod.rs), which compare registers, flags, clocks, memory, caches, raster history, prefetch state and where runs stop.
   Tests in `cpu/mod.rs` cover MMIO, DMA setup, IRQ entry and BIOS code, and `run_registers_match_the_bus` in [`bus/kernel.rs`](../systems/gba/src/bus/kernel.rs) covers the registers a run serves itself.
+
+### HLE interrupt trampoline
+
+Under HLE boot, every interrupt makes the bus accesses of the retail BIOS trampoline ([BIOS](gba/hardware/bios.md#the-hle-interrupt-dispatcher)).
+The entry makes sixteen accesses and an internal cycle, and the return eight accesses and an internal cycle.
+When the interrupt stack is in IWRAM or EWRAM, no DMA is pending and no device event falls inside the sequence, nothing can see those accesses one at a time.
+[`Bus::fused_hle_irq_entry` and `fused_hle_irq_return`](../systems/gba/src/bus/mod.rs) then make a whole sequence in one step: they move the clock, write the stack and leave the bus as its last access would.
+Otherwise the accesses go through `Bus::read` and `write` one by one, so a DMA or timer event between two of them sees the stack half written.
+
+- Reference: the per-access sequences in `Cpu::charge_hle_irq_entry` and `Cpu::complete_hle_irq`.
+- Checked by: `fused_hle_irq_trampolines_match_the_per_access_sequence` in [`bus/mod.rs`](../systems/gba/src/bus/mod.rs).
+  It compares the bus after every sequence, and state bytes, frames and audio at every slice end, with the stack in IWRAM, in EWRAM and across both, while timer, HBlank and FIFO DMA events land inside sequences.
+
+### Multiply carry
+
+A flag-setting multiply takes C from the multiplier's carry-save datapath ([CPU](gba/hardware/cpu.md#the-carry-flag-after-a-multiply)).
+C is one bit of the carry vector the last multiplier cycle leaves, so [`multiply_carry`](../crates/cpu-arm/src/multiply.rs) runs the carry-save stages back to back and reads that bit, without the shift register that collects the bits each cycle settles.
+Most multiplies skip the stages too, in a check inlined at each call.
+A four-cycle `MUL` or `MLA` takes C from the top two multiplier bits.
+Each stage reads its inputs two bits above the bit it writes, so a one- or two-cycle `MUL` gets C from the multiplier and the multiplicand's upper bits alone.
+When those bits only repeat the multiplier's sign, as they do for small operands of the same sign, C is clear.
+
+- Reference: `multiply_carry_reference`, which runs the whole datapath, shift register and final rotation included.
+- Checked by: `multiply_carry_matches_the_shift_register_reference` in `multiply.rs`, over every multiply kind and cycle count with operands of every width and sign, and `short_multiplies_of_sign_filled_multiplicands_clear_carry` over every one- and two-cycle multiplier.
 
 ### Streamed Thumb fetches
 
