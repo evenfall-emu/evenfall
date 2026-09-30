@@ -1,4 +1,4 @@
-//! Pinned jsmolka/gba-tests images; hashes and oracles from ZiGBA's test/jsmolka_cases.zig.
+//! Pinned jsmolka/gba-tests images, with their hashes and oracles.
 
 use super::{Case, Context, Pixel, Result};
 use evenfall_gba::{

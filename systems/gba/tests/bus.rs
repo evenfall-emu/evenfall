@@ -1,4 +1,4 @@
-//! ZiGBA bus integration oracles (`test/bus_test.zig`).
+//! Bus integration oracles.
 
 use evenfall_gba::bus::{
     Access, AccessKind, AccessSource, AccessWidth, Bus, JoyBusCommand, JoyBusError, KeyState,

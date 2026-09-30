@@ -1,8 +1,8 @@
 //! ROM validators. `cargo test -p evenfall-gba --test validator -- probe-timer jsmolka-ppu`
 //! selects exact names or hyphen-delimited prefixes; without arguments all
 //! available ROMs run. Missing ROMs are reported, never synthesized.
-//! `--list`, `--gba-tests DIR`, `--probes DIR`, and `--bios FILE` mirror the
-//! Zig runner's input options. `--require-roms` makes absent inputs a CI
+//! `--list`, `--gba-tests DIR`, `--probes DIR`, and `--bios FILE` choose the
+//! inputs. `--require-roms` makes absent inputs a CI
 //! failure; otherwise each absent case is skipped. Probes always use HLE boot.
 
 mod jsmolka_cases;

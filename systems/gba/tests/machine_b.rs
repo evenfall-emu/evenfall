@@ -1,5 +1,5 @@
-//! Second half of ZiGBA's `test/machine_test.zig`. Oracles below are copied
-//! from the pinned ZiGBA tests, not calculated from the Rust implementation.
+//! Second half of the machine integration oracles. The expected values are
+//! fixed oracles, not calculated from the Rust implementation.
 
 use evenfall_gba::bus::{
     Access, AccessKind, AccessSource, AccessWidth, InstructionFetchRegion, JoyBusCommand,
@@ -139,8 +139,8 @@ fn canonical_save_state_round_trip_resumes_bit_identical_execution() {
         executed_step(&mut machine);
     }
     let bytes = encode_machine_state(&machine);
-    // ZiGBA compares with sizeof(Machine). Rust boxes the large arrays, so
-    // include their allocations rather than comparing to the pointer fields.
+    // The large arrays are boxed, so the live size includes their
+    // allocations rather than only the pointer fields.
     let live_bytes = std::mem::size_of::<Machine>()
         + std::mem::size_of_val(machine.bus.ewram.as_ref())
         + std::mem::size_of_val(machine.bus.vram.as_ref())
@@ -311,8 +311,8 @@ fn save_state_load_transactionally_rejects_a_digest_valid_impossible_ppu_phase()
     assert_eq!(baseline_bytes.len(), payload_end + 32);
     assert_eq!(baseline_bytes.len(), marker_bytes.len());
 
-    // Discover the field from two independently valid public states, just
-    // as in ZiGBA, instead of baking in a private payload offset.
+    // Discover the field from two independently valid public states instead
+    // of baking in a private payload offset.
     let offsets: Vec<_> = (payload_start..payload_end)
         .filter(|&offset| baseline_bytes[offset] != marker_bytes[offset])
         .collect();
@@ -471,7 +471,7 @@ fn hle_custom_halt_selects_halt_or_stop_from_r2_bit_seven() {
 #[test]
 fn hle_div_and_div_arm_return_quotient_remainder_and_absolute_quotient_including_bios_edges() {
     // GBATEK SWI 06h/07h: quotient, remainder, |quotient|. The 0/0 and
-    // INT_MIN/-1 results are the retail BIOS oracles in ZiGBA's test.
+    // INT_MIN/-1 results are the retail BIOS oracles.
     let cases = [
         (6, 100, 7, 14, 2, 14),
         (7, 7, 100, 14, 2, 14),
@@ -1926,8 +1926,8 @@ fn hle_huff_un_comp_treats_zero_symbol_width_as_eight_and_writes_a_padded_word()
 #[test]
 fn save_state_restores_an_in_flight_prefetch_across_waitcnt_and_boundary_repricing() {
     let rom = vec![0xa5; 0x20040];
-    // ZiGBA compares the whole prefetch struct. Rust does not derive Eq for
-    // this durable record, so compare its eight stored fields explicitly.
+    // The durable prefetch record does not derive Eq, so compare its eight
+    // stored fields explicitly.
     macro_rules! assert_prefetch_eq {
         ($original:expr, $restored:expr) => {{
             let a = &$original.bus.game_pak_prefetch;

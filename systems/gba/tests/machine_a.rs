@@ -1,4 +1,4 @@
-//! ZiGBA `test/machine_test.zig`, first-half machine integration oracles.
+//! First half of the machine integration oracles.
 
 use evenfall_cpu_arm::{
     ArmInstructionClass, FaultReason as IsaFaultReason, InvalidPsrStateKind, Pipeline,

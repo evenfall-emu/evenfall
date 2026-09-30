@@ -1,4 +1,4 @@
-//! ZiGBA `bus_test.zig` video integration oracles, exercised through Bus writes and time.
+//! Video integration oracles, exercised through Bus writes and time.
 
 use super::*;
 

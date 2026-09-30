@@ -1,4 +1,4 @@
-//! ZiGBA `test/bus_test.zig` integration oracles not covered by `bus.rs`.
+//! Bus integration oracles not covered by `bus.rs`.
 
 use evenfall_gba::bus::{
     Access, AccessKind, AccessSource, AccessWidth, Bus, InstructionFetchRegion, KeyState,

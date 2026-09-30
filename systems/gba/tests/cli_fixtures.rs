@@ -1,4 +1,4 @@
-//! Byte-exact headless CLI fixtures from ZiGBA's `build.zig` test-host step.
+//! Byte-exact headless CLI fixtures.
 
 use std::process::Command;
 
