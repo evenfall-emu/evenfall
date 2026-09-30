@@ -138,14 +138,15 @@ length, and the zigzag-encoded change of displacement since the previous
 copy). The literal bytes follow the ops. Bytes after the last copy are
 stored as trailing literals.
 
-### ZiGBA's word-run delta
+### Word-run deltas
 
-ZiGBA writes a simpler delta (entry encoding 2). It compares the new state
+Bundles written by our previous implementation,
+[ZiGBA](https://github.com/evenfall-emu/zigba), use a simpler delta (entry
+encoding 2). It compares the new state
 with the anchor 32-bit word by 32-bit word at the same offsets, after
 zero-extending or truncating the anchor to the new state's size. It stores
 varint skip and copy run headers, then the changed words, then any trailing
-partial word. Evenfall still reads this format from imported bundles but no
-longer writes it.
+partial word. Evenfall still reads this format but no longer writes it.
 
 ### Framing and decoding
 
@@ -162,10 +163,9 @@ consumed exactly.
 
 ### Compressor
 
-Evenfall writes raw DEFLATE with **miniz_oxide**, so its compressed bytes
-differ from ZiGBA's. The two still read each other's data. Evenfall reads
-ZiGBA's bundles and re-exports imported entries without recompressing them,
-and ZiGBA reads Evenfall's bundles as long as they contain no copy delta.
+Evenfall writes raw DEFLATE with **miniz_oxide**. Imported entries are
+never recompressed, so a bundle from ZiGBA exports with its entries
+unchanged.
 
 zstd with the anchor as a dictionary stores a little less during play. Its C
 library would grow the WebAssembly module and need a C toolchain in the
@@ -224,9 +224,9 @@ bundle.
 ### Format
 
 Bundles are little-endian and versioned separately from save states. Version
-1 is ZiGBA's format, and version 2 adds copy deltas. The writer emits version
-1 whenever no entry is a copy delta, so that ZiGBA can read it. A version 1
-bundle that contains a copy delta is rejected.
+2 adds copy deltas to the original version 1. The writer emits version 1
+whenever no entry is a copy delta, so older readers can still load it. A
+version 1 bundle that contains a copy delta is rejected.
 
 | Section               | Contents                                                      |
 | --------------------- | ------------------------------------------------------------- |
@@ -255,14 +255,12 @@ checks of private storage in
 [`crates/state/src/rewind.rs`](../../crates/state/src/rewind.rs). The
 session's tests live in
 [`systems/gba/src/session.rs`](../../systems/gba/src/session.rs), and the
-browser tests in `web/gba` exercise the SDK. A test ported from ZiGBA names
-its original in its doc comment. ZiGBA's injected allocation failures and
-its browser end-to-end checks are not ported yet.
+browser tests in `web/gba` exercise the SDK. No test yet covers rewind
+under allocation failure, or a full rewind session in a browser.
 
 A [bundle written by ZiGBA](../../crates/state/tests/fixtures/zigba-rewind-bundle.bin)
 checks that Evenfall imports it, decodes every checkpoint to the expected
-state, and exports the imported entries unchanged. In the other direction,
-ZiGBA's DEFLATE decoder accepts miniz_oxide's output.
+state, and exports the imported entries unchanged.
 
 ## Known limits
 
