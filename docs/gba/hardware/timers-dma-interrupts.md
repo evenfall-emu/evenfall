@@ -328,17 +328,31 @@ within its own transfer is ready again as it completes. The arbiter then
 never releases the bus: on hardware the CPU stalls for good while video and
 audio keep running.
 
-ZiGBA services DMA inside the CPU access it follows, so such a burst would
-never return control to the host. A burst therefore ends after 2^24 cycles
-(`Bus.max_dma_burst_cycles`, about one second of guest time and many times
-the longest possible single transfer). Before its next transfer starts, the
-bus latches a `DmaLivelock` (channel and start cycle), drops pending requests
-and runs no further DMA; `Machine` reports a terminal `dma_livelock` fault at
-the next instruction boundary. Guest behavior is exact up to the limit, and
-the fault lands on the same cycle under any host slicing (ZiGBA test "a DMA
-livelock is a terminal fault at the same cycle under any host slicing" in
-[`machine_test.zig`](../../../refs/zigba/test/machine_test.zig)). Unlike hardware,
-the stalled instruction then completes without DMA and the machine stops.
+The core services DMA inside the CPU access it follows, as ZiGBA does, so
+such a burst would never return control to the host. For up to 2^24 cycles
+(`Bus::MAX_DMA_BURST_CYCLES`, about one second of guest time and many times
+the longest possible single transfer) it runs there exactly as ZiGBA's does.
+At that limit it yields at its next transfer start or beat boundary: it
+records the transfers it interrupted, keeps its pending requests and the
+bus, the interrupted instruction completes without DMA, and from that
+instruction boundary the machine continues the burst up to each host
+deadline. The CPU stays stalled while video, audio, timers, interrupt flags
+and DMA itself run; if the burst ever ends (a DMA that stops the timers or
+disables its own channel), the CPU takes any interrupt it would take at that
+boundary and runs on. The limit falls on the same cycle, and the stall gives
+the same results, under any host slicing (tests
+`a_dma_livelock_stalls_the_cpu_at_the_same_cycle_under_any_host_slicing`,
+`a_dma_stall_that_guest_dma_ends_resumes_the_cpu_identically_under_any_host_slicing`
+and `a_dma_livelock_during_halt_keeps_the_cpu_halted_under_any_host_slicing`
+in [`machine_b.rs`](../../../systems/gba/tests/machine_b.rs), and the
+`probe-dma_stall` parity scenario).
+
+ZiGBA instead ends the burst at the limit with a terminal `dma_livelock`
+fault. Against hardware, the interrupted instruction's remaining accesses
+happen before the stall instead of after it; for hosts, the call that
+reaches the limit returns about one second late. Save states are refused
+during a stall. The decision and its evidence
+are in the [roadmap](../../roadmap.md#dma-that-never-releases-the-bus).
 
 ## Interrupts
 
@@ -454,8 +468,9 @@ no armed serial event reports `power_stopped` without advancing its clock
   mGBA; no suite row times it.
 - **Unmodeled DMA features.** DMA3 video capture, the Game Pak DRQ bit and
   the special timing of DMA0 do nothing.
-- **Livelock after the limit.** Hardware stalls the CPU indefinitely while
-  video and audio continue; ZiGBA stops with a fault instead.
+- **Release after a long stall.** No capture times how the CPU resumes when
+  DMA releases the bus after a stall; the core takes a pending interrupt at
+  the instruction boundary where the stall ends.
 - **Keypad IRQ trigger.** ZiGBA is edge-triggered; level behavior has not
   been measured.
 

@@ -269,6 +269,10 @@ small pool and detaches them; it is optional.
   expensive instruction or HLE call.
 - `step()` distinguishes `executed`, `halted`, `power_stopped` and `faulted`.
   Bounded running advances eligible devices while HALTed; STOP freezes time.
+  A CPU stalled by a DMA burst that holds the bus also reports `halted`:
+  it executes nothing until bounded running lets the burst end, and snapshot
+  writes fail meanwhile
+  ([roadmap](roadmap.md#dma-that-never-releases-the-bus)).
 - Invalid ROM, BIOS, configuration or snapshot imports leave the previous
   machine intact. Guest compatibility faults are sticky diagnostics:
   `play()` on a faulted machine fails, and snapshot writes from it fail.

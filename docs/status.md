@@ -3,8 +3,10 @@
 Evenfall has one system so far: a Game Boy Advance core ported from ZiGBA.
 The port is exact. On every workload the parity harness runs, it produces
 the same frames, audio samples, battery-save bytes and save-state bytes as
-ZiGBA at the pinned commit, however execution is sliced. It therefore
-inherits ZiGBA's compatibility, and its limits: the core implements every
+ZiGBA at the pinned commit, however execution is sliced; the one
+deliberate behavioral difference (a DMA stall where ZiGBA faults) is applied
+to the oracle as well. It therefore inherits ZiGBA's compatibility, and its
+limits: the core implements every
 major GBA subsystem, but evidence across real games is thin and nothing has
 been checked against captures from physical hardware. What complete would
 mean is defined in [`methodology.md`](methodology.md#goals).
@@ -34,7 +36,8 @@ mean is defined in [`methodology.md`](methodology.md#goals).
   for byte at every checkpoint: the jsmolka gba-tests, every probe ROM, the
   benchmark ROMs, the HLE, skip-BIOS and external-BIOS boot paths, and
   linked two- to four-machine cable runs, each under several host slicing
-  schedules ([`parity.md`](parity.md)).
+  schedules. For the one behavioral difference below, the oracle is ZiGBA
+  with that difference applied as a patch ([`parity.md`](parity.md)).
 - **Save-state layout.** The schema description the Rust types produce is
   byte-identical to ZiGBA's version 6, and ZiGBA's locked state fixture
   reproduces exactly, so existing `ZIGBAST1` states load
@@ -63,8 +66,18 @@ remaining gaps are in [`performance.md`](performance.md).
 
 ## Deliberate differences from ZiGBA
 
-These change no emulated result; each is recorded with its evidence in
-[`roadmap.md`](roadmap.md):
+Each is recorded with its evidence in [`roadmap.md`](roadmap.md). One
+changes behavior only where ZiGBA stops with a fault, and the parity oracle
+is patched to match it:
+
+- **DMA that never releases the bus** stalls the CPU instead of ending in
+  ZiGBA's terminal `dma_livelock` fault after about one second of guest
+  time. From then on video, audio, timers and interrupt flags keep running,
+  host calls return at their deadlines, and the CPU resumes if the guest's
+  DMA ever releases the bus
+  ([`gba/hardware/timers-dma-interrupts.md`](gba/hardware/timers-dma-interrupts.md#bursts-that-never-release-the-bus)).
+
+The others change no emulated result:
 
 - Compressed rewind entries use a different DEFLATE encoder, so their bytes
   differ while ZiGBA and Evenfall read each other's bundles and decode
@@ -76,11 +89,16 @@ These change no emulated result; each is recorded with its evidence in
 
 ## Known issues
 
-Because the port is exact, ZiGBA's known issues are also Evenfall's:
+Because the port is exact, ZiGBA's known issues are also Evenfall's, except
+where a deliberate difference above replaces one:
 
-- **DMA that never releases the bus** ends in a terminal `dma_livelock`
-  fault after about one second of guest time. On hardware the CPU stalls
-  while video and audio keep running.
+- **A DMA stall's first second runs inside one host call.** A burst that
+  never releases the bus is serviced inside the CPU access it follows until
+  it has run 2^24 cycles, so the host call it starts in returns about one
+  second late and the host loses that call's oldest audio; the instruction it
+  interrupted then completes before the stall instead of after it. Save
+  states are refused while the stall lasts
+  ([`roadmap.md`](roadmap.md#dma-that-never-releases-the-bus)).
 - **The MP2K sound-driver HLE runs inside one step.** A cyclic channel chain,
   or a track that jumps without waiting, would hold the host call. This is
   inferred from the code and has not been reproduced

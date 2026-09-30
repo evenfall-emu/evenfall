@@ -115,5 +115,15 @@ schema exporter into that scratch tree and applies
 export it from `root.zig`. The pinned `refs/zigba` checkout stays read-only.
 Zig 0.16 builds the native oracle and exports ZiGBA's version-six schema
 description; the build compares it byte for byte with the committed
-[`schema-v6.bin`](../tools/parity/fixtures/schema-v6.bin) fixture. The only
-patch is for that export, not guest behavior.
+[`schema-v6.bin`](../tools/parity/fixtures/schema-v6.bin) fixture.
+
+One further patch changes guest behavior, and only where ZiGBA would stop:
+[`dma-stall.patch`](../tools/parity/patches/dma-stall.patch) replaces ZiGBA's
+terminal DMA livelock fault with the stall the Rust core implements
+([roadmap](roadmap.md#dma-that-never-releases-the-bus)). Its new bus fields
+are transient, so the schema check still holds. No scenario ZiGBA completes
+changes; `probe-dma_stall` exercises the patched path. Its manifest sets
+`"audioOutput": false` in `config`: the host call that reaches the stall's
+limit runs about one second of guest time, more than the host sample queue
+holds, so drained audio would depend on slicing. The key defaults to true
+and only suppresses host samples; emulated sound is unchanged.
