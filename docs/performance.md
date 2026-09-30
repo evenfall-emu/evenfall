@@ -74,15 +74,16 @@ WebAssembly builds link the shipped web module.
 [`build-times.sh`](../tools/bench/build-times.sh) reproduces them from a
 snapshot of committed source, so it never touches your worktree.
 
+These are captured from my Ultra X7 Panther Lake CPU, on a loaded host.
+
 | Build                         |   Cold | One-line rebuild |
 | ----------------------------- | -----: | ---------------: |
 | dev                           | 10.0 s |            3.6 s |
 | release (no LTO, incremental) |  6.5 s |            2.5 s |
 | wasm-release (fat LTO)        |  9.5 s |            7.7 s |
 
-Host load and cache state affect these times. The `wide` crate and its
-dependencies add about 4 s to a cold release build and 5 s to a cold
-wasm-release build, and nothing to rebuilds.
+The `wide` crate and its dependencies add about 4 s to a cold
+release build and 5 s to a cold wasm-release build, and nothing to rebuilds.
 
 Most of the rebuild time goes into the execution engine's run loops, which
 are generated separately for each memory region. The two ARM loops, one for
