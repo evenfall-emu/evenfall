@@ -2,6 +2,7 @@
 
 use crate::bus::{KeyState, Media, TimedInput};
 use crate::cartridge::{self, save::Type as SaveType};
+use crate::cheats::{self, Cheat};
 use crate::machine::{
     BootMode, Config as MachineConfig, Machine, RunError, RunResult, StateError, StepOutcome,
     StopReason,
@@ -89,6 +90,7 @@ pub enum Error {
     Rewind(evenfall_state::Error),
     State(StateError),
     Run(RunError),
+    Cheats(cheats::Error),
 }
 
 impl std::fmt::Display for Error {
@@ -333,6 +335,17 @@ impl Session {
         }
         Ok(())
     }
+    /// Replaces the active cheats at the current cycle. Selective video
+    /// journals the change so skipped frames reconstruct exactly.
+    pub fn set_cheats(&mut self, cheats: Vec<Cheat>) -> Result<(), Error> {
+        if let Some(recovery) = &mut self.video_recovery {
+            recovery.set_cheats(&mut self.machine, cheats)?;
+        } else {
+            self.machine.set_cheats(cheats).map_err(Error::Cheats)?;
+        }
+        Ok(())
+    }
+
     pub fn step(&mut self) -> Result<StepOutcome, Error> {
         let outcome = if let Some(recovery) = &mut self.video_recovery {
             recovery.step(&mut self.machine)?
@@ -585,6 +598,8 @@ impl Session {
                 tilt_sample: features.tilt.then_some(Default::default()),
             },
         );
+        // The cheat device stays plugged in across a reset.
+        next.set_cheats(self.machine.cheats().to_vec()).expect("active cheats are within limits");
         next.set_audio_output(self.audio_output_enabled);
         if let Some(recovery) = &mut self.video_recovery {
             recovery.rebase(&next);
@@ -1155,6 +1170,42 @@ mod tests {
                 assert_eq!(session.machine.completed_frames(), oldest_frame);
             }
         }
+    }
+
+    /// Cheat changes pass through selective video's journal, so skipped
+    /// frames reconstruct with the backdrop colors the cheats wrote, and the
+    /// device stays plugged in across a reset.
+    #[test]
+    fn cheats_journal_through_selective_video_and_survive_reset() {
+        // Leave forced blank (DISPCNT) and color the backdrop.
+        let backdrop = |color: &str| {
+            vec![Cheat::parse(&format!("04000000:0000 05000000:{color}"), None).unwrap()]
+        };
+        let mut plain = Session::create(Config { image: LOOP_ROM, ..Config::default() }).unwrap();
+        let mut selective =
+            Session::create(Config { image: LOOP_ROM, ..Config::default() }).unwrap();
+        selective.set_video_interval(3).unwrap();
+        let frame = Machine::CYCLES_PER_FRAME;
+        let mut backdrops = [Vec::new(), Vec::new()];
+        for (session, seen) in [&mut plain, &mut selective].into_iter().zip(&mut backdrops) {
+            let mut target = 0;
+            for (step, color) in [(1, "001F"), (3, "03E0"), (5, "7C00"), (8, "0000")] {
+                while target < step * frame + 777 {
+                    target = (target + frame / 2).min(step * frame + 777);
+                    session.advance(target).unwrap();
+                    seen.push(session.canonical_framebuffer().unwrap()[0]);
+                }
+                session.set_cheats(backdrop(color)).unwrap();
+            }
+        }
+        assert_eq!(backdrops[0], backdrops[1]);
+        for color in [0x001f, 0x03e0, 0x7c00] {
+            assert!(backdrops[0].contains(&color), "{color:04x} never shown");
+        }
+        assert_eq!(selective.write_state().unwrap(), plain.write_state().unwrap());
+
+        selective.reset_with_save(&[]).unwrap();
+        assert_eq!(selective.machine.cheats(), &backdrop("0000")[..]);
     }
 
     fn video_recovery_rom(fault_on_a: bool) -> [u8; 32] {

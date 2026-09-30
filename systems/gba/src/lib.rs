@@ -59,6 +59,7 @@ pub mod cpu;
 pub mod hle;
 
 // [machine]
+pub mod cheats;
 pub mod machine;
 pub mod session;
 pub mod video_recovery;

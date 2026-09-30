@@ -1,0 +1,215 @@
+//! Code ciphers of the GameShark v1/v2, Action Replay v3 and CodeBreaker
+//! devices, from GBATEK's "GBA Cheat Codes" pages.
+
+/// The GameShark and Action Replay cipher: 32 rounds of TEA whose key is the
+/// device's four seeds. The address word is TEA's first half, the value word
+/// its second.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Tea {
+    seeds: [u32; 4],
+}
+
+const DELTA: u32 = 0x9e37_79b9;
+
+impl Tea {
+    /// GBATEK: the GameShark v1/v2 seeds at startup.
+    pub(super) const GAMESHARK: Self =
+        Self { seeds: [0x09f4_fbbd, 0x9681_884a, 0x3520_27e9, 0xf3de_e5a7] };
+    /// GBATEK: the Pro Action Replay v3 seeds at startup.
+    pub(super) const ACTION_REPLAY: Self =
+        Self { seeds: [0x7aa9_648f, 0x7fae_6994, 0xc0ef_aad5, 0x4271_2c57] };
+
+    #[cfg(test)]
+    pub(super) const fn with_seeds(seeds: [u32; 4]) -> Self {
+        Self { seeds }
+    }
+
+    pub(super) fn decrypt(&self, address: u32, value: u32) -> (u32, u32) {
+        let [s0, s1, s2, s3] = self.seeds;
+        let (mut a, mut v) = (address, value);
+        let mut sum = DELTA.wrapping_mul(32);
+        for _ in 0..32 {
+            v = v.wrapping_sub(
+                (a << 4).wrapping_add(s2) ^ a.wrapping_add(sum) ^ (a >> 5).wrapping_add(s3),
+            );
+            a = a.wrapping_sub(
+                (v << 4).wrapping_add(s0) ^ v.wrapping_add(sum) ^ (v >> 5).wrapping_add(s1),
+            );
+            sum = sum.wrapping_sub(DELTA);
+        }
+        (a, v)
+    }
+
+    #[cfg(test)]
+    pub(super) fn encrypt(&self, address: u32, value: u32) -> (u32, u32) {
+        let [s0, s1, s2, s3] = self.seeds;
+        let (mut a, mut v) = (address, value);
+        let mut sum = 0u32;
+        for _ in 0..32 {
+            sum = sum.wrapping_add(DELTA);
+            a = a.wrapping_add(
+                (v << 4).wrapping_add(s0) ^ v.wrapping_add(sum) ^ (v >> 5).wrapping_add(s1),
+            );
+            v = v.wrapping_add(
+                (a << 4).wrapping_add(s2) ^ a.wrapping_add(sum) ^ (a >> 5).wrapping_add(s3),
+            );
+        }
+        (a, v)
+    }
+
+    /// The seeds an Action Replay v3 `DEADFACE 0000xxyy` code selects:
+    /// GBATEK's `Sy = Sy*100h + (T1[(xx+x) AND FFh] + T2[(yy+y) AND FFh])`.
+    pub(super) fn action_replay_reseed(key: u16) -> Self {
+        let [high, low] = key.to_be_bytes();
+        let mut seeds = [0; 4];
+        for (y, seed) in seeds.iter_mut().enumerate() {
+            for x in 0..4 {
+                let z = AR3_T1[usize::from(high.wrapping_add(x))]
+                    .wrapping_add(AR3_T2[usize::from(low.wrapping_add(y as u8))]);
+                *seed = (*seed << 8) | u32::from(z);
+            }
+        }
+        Self { seeds }
+    }
+}
+
+/// The Action Replay v3 translation tables GBATEK names T1 and T2, as dumped
+/// from the device firmware and published with the MIT-licensed
+/// kirschju/gameshark-gba-tooling `arcrypt.py`. Key zero reproduces
+/// GBATEK's startup seeds, which the tests check.
+const AR3_T1: [u8; 256] = [
+    0xd0, 0xff, 0xba, 0xe5, 0xc1, 0xc7, 0xdb, 0x5b, 0x16, 0xe3, 0x6e, 0x26, 0x62, 0x31, 0x2e, 0x2a,
+    0xd1, 0xbb, 0x4a, 0xe6, 0xae, 0x2f, 0x0a, 0x90, 0x29, 0x90, 0xb6, 0x67, 0x58, 0x2a, 0xb4, 0x45,
+    0x7b, 0xcb, 0xf0, 0x73, 0x84, 0x30, 0x81, 0xc2, 0xd7, 0xbe, 0x89, 0xd7, 0x4e, 0x73, 0x5c, 0xc7,
+    0x80, 0x1b, 0xe5, 0xe4, 0x43, 0xc7, 0x46, 0xd6, 0x6f, 0x7b, 0xbf, 0xed, 0xe5, 0x27, 0xd1, 0xb5,
+    0xd0, 0xd8, 0xa3, 0xcb, 0x2b, 0x30, 0xa4, 0xf0, 0x84, 0x14, 0x72, 0x5c, 0xff, 0xa4, 0xfb, 0x54,
+    0x9d, 0x70, 0xe2, 0xff, 0xbe, 0xe8, 0x24, 0x76, 0xe5, 0x15, 0xfb, 0x1a, 0xbc, 0x87, 0x02, 0x2a,
+    0x58, 0x8f, 0x9a, 0x95, 0xbd, 0xae, 0x8d, 0x0c, 0xa5, 0x4c, 0xf2, 0x5c, 0x7d, 0xad, 0x51, 0xfb,
+    0xb1, 0x22, 0x07, 0xe0, 0x29, 0x7c, 0xeb, 0x98, 0x14, 0xc6, 0x31, 0x97, 0xe4, 0x34, 0x8f, 0xcc,
+    0x99, 0x56, 0x9f, 0x78, 0x43, 0x91, 0x85, 0x3f, 0xc2, 0xd0, 0xd1, 0x80, 0xd1, 0x77, 0xa7, 0xe2,
+    0x43, 0x99, 0x1d, 0x2f, 0x8b, 0x6a, 0xe4, 0x66, 0x82, 0xf7, 0x2b, 0x0b, 0x65, 0x14, 0xc0, 0xc2,
+    0x1d, 0x96, 0x78, 0x1c, 0xc4, 0xc3, 0xd2, 0xb1, 0x64, 0x07, 0xd7, 0x6f, 0x02, 0xe9, 0x44, 0x31,
+    0xdb, 0x3c, 0xeb, 0x93, 0xed, 0x9a, 0x57, 0x05, 0xb9, 0x0e, 0xaf, 0x1f, 0x48, 0x11, 0xdc, 0x35,
+    0x6c, 0xb8, 0xee, 0x2a, 0x48, 0x2b, 0xbc, 0x89, 0x12, 0x59, 0xcb, 0xd1, 0x18, 0xea, 0x72, 0x11,
+    0x01, 0x75, 0x3b, 0xb5, 0x56, 0xf4, 0x8b, 0xa0, 0x41, 0x75, 0x86, 0x7b, 0x94, 0x12, 0x2d, 0x4c,
+    0x0c, 0x22, 0xc9, 0x4a, 0xd8, 0xb1, 0x8d, 0xf0, 0x55, 0x2e, 0x77, 0x50, 0x1c, 0x64, 0x77, 0xaa,
+    0x3e, 0xac, 0xd3, 0x3d, 0xce, 0x60, 0xca, 0x5d, 0xa0, 0x92, 0x78, 0xc6, 0x51, 0xfe, 0xf9, 0x30,
+];
+
+const AR3_T2: [u8; 256] = [
+    0xaa, 0xaf, 0xf0, 0x72, 0x90, 0xf7, 0x71, 0x27, 0x06, 0x11, 0xeb, 0x9c, 0x37, 0x12, 0x72, 0xaa,
+    0x65, 0xbc, 0x0d, 0x4a, 0x76, 0xf6, 0x5c, 0xaa, 0xb0, 0x7a, 0x7d, 0x81, 0xc1, 0xce, 0x2f, 0x9f,
+    0x02, 0x75, 0x38, 0xc8, 0xfc, 0x66, 0x05, 0xc2, 0x2c, 0xbd, 0x91, 0xad, 0x03, 0xb1, 0x88, 0x93,
+    0x31, 0xc6, 0xab, 0x40, 0x23, 0x43, 0x76, 0x54, 0xca, 0xe7, 0x00, 0x96, 0x9f, 0xd8, 0x24, 0x8b,
+    0xe4, 0xdc, 0xde, 0x48, 0x2c, 0xcb, 0xf7, 0x84, 0x1d, 0x45, 0xe5, 0xf1, 0x75, 0xa0, 0xed, 0xcd,
+    0x4b, 0x24, 0x8a, 0xb3, 0x98, 0x7b, 0x12, 0xb8, 0xf5, 0x63, 0x97, 0xb3, 0xa6, 0xa6, 0x0b, 0xdc,
+    0xd8, 0x4c, 0xa8, 0x99, 0x27, 0x0f, 0x8f, 0x94, 0x63, 0x0f, 0xb0, 0x11, 0x94, 0xc7, 0xe9, 0x7f,
+    0x3b, 0x40, 0x72, 0x4c, 0xdb, 0x84, 0x78, 0xfe, 0xb8, 0x56, 0x08, 0x80, 0xdf, 0x20, 0x2f, 0xb9,
+    0x66, 0x2d, 0x60, 0x63, 0xf5, 0x18, 0x15, 0x1b, 0x86, 0x85, 0xb9, 0xb4, 0x68, 0x0e, 0xc6, 0xd1,
+    0x8a, 0x81, 0x2b, 0xb3, 0xf6, 0x48, 0xf0, 0x4f, 0x9c, 0x28, 0x1c, 0xa4, 0x51, 0x2f, 0xd7, 0x4b,
+    0x17, 0xe7, 0xcc, 0x50, 0x9f, 0xd0, 0xd1, 0x40, 0x0c, 0x0d, 0xca, 0x83, 0xfa, 0x5e, 0xca, 0xec,
+    0xbf, 0x4e, 0x7c, 0x8f, 0xf0, 0xae, 0xc2, 0xd3, 0x28, 0x41, 0x9b, 0xc8, 0x04, 0xb9, 0x4a, 0xba,
+    0x72, 0xe2, 0xb5, 0x06, 0x2c, 0x1e, 0x0b, 0x2c, 0x7f, 0x11, 0xa9, 0x26, 0x51, 0x9d, 0x3f, 0xf8,
+    0x62, 0x11, 0x2e, 0x89, 0xd2, 0x9d, 0x35, 0xb1, 0xe4, 0x0a, 0x4d, 0x93, 0x01, 0xa7, 0xd1, 0x2d,
+    0x00, 0x87, 0xe2, 0x2d, 0xa4, 0xe9, 0x0a, 0x06, 0x66, 0xf8, 0x1f, 0x44, 0x75, 0xb5, 0x6b, 0x1c,
+    0xfc, 0x31, 0x09, 0x48, 0xa3, 0xff, 0x92, 0x12, 0x58, 0xe9, 0xfa, 0xae, 0x4f, 0xe2, 0xb4, 0xcc,
+];
+
+/// The CodeBreaker cipher a `9xyyxxxx xxxx` code selects. A code is six
+/// bytes: the address word then the value halfword, both little-endian, as
+/// GBATEK's `byte[code+n]` notation addresses them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct CodeBreakerCipher {
+    swaps: [u8; 48],
+    seeds: [u8; 14],
+}
+
+/// Byte order of GBATEK's `xlatlist`: bit `i` of a code lives in byte
+/// `XLAT[i / 8]`, so bits count from the most significant digit of each word.
+const XLAT: [usize; 6] = [3, 2, 1, 0, 5, 4];
+
+/// GBATEK's `random`: three steps of the LCG, each contributing some bits.
+fn random(state: &mut u32) -> u32 {
+    let mut step = || {
+        *state = state.wrapping_mul(0x41c6_4e6d).wrapping_add(0x3039);
+        *state
+    };
+    let mut x = (step() << 14) & 0xc000_0000;
+    x = x.wrapping_add((step() >> 1) & 0x3fff_8000);
+    x.wrapping_add((step() >> 16) & 0x7fff)
+}
+
+fn code_bytes(address: u32, value: u16) -> [u8; 6] {
+    let mut bytes = [0; 6];
+    bytes[..4].copy_from_slice(&address.to_le_bytes());
+    bytes[4..].copy_from_slice(&value.to_le_bytes());
+    bytes
+}
+
+impl CodeBreakerCipher {
+    /// GBATEK's `codebreaker_change_encryption`. Its `FOR i=0 TO n` loops run
+    /// `n + 1` times and none when `n` is negative.
+    pub(super) fn new(address: u32, value: u16) -> Self {
+        let code = code_bytes(address, value);
+        let mut swaps: [u8; 48] = std::array::from_fn(|i| i as u8);
+        let mut state = 0x1111 ^ u32::from(code[4]);
+        for _ in 0..0x50 {
+            let first = (random(&mut state) % 48) as usize;
+            let second = (random(&mut state) % 48) as usize;
+            swaps.swap(first, second);
+        }
+        let mut seeds = [0; 14];
+        seeds[0..2].copy_from_slice(&code[0..2]);
+        let mut state = 0x4efa_d1c3;
+        for _ in 0..(i32::from(code[3]) - 0x91 + 1).max(0) {
+            state = random(&mut state);
+        }
+        seeds[2..6].copy_from_slice(&random(&mut state).to_le_bytes());
+        seeds[6..8].copy_from_slice(&(random(&mut state) as u16).to_le_bytes());
+        let mut state = 0xf254 ^ u32::from(code[5]);
+        for _ in 0..code[5] {
+            state = random(&mut state);
+        }
+        seeds[8..12].copy_from_slice(&random(&mut state).to_le_bytes());
+        seeds[12..14].copy_from_slice(&(random(&mut state) as u16).to_le_bytes());
+        Self { swaps, seeds }
+    }
+
+    fn seed_word(&self, offset: usize) -> u32 {
+        u32::from_le_bytes(self.seeds[offset..offset + 4].try_into().unwrap())
+    }
+
+    fn seed_half(&self, offset: usize) -> u16 {
+        u16::from_le_bytes([self.seeds[offset], self.seeds[offset + 1]])
+    }
+
+    /// GBATEK's decryption, with one step GBATEK omits: after the address
+    /// word is XORed with `word[seedlist+8]`, the value halfword is XORed with
+    /// `halfword[seedlist+12]`. Published encrypted master codes decrypt to
+    /// their published raw forms only with it (see the tests).
+    pub(super) fn decrypt(&self, address: u32, value: u16) -> (u32, u16) {
+        let mut code = code_bytes(address, value);
+        for i in (0..48).rev() {
+            let j = usize::from(self.swaps[i]);
+            let (byte1, bit1) = (XLAT[i / 8], i % 8);
+            let (byte2, bit2) = (XLAT[j / 8], j % 8);
+            let first = (code[byte1] >> bit1) & 1;
+            let second = (code[byte2] >> bit2) & 1;
+            code[byte1] = (code[byte1] & !(1 << bit1)) | (second << bit1);
+            code[byte2] = (code[byte2] & !(1 << bit2)) | (first << bit2);
+        }
+        let word = u32::from_le_bytes(code[..4].try_into().unwrap()) ^ self.seed_word(8);
+        code[..4].copy_from_slice(&word.to_le_bytes());
+        let half = u16::from_le_bytes([code[4], code[5]]) ^ self.seed_half(12);
+        code[4..].copy_from_slice(&half.to_le_bytes());
+
+        let [c0, c1, c2, c3, c4, c5] = code.map(u32::from);
+        let mut i = c3.wrapping_mul(0x0101_0000) | (c0 << 8) | c5;
+        i ^= (c1 | (c2 << 8)).wrapping_mul(0x0001_0001) ^ self.seed_word(2);
+        i ^= u32::from(self.seeds[0]).wrapping_mul(0x0101_0101)
+            ^ u32::from(self.seeds[1]).wrapping_mul(0x0100_0000);
+        let mut j = c5 | ((c0 ^ c4) << 8);
+        j ^= (u32::from(self.seeds[0]) * 0x101) ^ u32::from(self.seed_half(6));
+        (i, j as u16)
+    }
+}
