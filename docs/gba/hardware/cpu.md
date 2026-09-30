@@ -272,7 +272,7 @@ Evenfall traps on:
 
 **UNPREDICTABLE** encodings have no defined behavior at all.
 Evenfall doesn't guess one, and doesn't crash the host.
-The machine stops with a typed fault before any register write, memory access or pipeline refill ([architecture](../../architecture.md#time-and-faults)).
+The machine stops with a typed fault before any register write, memory access or pipeline refill ([architecture](../../architecture.md#faults)).
 Stepping again returns the same fault without advancing time, and a stopped machine refuses to write a save state.
 The fault reasons are:
 

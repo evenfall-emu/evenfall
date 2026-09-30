@@ -11,7 +11,7 @@ Three small pieces of hardware keep a GBA game on schedule.
 A fourth piece, the **HALT and STOP** power states, lets the CPU sleep until an interrupt wakes it.
 Most games spend the end of every frame halted, waiting for the next one.
 
-All of these run on the master clock, which the bus owns ([architecture](../../architecture.md#time-and-faults)).
+All of these run on the master clock, which the bus owns ([architecture](../../architecture.md#how-time-flows)).
 Timer state is in [`timer.rs`](../../../systems/gba/src/timer.rs) (`Timer`) and DMA channel state in [`dma.rs`](../../../systems/gba/src/dma.rs) (`Channel`).
 Scheduling, arbitration between channels and interrupt delivery are in [`bus/mod.rs`](../../../systems/gba/src/bus/mod.rs).
 

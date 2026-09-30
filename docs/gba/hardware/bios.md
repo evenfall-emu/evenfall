@@ -387,7 +387,7 @@ The sequencer and mixer run inside one step, and only pause around the game's ca
 
 A game can ask the HLE BIOS for something it can't do faithfully: an unassigned routine, an internal BIOS address as a callback, malformed sound data, or a pointer that would break a bus rule.
 None of these crashes the host or pretends to succeed.
-Each stops the machine with a typed, sticky `Fault` that records the cycle and the instruction ([architecture](../../architecture.md#time-and-faults)).
+Each stops the machine with a typed, sticky `Fault` that records the cycle and the instruction ([architecture](../../architecture.md#faults)).
 A stopped machine refuses to write a save state, and loading an earlier valid state clears the fault.
 The CLI prints one stable line and still saves the cartridge's save data.
 
