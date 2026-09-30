@@ -4,7 +4,7 @@ ENTRY(_start)
 SECTIONS {
     . = 0x08000000;
     .header : { KEEP(*(.header)) }
-    /* report_and_idle sits at the fixed address test/probe_cases.zig polls
+    /* report_and_idle sits at the fixed address validator/probe_cases.rs polls
      * for. Code follows it rather than preceding it, so a probe of any size
      * links with any compiler version. */
     .idle 0x08000300 : { KEEP(*(.idle)) }

@@ -1,8 +1,7 @@
-//! ZiGBA `bus_test.zig` video integration oracles, exercised through Bus writes and time.
+//! Video integration oracles, exercised through Bus writes and time.
 
 use super::*;
 
-/// ZiGBA: "mid-scanline Mode 4 palette word write exposes each halfword at its completion dot"
 #[test]
 fn mid_scanline_mode_4_palette_word_write_exposes_each_halfword_at_its_completion_dot() {
     let mut bus = Bus::init(&[]);
@@ -19,7 +18,6 @@ fn mid_scanline_mode_4_palette_word_write_exposes_each_halfword_at_its_completio
     assert_eq!(0x7c00, bus.framebuffer()[99]);
 }
 
-/// ZiGBA: "full mid-scanline video log never leaves an orphaned palette start value"
 #[test]
 fn full_mid_scanline_video_log_never_leaves_an_orphaned_palette_start_value() {
     let mut bus = Bus::init(&[]);
@@ -35,7 +33,6 @@ fn full_mid_scanline_video_log_never_leaves_an_orphaned_palette_start_value() {
     assert_eq!(0x7c00, bus.framebuffer()[100]);
 }
 
-/// ZiGBA: "mid-scanline Mode 3 affine write preserves pixels rendered before completion"
 #[test]
 fn mid_scanline_mode_3_affine_write_preserves_pixels_rendered_before_completion() {
     let mut bus = Bus::init(&[]);
@@ -58,7 +55,6 @@ fn mid_scanline_mode_3_affine_write_preserves_pixels_rendered_before_completion(
     assert_eq!(0x03e0, bus.framebuffer()[200]);
 }
 
-/// ZiGBA: "mid-scanline Mode 3 VRAM word write exposes each halfword at its completion dot"
 #[test]
 fn mid_scanline_mode_3_vram_word_write_exposes_each_halfword_at_its_completion_dot() {
     let mut bus = Bus::init(&[]);
@@ -74,7 +70,6 @@ fn mid_scanline_mode_3_vram_word_write_exposes_each_halfword_at_its_completion_d
     assert_eq!(0x7c00, bus.framebuffer()[99]);
 }
 
-/// ZiGBA: "mixed mid-scanline palette and BG VRAM writes retain their independent histories"
 #[test]
 fn mixed_mid_scanline_palette_and_bg_vram_writes_retain_their_independent_histories() {
     let mut bus = Bus::init(&[]);
@@ -98,7 +93,6 @@ fn mixed_mid_scanline_palette_and_bg_vram_writes_retain_their_independent_histor
     }
 }
 
-/// ZiGBA: "Mode 5 renders its 160-pixel bitmap and uses backdrop color outside it"
 #[test]
 fn mode_5_renders_its_160_pixel_bitmap_and_uses_backdrop_color_outside_it() {
     let mut bus = Bus::init(&[]);
@@ -112,7 +106,6 @@ fn mode_5_renders_its_160_pixel_bitmap_and_uses_backdrop_color_outside_it() {
     assert_eq!(0x1234, bus.framebuffer()[160]);
 }
 
-/// ZiGBA: "Mode 4 index zero lets a lower-priority OBJ show through but Mode 3 color zero is opaque"
 #[test]
 fn mode_4_index_zero_lets_a_lower_priority_obj_show_through_but_mode_3_color_zero_is_opaque() {
     for mode in [4, 3] {
@@ -136,7 +129,6 @@ fn mode_4_index_zero_lets_a_lower_priority_obj_show_through_but_mode_3_color_zer
     }
 }
 
-/// ZiGBA: "transparent Mode 4 pixel leaves backdrop eligible behind semi-transparent OBJ"
 #[test]
 fn transparent_mode_4_pixel_leaves_backdrop_eligible_behind_semi_transparent_obj() {
     let mut bus = Bus::init(&[]);
@@ -157,7 +149,6 @@ fn transparent_mode_4_pixel_leaves_backdrop_eligible_behind_semi_transparent_obj
     assert_eq!(0x3c0f, bus.framebuffer()[0]);
 }
 
-/// ZiGBA: "bitmap BG2 applies its affine transform before horizontal and vertical mosaic"
 #[test]
 fn bitmap_bg2_applies_its_affine_transform_before_horizontal_and_vertical_mosaic() {
     let mut bus = Bus::init(&[]);
@@ -179,7 +170,6 @@ fn bitmap_bg2_applies_its_affine_transform_before_horizontal_and_vertical_mosaic
     }
 }
 
-/// ZiGBA: "mid-frame affine reference write becomes the next scanline origin"
 #[test]
 fn mid_frame_affine_reference_write_becomes_the_next_scanline_origin() {
     let mut bus = Bus::init(&[]);
@@ -201,7 +191,6 @@ fn mid_frame_affine_reference_write_becomes_the_next_scanline_origin() {
     assert_eq!(0x03e0, bus.framebuffer()[240]);
 }
 
-/// ZiGBA: "disabled affine background does not advance its hidden reference"
 #[test]
 fn disabled_affine_background_does_not_advance_its_hidden_reference() {
     let mut bus = Bus::init(&[]);
@@ -220,7 +209,6 @@ fn disabled_affine_background_does_not_advance_its_hidden_reference() {
     assert_eq!(0x001f, bus.framebuffer()[240]);
 }
 
-/// ZiGBA: "mid-scanline BGCNT priority write changes only later background pixels"
 #[test]
 fn mid_scanline_bgcnt_priority_write_changes_only_later_background_pixels() {
     let mut bus = Bus::init(&[]);
@@ -248,7 +236,6 @@ fn mid_scanline_bgcnt_priority_write_changes_only_later_background_pixels() {
     assert_eq!(0x03e0, bus.framebuffer()[200]);
 }
 
-/// ZiGBA: "mid-scanline forced-blank assertion whites only later pixels"
 #[test]
 fn mid_scanline_forced_blank_assertion_whites_only_later_pixels() {
     let mut bus = Bus::init(&[]);
@@ -263,7 +250,6 @@ fn mid_scanline_forced_blank_assertion_whites_only_later_pixels() {
     assert_eq!(0x7fff, bus.framebuffer()[200]);
 }
 
-/// ZiGBA: "BLDY brightness decrease requires the top layer to be selected"
 #[test]
 fn bldy_brightness_decrease_requires_the_top_layer_to_be_selected() {
     let mut selected = Bus::init(&[]);
@@ -283,7 +269,6 @@ fn bldy_brightness_decrease_requires_the_top_layer_to_be_selected() {
     assert_eq!(0x0010, unselected.framebuffer()[0]);
 }
 
-/// ZiGBA: "mid-scanline DISPCNT WIN0 enable affects only pixels at and after its completion"
 #[test]
 fn mid_scanline_dispcnt_win0_enable_affects_only_pixels_at_and_after_its_completion() {
     let mut bus = Bus::init(&[]);
@@ -309,7 +294,6 @@ fn mid_scanline_dispcnt_win0_enable_affects_only_pixels_at_and_after_its_complet
     assert_eq!(0x03e0, bus.framebuffer()[100]);
 }
 
-/// ZiGBA: "BLDALPHA uses an OBJ behind the top BG as the second visible target"
 #[test]
 fn bldalpha_uses_an_obj_behind_the_top_bg_as_the_second_visible_target() {
     let mut bus = Bus::init(&[]);
@@ -337,7 +321,6 @@ fn bldalpha_uses_an_obj_behind_the_top_bg_as_the_second_visible_target() {
     assert_eq!(0x01ef, bus.framebuffer()[0]);
 }
 
-/// ZiGBA: "wrapped WIN0 bounds take precedence over overlapping WIN1"
 #[test]
 fn wrapped_win0_bounds_take_precedence_over_overlapping_win1() {
     let mut bus = Bus::init(&[]);
@@ -362,7 +345,6 @@ fn wrapped_win0_bounds_take_precedence_over_overlapping_win1() {
     assert_eq!(0x7c00, bus.framebuffer()[239]);
 }
 
-/// ZiGBA: "window color-effect bit gates brightness independently of its layer mask"
 #[test]
 fn window_color_effect_bit_gates_brightness_independently_of_its_layer_mask() {
     let mut bus = Bus::init(&[]);
@@ -384,7 +366,6 @@ fn window_color_effect_bit_gates_brightness_independently_of_its_layer_mask() {
     assert_eq!(0x3df7, bus.framebuffer()[1]);
 }
 
-/// ZiGBA: "clipped, equal and wrapped window bounds keep BG2 visible on every pixel"
 #[test]
 fn clipped_equal_and_wrapped_window_bounds_keep_bg2_visible_on_every_pixel() {
     for (h0, h1, winin, outside) in [
@@ -409,7 +390,6 @@ fn clipped_equal_and_wrapped_window_bounds_keep_bg2_visible_on_every_pixel() {
     }
 }
 
-/// ZiGBA: "OBJ-window nonzero texels select the high WINOUT mask only with OBJ enabled"
 #[test]
 fn obj_window_nonzero_texels_select_the_high_winout_mask_only_with_obj_enabled() {
     let mut bus = Bus::init(&[]);
@@ -436,7 +416,6 @@ fn obj_window_nonzero_texels_select_the_high_winout_mask_only_with_obj_enabled()
     assert_eq!(0x001f, bus.framebuffer()[0]);
 }
 
-/// ZiGBA: "OBJ-window mosaic quantizes source rows but not horizontal mask samples"
 #[test]
 fn obj_window_mosaic_quantizes_source_rows_but_not_horizontal_mask_samples() {
     let mut bus = Bus::init(&[]);
@@ -463,7 +442,6 @@ fn obj_window_mosaic_quantizes_source_rows_but_not_horizontal_mask_samples() {
     assert_eq!(0x001f, bus.framebuffer()[241]);
 }
 
-/// ZiGBA: "text tiles past the BG side of VRAM are transparent"
 #[test]
 fn text_tiles_past_the_bg_side_of_vram_are_transparent() {
     for (color_256, first_tile, tiles) in [(false, 512usize, 512usize), (true, 256, 768)] {
@@ -488,7 +466,6 @@ fn text_tiles_past_the_bg_side_of_vram_are_transparent() {
     }
 }
 
-/// ZiGBA: "text map entries past the BG side of VRAM read as zero"
 #[test]
 fn text_map_entries_past_the_bg_side_of_vram_read_as_zero() {
     for mosaic in [false, true] {
@@ -507,7 +484,6 @@ fn text_map_entries_past_the_bg_side_of_vram_read_as_zero() {
     }
 }
 
-/// ZiGBA: "empty text rows preserve the backdrop and hidden rows do not fetch tile data"
 #[test]
 fn empty_text_rows_preserve_the_backdrop_and_hidden_rows_do_not_fetch_tile_data() {
     for color_256 in [false, true] {
@@ -532,7 +508,6 @@ fn empty_text_rows_preserve_the_backdrop_and_hidden_rows_do_not_fetch_tile_data(
     }
 }
 
-/// ZiGBA: "one by one text mosaic preserves distinct pixels and rows"
 #[test]
 fn one_by_one_text_mosaic_preserves_distinct_pixels_and_rows() {
     for color_256 in [false, true] {
@@ -560,7 +535,6 @@ fn one_by_one_text_mosaic_preserves_distinct_pixels_and_rows() {
     }
 }
 
-/// ZiGBA: "affine background mosaic quantizes screen coordinates before matrix sampling"
 #[test]
 fn affine_background_mosaic_quantizes_screen_coordinates_before_matrix_sampling() {
     let mut bus = Bus::init(&[]);
@@ -585,7 +559,6 @@ fn affine_background_mosaic_quantizes_screen_coordinates_before_matrix_sampling(
     }
 }
 
-/// ZiGBA: "affine overflow wrap maps a negative reference point to the far edge"
 #[test]
 fn affine_overflow_wrap_maps_a_negative_reference_point_to_the_far_edge() {
     let mut bus = Bus::init(&[]);
@@ -606,7 +579,6 @@ fn affine_overflow_wrap_maps_a_negative_reference_point_to_the_far_edge() {
     assert_eq!(0x6318, bus.framebuffer()[0]);
 }
 
-/// ZiGBA: "regular OBJ size, horizontal flip, wrapped X, and 1D mapping select the source tile"
 #[test]
 fn regular_obj_size_horizontal_flip_wrapped_x_and_1d_mapping_select_the_source_tile() {
     let mut bus = Bus::init(&[]);
@@ -624,7 +596,6 @@ fn regular_obj_size_horizontal_flip_wrapped_x_and_1d_mapping_select_the_source_t
     assert_eq!(0x03e0, bus.framebuffer()[0]);
 }
 
-/// ZiGBA: "bitmap modes suppress each OBJ tile below character name 512"
 #[test]
 fn bitmap_modes_suppress_each_obj_tile_below_character_name_512() {
     let mut bus = Bus::init(&[]);
@@ -646,7 +617,6 @@ fn bitmap_modes_suppress_each_obj_tile_below_character_name_512() {
     assert_eq!(0x001f, bus.framebuffer()[8]);
 }
 
-/// ZiGBA: "OBJ character names wrap at 1024 in 1D mapping and within the row in 2D mapping"
 #[test]
 fn obj_character_names_wrap_at_1024_in_1d_mapping_and_within_the_row_in_2d_mapping() {
     for (mapping_1d, name, first_tile) in [(true, 1023, 0x0601_7fe0), (false, 31, 0x0601_03e0)] {
@@ -669,7 +639,6 @@ fn obj_character_names_wrap_at_1024_in_1d_mapping_and_within_the_row_in_2d_mappi
     }
 }
 
-/// ZiGBA: "lower OAM index wins overlapping OBJ regardless of BG-relative priority"
 #[test]
 fn lower_oam_index_wins_overlapping_obj_regardless_of_bg_relative_priority() {
     let mut bus = Bus::init(&[]);
@@ -692,7 +661,6 @@ fn lower_oam_index_wins_overlapping_obj_regardless_of_bg_relative_priority() {
     assert_eq!(0x001f, bus.framebuffer()[0]);
 }
 
-/// ZiGBA: "reused text rows retain midline VRAM history and update the following frame"
 #[test]
 fn reused_text_rows_retain_midline_vram_history_and_update_the_following_frame() {
     let mut bus = Bus::init(&[]);
@@ -715,7 +683,6 @@ fn reused_text_rows_retain_midline_vram_history_and_update_the_following_frame()
     assert_eq!(0x001f, bus.framebuffer()[100]);
 }
 
-/// ZiGBA: "lower overlapping OBJ is excluded from the color-effects second target"
 #[test]
 fn lower_overlapping_obj_is_excluded_from_the_color_effects_second_target() {
     let mut bus = Bus::init(&[]);
@@ -744,7 +711,6 @@ fn lower_overlapping_obj_is_excluded_from_the_color_effects_second_target() {
     assert_eq!(0x3c0f, bus.framebuffer()[0]);
 }
 
-/// ZiGBA: "affine OBJ mosaic holds transformed source coordinates for each screen group"
 #[test]
 fn affine_obj_mosaic_holds_transformed_source_coordinates_for_each_screen_group() {
     let mut bus = Bus::init(&[]);
@@ -772,7 +738,6 @@ fn affine_obj_mosaic_holds_transformed_source_coordinates_for_each_screen_group(
     }
 }
 
-/// ZiGBA: "HBlank-free OBJ budget partially draws the final evaluated object"
 #[test]
 fn hblank_free_obj_budget_partially_draws_the_final_evaluated_object() {
     for hblank_free in [false, true] {
@@ -801,7 +766,6 @@ fn hblank_free_obj_budget_partially_draws_the_final_evaluated_object() {
     }
 }
 
-/// ZiGBA: "OBJ admission is recalculated when a scanline returns next frame"
 #[test]
 fn obj_admission_is_recalculated_when_a_scanline_returns_next_frame() {
     let mut bus = Bus::init(&[]);
@@ -825,7 +789,6 @@ fn obj_admission_is_recalculated_when_a_scanline_returns_next_frame() {
     assert_eq!(0, bus.framebuffer()[0]);
 }
 
-/// ZiGBA: "reused text rows observe changed bytes palette banks and horizontal flips"
 #[test]
 fn reused_text_rows_observe_changed_bytes_palette_banks_and_horizontal_flips() {
     let mut bus = Bus::init(&[]);
@@ -866,7 +829,6 @@ fn reused_text_rows_observe_changed_bytes_palette_banks_and_horizontal_flips() {
     assert_eq!(&[0; 8], &bus.framebuffer()[0..8]);
 }
 
-/// ZiGBA: "scanlines resume alpha, OBJ and raster effects after opaque composition"
 #[test]
 fn scanlines_resume_alpha_obj_and_raster_effects_after_opaque_composition() {
     let mut bus = Bus::init(&[]);
@@ -906,7 +868,6 @@ fn scanlines_resume_alpha_obj_and_raster_effects_after_opaque_composition() {
     assert_eq!(0x001f, bus.framebuffer()[5 * 240 + 239]);
 }
 
-/// ZiGBA: "selective video latches whole frames and publishes only complete images"
 #[test]
 fn selective_video_latches_whole_frames_and_publishes_only_complete_images() {
     const FRAME: u64 = 280896;
@@ -961,7 +922,6 @@ fn selective_video_latches_whole_frames_and_publishes_only_complete_images() {
     assert_eq!(5 * FRAME + VISIBLE_END, bus.next_rendered_frame_cycle());
 }
 
-/// ZiGBA: "canonical video repair preserves publication and full rendering resumes immediately"
 #[test]
 fn canonical_video_repair_preserves_publication_and_full_rendering_resumes_immediately() {
     const FRAME: u64 = 280896;

@@ -3,7 +3,7 @@
  * Sends 0x1111 and starts a baud-3 multiplayer transfer with three children
  * attached. After completion the parent reads the third child's word from
  * SIOMULTI3 (expected 0x4444) and reports it. Runs with multi4_child1.c,
- * multi4_child2.c, and multi4_child3.c via test/probe_cases.zig.
+ * multi4_child2.c, and multi4_child3.c via validator/probe_cases.rs.
  */
 
 #include "gba.h"

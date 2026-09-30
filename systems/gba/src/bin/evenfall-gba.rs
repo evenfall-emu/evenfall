@@ -1,4 +1,4 @@
-//! ZiGBA's headless CLI, with file policy separated from the machine.
+//! The headless CLI, with file policy separated from the machine.
 
 use evenfall_gba::bus::{KeyState, TimedInput, TimedInputChange};
 use evenfall_gba::cpu::InstructionSet;
@@ -32,7 +32,7 @@ fn keys_from_bits(bits: u16) -> KeyState {
     }
 }
 
-/// Zig 0.16's Wyhash final v4.1, seed zero. The `wyhash` crate's top-level
+/// Wyhash final v4.1, seed zero. The `wyhash` crate's top-level
 /// function implements a different generation and changes `--frame-hash`.
 fn frame_wyhash(input: &[u8]) -> u64 {
     const SECRET: [u64; 4] = [
@@ -329,7 +329,7 @@ fn run(args: &[String], stdout: &mut impl Write) -> Result<(), Box<dyn std::erro
 mod tests {
     use super::frame_wyhash;
 
-    /// Independent results from Zig 0.16 std.hash.Wyhash.hash(0, bytes),
+    /// Independent reference results for Wyhash final v4.1 with seed zero,
     /// including either side of both the 16- and 48-byte block boundaries.
     #[test]
     fn frame_hash_matches_zig_wyhash_vectors() {

@@ -4,7 +4,7 @@
  * (green) at priority 1; BLDCNT selects alpha blending with BG0 as first
  * target and BG1 as second, EVA=EVB=8. After two frames the validator
  * asserts every pixel analytically: (31*8+0*8)/16 = 15 per red/green
- * channel, i.e. 0x01EF (see test/probe_cases.zig). Exercises
+ * channel, i.e. 0x01EF (see validator/probe_cases.rs). Exercises
  * priority resolution, first/second target selection, and the blend
  * equation end to end.
  */

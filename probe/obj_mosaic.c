@@ -6,7 +6,7 @@
  * to screen coordinates, so the odd-placed OBJ1 samples group bases
  * outside itself clamped to its first source edge. After two frames the
  * validator recomputes every pixel analytically (see
- * test/probe_cases.zig), with OBJ0 winning the overlap on
+ * validator/probe_cases.rs), with OBJ0 winning the overlap on
  * priority. Exercises OBJ mosaic grouping, clamping, and compositing end
  * to end. HLE boot only.
  */

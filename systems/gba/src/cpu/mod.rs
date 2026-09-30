@@ -124,7 +124,7 @@ pub enum HleMemoryOperation {
     Write,
 }
 
-/// A typed stop for guest-controlled behavior ZiGBA cannot safely emulate.
+/// A typed stop for guest-controlled behavior the core cannot safely emulate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FaultReason {
     Isa(evenfall_cpu_arm::FaultReason),
@@ -466,7 +466,7 @@ impl HleBulkWork {
 }
 
 fn bg_affine_set_mmio_fault(source: u32, destination: u32, count: u32) -> bool {
-    // ZiGBA's four record streams, in per-record bus access order.
+    // The four record streams, in per-record bus access order.
     for (base, stride) in [
         (source, 20),
         (source.wrapping_add(4), 20),
@@ -966,7 +966,7 @@ impl Cpu {
         }
     }
 
-    /// The engine entry the ported ARM kernel tests exercise.
+    /// The engine entry the ARM kernel tests exercise.
     #[cfg(test)]
     fn run_arm_iwram_kernel(&mut self, bus: &mut Bus, yield_at: u64) -> bool {
         self.run_engine(bus, yield_at)
@@ -1211,7 +1211,6 @@ mod tests {
         );
     }
 
-    /// Zig: CPU state rejects misaligned instruction addresses.
     #[test]
     fn cpu_state_rejects_misaligned_instruction_addresses() {
         let mut arm = Cpu::init(0x0800_0000, 0x1f, true);
@@ -1222,7 +1221,6 @@ mod tests {
         expect_invalid_state(&thumb, 0);
     }
 
-    /// Zig: CPU state rejects HLE continuations under an external BIOS.
     #[test]
     fn cpu_state_rejects_hle_continuations_under_an_external_bios() {
         let mut irq = Cpu::init(0x0800_0000, 0x1f, false);
@@ -1277,7 +1275,6 @@ mod tests {
         }
     }
 
-    /// Zig: CPU state rejects impossible HLE callback continuations.
     #[test]
     fn cpu_state_rejects_impossible_hle_callback_continuations() {
         let channel = HleSoundChannelClearContinuation {
@@ -1321,7 +1318,6 @@ mod tests {
         }
     }
 
-    /// Zig: CPU state rejects impossible HLE IRQ frames.
     #[test]
     fn cpu_state_rejects_impossible_hle_irq_frames() {
         for frame in [
@@ -1335,7 +1331,6 @@ mod tests {
         }
     }
 
-    /// Zig: CPU state rejects impossible HLE MultiBoot progress.
     #[test]
     fn cpu_state_rejects_impossible_hle_multi_boot_progress() {
         let original = multi_boot_continuation();
@@ -1368,7 +1363,6 @@ mod tests {
         }
     }
 
-    /// Zig: CPU state accepts reachable HLE continuation boundaries.
     #[test]
     fn cpu_state_accepts_reachable_hle_continuation_boundaries() {
         let mut channel = Cpu::init(0x0800_0040, 0x1f, true);
@@ -1401,7 +1395,7 @@ mod tests {
         }
     }
 
-    /// ZiGBA `writeState`: unused IRQ frames and pending player slots are canonical.
+    /// Writing state canonicalizes unused IRQ frames and pending player slots.
     #[test]
     fn cpu_state_canonicalizes_unused_hle_slots() {
         let mut cpu = Cpu::init(0x0800_0000, 0x1f, true);
@@ -1419,7 +1413,7 @@ mod tests {
         assert_eq!(cpu.hle_irq_stack[7].saved_r12, 0x8234_abcf);
     }
 
-    /// ZiGBA `validateState`: reject a stale resumed SWI whose PC has moved.
+    /// State validation rejects a stale resumed SWI whose PC has moved.
     #[test]
     fn bulk_state_requires_return_point() {
         let mut cpu = Cpu::init(0x0800_0004, 0x1f, true);
@@ -1455,7 +1449,6 @@ mod tests {
         })
     }
 
-    /// Zig: CPU state accepts a bulk HLE service at its return point.
     #[test]
     fn cpu_state_accepts_a_bulk_hle_service_at_its_return_point() {
         let mut arm = Cpu::init(0x0800_0004, 0x1f, true);
@@ -1479,7 +1472,6 @@ mod tests {
         }
     }
 
-    /// Zig: CPU state rejects impossible bulk HLE service progress.
     #[test]
     fn cpu_state_rejects_impossible_bulk_hle_service_progress() {
         let mut external = Cpu::init(0x0800_0004, 0x1f, false);
@@ -1540,7 +1532,7 @@ mod tests {
         expect_invalid_state(&unaligned_records, 0);
     }
 
-    /// ZiGBA: BgAffineSet analytic preflight matches the record-by-record loop.
+    /// BgAffineSet's analytic preflight matches the record-by-record loop.
     #[test]
     fn bg_affine_set_preflight_crosses_mmio_on_first_reachable_record() {
         let source = 0x03ff_fff9;
@@ -1552,8 +1544,8 @@ mod tests {
         assert!(!bg_affine_set_mmio_fault(0x0400_0000, 0x0400_0000, u32::MAX));
     }
 
-    /// ZiGBA's ordinary runner differential: the same fetched instructions
-    /// must leave CPU, prefetch and bus timing equal to single stepping.
+    /// Given the same fetched instructions, the ordinary runner must leave
+    /// CPU, prefetch and bus timing equal to single stepping.
     #[test]
     fn ordinary_runner_matches_single_steps() {
         for thumb in [false, true] {
@@ -1611,10 +1603,9 @@ mod tests {
         }
     }
 
-    /// ZiGBA: "Thumb ROM kernel matches ordinary stepping for random code, queues and horizons".
-    /// The engine replaces the kernel; the reference steps to the engine's
-    /// clock and must land on it with the same registers and pipeline, so a
-    /// mispredicted branch shows as a different PC.
+    /// The reference steps to the engine's clock and must land on it with
+    /// the same registers and pipeline, so a mispredicted branch shows as a
+    /// different PC.
     #[test]
     fn thumb_rom_engine_matches_ordinary_steps_for_random_code_queues_and_horizons() {
         fn next(seed: &mut u32) -> u32 {
@@ -1834,9 +1825,9 @@ mod tests {
         assert!(executed > 3 * runs, "{executed} instructions in {runs} runs");
     }
 
-    /// ZiGBA `thumbKernelBranch`: a taken branch and a POP {pc} must admit
-    /// both refill fetches, not only the opcode and data beat. One cycle
-    /// short refuses the *whole* instruction without changing its pipeline.
+    /// A taken Thumb branch and a POP {pc} must admit both refill fetches,
+    /// not only the opcode and data beat. One cycle short refuses the *whole*
+    /// instruction without changing its pipeline.
     #[test]
     fn thumb_rom_branch_refill_requires_its_full_horizon() {
         for opcode in [0xe7fe_u16, 0xbd00] {
@@ -1885,7 +1876,7 @@ mod tests {
         }
     }
 
-    /// ZiGBA `runNormalUntil`: IWRAM kernel instructions, RAM transfers and
+    /// `run_normal_until`: IWRAM kernel instructions, RAM transfers and
     /// a backward branch publish the same pipeline, memory and bus timing.
     #[test]
     fn arm_iwram_runner_matches_ordinary_steps_through_a_backwards_branch() {
@@ -1934,7 +1925,6 @@ mod tests {
         runner_bus.end_device_batch();
     }
 
-    /// Zig: unified kernel RAM transfers match reference at full and short horizons.
     #[test]
     fn unified_kernel_ram_transfers_match_reference_at_full_and_short_horizons() {
         for base in [0x0200_0103_u32, 0x03ff_8103] {
@@ -2013,7 +2003,6 @@ mod tests {
         }
     }
 
-    /// Zig: ARM kernel matches ordinary execution for random encodings and operands.
     #[test]
     fn arm_kernel_matches_ordinary_execution_for_random_encodings_and_operands() {
         let mut seed = 0x5eed_a4a1_u32;

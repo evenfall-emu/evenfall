@@ -1,6 +1,6 @@
 //! Suspendable BIOS copy, affine and decompression services.
 //!
-//! Each loop stops only at ZiGBA's guest-cycle iteration boundaries. The
+//! Each loop stops only at guest-cycle iteration boundaries. The
 //! caller retains `HleBulkWork` without changing the BIOS latch or taking an
 //! interrupt until the loop finishes.
 
@@ -781,8 +781,9 @@ fn write_decompression_byte(
 mod tests {
     use super::*;
 
-    /// ZiGBA machine_test: "HLE CpuSet copies halfwords or words and writes back only word address registers".
-    /// The split case also checks that suspension leaves result registers alone until completion.
+    /// CpuSet copies halfwords or words and writes back only the word
+    /// address registers. The split case also checks that suspension leaves
+    /// the result registers alone until completion.
     #[test]
     fn hle_cpu_set_writeback_and_suspension() {
         for (word, count) in [(false, 3_u32), (true, 2)] {
@@ -836,7 +837,6 @@ mod tests {
         }
     }
 
-    /// ZiGBA machine_test: "HLE HuffUnComp traverses nested 8-bit nodes from the bitstream MSB".
     #[test]
     fn hle_huff_un_comp_traverses_nested_8_bit_nodes_from_the_bitstream_msb() {
         let rom =
@@ -855,7 +855,6 @@ mod tests {
         assert_eq!(cpu.registers[..4], [0x0800_0014, 0x0200_0004, 0xCAFE_BABE, 0xDEAD_BEEF]);
     }
 
-    /// ZiGBA machine_test: "HLE BitUnPack extracts low bits first and applies its conditional bias".
     #[test]
     fn hle_bit_un_pack_extracts_low_bits_first_and_applies_its_conditional_bias() {
         for (bias, expected) in [

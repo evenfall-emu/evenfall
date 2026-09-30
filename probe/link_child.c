@@ -2,7 +2,7 @@
  *
  * Sends 0x5A with the external shift clock and polls the start bit for
  * completion, then reports the received byte (expected 0xA5 from
- * link_parent.c). See link_parent.c and test/probe_cases.zig.
+ * link_parent.c). See link_parent.c and validator/probe_cases.rs.
  */
 
 #include "gba.h"

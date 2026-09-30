@@ -1,4 +1,4 @@
-//! ZiGBA `test/bus_test.zig` integration oracles not covered by `bus.rs`.
+//! Bus integration oracles not covered by `bus.rs`.
 
 use evenfall_gba::bus::{
     Access, AccessKind, AccessSource, AccessWidth, Bus, InstructionFetchRegion, KeyState,
@@ -88,7 +88,6 @@ fn region_fetch_parity(
     fetch_state_parity(reference, active);
 }
 
-/// ZiGBA: "CPU Game Pak data reads match read() in every queue phase and at deadlines"
 #[test]
 fn cpu_game_pak_data_reads_match_read_in_every_queue_phase_and_at_deadlines() {
     let rom: Vec<u8> = (0..0x20040).map(|index| (index * 37 + 11) as u8).collect();
@@ -178,7 +177,6 @@ fn cpu_game_pak_data_reads_match_read_in_every_queue_phase_and_at_deadlines() {
     }
 }
 
-/// ZiGBA: "Thumb region misses match read() across forced N fetches and deadlines"
 #[test]
 fn thumb_region_misses_match_read_across_forced_n_fetches_and_deadlines() {
     let rom: Vec<u8> = (0..0x20040).map(|index| (index * 13 + 5) as u8).collect();
@@ -302,7 +300,6 @@ fn thumb_region_misses_match_read_across_forced_n_fetches_and_deadlines() {
     }
 }
 
-/// ZiGBA: "synchronized reads and FIFO writes keep the device batch armed"
 #[test]
 fn synchronized_reads_and_fifo_writes_keep_the_device_batch_armed() {
     let mut eager = Bus::init(&[]);
@@ -384,7 +381,6 @@ fn synchronized_reads_and_fifo_writes_keep_the_device_batch_armed() {
     bus_state_parity(&eager, &batched);
 }
 
-/// ZiGBA: "delegated FIFO timer overflows match eager delivery through refill and schedule changes"
 #[test]
 fn delegated_fifo_timer_overflows_match_eager_delivery_through_refill_and_schedule_changes() {
     let mut eager = Bus::init(&[]);
@@ -520,7 +516,6 @@ fn delegated_fifo_timer_overflows_match_eager_delivery_through_refill_and_schedu
     bus_state_parity(&eager, &batched);
 }
 
-/// ZiGBA: "text row colors refresh before stable second-surface lines and retain palette history"
 #[test]
 fn text_row_colors_refresh_before_stable_second_surface_lines_and_retain_palette_history() {
     let mut bus = Bus::init(&[]);
@@ -598,7 +593,6 @@ fn text_row_colors_refresh_before_stable_second_surface_lines_and_retain_palette
     }
 }
 
-/// ZiGBA: "cached text colors preserve palette raster history and portable state"
 #[test]
 fn cached_text_colors_preserve_palette_raster_history_and_portable_state() {
     let rom = [0xFE, 0xFF, 0xFF, 0xEA];
@@ -640,7 +634,6 @@ fn cached_text_colors_preserve_palette_raster_history_and_portable_state() {
     }
 }
 
-/// ZiGBA: "selected frames preserve affine mosaic raster histories DMA and durable state"
 #[test]
 fn selected_frames_preserve_affine_mosaic_raster_histories_dma_and_durable_state() {
     let rom = [0xFE, 0xFF, 0xFF, 0xEA];
@@ -742,7 +735,6 @@ fn selected_frames_preserve_affine_mosaic_raster_histories_dma_and_durable_state
     );
 }
 
-/// ZiGBA: "complete mixed text rows retain layered surfaces through masks flips and semi OBJ"
 #[test]
 fn complete_mixed_text_rows_retain_layered_surfaces_through_masks_flips_and_semi_obj() {
     let rows: [[u8; 8]; 4] = [

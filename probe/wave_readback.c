@@ -9,7 +9,7 @@
  * span for exactly 67 steps plus margin (effective rotation 3), stops, and
  * extends the checksum over both banks. The validator recomputes the FNV-1a
  * over the GBATEK-model rotated patterns (see
- * test/probe_cases.zig). Output samples are covered by the
+ * validator/probe_cases.rs). Output samples are covered by the
  * wave_ramp/wave_chain probes; this probe pins storage rotation only.
  */
 

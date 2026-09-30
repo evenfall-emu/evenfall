@@ -4,7 +4,7 @@
  * screenblock 31, with BG mosaic size 4x4 selecting the
  * upper-left source pixel of each group. Palette entries are all distinct.
  * After two frames the validator recomputes every pixel analytically (see
- * test/probe_cases.zig): mosaic quantization of the output
+ * validator/probe_cases.rs): mosaic quantization of the output
  * coordinates before scrolling (HOFS/VOFS are zero), per the GBATEK mosaic
  * description. Index 0 stays transparent and shows the backdrop.
  */

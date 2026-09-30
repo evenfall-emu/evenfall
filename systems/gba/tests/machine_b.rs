@@ -1,5 +1,5 @@
-//! Second half of ZiGBA's `test/machine_test.zig`. Oracles below are copied
-//! from the pinned ZiGBA tests, not calculated from the Rust implementation.
+//! Second half of the machine integration oracles. The expected values are
+//! fixed oracles, not calculated from the Rust implementation.
 
 use evenfall_gba::bus::{
     Access, AccessKind, AccessSource, AccessWidth, InstructionFetchRegion, JoyBusCommand,
@@ -68,7 +68,6 @@ fn encode_machine_state(machine: &Machine) -> Vec<u8> {
     bytes
 }
 
-/// ZiGBA: `HLE SoundChannelClear stops twelve initialized software channels`.
 #[test]
 fn hle_sound_channel_clear_stops_twelve_initialized_software_channels() {
     let rom = [0x00, 0x00, 0x1e, 0xef];
@@ -96,7 +95,6 @@ fn hle_sound_channel_clear_stops_twelve_initialized_software_channels() {
     assert_eq!(machine.read_register(2), 0);
 }
 
-/// ZiGBA: `HLE SoundChannelClear leaves an invalid SoundArea untouched`.
 #[test]
 fn hle_sound_channel_clear_leaves_an_invalid_sound_area_untouched() {
     let rom = [0x00, 0x00, 0x1e, 0xef];
@@ -132,7 +130,6 @@ fn save_state_v6_byte_schema_is_locked_by_a_deterministic_fixture() {
     assert_eq!(blake3::hash(&bytes).as_bytes(), &expected_digest);
 }
 
-/// ZiGBA: `canonical save-state round trip resumes bit-identical execution`.
 #[test]
 fn canonical_save_state_round_trip_resumes_bit_identical_execution() {
     let words: [u32; 3] = [0xe3a0_0005, 0xe283_3001, 0xeaff_fffd];
@@ -142,8 +139,8 @@ fn canonical_save_state_round_trip_resumes_bit_identical_execution() {
         executed_step(&mut machine);
     }
     let bytes = encode_machine_state(&machine);
-    // ZiGBA compares with sizeof(Machine). Rust boxes the large arrays, so
-    // include their allocations rather than comparing to the pointer fields.
+    // The large arrays are boxed, so the live size includes their
+    // allocations rather than only the pointer fields.
     let live_bytes = std::mem::size_of::<Machine>()
         + std::mem::size_of_val(machine.bus.ewram.as_ref())
         + std::mem::size_of_val(machine.bus.vram.as_ref())
@@ -219,7 +216,6 @@ fn save_state_envelope_rejects_wrong_media_version_corruption_truncation_and_tra
     ));
 }
 
-/// ZiGBA: `save-state writer rejects impossible PPU phases, past deadlines and incomplete JoyBus`.
 #[test]
 fn save_state_writer_rejects_impossible_ppu_phases_past_deadlines_and_incomplete_joy_bus() {
     let rom = [0xfe, 0xff, 0xff, 0xea];
@@ -288,7 +284,6 @@ fn save_state_envelope_binds_bios_and_boot_mode() {
     ));
 }
 
-/// ZiGBA: `save-state load drops already-produced host audio samples`.
 #[test]
 fn save_state_load_drops_already_produced_host_audio_samples() {
     let rom = [0xfe, 0xff, 0xff, 0xea];
@@ -302,7 +297,6 @@ fn save_state_load_drops_already_produced_host_audio_samples() {
     assert_eq!(resumed.drain_audio_samples(&mut queued), 0);
 }
 
-/// ZiGBA: `save-state load transactionally rejects a digest-valid impossible PPU phase`.
 #[test]
 fn save_state_load_transactionally_rejects_a_digest_valid_impossible_ppu_phase() {
     let rom = [0xfe, 0xff, 0xff, 0xea];
@@ -317,8 +311,8 @@ fn save_state_load_transactionally_rejects_a_digest_valid_impossible_ppu_phase()
     assert_eq!(baseline_bytes.len(), payload_end + 32);
     assert_eq!(baseline_bytes.len(), marker_bytes.len());
 
-    // Discover the field from two independently valid public states, just
-    // as in ZiGBA, instead of baking in a private payload offset.
+    // Discover the field from two independently valid public states instead
+    // of baking in a private payload offset.
     let offsets: Vec<_> = (payload_start..payload_end)
         .filter(|&offset| baseline_bytes[offset] != marker_bytes[offset])
         .collect();
@@ -341,7 +335,6 @@ fn save_state_load_transactionally_rejects_a_digest_valid_impossible_ppu_phase()
     assert_eq!(target_before, encode_machine_state(&target));
 }
 
-/// ZiGBA: `save-state round trip keeps the prescaler counter and rejects a timer phase off it`.
 #[test]
 fn save_state_round_trip_keeps_the_prescaler_counter_and_rejects_a_timer_phase_off_it() {
     let rom = [0xfe, 0xff, 0xff, 0xea];
@@ -385,7 +378,6 @@ fn save_state_round_trip_keeps_the_prescaler_counter_and_rejects_a_timer_phase_o
     ));
 }
 
-/// ZiGBA: `HLE SoundDriverVSync only decrements a countdown above one`.
 #[test]
 fn hle_sound_driver_v_sync_only_decrements_a_countdown_above_one() {
     let rom = [0, 0, 0x1d, 0xef];
@@ -406,7 +398,6 @@ fn hle_sound_driver_v_sync_only_decrements_a_countdown_above_one() {
     );
 }
 
-/// ZiGBA: `HLE SoundDriverVSync reloads zero and one countdowns and resets DMA`.
 #[test]
 fn hle_sound_driver_v_sync_reloads_zero_and_one_countdowns_and_resets_dma() {
     let rom = [0, 0, 0x1d, 0xef];
@@ -429,7 +420,6 @@ fn hle_sound_driver_v_sync_reloads_zero_and_one_countdowns_and_resets_dma() {
     }
 }
 
-/// ZiGBA: `HLE SoundDriverVSync rejects an invalid SoundArea identifier`.
 #[test]
 fn hle_sound_driver_v_sync_rejects_an_invalid_sound_area_identifier() {
     let rom = [0, 0, 0x1d, 0xef];
@@ -446,7 +436,6 @@ fn hle_sound_driver_v_sync_rejects_an_invalid_sound_area_identifier() {
     );
 }
 
-/// ZiGBA: `HLE SoundDriverVSyncOn configures repeating special-timing DMA`.
 #[test]
 fn hle_sound_driver_v_sync_on_configures_repeating_special_timing_dma() {
     let rom = [0, 0, 0x29, 0xef];
@@ -462,7 +451,6 @@ fn hle_sound_driver_v_sync_on_configures_repeating_special_timing_dma() {
     );
 }
 
-/// ZiGBA: `HLE CustomHalt selects Halt or Stop from r2 bit seven`.
 #[test]
 fn hle_custom_halt_selects_halt_or_stop_from_r2_bit_seven() {
     let rom = [0, 0, 0x27, 0xef];
@@ -480,11 +468,10 @@ fn hle_custom_halt_selects_halt_or_stop_from_r2_bit_seven() {
     assert_eq!(stop.bus.power_state(), PowerState::Stopped);
 }
 
-/// ZiGBA: `HLE Div and DivArm return quotient remainder and absolute quotient including BIOS edges`.
 #[test]
 fn hle_div_and_div_arm_return_quotient_remainder_and_absolute_quotient_including_bios_edges() {
     // GBATEK SWI 06h/07h: quotient, remainder, |quotient|. The 0/0 and
-    // INT_MIN/-1 results are the retail BIOS oracles in ZiGBA's test.
+    // INT_MIN/-1 results are the retail BIOS oracles.
     let cases = [
         (6, 100, 7, 14, 2, 14),
         (7, 7, 100, 14, 2, 14),
@@ -504,7 +491,6 @@ fn hle_div_and_div_arm_return_quotient_remainder_and_absolute_quotient_including
     }
 }
 
-/// ZiGBA: `HLE GetBiosChecksum returns the retail BIOS identity tuple`.
 #[test]
 fn hle_get_bios_checksum_returns_the_retail_bios_identity_tuple() {
     let rom = [0, 0, 0x0d, 0xef];
@@ -517,7 +503,6 @@ fn hle_get_bios_checksum_returns_the_retail_bios_identity_tuple() {
     );
 }
 
-/// ZiGBA: `HLE CpuSet copies halfwords or words and writes back only word address registers`.
 #[test]
 fn hle_cpu_set_copies_halfwords_or_words_and_writes_back_only_word_address_registers() {
     let rom = [0, 0, 0x0b, 0xef];
@@ -537,7 +522,6 @@ fn hle_cpu_set_copies_halfwords_or_words_and_writes_back_only_word_address_regis
     }
 }
 
-/// ZiGBA: `HLE BitUnPack extracts low bits first and applies its conditional bias`.
 #[test]
 fn hle_bit_un_pack_extracts_low_bits_first_and_applies_its_conditional_bias() {
     for (bias, expected) in [
@@ -562,7 +546,6 @@ fn hle_bit_un_pack_extracts_low_bits_first_and_applies_its_conditional_bias() {
     }
 }
 
-/// ZiGBA: `HLE LZ77 expands literals and overlapping back-references to WRAM and VRAM`.
 #[test]
 fn hle_lz77_expands_literals_and_overlapping_back_references_to_wram_and_vram() {
     let expected = b"ABCABCABCX";
@@ -581,7 +564,6 @@ fn hle_lz77_expands_literals_and_overlapping_back_references_to_wram_and_vram() 
     }
 }
 
-/// ZiGBA: `HLE LZ77 consumes a new control byte after every eight tokens`.
 #[test]
 fn hle_lz77_consumes_a_new_control_byte_after_every_eight_tokens() {
     let rom = [
@@ -597,7 +579,6 @@ fn hle_lz77_consumes_a_new_control_byte_after_every_eight_tokens() {
     assert_eq!(machine.read_register(3), 0);
 }
 
-/// ZiGBA: `HLE run-length decompression handles literal and repeated blocks in WRAM and VRAM`.
 #[test]
 fn hle_run_length_decompression_handles_literal_and_repeated_blocks_in_wram_and_vram() {
     let expected = b"AAAAABCDEFZZZZ\0\0";
@@ -619,7 +600,6 @@ fn hle_run_length_decompression_handles_literal_and_repeated_blocks_in_wram_and_
     }
 }
 
-/// ZiGBA: `HLE run-length VRAM output from an odd destination ends its padding`.
 #[test]
 fn hle_run_length_vram_output_from_an_odd_destination_ends_its_padding() {
     for (length, expected) in
@@ -636,7 +616,6 @@ fn hle_run_length_vram_output_from_an_odd_destination_ends_its_padding() {
     }
 }
 
-/// ZiGBA: `HLE 8-bit differential filters accumulate deltas to WRAM and packed VRAM output`.
 #[test]
 fn hle_8_bit_differential_filters_accumulate_deltas_to_wram_and_packed_vram_output() {
     for (swi, destination, vram) in [(0x16, 0x0200_0000, false), (0x17, 0x0600_0000, true)] {
@@ -654,7 +633,6 @@ fn hle_8_bit_differential_filters_accumulate_deltas_to_wram_and_packed_vram_outp
     }
 }
 
-/// ZiGBA: `HLE 16-bit differential filter wraps halfword deltas`.
 #[test]
 fn hle_16_bit_differential_filter_wraps_halfword_deltas() {
     let rom = [0, 0, 0x18, 0xef, 0x80, 6, 0, 0, 1, 0, 2, 0, 0xff, 0xff];
@@ -669,7 +647,6 @@ fn hle_16_bit_differential_filter_wraps_halfword_deltas() {
     assert_eq!(machine.read_register(3), 0xdead_beef);
 }
 
-/// ZiGBA: `mGBA BIOS math table ArcTan cases preserve fixed-point BIOS intermediates`.
 #[test]
 fn m_gba_bios_math_table_arc_tan_cases_preserve_fixed_point_bios_intermediates() {
     let rom = [0, 0, 9, 0xef];
@@ -700,7 +677,6 @@ fn m_gba_bios_math_table_arc_tan_cases_preserve_fixed_point_bios_intermediates()
     }
 }
 
-/// ZiGBA: `mGBA BIOS math table ArcTan2 covers axes and every quadrant`.
 #[test]
 fn m_gba_bios_math_table_arc_tan2_covers_axes_and_every_quadrant() {
     let rom = [0, 0, 0x0a, 0xef];
@@ -734,7 +710,6 @@ fn m_gba_bios_math_table_arc_tan2_covers_axes_and_every_quadrant() {
     }
 }
 
-/// ZiGBA: `HLE BgAffineSet applies fixed-point rotation and ignores the low angle byte`.
 #[test]
 fn hle_bg_affine_set_applies_fixed_point_rotation_and_ignores_the_low_angle_byte() {
     let rom = [0, 0, 0x0e, 0xef];
@@ -777,7 +752,6 @@ fn hle_bg_affine_set_applies_fixed_point_rotation_and_ignores_the_low_angle_byte
     );
 }
 
-/// ZiGBA: `HLE ObjAffineSet writes consecutive records at the requested OAM stride`.
 #[test]
 fn hle_obj_affine_set_writes_consecutive_records_at_the_requested_oam_stride() {
     let rom = [0, 0, 0x0f, 0xef];
@@ -805,7 +779,6 @@ fn hle_obj_affine_set_writes_consecutive_records_at_the_requested_oam_stride() {
     );
 }
 
-/// ZiGBA: `HLE CpuFastSet fills complete eight-word bursts`.
 #[test]
 fn hle_cpu_fast_set_fills_complete_eight_word_bursts() {
     let words: [u32; 11] = [
@@ -834,7 +807,6 @@ fn hle_cpu_fast_set_fills_complete_eight_word_bursts() {
     assert_eq!(machine.read_register(3), 0x5a);
 }
 
-/// ZiGBA: `unsupported HLE SWI is a typed Machine fault`.
 #[test]
 fn unsupported_hle_swi_is_a_typed_machine_fault() {
     let rom = [0, 0, 0x2b, 0xef];
@@ -851,7 +823,6 @@ fn unsupported_hle_swi_is_a_typed_machine_fault() {
     );
 }
 
-/// ZiGBA: `HLE SampleFreqSet mode zero is a typed Machine fault`.
 #[test]
 fn hle_sample_freq_set_mode_zero_is_a_typed_machine_fault() {
     let rom = [0x13, 0xff, 0x2f, 0xe1];
@@ -873,7 +844,6 @@ fn hle_sample_freq_set_mode_zero_is_a_typed_machine_fault() {
     );
 }
 
-/// ZiGBA: `HLE BgAffineSet rejects an unaligned MMIO word read before side effects`.
 #[test]
 fn hle_bg_affine_set_rejects_an_unaligned_mmio_word_read_before_side_effects() {
     let rom = [0, 0, 0x0e, 0xef];
@@ -905,7 +875,6 @@ fn hle_bg_affine_set_rejects_an_unaligned_mmio_word_read_before_side_effects() {
     ));
 }
 
-/// ZiGBA: `HLE BgAffineSet rejects a later unaligned MMIO word write before side effects`.
 #[test]
 fn hle_bg_affine_set_rejects_a_later_unaligned_mmio_word_write_before_side_effects() {
     let rom = [0, 0, 0x0e, 0xef];
@@ -929,7 +898,6 @@ fn hle_bg_affine_set_rejects_a_later_unaligned_mmio_word_write_before_side_effec
     assert_eq!(&machine.bus.iwram[0x7ffa..], &[0x5a; 6]);
 }
 
-/// ZiGBA: `HLE services preflight direct guest word pointers at the Machine seam`.
 #[test]
 fn hle_services_preflight_direct_guest_word_pointers_at_the_machine_seam() {
     // (service, r0, r1, r2, r13, operation); each wraps onto 04000002h.
@@ -969,7 +937,6 @@ fn hle_services_preflight_direct_guest_word_pointers_at_the_machine_seam() {
     }
 }
 
-/// ZiGBA: `HLE SoundDriverInit establishes the retail mode-four mixer state`.
 #[test]
 fn hle_sound_driver_init_establishes_the_retail_mode_four_mixer_state() {
     let rom = [0, 0, 0x1a, 0xef];
@@ -1021,7 +988,6 @@ fn hle_sound_driver_init_establishes_the_retail_mode_four_mixer_state() {
     assert_eq!(read_u32(&machine.bus.iwram[0x7f00..]), 0);
 }
 
-/// ZiGBA: `HLE SoundDriverMode applies fields and clears enabled software channels`.
 #[test]
 fn hle_sound_driver_mode_applies_fields_and_clears_enabled_software_channels() {
     let rom = [0, 0, 0x1b, 0xef];
@@ -1046,7 +1012,6 @@ fn hle_sound_driver_mode_applies_fields_and_clears_enabled_software_channels() {
     assert_eq!(machine.read_register(0), 0x0090_4381);
 }
 
-/// ZiGBA: `HLE SoundDriverMode ignores zero fields and an invalid SoundArea`.
 #[test]
 fn hle_sound_driver_mode_ignores_zero_fields_and_an_invalid_sound_area() {
     let rom = [0, 0, 0x1b, 0xef];
@@ -1072,7 +1037,6 @@ fn hle_sound_driver_mode_ignores_zero_fields_and_an_invalid_sound_area() {
     assert_eq!(invalid.read_register(1), 0x6873_6d54);
 }
 
-/// ZiGBA: `HLE SoundDriverVSyncOff disables DMA and clears the mix buffer`.
 #[test]
 fn hle_sound_driver_v_sync_off_disables_dma_and_clears_the_mix_buffer() {
     let rom = [0, 0, 0x28, 0xef];
@@ -1104,7 +1068,6 @@ fn hle_sound_driver_v_sync_off_disables_dma_and_clears_the_mix_buffer() {
     }
 }
 
-/// ZiGBA: `HLE SoundDriverMode programs playback mode four at scanline 159`.
 #[test]
 fn hle_sound_driver_mode_programs_playback_mode_four_at_scanline_159() {
     let rom = [0, 0, 0x1b, 0xef];
@@ -1132,7 +1095,6 @@ fn hle_sound_driver_mode_programs_playback_mode_four_at_scanline_159() {
     assert_eq!(machine.read_register(1), 159);
 }
 
-/// ZiGBA: `HLE SoundDriverVSyncOff rejects identifiers beyond the busy state`.
 #[test]
 fn hle_sound_driver_v_sync_off_rejects_identifiers_beyond_the_busy_state() {
     let rom = [0, 0, 0x28, 0xef];
@@ -1155,7 +1117,6 @@ fn hle_sound_driver_v_sync_off_rejects_identifiers_beyond_the_busy_state() {
     );
 }
 
-/// ZiGBA: `HLE MidiKey2Freq reads WaveData frequency and uses byte-sized pitch inputs`.
 #[test]
 fn hle_midi_key2_freq_reads_wave_data_frequency_and_uses_byte_sized_pitch_inputs() {
     let rom = [0, 0, 0x1f, 0xef];
@@ -1175,7 +1136,6 @@ fn hle_midi_key2_freq_reads_wave_data_frequency_and_uses_byte_sized_pitch_inputs
     assert_eq!(byte_inputs.read_register(0), 0x0100_0000);
 }
 
-/// ZiGBA: `HLE SoundDriverMain advances an attacking fixed-rate PCM channel`.
 #[test]
 fn hle_sound_driver_main_advances_an_attacking_fixed_rate_pcm_channel() {
     let rom = [0, 0, 0x1c, 0xef];
@@ -1201,7 +1161,6 @@ fn hle_sound_driver_main_advances_an_attacking_fixed_rate_pcm_channel() {
     assert_eq!(&area[0x980..0x984], &[0, 0xfe, 2, 0xfc]);
 }
 
-/// ZiGBA: `HLE SoundDriverMain linearly interpolates a variable-rate PCM channel`.
 #[test]
 fn hle_sound_driver_main_linearly_interpolates_a_variable_rate_pcm_channel() {
     let rom = [0, 0, 0x1c, 0xef];
@@ -1233,7 +1192,6 @@ fn hle_sound_driver_main_linearly_interpolates_a_variable_rate_pcm_channel() {
     assert_eq!(&area[0x980..0x982], &[0, 49]);
 }
 
-/// ZiGBA: `high-speed audio preserves machine execution and FIFO DMA timing`.
 #[test]
 fn high_speed_audio_preserves_machine_execution_and_fifo_dma_timing() {
     let rom = [0xfe, 0xff, 0xff, 0xea];
@@ -1279,7 +1237,6 @@ fn high_speed_audio_preserves_machine_execution_and_fifo_dma_timing() {
     assert_eq!(exact_bytes, fast_bytes);
 }
 
-/// ZiGBA: `high-speed audio state round trip retains phases and requires policy reapplication`.
 #[test]
 fn high_speed_audio_state_round_trip_retains_phases_and_requires_policy_reapplication() {
     let rom = [0xfe, 0xff, 0xff, 0xea];
@@ -1324,7 +1281,6 @@ fn high_speed_audio_state_round_trip_retains_phases_and_requires_policy_reapplic
     assert_eq!(&expected[..count], &actual[..count]);
 }
 
-/// ZiGBA: `high-speed audio transitions flush device batches and survive BIOS hard reset`.
 #[test]
 fn high_speed_audio_transitions_flush_device_batches_and_survive_bios_hard_reset() {
     let mut machine = machine(&[]);
@@ -1392,7 +1348,6 @@ fn expect_quarter_turn_oam(machine: &Machine) {
     }
 }
 
-/// ZiGBA: `HLE ObjAffineSet spanning several steps matches the single-step cost and output`.
 #[test]
 fn hle_obj_affine_set_spanning_several_steps_matches_the_single_step_cost_and_output() {
     let mut first = obj_affine_workload(1, 2);
@@ -1432,7 +1387,6 @@ fn hle_obj_affine_set_spanning_several_steps_matches_the_single_step_cost_and_ou
     assert_eq!(machine.read_register(5), 0x5a);
 }
 
-/// ZiGBA: `HLE HuffUnComp without a terminal returns to runUntil while video advances`.
 #[test]
 fn hle_huff_un_comp_without_a_terminal_returns_to_run_until_while_video_advances() {
     let mut machine = bulk_service_machine(0x13);
@@ -1543,7 +1497,6 @@ fn finish_bulk_call(machine: &mut Machine) {
     executed_step(machine);
 }
 
-/// ZiGBA: `a state saved inside a multi-step HLE service resumes identically`.
 #[test]
 fn a_state_saved_inside_a_multi_step_hle_service_resumes_identically() {
     for service in LONG_BULK_SERVICES {
@@ -1566,7 +1519,6 @@ fn a_state_saved_inside_a_multi_step_hle_service_resumes_identically() {
     }
 }
 
-/// ZiGBA: `multi-step HLE services reach the same state under any host slicing`.
 #[test]
 fn multi_step_hle_services_reach_the_same_state_under_any_host_slicing() {
     for service in LONG_BULK_SERVICES {
@@ -1595,7 +1547,6 @@ fn multi_step_hle_services_reach_the_same_state_under_any_host_slicing() {
     }
 }
 
-/// ZiGBA: `ARM software interrupt enters Supervisor at the BIOS vector and MOVS PC, LR returns`.
 #[test]
 fn arm_software_interrupt_enters_supervisor_at_the_bios_vector_and_movs_pc_lr_returns() {
     let rom = [0, 0, 0, 0xef, 7, 0, 0xa0, 0xe3];
@@ -1620,7 +1571,6 @@ fn arm_software_interrupt_enters_supervisor_at_the_bios_vector_and_movs_pc_lr_re
     assert_eq!(machine.read_register(0), 7);
 }
 
-/// ZiGBA: `software interrupt from FIQ saves the FIQ bank and enters Supervisor mode`.
 #[test]
 fn software_interrupt_from_fiq_saves_the_fiq_bank_and_enters_supervisor_mode() {
     let words: [u32; 4] = [0xe3a0_8022, 0xe329_f011, 0xe3a0_8044, 0xef00_0000];
@@ -1644,7 +1594,6 @@ fn software_interrupt_from_fiq_saves_the_fiq_bank_and_enters_supervisor_mode() {
     assert_eq!(machine.next_instruction_address(), 8);
 }
 
-/// ZiGBA: `pending IRQ can interrupt Supervisor mode without losing its bank`.
 #[test]
 fn pending_irq_can_interrupt_supervisor_mode_without_losing_its_bank() {
     let rom = [0x13, 0xf0, 0x29, 0xe3];
@@ -1669,7 +1618,6 @@ fn pending_irq_can_interrupt_supervisor_mode_without_losing_its_bank() {
     assert_eq!(machine.next_instruction_address(), 0x18);
 }
 
-/// ZiGBA: `LDM exception return loads the privileged bank then restores Thumb System state`.
 #[test]
 fn ldm_exception_return_loads_the_privileged_bank_then_restores_thumb_system_state() {
     let words: [u32; 5] = [0xe3a0_0403, 0xe329_f012, 0xe369_f03f, 0xe8d0_a000, 0x0000_2107];
@@ -1688,7 +1636,6 @@ fn ldm_exception_return_loads_the_privileged_bank_then_restores_thumb_system_sta
     assert_eq!(machine.read_register(1), 7);
 }
 
-/// ZiGBA: `ARM coprocessor encoding enters Undefined mode and returns through MOVS PC LR`.
 #[test]
 fn arm_coprocessor_encoding_enters_undefined_mode_and_returns_through_movs_pc_lr() {
     let words: [u32; 2] = [0xee00_0010, 0xe3a0_1007];
@@ -1713,7 +1660,6 @@ fn arm_coprocessor_encoding_enters_undefined_mode_and_returns_through_movs_pc_lr
     assert_eq!(machine.read_register(1), 7);
 }
 
-/// ZiGBA: `ARM class 011 bit-four reserved encoding takes Undefined only when condition passes`.
 #[test]
 fn arm_class_011_bit_four_reserved_encoding_takes_undefined_only_when_condition_passes() {
     let words: [u32; 5] = [0xe1a0_0000, 0x07f0_00f0, 0xe3a0_1007, 0xe7f0_00f0, 0xe3a0_2009];
@@ -1747,7 +1693,6 @@ fn arm_class_011_bit_four_reserved_encoding_takes_undefined_only_when_condition_
     assert_eq!(machine.read_register(2), 9);
 }
 
-/// ZiGBA: `ARMv5 doubleword encodings take Undefined on ARM7TDMI`.
 #[test]
 fn armv5_doubleword_encodings_take_undefined_on_arm7tdmi() {
     for encoding in [0xe1e0_20d4, 0xe1e0_20f4] {
@@ -1786,7 +1731,6 @@ fn armv5_doubleword_encodings_take_undefined_on_arm7tdmi() {
     }
 }
 
-/// ZiGBA: `Thumb primary decode preserves unallocated stack and branch encodings`.
 #[test]
 fn thumb_primary_decode_preserves_unallocated_stack_and_branch_encodings() {
     for instruction in [
@@ -1810,7 +1754,6 @@ fn thumb_primary_decode_preserves_unallocated_stack_and_branch_encodings() {
     }
 }
 
-/// ZiGBA: `Thumb primary decode routes SWI boundary immediates to the Supervisor vector`.
 #[test]
 fn thumb_primary_decode_routes_swi_boundary_immediates_to_the_supervisor_vector() {
     for instruction in [0xdf00u16, 0xdf08, 0xdf7f, 0xdfff] {
@@ -1831,7 +1774,6 @@ fn thumb_primary_decode_routes_swi_boundary_immediates_to_the_supervisor_vector(
     }
 }
 
-/// ZiGBA: `linked scheduler reports the exact faulted peer without advancing siblings`.
 #[test]
 fn linked_scheduler_reports_the_exact_faulted_peer_without_advancing_siblings() {
     let healthy_rom = [0xfe, 0xff, 0xff, 0xea];
@@ -1863,7 +1805,6 @@ fn linked_scheduler_reports_the_exact_faulted_peer_without_advancing_siblings() 
     assert_eq!(faulty.now(), faulty_cycle);
 }
 
-/// ZiGBA: `linked scheduler advances a halted child to the serial IRQ and resumes it`.
 #[test]
 fn linked_scheduler_advances_a_halted_child_to_the_serial_irq_and_resumes_it() {
     let rom = [0xfe, 0xff, 0xff, 0xea];
@@ -1884,7 +1825,6 @@ fn linked_scheduler_advances_a_halted_child_to_the_serial_irq_and_resumes_it() {
     assert_eq!(read_machine_half(&mut child, 0x0400_012a), 0x0012);
 }
 
-/// ZiGBA: `linked scheduler reports a stopped machine without advancing its clock`.
 #[test]
 fn linked_scheduler_reports_a_stopped_machine_without_advancing_its_clock() {
     let rom = [0xfe, 0xff, 0xff, 0xea];
@@ -1898,7 +1838,6 @@ fn linked_scheduler_reports_a_stopped_machine_without_advancing_its_clock() {
     assert_eq!(stopped.now(), 0);
 }
 
-/// ZiGBA: `HLE affine and MidiKey2Freq results beyond their stored width keep their low bits`.
 #[test]
 fn hle_affine_and_midi_key2_freq_results_beyond_their_stored_width_keep_their_low_bits() {
     let mut obj = machine(&[0, 0, 0x0f, 0xef]);
@@ -1933,7 +1872,6 @@ fn hle_affine_and_midi_key2_freq_results_beyond_their_stored_width_keep_their_lo
     assert_eq!(midi.read_register(0), 0x8000_0000);
 }
 
-/// ZiGBA: `HLE HuffUnComp reads a halfword-aligned bitstream as rotated words`.
 #[test]
 fn hle_huff_un_comp_reads_a_halfword_aligned_bitstream_as_rotated_words() {
     let rom = [0, 0, 0x13, 0xef, 0x28, 4, 0, 0, 2, 0xc0, b'A', b'B', 0, 0x60, 0, 0, 0, 0];
@@ -1944,7 +1882,6 @@ fn hle_huff_un_comp_reads_a_halfword_aligned_bitstream_as_rotated_words() {
     assert_eq!(machine.read_register(0), 0x0800_0012);
 }
 
-/// ZiGBA: `HLE HuffUnComp traverses nested 8-bit nodes from the bitstream MSB`.
 #[test]
 fn hle_huff_un_comp_traverses_nested_8_bit_nodes_from_the_bitstream_msb() {
     let rom =
@@ -1964,7 +1901,6 @@ fn hle_huff_un_comp_traverses_nested_8_bit_nodes_from_the_bitstream_msb() {
     );
 }
 
-/// ZiGBA: `HLE HuffUnComp packs 4-bit terminal symbols low nibble first`.
 #[test]
 fn hle_huff_un_comp_packs_4_bit_terminal_symbols_low_nibble_first() {
     let rom = [0, 0, 0x13, 0xef, 0x24, 4, 0, 0, 1, 0xc0, 0x0a, 3, 0, 0, 0, 0x4d];
@@ -1976,7 +1912,6 @@ fn hle_huff_un_comp_packs_4_bit_terminal_symbols_low_nibble_first() {
     assert_eq!(machine.read_register(1), 0x0200_0004);
 }
 
-/// ZiGBA: `HLE HuffUnComp treats zero symbol width as eight and writes a padded word`.
 #[test]
 fn hle_huff_un_comp_treats_zero_symbol_width_as_eight_and_writes_a_padded_word() {
     let rom = [0, 0, 0x13, 0xef, 0x20, 1, 0, 0, 1, 0xc0, b'X', b'Y', 0, 0, 0, 0];
@@ -1988,12 +1923,11 @@ fn hle_huff_un_comp_treats_zero_symbol_width_as_eight_and_writes_a_padded_word()
     assert_eq!(machine.read_register(1), 0x0200_0004);
 }
 
-/// ZiGBA: `save-state restores an in flight prefetch across WAITCNT and boundary repricing`.
 #[test]
 fn save_state_restores_an_in_flight_prefetch_across_waitcnt_and_boundary_repricing() {
     let rom = vec![0xa5; 0x20040];
-    // ZiGBA compares the whole prefetch struct. Rust does not derive Eq for
-    // this durable record, so compare its eight stored fields explicitly.
+    // The durable prefetch record does not derive Eq, so compare its eight
+    // stored fields explicitly.
     macro_rules! assert_prefetch_eq {
         ($original:expr, $restored:expr) => {{
             let a = &$original.bus.game_pak_prefetch;
@@ -2060,7 +1994,6 @@ fn save_state_restores_an_in_flight_prefetch_across_waitcnt_and_boundary_reprici
     }
 }
 
-/// ZiGBA: `HLE SoundChannelClear resumes ARM and Thumb extension callbacks`.
 #[test]
 fn hle_sound_channel_clear_resumes_arm_and_thumb_extension_callbacks() {
     for thumb in [false, true] {
@@ -2114,7 +2047,6 @@ fn hle_sound_channel_clear_resumes_arm_and_thumb_extension_callbacks() {
     }
 }
 
-/// ZiGBA: `HLE SoundDriverMain resumes player and CGB callbacks in order`.
 #[test]
 fn hle_sound_driver_main_resumes_player_and_cgb_callbacks_in_order() {
     let mut rom = [0u8; 0x48];
@@ -2155,7 +2087,6 @@ fn hle_sound_driver_main_resumes_player_and_cgb_callbacks_in_order() {
     assert_eq!(machine.read_cpsr(), 0xa000_001f);
 }
 
-/// ZiGBA: `HLE SoundDriverMain samples CGB callback once across HBlank DMA`.
 #[test]
 fn hle_sound_driver_main_samples_cgb_callback_once_across_hblank_dma() {
     let mut rom = [0u8; 0x48];
@@ -2185,7 +2116,6 @@ fn hle_sound_driver_main_samples_cgb_callback_once_across_hblank_dma() {
     assert_eq!(continuation.return_address, 0x0800_0004);
 }
 
-/// ZiGBA: `HLE IRQ nesting limit faults before exception state changes`.
 #[test]
 fn hle_irq_nesting_limit_faults_before_exception_state_changes() {
     let mut machine = machine(&[0, 0, 0xa0, 0xe1]);
@@ -2220,7 +2150,6 @@ fn hle_irq_nesting_limit_faults_before_exception_state_changes() {
     );
 }
 
-/// ZiGBA: `HLE MP2K missing running status is a typed Machine fault`.
 #[test]
 fn hle_mp2k_missing_running_status_is_a_typed_machine_fault() {
     let mut machine = machine(&[0, 0, 0x1c, 0xef]);
@@ -2256,7 +2185,6 @@ fn hle_mp2k_missing_running_status_is_a_typed_machine_fault() {
     );
 }
 
-/// ZiGBA: `unsupported HLE SoundDriverMain callback stops at the Machine boundary`.
 #[test]
 fn unsupported_hle_sound_driver_main_callback_stops_at_the_machine_boundary() {
     let rom = [0, 0, 0x1c, 0xef];
@@ -2319,7 +2247,6 @@ fn unsupported_hle_sound_driver_main_callback_stops_at_the_machine_boundary() {
     );
 }
 
-/// ZiGBA: `unsupported SoundChannelClear callbacks fault on entry and continuation`.
 #[test]
 fn unsupported_sound_channel_clear_callbacks_fault_on_entry_and_continuation() {
     let rom = 0xef1e_0000u32.to_le_bytes();
@@ -2349,7 +2276,6 @@ fn unsupported_sound_channel_clear_callbacks_fault_on_entry_and_continuation() {
     assert_eq!(fault.reason, FaultReason::SoundChannelClearInternalCallback { target: 0x2345 });
 }
 
-/// ZiGBA: `HLE TrackStop CGB callback incompatibility is a typed fault`.
 #[test]
 fn hle_track_stop_cgb_callback_incompatibility_is_a_typed_fault() {
     let mut machine = machine(&[0, 0, 0x22, 0xef]);
@@ -2369,7 +2295,6 @@ fn hle_track_stop_cgb_callback_incompatibility_is_a_typed_fault() {
     );
 }
 
-/// ZiGBA: `HLE MP2K internal callback and chain limit are typed faults`.
 #[test]
 fn hle_mp2k_internal_callback_and_chain_limit_are_typed_faults() {
     let rom = [0, 0, 0x1c, 0xef];
@@ -2408,7 +2333,6 @@ fn hle_mp2k_internal_callback_and_chain_limit_are_typed_faults() {
     );
 }
 
-/// ZiGBA: `HLE MP2K replacement command incompatibility is a typed fault`.
 #[test]
 fn hle_mp2k_replacement_command_incompatibility_is_a_typed_fault() {
     let mut machine = machine(&[0, 0, 0x1c, 0xef]);
@@ -2435,7 +2359,6 @@ fn hle_mp2k_replacement_command_incompatibility_is_a_typed_fault() {
     );
 }
 
-/// ZiGBA: `HLE SoundDriverMain runs the internal MP2K scheduler and starts a note`.
 #[test]
 fn hle_sound_driver_main_runs_the_internal_mp2k_scheduler_and_starts_a_note() {
     let mut machine = machine(&[0, 0, 0x1c, 0xef]);
@@ -2477,7 +2400,6 @@ fn hle_sound_driver_main_runs_the_internal_mp2k_scheduler_and_starts_a_note() {
     assert_ne!(read_u32(&ram[0x170..]), 0);
 }
 
-/// ZiGBA: `HLE MP2K scheduler resumes a wrapped guest player callback`.
 #[test]
 fn hle_mp2k_scheduler_resumes_a_wrapped_guest_player_callback() {
     let mut rom = [0u8; 0x108];
@@ -2511,7 +2433,6 @@ fn hle_mp2k_scheduler_resumes_a_wrapped_guest_player_callback() {
     assert_eq!(machine.next_instruction_address(), 0x0800_0004);
 }
 
-/// ZiGBA: `HLE music-player SWIs open start stop continue and initialize fade`.
 #[test]
 fn hle_music_player_swis_open_start_stop_continue_and_initialize_fade() {
     let words = [0xef20_0000u32, 0xef21_0000, 0xef22_0000, 0xef23_0000, 0xef24_0000];
@@ -2577,7 +2498,6 @@ fn hle_music_player_swis_open_start_stop_continue_and_initialize_fade() {
     assert_eq!(read_u32(&ram[0x1034..]), 0x6873_6d53);
 }
 
-/// ZiGBA: `HLE MusicPlayerJumpTableCopy publishes 36 callable Thumb targets`.
 #[test]
 fn hle_music_player_jump_table_copy_publishes_36_callable_thumb_targets() {
     let words = [0xef2a_0000u32, 0xe12f_ff13, 0xe1a0_0000];
@@ -2611,7 +2531,6 @@ fn hle_music_player_jump_table_copy_publishes_36_callable_thumb_targets() {
     assert_eq!(machine.bus.ewram[0x2040], 0xcc);
 }
 
-/// ZiGBA: `HLE SoundDriverMain can call a function returned by its HLE jump list`.
 #[test]
 fn hle_sound_driver_main_can_call_a_function_returned_by_its_hle_jump_list() {
     let words = [0xef2a_0000u32, 0xef1c_0000, 0xe1a0_0000];
@@ -2635,7 +2554,6 @@ fn hle_sound_driver_main_can_call_a_function_returned_by_its_hle_jump_list() {
     assert_eq!(read_u32(&machine.bus.ewram[0x100..]), 0x6873_6d53);
 }
 
-/// ZiGBA: `HLE music event targets consume commands and unlink channels`.
 #[test]
 fn hle_music_event_targets_consume_commands_and_unlink_channels() {
     let words = [0xe12f_ff13u32, 0xe12f_ff13, 0xe1a0_0000];
@@ -2671,7 +2589,6 @@ fn hle_music_event_targets_consume_commands_and_unlink_channels() {
     assert_eq!(read_u32(&machine.bus.ewram[0x202c..]), 0);
 }
 
-/// ZiGBA: `HLE music helpers calculate track output and advance fades`.
 #[test]
 fn hle_music_helpers_calculate_track_output_and_advance_fades() {
     let words = [0xe12f_ff13u32, 0xe12f_ff13, 0xe1a0_0000];
@@ -2714,7 +2631,6 @@ fn hle_music_helpers_calculate_track_output_and_advance_fades() {
     assert_eq!(machine.bus.ewram[0x1000], 0x8b);
 }
 
-/// ZiGBA: `HLE HuffUnComp and BitUnPack fault before an unaligned MMIO output word`.
 #[test]
 fn hle_huff_un_comp_and_bit_un_pack_fault_before_an_unaligned_mmio_output_word() {
     let cases = [
@@ -2751,7 +2667,6 @@ fn hle_huff_un_comp_and_bit_un_pack_fault_before_an_unaligned_mmio_output_word()
     }
 }
 
-/// ZiGBA: `HLE BgAffineSet preflight faults on distant and wrapped records before side effects`.
 #[test]
 fn hle_bg_affine_set_preflight_faults_on_distant_and_wrapped_records_before_side_effects() {
     let cases = [
@@ -2787,7 +2702,6 @@ fn hle_bg_affine_set_preflight_faults_on_distant_and_wrapped_records_before_side
     assert!(machine.cpu.hle_service.is_some());
 }
 
-/// ZiGBA: `a DMA livelock is a terminal fault at the same cycle under any host slicing`.
 #[test]
 fn a_dma_livelock_is_a_terminal_fault_at_the_same_cycle_under_any_host_slicing() {
     let rom = [
@@ -2881,7 +2795,6 @@ fn irq_obj_affine_workload(count: u32, enable: u16) -> Box<Machine> {
     machine
 }
 
-/// ZiGBA: `an IRQ raised inside a multi-step HLE service is taken when the service returns`.
 #[test]
 fn an_irq_raised_inside_a_multi_step_hle_service_is_taken_when_the_service_returns() {
     let mut one = irq_obj_affine_workload(1, 0);
@@ -2928,7 +2841,6 @@ fn an_irq_raised_inside_a_multi_step_hle_service_is_taken_when_the_service_retur
     expect_quarter_turn_oam(&machine);
 }
 
-/// ZiGBA: `a bulk HLE service runs on through a HALT it writes, then halts`.
 #[test]
 fn a_bulk_hle_service_runs_on_through_a_halt_it_writes_then_halts() {
     let mut one = obj_affine_workload(1, 0);

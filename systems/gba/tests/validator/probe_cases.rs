@@ -1,4 +1,4 @@
-//! Source-derived probe oracles from ZiGBA's test/probe_cases.zig.
+//! Source-derived oracles for the probe ROMs in `probe/`.
 
 use super::{Case, Context, Pixel, Result};
 use evenfall_audio::StereoSample;
