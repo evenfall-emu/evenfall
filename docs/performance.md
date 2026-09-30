@@ -229,31 +229,192 @@ measured on another loaded run; one-line rebuilds do not change.
 
 ## Where the speed comes from
 
-ZiGBA's optimizations were ported with their ordinary path intact. A fast
-path is allowed only when the remaining instruction, transfer or renderer
-work cannot reach a guest-visible event; otherwise it falls back. The links
-name the Rust owner, the reference path and tests that compare observable
-effects rather than merely counting invocations.
+Each fast path below skips work only when nothing the guest can see could
+happen in the meantime: no device event, no visible pixel, no interrupt. When
+it can't be sure, it hands over to the ordinary path, which stays in the tree
+as the reference. Each has a test that runs both and compares what the guest
+would see (state bytes, pixels, samples, timing), not just whether the fast
+path ran. Most were ported from ZiGBA along with their reference.
 
-| Fast path and owner                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Retained reference and evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Event horizon and deferred devices:** [`Bus`](../systems/gba/src/bus/mod.rs) advances in an open batch with a strict next-event deadline, materializing APU and timers before MMIO, overflow effects or host reads. FIFO-only timer overflows delegate to [`Apu::elapse_clocked`](../systems/gba/src/apu.rs), stopping at the first refill request.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `Bus::advance_eager`/`advance_step` remain the reference; `fifo_only_timer_overflows_match_eager_refill_and_irq_schedule` in [`bus/mod.rs`](../systems/gba/src/bus/mod.rs) and `synchronized_reads_and_fifo_writes_keep_the_device_batch_armed` in [`bus_b.rs`](../systems/gba/tests/bus_b.rs) compare eager and batched endpoints, including DMA.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| **Direct DMA beats:** [`Bus::read_dma_source` and `write_dma_destination`](../systems/gba/src/bus/mod.rs) dispatch RAM, ROM and FIFO beats directly while preserving charging and beat-boundary preemption.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Generic `Bus::read`/`write` handles other regions; `dma_at_lcd_boundary_preserves_deferred_batch` and the FIFO/batched differential test above cover timing and state. The direct-versus-generic dispatch itself has no standalone switchable differential test.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| **Bulk DMA beats:** [`Bus::dma_bulk`](../systems/gba/src/bus/mod.rs) runs the beats of a DMA from RAM or the latch to RAM, VRAM or OAM that end before the device deadline in one loop, with its own clock and PPU position, while no DMA is pending and each address stays in its region. Devices catch up at the batch's end; a VRAM write on a visible dot whose line's history has room goes through the per-beat path at its cycle. VRAM writes skip their history snapshot once the line's history is full. Beats to VRAM where no visible dot sees them compare and copy once per scanline-memo page.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | The per-beat loop in `Bus::run_dma` is the reference and runs everything else. `bulk_dma_beats_match_the_per_beat_loop` and `vram_writes_skip_snapshots_only_when_history_is_full` in [`bus/mod.rs`](../systems/gba/src/bus/mod.rs) compare durable state bytes, memo marks, raster history and pixels, as `vram_dma_runs_match_the_per_beat_loop` does for VRAM runs; `halfword_vram_writes_match_byte_writes` in [`bus/kernel.rs`](../systems/gba/src/bus/kernel.rs) checks the one-step halfword write.                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| **Execution engine:** [`cpu/engine`](../systems/gba/src/cpu/engine/mod.rs) runs ARM code from IWRAM and EWRAM and Thumb code from IWRAM, EWRAM and Game Pak ROM out of caches of pre-decoded ops, charging each instruction the interpreter's exact cost against a budget that ends before the next device event, and materializing r15, the pipeline, CPSR, open bus and prefetch state only when a run stops. Straight runs of ARM ALU ops execute as charged-once blocks chained through branches; Thumb ROM runs follow the prefetch buffer in closed form; RAM and video memory accesses run inline, VRAM and palette stores only before the next visible dot. MMIO accesses the device batch can take run at their cycle, the interrupt registers, DMA latches, LCD status and (outside visible dots) affine registers inside the run itself ([`RunRegisters`](../systems/gba/src/bus/kernel.rs)); ARM code in the BIOS runs with BIOS fetch timing and read protection. Refusals (SWI, PSR and mode changes, stores into decoded code, MMIO the batch cannot take) go to the interpreter; [research](research/execution-engine.md). | Ordinary `Cpu::step`/`Core::execute_arm` and `execute_thumb` execute refused work and are the reference. The randomized differentials in [`engine/tests.rs`](../systems/gba/src/cpu/engine/tests.rs), `arm_kernel_matches_ordinary_execution_for_random_encodings_and_operands` and `thumb_rom_engine_matches_ordinary_steps_for_random_code_queues_and_horizons` in [`cpu/mod.rs`](../systems/gba/src/cpu/mod.rs) compare registers, flags, clocks, memory, video memory and its caches, raster history, prefetch state and refusal boundaries; `mmio_transfers_in_runs_match_stepping`, `dma_setup_in_runs_matches_stepping` and `bios_and_indirect_branches_run_like_stepping` there cover MMIO, DMA setup, IRQ entry and BIOS code, and `run_registers_match_the_bus` and `run_registers_read_the_lcd_status_at_the_access_cycle` in [`bus/kernel.rs`](../systems/gba/src/bus/kernel.rs) compare the registers runs serve with `Bus::read`, `Bus::write` and `Bus::read_mmio`. |
-| **Streamed fetches:** where the engine refuses, [`Bus`](../systems/gba/src/bus/mod.rs) streams eligible sequential Thumb fetches for the ordinary runner and fuses the common branch refill.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | The scalar `GamePakPrefetch`/ordinary fetch path stays in `Bus`; `thumb_refills_match_two_ordinary_fetches_in_every_queue_phase_and_at_deadlines` in [`bus/fetch.rs`](../systems/gba/tests/bus/fetch.rs) and `bounded_thumb_rom_streams_match_eager_fetches_across_duty_boundaries_and_deadlines` in [`machine_a.rs`](../systems/gba/tests/machine_a.rs) cover the boundaries.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| **Lazy PSG:** [`Apu`](../systems/gba/src/apu.rs) accumulates silent square/noise oscillator time and pushes constant sample runs in bulk.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | The eager oscillator scheduler is retained as a test oracle in [`apu/tests.rs`](../systems/gba/src/apu/tests.rs): `deferred_square_and_noise_oscillators_match_eager_endpoint_ordering` and `constant_sample_runs_match_the_eager_scheduler_across_silent_and_audible_psg`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| **Layer-major compositor:** [`video/compose.rs`](../systems/gba/src/video/compose.rs) renders each background into a color row and the objects into front and minimum-priority rows, then one kernel written against [`Lanes`](../systems/gba/src/video/lanes.rs) (the `wide` crate's `i16x8`: SSE2 on x86-64, NEON on AArch64, `simd128` on WebAssembly built with it; scalar elsewhere) selects, merges and blends eight pixels at a time. Lines with raster history use the reference, unless their only history is VRAM writes to pages the line does not read; [research](research/layer-major-compositor.md).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | The front-to-back `compose_scanline_reference` with the per-dot and per-pixel renderers. `layer_major_lines_match_the_front_to_back_reference` and `vram_history_selects_the_reference_only_for_pages_the_line_reads` in [`video/tests.rs`](../systems/gba/src/video/tests.rs) and `vector_lanes_match_the_scalar_kernel` in [`video/compose.rs`](../systems/gba/src/video/compose.rs) compare them.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| **Tile-row decoding:** [`video/backgrounds.rs`](../systems/gba/src/video/backgrounds.rs) writes whole text tiles; the [decoded palette](../systems/gba/src/video/tile_row_cache.rs) maps each 4bpp byte to two colors per bank and is validated against the palette's bytes; [research](research/tile-row-cache.md).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | The per-dot `render_text_background`. `text_tile_rows_match_the_per_dot_text_renderer` in [`video/tests.rs`](../systems/gba/src/video/tests.rs) and the table checks in [`tile_row_cache.rs`](../systems/gba/src/video/tile_row_cache.rs).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| **Front-to-back composition (history lines):** [`video/render.rs`](../systems/gba/src/video/render.rs) stops BG passes after top/second surfaces close, and [`video/objects.rs`](../systems/gba/src/video/objects.rs) composes regular OBJ rows in lanes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Per-pixel objects and `apply_color_effect_at` remain for special cases; `regular_object_rows_match_the_per_pixel_object_renderer`, `vector_color_effects_match_the_per_dot_effects_unit` and `front_to_back_passes_preserve_priority_and_the_next_visible_bg` in [`video/tests.rs`](../systems/gba/src/video/tests.rs) cover them.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| **Scanline memo:** [`render_scanline`](../systems/gba/src/video/render.rs) retains a line only while registers and video-memory reads remain valid; marked changes invalidate it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `check_kept_scanline` recomposes kept lines and compares their colors. `memoized_scanlines_match_fresh_renders_after_every_kind_of_input_change` in [`video/tests.rs`](../systems/gba/src/video/tests.rs) compares fresh and memoized frames; [research](research/scanline-memo.md).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| **Selective video:** [`Session`](../systems/gba/src/session.rs) skips only pixel production on unpresented frames; [`VideoRecovery`](../systems/gba/src/video_recovery.rs) replays a bounded journal for exact on-demand pixels.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Full-video execution and the portable state load are references. `selective_session_restores_exact_arbitrary_cycle_states_and_inputs_across_internal_frame_splits` in [`session.rs`](../systems/gba/src/session.rs) compares reconstructed states and frames, and `copies_continue_exactly_like_their_source` in [`machine.rs`](../systems/gba/src/machine.rs) compares a raw copy's future with its source's and a loaded state's; [research](research/selective-video.md).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+The [parity traces](parity.md) check the same thing end to end: the whole
+core, fast paths included, must match ZiGBA byte for byte however the host
+slices execution.
 
-These tests complement the ZiGBA/Rust [parity traces](parity.md): optimized
-paths must preserve timed access, IRQ/DMA ordering, full-frame pixels, DAC
-samples and portable state bytes under different host slice sizes. Save-state
-and browser behavior are described in [`design/`](design/save-states.md) and
-[`sdk.md`](sdk.md).
+### Deferred devices
+
+The [`Bus`](../systems/gba/src/bus/mod.rs) doesn't step the APU and timers on
+every access. It lets them run behind in a batch up to the next device event,
+and brings them up to date only when something could observe them: an MMIO
+access, an overflow with side effects, or a host read. A timer overflow that
+only feeds the sound FIFO is left to
+[`Apu::elapse_clocked`](../systems/gba/src/apu.rs), which stops at the first
+refill request.
+
+- Reference: `Bus::advance_eager` and `advance_step`.
+- Checked by: `fifo_only_timer_overflows_match_eager_refill_and_irq_schedule`
+  in [`bus/mod.rs`](../systems/gba/src/bus/mod.rs) and
+  `synchronized_reads_and_fifo_writes_keep_the_device_batch_armed` in
+  [`bus_b.rs`](../systems/gba/tests/bus_b.rs).
+
+### DMA
+
+A DMA beat to or from RAM, ROM or the sound FIFO goes straight to that
+memory
+([`Bus::read_dma_source` and `write_dma_destination`](../systems/gba/src/bus/mod.rs))
+instead of through the generic `Bus::read` and `write`, with the same cost
+and the same chance for a higher-priority DMA to step in between beats.
+
+[`Bus::dma_bulk`](../systems/gba/src/bus/mod.rs) goes further: while no other
+DMA is pending, it runs every beat that ends before the next device event in
+one loop, from RAM or the latch to RAM, VRAM or OAM, as long as each address
+stays in its region. Devices catch up at the end. A VRAM write during a
+visible pixel goes through the per-beat path at its own cycle while the line's
+raster history has room; once it is full, writes skip their history snapshot.
+VRAM beats that no visible pixel can see are compared and copied one
+scanline-memo page at a time.
+
+- Reference: the per-beat loop in `Bus::run_dma`, which also runs every DMA
+  the bulk loop doesn't take.
+- Checked by: `bulk_dma_beats_match_the_per_beat_loop`,
+  `vram_dma_runs_match_the_per_beat_loop` and
+  `vram_writes_skip_snapshots_only_when_history_is_full` in
+  [`bus/mod.rs`](../systems/gba/src/bus/mod.rs), which compare state bytes,
+  raster history and pixels; `dma_at_lcd_boundary_preserves_deferred_batch`
+  for timing.
+- Gap: nothing switches the direct beat dispatch off to compare it with the
+  generic one on its own.
+
+### Execution engine
+
+The [execution engine](../systems/gba/src/cpu/engine/mod.rs) runs ARM and
+Thumb code from IWRAM and EWRAM, and Thumb code from Game Pak ROM, out of
+caches of pre-decoded instructions. It charges each instruction exactly what
+the interpreter would, and stops before the next device event. The program
+counter, pipeline, CPSR, open bus and prefetch state are only written back
+when a run stops.
+
+Inside a run, straight ARM ALU code executes as blocks charged once, Thumb
+ROM code follows the prefetch buffer in closed form, and RAM and video memory
+accesses run inline. Some MMIO registers are served by the run itself
+([`RunRegisters`](../systems/gba/src/bus/kernel.rs)): the interrupt
+registers, DMA latches, LCD status, and the affine registers while no pixel
+is being drawn. BIOS ARM code runs with the BIOS's fetch timing and read
+protection.
+
+Anything else goes to the interpreter: SWI, PSR and mode changes, stores into
+code the engine has decoded, and MMIO the device batch can't take. The
+[research note](research/execution-engine.md) explains the design.
+
+- Reference: `Cpu::step`, `Core::execute_arm` and `execute_thumb`.
+- Checked by: randomized comparisons in
+  [`engine/tests.rs`](../systems/gba/src/cpu/engine/tests.rs) and
+  [`cpu/mod.rs`](../systems/gba/src/cpu/mod.rs) (registers, flags, clocks,
+  memory, caches, raster history, prefetch state and where runs stop); tests
+  for MMIO, DMA setup, IRQ entry and BIOS code in `cpu/mod.rs`; and
+  `run_registers_match_the_bus` in
+  [`bus/kernel.rs`](../systems/gba/src/bus/kernel.rs).
+
+### Streamed Thumb fetches
+
+When the engine refuses Thumb ROM code, the [`Bus`](../systems/gba/src/bus/mod.rs)
+still streams sequential fetches for the interpreter and handles the common
+refill after a branch in one step.
+
+- Reference: the ordinary `GamePakPrefetch` fetch path.
+- Checked by:
+  `thumb_refills_match_two_ordinary_fetches_in_every_queue_phase_and_at_deadlines`
+  in [`bus/fetch.rs`](../systems/gba/tests/bus/fetch.rs) and
+  `bounded_thumb_rom_streams_match_eager_fetches_across_duty_boundaries_and_deadlines`
+  in [`machine_a.rs`](../systems/gba/tests/machine_a.rs).
+
+### Lazy PSG
+
+While a square or noise channel is silent, the [`Apu`](../systems/gba/src/apu.rs)
+only counts elapsed time, and it pushes runs of constant samples in bulk.
+
+- Reference: the eager oscillator scheduler, kept as a test oracle in
+  [`apu/tests.rs`](../systems/gba/src/apu/tests.rs).
+- Checked by: `deferred_square_and_noise_oscillators_match_eager_endpoint_ordering`
+  and `constant_sample_runs_match_the_eager_scheduler_across_silent_and_audible_psg`.
+
+### Layer-major compositor
+
+Most lines are drawn one layer at a time
+([`video/compose.rs`](../systems/gba/src/video/compose.rs)): each background
+into a row of colors, the objects into two rows, then one kernel selects,
+merges and blends eight pixels at a time. The kernel is written against
+[`Lanes`](../systems/gba/src/video/lanes.rs), the `wide` crate's `i16x8`:
+SSE2 on x86-64, NEON on AArch64, `simd128` in the WebAssembly build that
+enables it, scalar elsewhere.
+
+Lines whose registers or video memory change while they are drawn (raster
+history) use the front-to-back reference instead, except when the only
+change is a VRAM write to a page the line doesn't read. The
+[research note](research/layer-major-compositor.md) explains the design.
+
+- Reference: `compose_scanline_reference`, with the per-dot and per-pixel
+  renderers.
+- Checked by: `layer_major_lines_match_the_front_to_back_reference` and
+  `vram_history_selects_the_reference_only_for_pages_the_line_reads` in
+  [`video/tests.rs`](../systems/gba/src/video/tests.rs), and
+  `vector_lanes_match_the_scalar_kernel` in `video/compose.rs`.
+
+### Text tiles
+
+[`video/backgrounds.rs`](../systems/gba/src/video/backgrounds.rs) writes a
+whole text tile at once, and a
+[decoded palette](../systems/gba/src/video/tile_row_cache.rs) turns each 4bpp
+byte into two colors per palette bank. The decoded palette is checked against
+the palette's bytes before use
+([research note](research/tile-row-cache.md)).
+
+- Reference: the per-dot `render_text_background`.
+- Checked by: `text_tile_rows_match_the_per_dot_text_renderer` in
+  [`video/tests.rs`](../systems/gba/src/video/tests.rs), and the table
+  checks in `tile_row_cache.rs`.
+
+### Front-to-back lines
+
+On lines with raster history,
+[`video/render.rs`](../systems/gba/src/video/render.rs) stops drawing
+backgrounds once the top two surfaces of every pixel are known, and
+[`video/objects.rs`](../systems/gba/src/video/objects.rs) draws ordinary
+object rows eight pixels at a time.
+
+- Reference: per-pixel objects and `apply_color_effect_at`, which still
+  handle the special cases.
+- Checked by: `regular_object_rows_match_the_per_pixel_object_renderer`,
+  `vector_color_effects_match_the_per_dot_effects_unit` and
+  `front_to_back_passes_preserve_priority_and_the_next_visible_bg` in
+  [`video/tests.rs`](../systems/gba/src/video/tests.rs).
+
+### Scanline memo
+
+[`render_scanline`](../systems/gba/src/video/render.rs) leaves a line as it
+is when none of the registers or video memory it read has changed since it
+was last drawn.
+Writes mark what they change, and a marked change drops the saved line
+([research note](research/scanline-memo.md)).
+
+- Reference: `check_kept_scanline`, which redraws kept lines and compares
+  their colors.
+- Checked by: `memoized_scanlines_match_fresh_renders_after_every_kind_of_input_change`
+  in [`video/tests.rs`](../systems/gba/src/video/tests.rs).
+
+### Selective video
+
+When the host won't show a frame, [`Session`](../systems/gba/src/session.rs)
+skips drawing it; everything else runs as usual. If the host asks for those
+pixels later, [`VideoRecovery`](../systems/gba/src/video_recovery.rs) replays
+the calls since the last drawn frame with video on and returns the exact
+picture ([research note](research/selective-video.md)).
+
+- Reference: running with full video, and loading a portable state.
+- Checked by:
+  `selective_session_restores_exact_arbitrary_cycle_states_and_inputs_across_internal_frame_splits`
+  in [`session.rs`](../systems/gba/src/session.rs) and
+  `copies_continue_exactly_like_their_source` in
+  [`machine.rs`](../systems/gba/src/machine.rs).
 
 ## Differences, experiments and open questions
 
