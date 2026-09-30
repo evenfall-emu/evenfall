@@ -4,9 +4,9 @@ const frameCycles = 280896n;
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  vi.doUnmock("../../web/core.js");
-  vi.doUnmock("../../web/devtools/journal.js");
-  vi.doUnmock("../../web/devtools/scenario.js");
+  vi.doUnmock("../../gba/core.js");
+  vi.doUnmock("../../gba/devtools/journal.js");
+  vi.doUnmock("../../gba/devtools/scenario.js");
   vi.resetModules();
 });
 
@@ -75,8 +75,8 @@ async function worker(frameWorkMs = 5, messageDelayMs = 0) {
     presentationFrame: (pixels: Uint16Array) => pixels,
     wasm: {
       memory: { buffer: new ArrayBuffer(65536) },
-      zb_cycle: () => cycle,
-      zb_frames: () => cycle / frameCycles,
+      ef_cycle: () => cycle,
+      ef_frames: () => cycle / frameCycles,
     },
     requireLoaded() {},
     load() {},
@@ -91,22 +91,22 @@ async function worker(frameWorkMs = 5, messageDelayMs = 0) {
     }),
     drainAudio: vi.fn((audio: Int16Array) => audio.subarray(0, 0)),
   };
-  vi.doMock("../../web/core.js", () => ({
+  vi.doMock("../../gba/core.js", () => ({
     CYCLES_PER_FRAME: frameCycles,
     WasmCore: { create: async () => core },
   }));
-  vi.doMock("../../web/devtools/journal.js", () => ({
+  vi.doMock("../../gba/devtools/journal.js", () => ({
     GameplayRecording: class {
       constructor() {
         return core;
       }
     },
   }));
-  vi.doMock("../../web/devtools/scenario.js", () => ({
+  vi.doMock("../../gba/devtools/scenario.js", () => ({
     sha256: async () => "test-wasm",
     runScenario() {},
   }));
-  await import("../../web/worker.js");
+  await import("../../gba/worker.js");
   const command = (method: string, ...args: unknown[]) =>
     scope.onmessage({ data: { id: ++nextId, method, args } });
   await command("init", "test.wasm");

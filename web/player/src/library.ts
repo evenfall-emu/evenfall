@@ -1,6 +1,8 @@
 import { Context, Data, Effect, Layer } from "effect";
 import { openDB, type IDBPDatabase, type IDBPTransaction } from "idb";
 import type { LoadOptions } from "@evenfall/gba";
+import { LOCAL_DATABASE } from "./deployed-names";
+import { isLegacyState } from "./state-format";
 export class StorageError extends Data.TaggedError("StorageError")<{
   cause: unknown;
 }> {
@@ -68,6 +70,11 @@ export type ResumeGeneration = {
 };
 export type ResumeCheckpoint = ResumeGeneration & {
   previous?: ResumeGeneration;
+  /**
+   * The newest resume point written by the previous core, which the current
+   * core cannot load. Kept until the playthrough is deleted.
+   */
+  legacy?: ResumeGeneration;
 };
 export type SaveKind = "resume" | "battery";
 /** Doubles as the URL suffix: `/api/saves/:hash/:run/quick/:slot`. */
@@ -484,19 +491,27 @@ export class Library {
           expectedAccountId,
         )),
       };
+      const generation = (resume: ResumeGeneration): ResumeGeneration => ({
+        data: resume.data,
+        options: resume.options,
+        cycle: resume.cycle,
+        savedAt: resume.savedAt,
+      });
+      // Resume points from the previous core never rotate out: the newest
+      // one moves to `legacy` and stays there.
+      const legacy =
+        old?.legacy ??
+        [old, old?.previous].find(
+          (resume): resume is ResumeGeneration =>
+            resume !== undefined && isLegacyState(resume.data),
+        );
       await resumes.put(
         {
           ...current,
-          ...(old
-            ? {
-                previous: {
-                  data: old.data,
-                  options: old.options,
-                  cycle: old.cycle,
-                  savedAt: old.savedAt,
-                },
-              }
+          ...(old && !isLegacyState(old.data)
+            ? { previous: generation(old) }
             : {}),
+          ...(legacy ? { legacy: generation(legacy) } : {}),
         },
         runKey(ref),
       );
@@ -606,20 +621,31 @@ export class Library {
       (await this.db?.getAllFromIndex("cloud", "accountId", accountId)) ?? []
     ).filter((value): value is CloudJob => isCloudKind(value.kind));
   }
+  /**
+   * The bytes `job` uploads, or undefined when nothing should: the source was
+   * replaced, belongs to another account, or is a state from the previous
+   * core, which the server no longer accepts.
+   */
   async cloudSource(job: CloudJob): Promise<Uint8Array | undefined> {
     const slot = quickSlotOf(job.kind);
+    let data: Uint8Array | undefined;
     if (slot !== undefined) {
       const quick = await this.getQuickSlot(job, slot);
-      return quick?.cloudRevision === job.revision &&
+      if (
+        quick?.cloudRevision === job.revision &&
         quick.accountId === job.accountId
-        ? quick.data
-        : undefined;
+      )
+        data = quick.data;
+    } else {
+      const source = await this.db?.get(
+        job.kind === "resume" ? "resumes" : "saves",
+        runKey(job),
+      );
+      if (source?.cloudRevision === job.revision) data = source.data;
     }
-    const source = await this.db?.get(
-      job.kind === "resume" ? "resumes" : "saves",
-      runKey(job),
-    );
-    return source?.cloudRevision === job.revision ? source.data : undefined;
+    return data && job.kind !== "battery" && isLegacyState(data)
+      ? undefined
+      : data;
   }
   async beginCloud(job: CloudJob, digest: string, manual = false) {
     if (!this.db) return false;
@@ -953,7 +979,7 @@ export async function openLibrary() {
   const failure = new Promise<never>((_, reject) => {
     rejectBlocked = reject;
   });
-  const opened = openDB("zigba-local", 8, {
+  const opened = openDB(LOCAL_DATABASE, 8, {
     upgrade(db, oldVersion) {
       if (oldVersion < 7) {
         // Version 7 identifies games by the SHA-1 of the raw ROM instead of
@@ -983,7 +1009,7 @@ export async function openLibrary() {
       blocked = true;
       rejectBlocked(
         new Error(
-          "Close older ZiGBA tabs to upgrade storage. Export saves until then.",
+          "Close older Evenfall tabs to upgrade storage. Export saves until then.",
         ),
       );
     },

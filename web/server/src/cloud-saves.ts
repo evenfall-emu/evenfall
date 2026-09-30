@@ -11,7 +11,25 @@ const PLAYTHROUGH_LIMIT = 100;
 // digits, so an override can never address unbounded keys.
 const QUICK_SLOT_DEFAULT = 10;
 const QUICK_SLOT = /^[1-9][0-9]?$/;
-const STATE_MAGIC = new TextEncoder().encode("ZIGBAST1");
+// Uploaded states must be the core's own save states. Stored objects are never
+// checked again, so states in an older format still list, download, delete
+// and erase like any other object; the player decides what it can load.
+const STATE_MAGIC = new TextEncoder().encode("EVENFALL");
+/**
+ * Deployed identifier: the cloud protocol's headers, shared with players
+ * already in use. Renaming one needs a coordinated player and Worker change.
+ */
+const HEADER = {
+  account: "X-Zigba-Account",
+  rom: "X-Zigba-Rom",
+  revision: "X-Zigba-Revision",
+  capturedAt: "X-Zigba-Captured-At",
+  digest: "X-Zigba-Digest",
+  title: "X-Zigba-Title",
+  playthroughName: "X-Zigba-Playthrough-Name",
+  uploadedAt: "X-Zigba-Uploaded-At",
+  romIncluded: "X-Zigba-Rom-Included",
+} as const;
 const BATTERY_SIZES = new Set([
   512,
   8 * 1024,
@@ -268,8 +286,8 @@ export function registerCloudSaveRoutes(app: Hono<Env>): void {
     const { userId, baseURL } = account;
     const rejected = uploadRejected(c, baseURL);
     if (rejected) return rejected;
-    const hash = c.req.header("X-Zigba-Rom");
-    const expectedDigest = c.req.header("X-Zigba-Digest");
+    const hash = c.req.header(HEADER.rom);
+    const expectedDigest = c.req.header(HEADER.digest);
     if (
       !hash ||
       !HASH.test(hash) ||
@@ -282,11 +300,11 @@ export function registerCloudSaveRoutes(app: Hono<Env>): void {
         "invalid_metadata",
         "ROM hash or digest is invalid",
       );
-    const title = readLabel(c, "X-Zigba-Title", "invalid_title", "Title");
+    const title = readLabel(c, HEADER.title, "invalid_title", "Title");
     if (title instanceof Response) return title;
     const playthroughName = readLabel(
       c,
-      "X-Zigba-Playthrough-Name",
+      HEADER.playthroughName,
       "invalid_playthrough_name",
       "Playthrough name",
     );
@@ -378,7 +396,7 @@ export function registerCloudSaveRoutes(app: Hono<Env>): void {
         "share_not_found",
         "This shared state has expired or does not exist",
       );
-    const expectedDigest = c.req.header("X-Zigba-Digest");
+    const expectedDigest = c.req.header(HEADER.digest);
     if (!expectedDigest || !DIGEST.test(expectedDigest))
       return failure(c, 400, "invalid_metadata", "Digest is invalid");
     // One attempt from the request budget; ROM bytes bypass the byte budget,
@@ -470,7 +488,7 @@ export function registerCloudSaveRoutes(app: Hono<Env>): void {
         "Cache-Control": "no-store",
         "Content-Type": "application/octet-stream",
         "Referrer-Policy": "no-referrer",
-        "X-Zigba-Digest": rom.customMetadata?.digest ?? "",
+        [HEADER.digest]: rom.customMetadata?.digest ?? "",
       },
     });
   });
@@ -516,13 +534,13 @@ export function registerCloudSaveRoutes(app: Hono<Env>): void {
         "Cache-Control": "no-store",
         "Content-Type": "application/octet-stream",
         "Referrer-Policy": "no-referrer",
-        ...(romIncluded ? { "X-Zigba-Rom-Included": "1" } : {}),
-        "X-Zigba-Rom": metadata.hash,
-        "X-Zigba-Title": encodeURIComponent(title),
-        "X-Zigba-Playthrough-Name": encodeURIComponent(
+        ...(romIncluded ? { [HEADER.romIncluded]: "1" } : {}),
+        [HEADER.rom]: metadata.hash,
+        [HEADER.title]: encodeURIComponent(title),
+        [HEADER.playthroughName]: encodeURIComponent(
           metadata.playthroughName ?? "Playthrough",
         ),
-        "X-Zigba-Digest": metadata.digest ?? "",
+        [HEADER.digest]: metadata.digest ?? "",
       },
     });
   });
@@ -584,7 +602,7 @@ async function saveAccount(c: Context<Env>, allowDeleting = false) {
   const session = await auth.api.getSession({ headers: c.req.raw.headers });
   if (!session)
     return failure(c, 401, "unauthorized", "A valid session is required");
-  if (c.req.header("X-Zigba-Account") !== session.user.id)
+  if (c.req.header(HEADER.account) !== session.user.id)
     return failure(
       c,
       403,
@@ -821,9 +839,9 @@ async function putSave(
   const rejected = uploadRejected(c, baseURL);
   if (rejected) return rejected;
 
-  const revision = c.req.header("X-Zigba-Revision");
-  const capturedAt = c.req.header("X-Zigba-Captured-At");
-  const expectedDigest = c.req.header("X-Zigba-Digest");
+  const revision = c.req.header(HEADER.revision);
+  const capturedAt = c.req.header(HEADER.capturedAt);
+  const expectedDigest = c.req.header(HEADER.digest);
   if (
     !revision ||
     !UUID.test(revision) ||
@@ -840,11 +858,11 @@ async function putSave(
       "Revision, captured timestamp, or digest is invalid",
     );
 
-  const titleLabel = readLabel(c, "X-Zigba-Title", "invalid_title", "Title");
+  const titleLabel = readLabel(c, HEADER.title, "invalid_title", "Title");
   if (titleLabel instanceof Response) return titleLabel;
   const nameLabel = readLabel(
     c,
-    "X-Zigba-Playthrough-Name",
+    HEADER.playthroughName,
     "invalid_playthrough_name",
     "Playthrough name",
   );
@@ -1228,10 +1246,10 @@ function saveHeaders(object: R2Object): Headers {
     "Cache-Control": "no-store",
     "Content-Type": "application/octet-stream",
     ETag: object.httpEtag,
-    "X-Zigba-Revision": object.customMetadata?.revision ?? "",
-    "X-Zigba-Captured-At": object.customMetadata?.capturedAt ?? "",
-    "X-Zigba-Digest": object.customMetadata?.digest ?? "",
-    "X-Zigba-Uploaded-At": object.uploaded.toISOString(),
+    [HEADER.revision]: object.customMetadata?.revision ?? "",
+    [HEADER.capturedAt]: object.customMetadata?.capturedAt ?? "",
+    [HEADER.digest]: object.customMetadata?.digest ?? "",
+    [HEADER.uploadedAt]: object.uploaded.toISOString(),
   });
 }
 

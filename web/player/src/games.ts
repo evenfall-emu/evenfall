@@ -11,7 +11,7 @@ import {
 } from "@evenfall/gba/bridge";
 // Installed game packages. Each one is an optional dependency: removing its
 // import, its entry in `installed` and its package.json dependency leaves the
-// generic player. See frontend/README.md#game-plugins.
+// generic player. See docs/player.md#game-plugins.
 import { pokemonPlugin } from "@evenfall/gba-pokemon/ui";
 
 /** How the player knows the loaded build. */

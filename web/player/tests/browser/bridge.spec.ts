@@ -7,10 +7,10 @@ test.beforeAll(async () => {
   await build({
     configFile: false,
     logLevel: "error",
-    resolve: { conditions: ["zigba-source", ...defaultClientConditions] },
+    resolve: { conditions: ["evenfall-source", ...defaultClientConditions] },
     define: { "process.env.NODE_ENV": '"development"' },
     build: {
-      outDir: "../zig-out/web/bridge-test",
+      outDir: "dist/bridge-test",
       emptyOutDir: true,
       lib: {
         entry: resolve("tests/browser/bridge.fixture.tsx"),
@@ -21,9 +21,7 @@ test.beforeAll(async () => {
   });
 });
 
-test.afterAll(() =>
-  rm("../zig-out/web/bridge-test", { recursive: true, force: true }),
-);
+test.afterAll(() => rm("dist/bridge-test", { recursive: true, force: true }));
 
 test("worker capture is coherent and owned; React subscriptions follow step and state replacement", async ({
   page,

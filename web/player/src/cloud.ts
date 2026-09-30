@@ -11,6 +11,8 @@ import {
   type QuickSlot,
   type SaveKind,
 } from "./library";
+import { CLOUD_SYNC_LOCK, HEADER } from "./deployed-names";
+import { isLegacyState, isState, LegacyStateError } from "./state-format";
 
 export type CloudResume = {
   accountId: string;
@@ -46,7 +48,6 @@ export type CloudStatus = CloudIdentity & {
 };
 type CloudSession = { user: { id: string } } | null;
 type RemoteSave = { accountId: string; data: Uint8Array; etag: string };
-const STATE_MAGIC = new TextEncoder().encode("ZIGBAST1");
 const MAX_STATE = 2 * 1024 * 1024;
 // A GBA ROM is at most 32 MiB; gzip can grow incompressible data slightly.
 const MAX_ROM = 32 * 1024 * 1024;
@@ -82,18 +83,16 @@ export async function fetchSharedState(id: string): Promise<SharedState> {
   if (!response.ok)
     throw new Error("The shared state is unavailable. Try again later.");
   const bytes = await readBounded(response.body, MAX_STATE);
-  if ((await sha256(bytes)) !== response.headers.get("X-Zigba-Digest"))
+  if ((await sha256(bytes)) !== response.headers.get(HEADER.digest))
     throw new Error("The shared state failed its integrity check.");
   const data = await readBounded(
     new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip")),
     MAX_STATE,
   );
-  const hash = response.headers.get("X-Zigba-Rom") ?? "";
-  if (
-    !STATE_MAGIC.every((byte, index) => data[index] === byte) ||
-    !/^[0-9a-f]{40}$/.test(hash)
-  )
-    throw new Error("This link does not hold a ZiGBA state.");
+  const hash = response.headers.get(HEADER.rom) ?? "";
+  if (isLegacyState(data)) throw new LegacyStateError("This shared state");
+  if (!isState(data) || !/^[0-9a-f]{40}$/.test(hash))
+    throw new Error("This link does not hold an Evenfall state.");
   const label = (header: string, fallback: string) => {
     try {
       return (
@@ -106,10 +105,10 @@ export async function fetchSharedState(id: string): Promise<SharedState> {
   };
   return {
     hash,
-    title: label("X-Zigba-Title", `Game ${hash.slice(0, 8)}`),
-    playthroughName: label("X-Zigba-Playthrough-Name", "Shared playthrough"),
+    title: label(HEADER.title, `Game ${hash.slice(0, 8)}`),
+    playthroughName: label(HEADER.playthroughName, "Shared playthrough"),
     data,
-    romIncluded: response.headers.get("X-Zigba-Rom-Included") === "1",
+    romIncluded: response.headers.get(HEADER.romIncluded) === "1",
   };
 }
 
@@ -133,7 +132,7 @@ export async function fetchSharedRom(id: string): Promise<File> {
   if (!response.ok)
     throw new Error("The shared game is unavailable. Try again later.");
   const bytes = await readBounded(response.body, MAX_ROM_COMPRESSED);
-  if ((await sha256(bytes)) !== response.headers.get("X-Zigba-Digest"))
+  if ((await sha256(bytes)) !== response.headers.get(HEADER.digest))
     throw new Error("The shared game failed its integrity check.");
   let rom: Uint8Array<ArrayBuffer>;
   try {
@@ -308,7 +307,7 @@ export class CloudSync {
           {
             credentials: "same-origin",
             cache: "no-store",
-            headers: { "X-Zigba-Account": accountId },
+            headers: { [HEADER.account]: accountId },
             signal: AbortSignal.timeout(15_000),
           },
         );
@@ -379,7 +378,7 @@ export class CloudSync {
     if (!response.ok) throw new Error("Cloud progress is unavailable.");
     const etag = response.headers.get("ETag");
     const uploadedAt = Date.parse(
-      response.headers.get("X-Zigba-Uploaded-At") ?? "",
+      response.headers.get(HEADER.uploadedAt) ?? "",
     );
     if (!etag || !Number.isFinite(uploadedAt))
       throw new Error("Cloud checkpoint metadata is unavailable.");
@@ -390,7 +389,7 @@ export class CloudSync {
         ...ref,
         playthroughName: name,
         title,
-        capturedAt: Number(response.headers.get("X-Zigba-Captured-At") ?? 0),
+        capturedAt: Number(response.headers.get(HEADER.capturedAt) ?? 0),
         uploadedAt,
         etag,
       } satisfies CloudResume,
@@ -420,13 +419,13 @@ export class CloudSync {
         cache: "no-store",
         headers: {
           "Content-Type": "application/octet-stream",
-          "X-Zigba-Account": accountId,
-          "X-Zigba-Rom": state.hash,
-          "X-Zigba-Digest": await sha256(bytes),
-          "X-Zigba-Playthrough-Name": encodeURIComponent(
+          [HEADER.account]: accountId,
+          [HEADER.rom]: state.hash,
+          [HEADER.digest]: await sha256(bytes),
+          [HEADER.playthroughName]: encodeURIComponent(
             privateLabel(state.playthroughName) || "Playthrough",
           ),
-          ...(title ? { "X-Zigba-Title": encodeURIComponent(title) } : {}),
+          ...(title ? { [HEADER.title]: encodeURIComponent(title) } : {}),
         },
         body: bytes,
         signal: AbortSignal.timeout(30_000),
@@ -470,8 +469,8 @@ export class CloudSync {
         cache: "no-store",
         headers: {
           "Content-Type": "application/octet-stream",
-          "X-Zigba-Account": accountId,
-          "X-Zigba-Digest": await sha256(bytes),
+          [HEADER.account]: accountId,
+          [HEADER.digest]: await sha256(bytes),
         },
         body: bytes,
         signal: AbortSignal.timeout(300_000),
@@ -511,7 +510,7 @@ export class CloudSync {
       throw new Error(
         "Cloud sync needs browser storage locks. Local play is still available.",
       );
-    return navigator.locks.request("zigba-cloud-sync", operation);
+    return navigator.locks.request(CLOUD_SYNC_LOCK, operation);
   }
   async deletePlaythrough(ref: PlaythroughRef) {
     const { accountId } = await this.library.cloudIdentity();
@@ -529,7 +528,7 @@ export class CloudSync {
           method: "DELETE",
           credentials: "same-origin",
           cache: "no-store",
-          headers: { "X-Zigba-Account": accountId },
+          headers: { [HEADER.account]: accountId },
           signal: AbortSignal.timeout(30_000),
         },
       );
@@ -571,7 +570,7 @@ export class CloudSync {
           method: "DELETE",
           credentials: "same-origin",
           cache: "no-store",
-          headers: { "X-Zigba-Account": expectedAccountId },
+          headers: { [HEADER.account]: expectedAccountId },
           signal: AbortSignal.timeout(60_000),
         });
         const result = (await response.json()) as {
@@ -661,11 +660,11 @@ export class CloudSync {
               if (
                 job.flight &&
                 head.ok &&
-                head.headers.get("X-Zigba-Revision") === job.flight.revision &&
-                head.headers.get("X-Zigba-Digest") === job.flight.digest
+                head.headers.get(HEADER.revision) === job.flight.revision &&
+                head.headers.get(HEADER.digest) === job.flight.digest
               ) {
                 this.uploadedAt = Date.parse(
-                  head.headers.get("X-Zigba-Uploaded-At")!,
+                  head.headers.get(HEADER.uploadedAt)!,
                 );
                 if (!Number.isFinite(this.uploadedAt))
                   throw new Error("Invalid cloud acknowledgement time.");
@@ -715,13 +714,11 @@ export class CloudSync {
             const response = await this.request(job, "PUT", {
               headers: {
                 "Content-Type": "application/octet-stream",
-                "X-Zigba-Revision": job.revision,
-                "X-Zigba-Captured-At": String(job.capturedAt),
-                "X-Zigba-Digest": digest,
-                "X-Zigba-Playthrough-Name": encodeURIComponent(playthroughName),
-                ...(title
-                  ? { "X-Zigba-Title": encodeURIComponent(title) }
-                  : {}),
+                [HEADER.revision]: job.revision,
+                [HEADER.capturedAt]: String(job.capturedAt),
+                [HEADER.digest]: digest,
+                [HEADER.playthroughName]: encodeURIComponent(playthroughName),
+                ...(title ? { [HEADER.title]: encodeURIComponent(title) } : {}),
                 ...(job.baseEtag
                   ? { "If-Match": job.baseEtag }
                   : { "If-None-Match": "*" }),
@@ -852,7 +849,7 @@ export class CloudSync {
       method,
       credentials: "same-origin",
       cache: "no-store",
-      headers: { ...init.headers, "X-Zigba-Account": job.accountId },
+      headers: { ...init.headers, [HEADER.account]: job.accountId },
       signal: AbortSignal.timeout(30_000),
     });
   }
@@ -893,7 +890,7 @@ export class CloudSync {
       {
         credentials: "same-origin",
         cache: "no-store",
-        headers: { "X-Zigba-Account": accountId },
+        headers: { [HEADER.account]: accountId },
         signal: AbortSignal.timeout(15_000),
       },
     );
@@ -964,14 +961,16 @@ export class CloudSync {
       return undefined;
     }
     const bytes = await readBounded(response.body, 2 * 1024 * 1024);
-    if ((await sha256(bytes)) !== response.headers.get("X-Zigba-Digest"))
+    if ((await sha256(bytes)) !== response.headers.get(HEADER.digest))
       throw new Error("Cloud quick slot integrity check failed.");
     const data = await readBounded(
       new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip")),
       2 * 1024 * 1024,
     );
-    if (!STATE_MAGIC.every((byte, index) => data[index] === byte))
-      throw new Error("Cloud quick slot is not a ZiGBA state.");
+    // A slot from the previous core is kept like any other; loading it
+    // explains why it can't be used.
+    if (!isState(data) && !isLegacyState(data))
+      throw new Error("Cloud quick slot is not an Evenfall state.");
     return data;
   }
   private async loadQuickConflicts() {
@@ -1089,7 +1088,7 @@ export class CloudSync {
       );
     }
     const bytes = await readBounded(response.body, 2 * 1024 * 1024);
-    if ((await sha256(bytes)) !== response.headers.get("X-Zigba-Digest"))
+    if ((await sha256(bytes)) !== response.headers.get(HEADER.digest))
       throw new Error("Cloud backup integrity check failed.");
     const etag = response.headers.get("ETag");
     if (!etag) throw new Error("Cloud backup metadata is missing.");

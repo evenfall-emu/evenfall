@@ -211,6 +211,45 @@ describe("library storage", () => {
     expect(await lib.asset("quick-state:game:1")).toEqual(new Uint8Array([99]));
     lib.close();
   });
+  /**
+   * A resume point from the previous core (ZIGBAST1) survives any number of
+   * later autosaves in `legacy`, never becomes the recovery generation, and
+   * never enters the cloud outbox's upload source.
+   */
+  it("keeps a previous-core resume point through later saves without uploading it", async () => {
+    await deleteDB("zigba-local");
+    const lib = await openLibrary();
+    await lib.put({
+      hash: "game",
+      title: "Game",
+      rom: new Uint8Array([1]),
+      lastPlayed: 1,
+    });
+    await lib.setCloudIdentity("alice");
+    const old = new Uint8Array([...new TextEncoder().encode("ZIGBAST1"), 7]);
+    const current = (marker: number) =>
+      new Uint8Array([...new TextEncoder().encode("EVENFALL"), marker]);
+    await lib.saveResume(ref("game"), old, { saveType: "sram" }, 5n, 1);
+    const pending = (await lib.cloudJobs("alice")).find(
+      (job) => job.kind === "resume",
+    )!;
+    expect(await lib.cloudSource(pending)).toBeUndefined();
+    for (const marker of [1, 2, 3])
+      await lib.saveResume(ref("game"), current(marker), {}, BigInt(marker), 1);
+    const checkpoint = await lib.getResume(ref("game"));
+    expect(checkpoint?.data).toEqual(current(3));
+    expect(checkpoint?.previous?.data).toEqual(current(2));
+    expect(checkpoint?.legacy).toMatchObject({
+      data: old,
+      options: { saveType: "sram" },
+      cycle: "5",
+    });
+    const job = (await lib.cloudJobs("alice")).find(
+      (item) => item.kind === "resume",
+    )!;
+    expect(await lib.cloudSource(job)).toEqual(current(3));
+    lib.close();
+  });
   it("does not publish resume metadata or bytes when their transaction fails", async () => {
     await deleteDB("zigba-local");
     const lib = await openLibrary();

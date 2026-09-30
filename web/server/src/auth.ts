@@ -40,7 +40,7 @@ export function createAuth(env: AuthBindings) {
     return null;
 
   return betterAuth({
-    appName: "ZiGBA",
+    appName: "Evenfall",
     baseURL,
     basePath: "/api/auth",
     secret: env.BETTER_AUTH_SECRET,

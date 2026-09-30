@@ -338,10 +338,10 @@ describe("account authentication", () => {
   it("accepts only an exact HTTPS origin or the fixed local origin", async () => {
     for (const configured of [
       undefined,
-      "http://zigba.example",
+      "http://evenfall.example",
       "http://localhost:5173",
-      "https://zigba.example/",
-      "https://zigba.example/app",
+      "https://evenfall.example/",
+      "https://evenfall.example/app",
       "not a url",
     ]) {
       const response = await request(
@@ -352,7 +352,7 @@ describe("account authentication", () => {
       expect(response.status, String(configured)).toBe(503);
     }
     for (const configured of [
-      "https://zigba.example",
+      "https://evenfall.example",
       "http://127.0.0.1:5173",
     ]) {
       const response = await request(
@@ -824,7 +824,7 @@ describe("private cloud resume discovery", () => {
 
   it("retains private titles for unknown ROMs, validates them, and accepts older upload clients", async () => {
     const hash = "c".repeat(40);
-    const body = gzipSync(Buffer.from("ZIGBAST1test"));
+    const body = gzipSync(Buffer.from("EVENFALLtest"));
     const digest = createHash("sha256").update(body).digest("hex");
     const title = "My Pokémon adventure 🌙";
     const put = (headers: Record<string, string>) =>
@@ -879,7 +879,7 @@ describe("private cloud resume discovery", () => {
 
 describe("playthrough quota and account erasure", () => {
   const hash = "a".repeat(40);
-  const body = gzipSync(Buffer.from("ZIGBAST1checkpoint"));
+  const body = gzipSync(Buffer.from("EVENFALLcheckpoint"));
   const digest = createHash("sha256").update(body).digest("hex");
   let owner: { Cookie: string; "X-Zigba-Account": string };
   let other: typeof owner;
@@ -1475,7 +1475,7 @@ describe("playthrough quota and account erasure", () => {
 describe("cloud quick slots", () => {
   const hash = "d".repeat(40);
   const state = (marker: number) =>
-    gzipSync(Buffer.from([...Buffer.from("ZIGBAST1"), marker]));
+    gzipSync(Buffer.from([...Buffer.from("EVENFALL"), marker]));
   let owner: { Cookie: string; "X-Zigba-Account": string };
   let other: typeof owner;
 
@@ -1604,7 +1604,7 @@ describe("cloud quick slots", () => {
     ).toBe(404);
     expect((await listQuick(other, run)).body.slots).toEqual([]);
 
-    const resume = gzipSync(Buffer.from("ZIGBAST1resume"));
+    const resume = gzipSync(Buffer.from("EVENFALLresume"));
     const resumed = await miniflare.dispatchFetch(
       `${origin}/api/saves/${hash}/${run}/resume`,
       {
@@ -1657,7 +1657,7 @@ describe("cloud quick slots", () => {
       run,
       2,
       gzipSync(
-        Buffer.concat([Buffer.from("ZIGBAST1"), Buffer.alloc(2 * 1024 * 1024)]),
+        Buffer.concat([Buffer.from("EVENFALL"), Buffer.alloc(2 * 1024 * 1024)]),
       ),
     );
     expect(oversized.status).toBe(413);
@@ -1754,7 +1754,7 @@ describe("state shares", () => {
   // A catalog output whose name must replace the uploader's private label.
   const catalogHash = "b".repeat(40);
   const unknownHash = "9".repeat(40);
-  const state = (marker: string) => gzipSync(Buffer.from(`ZIGBAST1${marker}`));
+  const state = (marker: string) => gzipSync(Buffer.from(`EVENFALL${marker}`));
   const name = "Route 1 · Pokémon 🌙";
   let owner: { Cookie: string; "X-Zigba-Account": string };
   let other: typeof owner;
@@ -2191,5 +2191,146 @@ describe("state shares", () => {
     ).toBe(404);
     expect((await readRom(id)).status).toBe(404);
     expect((await share(other, unknownHash, state("late"))).status).toBe(401);
+  });
+});
+
+describe("states saved by the previous core", () => {
+  // Objects uploaded before the Rust core start with ZIGBAST1, which the
+  // current core cannot load. The server never decodes stored objects, so
+  // these stay listable, readable, deletable and erasable; only new uploads
+  // must be Evenfall states.
+  const hash = "7".repeat(40);
+  const legacy = (marker: string) => gzipSync(Buffer.from(`ZIGBAST1${marker}`));
+  const digest = (bytes: Buffer) =>
+    createHash("sha256").update(bytes).digest("hex");
+  let owner: { Cookie: string; "X-Zigba-Account": string };
+
+  beforeAll(async () => {
+    const email = "legacy-owner@example.com";
+    const ip = "192.0.2.220";
+    await request("/api/auth/sign-in/magic-link", post({ email }, ip));
+    expect(messages.at(-1)?.to).toBe(email);
+    const Cookie = sessionCookie(
+      await request(messageLink(), { headers: { "CF-Connecting-IP": ip } }),
+    );
+    const session = (await (
+      await request("/api/auth/get-session", { headers: { Cookie } })
+    ).json()) as { user: { id: string } };
+    owner = { Cookie, "X-Zigba-Account": session.user.id };
+  });
+
+  function upload(path: string, method: "PUT" | "POST", body: Buffer) {
+    return miniflare.dispatchFetch(`${origin}${path}`, {
+      method,
+      body,
+      headers: {
+        ...owner,
+        Origin: origin,
+        "Content-Type": "application/octet-stream",
+        "X-Zigba-Revision": crypto.randomUUID(),
+        "X-Zigba-Captured-At": "5",
+        "X-Zigba-Digest": digest(body),
+        "X-Zigba-Rom": hash,
+        "X-Zigba-Playthrough-Name": encodeURIComponent("Old run"),
+        "If-None-Match": "*",
+      },
+    });
+  }
+
+  /** Stores an object the way the Worker did before the Rust core. */
+  async function storeLegacy(key: string, body: Buffer, extra = {}) {
+    await saves.put(key, body, {
+      customMetadata: {
+        revision: crypto.randomUUID(),
+        capturedAt: "5",
+        digest: digest(body),
+        playthroughName: "Old run",
+        ...extra,
+      },
+    });
+  }
+
+  it("accepts Evenfall states and rejects old-format uploads of every state kind", async () => {
+    const run = crypto.randomUUID();
+    for (const [path, method, code] of [
+      [`/api/saves/${hash}/${run}/resume`, "PUT", "invalid_resume"],
+      [`/api/saves/${hash}/${run}/quick/1`, "PUT", "invalid_quick"],
+      ["/api/shares", "POST", "invalid_state"],
+    ] as const) {
+      const rejected = await upload(path, method, legacy("upload"));
+      expect(rejected.status).toBe(400);
+      expect(await rejected.json()).toMatchObject({ error: { code } });
+      const accepted = await upload(
+        path,
+        method,
+        gzipSync(Buffer.from("EVENFALLupload")),
+      );
+      expect(accepted.status).toBe(method === "POST" ? 201 : 200);
+    }
+  });
+
+  it("lists, serves, deletes and erases old-format objects", async () => {
+    const id = owner["X-Zigba-Account"];
+    const run = crypto.randomUUID();
+    const kept = crypto.randomUUID();
+    const resume = legacy("resume");
+    const quick = legacy("quick");
+    await storeLegacy(`${id}/${hash}/${run}/resume`, resume);
+    await storeLegacy(`${id}/${hash}/${run}/quick/1`, quick);
+    await storeLegacy(`${id}/${hash}/${kept}/resume`, legacy("kept"));
+    const shareId = "legacyShareAAAAAAAAAAA";
+    await storeLegacy(`share/state/${shareId}`, legacy("share"), {
+      userId: id,
+      hash,
+    });
+
+    const listing = (await (
+      await miniflare.dispatchFetch(`${origin}/api/saves`, { headers: owner })
+    ).json()) as { saves: { playthroughId: string }[] };
+    expect(listing.saves.map((save) => save.playthroughId)).toEqual(
+      expect.arrayContaining([run, kept]),
+    );
+    const quickSlots = (await (
+      await miniflare.dispatchFetch(
+        `${origin}/api/saves/${hash}/${run}/quick`,
+        { headers: owner },
+      )
+    ).json()) as { slots: { slot: number; digest: string }[] };
+    expect(quickSlots.slots).toMatchObject([
+      { slot: 1, digest: digest(quick) },
+    ]);
+
+    for (const [path, body] of [
+      [`/api/saves/${hash}/${run}/resume`, resume],
+      [`/api/saves/${hash}/${run}/quick/1`, quick],
+      [`/api/shares/${shareId}`, legacy("share")],
+    ] as const) {
+      const read = await miniflare.dispatchFetch(`${origin}${path}`, {
+        headers: path.startsWith("/api/shares") ? {} : owner,
+      });
+      expect(read.status).toBe(200);
+      expect(read.headers.get("X-Zigba-Digest")).toBe(digest(body));
+      expect(Buffer.from(await read.arrayBuffer())).toEqual(body);
+    }
+
+    const deleted = await miniflare.dispatchFetch(
+      `${origin}/api/saves/${hash}/${run}`,
+      { method: "DELETE", headers: { ...owner, Origin: origin } },
+    );
+    expect(deleted.status).toBe(204);
+    expect(await saves.head(`${id}/${hash}/${run}/resume`)).toBeNull();
+    expect(await saves.head(`${id}/${hash}/${run}/quick/1`)).toBeNull();
+    expect(await saves.head(`${id}/${hash}/${kept}/resume`)).not.toBeNull();
+
+    const erased = await request(
+      "/api/account",
+      { method: "DELETE", headers: { ...owner, Origin: origin } },
+      { SAVES: saves as unknown as R2Bucket },
+    );
+    expect(erased.status).toBe(202);
+    expect((await saves.list({ prefix: `${id}/` })).objects).toHaveLength(0);
+    expect(
+      (await miniflare.dispatchFetch(`${origin}/api/shares/${shareId}`)).status,
+    ).toBe(404);
   });
 });

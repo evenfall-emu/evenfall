@@ -134,15 +134,15 @@ let inactiveRegions: MemorySnapshot["regions"];
 let resources: NonNullable<ReturnType<NonNullable<typeof heartNSoul.prepare>>>;
 
 // Optional user-owned fixtures: a clean checkout must not require a private ROM.
-const romPath = process.env.ZIGBA_HNS_ROM;
-const battlePath = process.env.ZIGBA_HNS_BATTLE;
-const inactivePath = process.env.ZIGBA_HNS_STATE;
+const romPath = process.env.EVENFALL_HNS_ROM;
+const battlePath = process.env.EVENFALL_HNS_BATTLE;
+const inactivePath = process.env.EVENFALL_HNS_STATE;
 describe.skipIf(!romPath || !battlePath || !inactivePath)(
   "Heart & Soul battle bridge",
   () => {
     beforeAll(async () => {
       const [wasm, rom, battle, inactive] = await Promise.all([
-        readFile(new URL("../../../zig-out/web/zigba.wasm", import.meta.url)),
+        readFile(new URL("../../gba/evenfall-gba.wasm", import.meta.url)),
         readFile(romPath!),
         readFile(battlePath!),
         readFile(inactivePath!),

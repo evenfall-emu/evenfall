@@ -5,7 +5,7 @@ Usage: build.py SURFACE UNDERWATER
 
 SURFACE is a 480x202 sunset plate and UNDERWATER a 480x200 underwater plate,
 both made with pixelate.py. The plates are written to
-frontend/src/assets/landing:
+web/player/src/assets/landing:
 
 surface.png  the snapped sunset plate below 64 rows of starry flat sky, cut
              where its painted waves end (SEA_CUT) and finished with a
@@ -26,7 +26,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-OUT = Path(__file__).resolve().parents[2] / "frontend/src/assets/landing"
+OUT = Path(__file__).resolve().parents[2] / "src/assets/landing"
 W = 480
 DEEP = bytes.fromhex("012d53")
 SEA_BOTTOM = bytes.fromhex("012447")

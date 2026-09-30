@@ -23,17 +23,17 @@ const crc = (bytes: Uint8Array) =>
   crc32(Buffer.from(bytes)).toString(16).padStart(8, "0");
 
 const basesDir = resolve(
-  process.env.ZIGBA_BASES_DIR ??
-    fileURLToPath(new URL("../../bases", import.meta.url)),
+  process.env.EVENFALL_BASES_DIR ??
+    fileURLToPath(new URL("../../../bases", import.meta.url)),
 );
-const packs = process.env.ZIGBA_ROMPACK_DIR
-  ? [resolve(process.env.ZIGBA_ROMPACK_DIR)]
+const packs = process.env.EVENFALL_ROMPACK_DIR
+  ? [resolve(process.env.EVENFALL_ROMPACK_DIR)]
   : [
-      "../../.amp/in/rom-hacks",
-      "../../.amp/in/rom-hacks-golden-sun-fire-emblem/golden-sun",
-      "../../.amp/in/rom-hacks-golden-sun-fire-emblem/fire-emblem",
+      "../../../.amp/in/rom-hacks",
+      "../../../.amp/in/rom-hacks-golden-sun-fire-emblem/golden-sun",
+      "../../../.amp/in/rom-hacks-golden-sun-fire-emblem/fire-emblem",
     ].map((path) => fileURLToPath(new URL(path, import.meta.url)));
-const wasmPath = new URL("../../web/zigba.wasm", import.meta.url);
+const wasmPath = new URL("../../gba/evenfall-gba.wasm", import.meta.url);
 
 /** A release record usable here: a patch, its base dump and an output hash. */
 type Record = {

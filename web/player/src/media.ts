@@ -1,3 +1,4 @@
+import { VOLUME_KEY } from "./deployed-names";
 // Vite emits the SDK worklet as a separate static file and returns its URL.
 import audioWorkletUrl from "@evenfall/gba/audio-worklet?url&no-inline";
 // Build through Uint8ClampedArray to preserve the old conversion's exact
@@ -92,7 +93,7 @@ export class AudioOutput {
   private workletStarted = false;
   constructor() {
     try {
-      const stored = localStorage.getItem("zigba-volume");
+      const stored = localStorage.getItem(VOLUME_KEY);
       if (stored !== null) {
         const volume = Number(stored);
         if (Number.isFinite(volume) && volume >= 0 && volume <= 1)
@@ -115,7 +116,7 @@ export class AudioOutput {
     this.volume = volume;
     if (this.gain) this.gain.gain.value = volume;
     try {
-      localStorage.setItem("zigba-volume", String(volume));
+      localStorage.setItem(VOLUME_KEY, String(volume));
     } catch {
       // A denied preference write must not interrupt playback.
     }
@@ -131,7 +132,7 @@ export class AudioOutput {
         .then(() => {
           if (!this.context || this.context.state === "closed") return;
           this.clear();
-          this.node = new AudioWorkletNode(this.context, "zigba-audio", {
+          this.node = new AudioWorkletNode(this.context, "evenfall-audio", {
             numberOfInputs: 0,
             numberOfOutputs: 1,
             outputChannelCount: [2],

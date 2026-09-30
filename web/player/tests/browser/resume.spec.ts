@@ -313,7 +313,7 @@ test("a corrupt resume remains available for retry and cannot be replaced by the
   const recovery = page.getByRole("dialog", { name: "Resume needs attention" });
   await expect(recovery).toBeVisible();
   await page.screenshot({
-    path: "../artifacts/resume-recovery/desktop-corrupt.png",
+    path: "../../artifacts/resume-recovery/desktop-corrupt.png",
   });
   await advanceAutosave(page);
   expect(
@@ -369,7 +369,7 @@ test("missing resume data does not silently start from the battery save", async 
   await expect(recovery).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({
-    path: "../artifacts/resume-recovery/mobile-missing.png",
+    path: "../../artifacts/resume-recovery/mobile-missing.png",
   });
   await advanceAutosave(page);
   expect(

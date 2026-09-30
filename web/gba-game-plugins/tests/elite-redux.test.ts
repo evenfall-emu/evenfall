@@ -326,8 +326,8 @@ describe("Redux packed ABI", () => {
   });
 });
 
-const romPath = process.env.ZIGBA_REDUX_ROM,
-  statePath = process.env.ZIGBA_REDUX_STATE;
+const romPath = process.env.EVENFALL_REDUX_ROM,
+  statePath = process.env.EVENFALL_REDUX_STATE;
 describe.skipIf(!romPath || !statePath)("private Redux release/state", () => {
   let regions: readonly MemoryRegion[];
   let resources: ReturnType<NonNullable<typeof eliteRedux.prepare>>;
@@ -348,7 +348,7 @@ describe.skipIf(!romPath || !statePath)("private Redux release/state", () => {
       await WebAssembly.compile(
         Uint8Array.from(
           await readFile(
-            new URL("../../../zig-out/web/zigba.wasm", import.meta.url),
+            new URL("../../gba/evenfall-gba.wasm", import.meta.url),
           ),
         ),
       ),
@@ -642,8 +642,8 @@ describe.skipIf(!romPath || !statePath)("private Redux release/state", () => {
   });
 });
 
-const beta3RomPath = process.env.ZIGBA_REDUX_BETA3_ROM,
-  beta3StatePath = process.env.ZIGBA_REDUX_BETA3_STATE;
+const beta3RomPath = process.env.EVENFALL_REDUX_BETA3_ROM,
+  beta3StatePath = process.env.EVENFALL_REDUX_BETA3_STATE;
 describe.skipIf(!beta3RomPath)("private Redux Beta3 release", () => {
   let rom: Uint8Array;
   let resources: ReturnType<NonNullable<typeof eliteRedux.prepare>>;
@@ -703,7 +703,7 @@ describe.skipIf(!beta3RomPath)("private Redux Beta3 release", () => {
         await WebAssembly.compile(
           Uint8Array.from(
             await readFile(
-              new URL("../../../zig-out/web/zigba.wasm", import.meta.url),
+              new URL("../../gba/evenfall-gba.wasm", import.meta.url),
             ),
           ),
         ),

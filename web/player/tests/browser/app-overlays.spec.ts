@@ -131,7 +131,7 @@ for (const width of [1280, 390]) {
     await page.evaluate(() => document.fonts.ready);
     const capture = async (name: string) =>
       page.screenshot({
-        path: `../artifacts/app-overlays/${process.env.OVERLAY_PHASE ?? "final"}-${width}-${name}.png`,
+        path: `../../artifacts/app-overlays/${process.env.OVERLAY_PHASE ?? "final"}-${width}-${name}.png`,
       });
     await capture("account");
     await page.getByRole("button", { name: "Close dialog" }).click();

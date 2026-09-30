@@ -27,7 +27,7 @@ test("email sign-in stays optional and reports a generic delivery result", async
     "ROMs stay on this device. Cloud backups are on by default",
   );
   await page.evaluate(() => document.fonts.ready);
-  await page.screenshot({ path: "../artifacts/account-email-desktop.png" });
+  await page.screenshot({ path: "../../artifacts/account-email-desktop.png" });
   await page.getByRole("button", { name: "Close dialog" }).click();
   await page.getByRole("button", { name: "Open player" }).click();
   await expect(page.getByLabel(/^Game screen/)).toBeVisible();
@@ -80,18 +80,18 @@ test("toolbar cloud upload runs backup for an active game only when enabled", as
   );
   await page.evaluate(() => document.fonts.ready);
   await page.locator(".player-tools").screenshot({
-    path: "../artifacts/backup-toolbar-desktop.png",
+    path: "../../artifacts/backup-toolbar-desktop.png",
   });
   await page.setViewportSize({ width: 390, height: 844 });
   // Phones keep the toolbar in the player menu.
   await page.getByRole("button", { name: "Player menu" }).click();
   await page.locator(".player-tools").screenshot({
-    path: "../artifacts/backup-toolbar-mobile.png",
+    path: "../../artifacts/backup-toolbar-mobile.png",
   });
   await page.evaluate(() => window.player.cloud.enable(false));
   await expect(backup).toBeDisabled();
   await page.locator(".player-tools").screenshot({
-    path: "../artifacts/backup-toolbar-disabled-mobile.png",
+    path: "../../artifacts/backup-toolbar-disabled-mobile.png",
   });
 });
 
@@ -128,7 +128,9 @@ test("cloud backups default on, an opt-out survives reload, and sign-out clears 
     dialog.getByRole("button", { name: "Enable cloud backups on this device" }),
   ).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
-  await page.screenshot({ path: "../artifacts/account-signed-in-mobile.png" });
+  await page.screenshot({
+    path: "../../artifacts/account-signed-in-mobile.png",
+  });
   await dialog.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(dialog.getByLabel("Email address")).toBeVisible();
   await expect(dialog).not.toContainText("player@example.com");
@@ -192,7 +194,7 @@ test("account deletion needs one confirmation, signs out, and keeps local progre
     .click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({
-    path: "../artifacts/playthrough-work/delete-account-mobile.png",
+    path: "../../artifacts/playthrough-work/delete-account-mobile.png",
   });
   await dialog
     .getByRole("button", { name: "Delete account permanently", exact: true })
@@ -263,7 +265,7 @@ test("an expired link explains how to retry without hiding sign-in options", asy
   );
   await expect(dialog.getByLabel("Email address")).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
-  await page.screenshot({ path: "../artifacts/account-expired-mobile.png" });
+  await page.screenshot({ path: "../../artifacts/account-expired-mobile.png" });
 });
 
 test("failed login and offline backend do not block local gameplay", async ({
@@ -280,7 +282,7 @@ test("failed login and offline backend do not block local gameplay", async ({
   await expect(dialog.getByRole("alert")).toContainText("unavailable");
   await page.evaluate(() => document.fonts.ready);
   await page.screenshot({
-    path: "../artifacts/account-unavailable-desktop.png",
+    path: "../../artifacts/account-unavailable-desktop.png",
   });
   await page.getByRole("button", { name: "Close dialog" }).click();
   await page.getByRole("button", { name: "Open player" }).click();

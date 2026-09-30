@@ -29,7 +29,8 @@ export const NAMES_PATH = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "..",
   "..",
-  "frontend",
+  "..",
+  "player",
   "src",
   "pages",
   "library",
@@ -317,9 +318,9 @@ export async function loadIndex(options) {
   return { version, ...indexDat(entries) };
 }
 
-const USAGE = `Usage: node tools/catalog/no-intro.mjs lookup (--crc32 HEX | --sha1 HEX | --name TEXT) [options]
-       node tools/catalog/no-intro.mjs latest
-       node tools/catalog/no-intro.mjs names [--out FILE]
+const USAGE = `Usage: node web/server/scripts/catalog/no-intro.mjs lookup (--crc32 HEX | --sha1 HEX | --name TEXT) [options]
+       node web/server/scripts/catalog/no-intro.mjs latest
+       node web/server/scripts/catalog/no-intro.mjs names [--out FILE]
 Options: --commit SHA --sha256 HEX  use another libretro-database commit and its DAT digest
          --cache DIR                 cache directory (default artifacts/no-intro)
 Exit status: 0 found, 1 not found, 2 usage, download or verification error.`;

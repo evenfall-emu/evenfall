@@ -1,12 +1,16 @@
 // Deployment configuration for the official play.evenfall-emu.org instance.
 // Wrangler takes the Cloudflare account from CLOUDFLARE_ACCOUNT_ID (or
-// `wrangler login`).
+// `wrangler login`). Build with `bash web/cloudflare/build.sh`, then deploy
+// from the repository root with
+// `npx wrangler deploy --config web/cloudflare/wrangler.jsonc`.
 // Self-hosted deployments must replace the instance-specific values below; see
-// server/README.md#self-hosting.
+// docs/server.md#self-hosting.
 {
-  "$schema": "./node_modules/wrangler/config-schema.json",
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  // Deployed identifier: the Worker's name in the Cloudflare account. Workers
+  // Builds refuses to deploy when it differs from the dashboard's Worker.
   "name": "zigba",
-  "main": "./server/src/index.ts",
+  "main": "../server/src/index.ts",
   "compatibility_date": "2026-09-20",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
@@ -28,7 +32,7 @@
   "triggers": { "crons": ["*/5 * * * *"] },
   "assets": {
     "binding": "ASSETS",
-    "directory": "./.dist/cloudflare",
+    "directory": "../../.dist/cloudflare",
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "none",
     "run_worker_first": [
@@ -44,14 +48,18 @@
   "d1_databases": [
     {
       "binding": "DB",
+      // Deployed identifier: the production D1 database.
       "database_name": "zigba-catalog",
       "database_id": "c3168a8a-7b59-433b-9c4b-7b1a55238e4d",
-      "migrations_dir": "./server/migrations",
+      "migrations_dir": "../server/migrations",
     },
   ],
   "r2_buckets": [
     {
       "binding": "SAVES",
+      // Deployed identifier: the private cloud-save bucket. Its object keys
+      // (<account>/<ROM SHA-1>/<playthrough>/<kind>, share/state/<id> and
+      // share/rom/<id>) are durable too.
       "bucket_name": "zigba-saves",
       "jurisdiction": "eu",
     },

@@ -2,9 +2,9 @@
 
 Home (`/`) is one vertical pixel-art fresco: three painted plates and a
 procedural abyss, all 480 art pixels wide on one shared grid. The images are
-original artwork made for ZiGBA with an image-generation tool and snapped to
+original artwork made for the player with an image-generation tool and snapped to
 the pixel grid by
-[`tools/landing-art`](../../../../tools/landing-art/README.md); they contain
+[`scripts/landing-art`](../../../scripts/landing-art/README.md); they contain
 no ROM data, game sprites or game locations. They are placeholders for
 hand-finished art on the same grid.
 

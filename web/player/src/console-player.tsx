@@ -12,6 +12,7 @@ import { QUICK_SLOTS, quickSlotForKey } from "./library";
 import { EmptyScreen } from "./empty-screen";
 import { draw } from "./media";
 import { RewindTimeline } from "./rewind-timeline";
+import { requireCurrentState } from "./state-format";
 
 /**
  * One owned operation: slots are ROM- and playthrough-specific and never
@@ -31,6 +32,7 @@ export async function quickState(slot: number, restore: boolean) {
     if (restore) {
       const quick = await player.library.getQuickSlot(ref, slot);
       if (!quick) throw new Error(`Quick slot ${slot} is empty.`);
+      requireCurrentState(quick.data, `Quick slot ${slot}`);
       player.latest = await player.emulator.loadState(quick.data);
       player.update({ message: `Loaded slot ${slot}` });
       await player.checkpointState();

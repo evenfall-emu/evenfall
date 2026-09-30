@@ -11,7 +11,7 @@ import { offlinePlayer } from "./offline";
 
 // Workspace packages export their TypeScript sources under this condition,
 // so the player needs no separate SDK bridge build. See docs/sdk.md.
-export const sourceConditions = ["zigba-source"];
+export const sourceConditions = ["evenfall-source"];
 
 export default defineConfig({
   plugins: lazyPlugins(() => [react(), tailwindcss(), offlinePlayer()]),
@@ -30,7 +30,7 @@ export default defineConfig({
   // The SDK's worker, WASM and audio worklet are emitted as hashed assets.
   // The install manifest and its icons keep stable URLs in public/.
   build: {
-    outDir: process.env.ZIGBA_PLAYER_DIR ?? "../zig-out/player",
+    outDir: process.env.EVENFALL_PLAYER_DIR ?? "dist",
     emptyOutDir: true,
     rolldownOptions: {
       input: {

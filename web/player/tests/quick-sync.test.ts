@@ -22,7 +22,7 @@ import {
 const hash = "a".repeat(40);
 const ref = { hash, playthroughId: "default" };
 const state = (marker: number) =>
-  new Uint8Array([...new TextEncoder().encode("ZIGBAST1"), marker]);
+  new Uint8Array([...new TextEncoder().encode("EVENFALL"), marker]);
 
 async function gzip(bytes: Uint8Array) {
   return new Uint8Array(
@@ -330,6 +330,21 @@ it("discovers and downloads every cloud slot for a playthrough on a new device",
   expect(
     (await library.quickSlots(ref, "alice")).map((slot) => slot.sync),
   ).toEqual(["synced", ...Array(8).fill(undefined), "synced"]);
+  expect(server.puts).toHaveLength(0);
+});
+
+/**
+ * A cloud quick slot saved by the previous core downloads and stays like any
+ * other slot, so sync neither fails nor drops it. Loading it is refused later
+ * with an explanation, and it is never uploaded back.
+ */
+it("keeps a previous-core cloud slot on the device without uploading it again", async () => {
+  const old = new Uint8Array([...new TextEncoder().encode("ZIGBAST1"), 4]);
+  await server.seed("alice", 4, old, 40);
+  await cloud.syncQuick(ref);
+  expect(await localBytes(4)).toEqual(old);
+  expect((await library.quickSlots(ref, "alice"))[3].sync).toBe("synced");
+  await cloud.flush();
   expect(server.puts).toHaveLength(0);
 });
 

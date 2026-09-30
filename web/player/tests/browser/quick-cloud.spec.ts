@@ -151,7 +151,12 @@ test("quick slots back up on save, sync silently, and ask once about true diverg
 
   // Another device changes slot 10 while this one saves it too.
   const other = server.replace(10, 1_000);
+  const firstSave = (await localSlot(page, 10)).savedAt;
   await page.keyboard.press("Shift+Digit0");
+  // Reconnect only once this device's save is stored, so both sides changed.
+  await expect
+    .poll(async () => (await localSlot(page, 10)).savedAt)
+    .not.toBe(firstSave);
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
   const dialog = page.getByRole("dialog", { name: "Quick slots changed" });
   await expect(dialog).toContainText("Slot 10");
@@ -160,7 +165,7 @@ test("quick slots back up on save, sync silently, and ask once about true diverg
     dialog.getByRole("radio", { name: /This device/ }),
   ).toBeChecked();
   expect(server.slots.get(10)?.etag).toBe(other.etag);
-  await page.screenshot({ path: "../artifacts/quick-cloud/divergence.png" });
+  await page.screenshot({ path: "../../artifacts/quick-cloud/divergence.png" });
   await dialog.getByRole("button", { name: "Decide later" }).click();
   await expect(dialog).toHaveCount(0);
   // Asked once: reconnecting again keeps the reminder only in the menu.
@@ -172,7 +177,7 @@ test("quick slots back up on save, sync silently, and ask once about true diverg
   await expect(menu.locator(".slot-row")).toHaveCount(10);
   await expect(menu.locator(".slot-row").nth(9)).toContainText("differs");
   await menu.locator(".slot-row").nth(9).scrollIntoViewIfNeeded();
-  await page.screenshot({ path: "../artifacts/quick-cloud/menu.png" });
+  await page.screenshot({ path: "../../artifacts/quick-cloud/menu.png" });
   await page.getByRole("button", { name: /Resolve 1 changed slot/ }).click();
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Keep selected copies" }).click();

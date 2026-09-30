@@ -1,7 +1,9 @@
+import { LOCAL_DATABASE, SAVE_LOCK_PREFIX } from "./deployed-names";
+
 export class SaveStore {
   static async open() {
     const db = await new Promise((resolve, reject) => {
-      const request = indexedDB.open("zigba-local", 2);
+      const request = indexedDB.open(LOCAL_DATABASE, 2);
       request.onupgradeneeded = () => {
         for (const name of ["saves", "games", "assets", "scenarios", "reports"])
           if (!request.result.objectStoreNames.contains(name))
@@ -13,7 +15,7 @@ export class SaveStore {
       };
       request.onerror = () => reject(request.error);
       request.onblocked = () =>
-        reject(new Error("Close other ZiGBA tabs to open save storage"));
+        reject(new Error("Close other Evenfall tabs to open save storage"));
     });
     return new SaveStore(db);
   }
@@ -53,7 +55,7 @@ export async function acquireSaveLock(hash) {
   if (!navigator.locks) return null;
   return new Promise((resolve, reject) => {
     navigator.locks
-      .request(`zigba-save-${hash}`, { ifAvailable: true }, (lock) => {
+      .request(`${SAVE_LOCK_PREFIX}${hash}`, { ifAvailable: true }, (lock) => {
         if (!lock) {
           resolve(null);
           return;

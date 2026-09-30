@@ -9,7 +9,7 @@ import { AccountDevices, GamePanels, RomhackFan, SpeedMeter } from "./showcase";
 
 // Optional instance privacy notice supplied by the deployment build.
 const privacyUrl = import.meta.env.VITE_PRIVACY_URL;
-const SOURCE_URL = "https://github.com/evenfall-emu/zigba";
+const SOURCE_URL = "https://github.com/evenfall-emu/evenfall";
 
 function Section({
   title,
@@ -415,10 +415,9 @@ export function LandingPage({
         </section>
         <footer className="px-6 pt-[clamp(56px,6vw,96px)] pb-8 text-center text-1x5 text-content [text-shadow:2px_2px_0_#011e3c]">
           <p className="mx-auto mt-4 max-w-[72ch] text-muted">
-            ZiGBA is an independent GBA emulator, not affiliated with or
-            endorsed by Nintendo. Game Boy Advance is a trademark of Nintendo.
-            Pokémon is a trademark of Nintendo, Creatures Inc. and GAME FREAK
-            inc.
+            Evenfall is an independent emulator, not affiliated with or endorsed
+            by Nintendo. Game Boy Advance is a trademark of Nintendo. Pokémon is
+            a trademark of Nintendo, Creatures Inc. and GAME FREAK inc.
           </p>
           {privacyUrl && (
             <p className="mt-2">

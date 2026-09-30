@@ -717,14 +717,14 @@ origins.
 npm run check -w frontend
 npm test -w frontend
 zig build web
-ZIGBA_TEST_PORT=8890 npm run test:browser -w frontend
+EVENFALL_TEST_PORT=8890 npm run test:browser -w frontend
 ```
 
 `zig build test-frontend` and `zig build test-browser` run these together with
 the [`@evenfall/gba-pokemon`](../games/pokemon/README.md#tests) suites. The
-browser suite serves `zig-out/web` on `ZIGBA_TEST_PORT` (default 8765) and
+browser suite serves `zig-out/web` on `EVENFALL_TEST_PORT` (default 8765) and
 covers the player and the `/validation.html` SDK harness, whose
-`window.zigbaValidation` hooks (`Emulator` and `acquireSaveLock`) also serve
+`window.evenfallValidation` hooks (`Emulator` and `acquireSaveLock`) also serve
 the SDK and save-lock tests.
 It uses `PLAYWRIGHT_CHROMIUM_EXECUTABLE` or `/usr/bin/chromium` when present;
 otherwise install a browser with `npx playwright install chromium`.
@@ -733,7 +733,7 @@ Browser checks can also target a local Wrangler preview or a deployment,
 where they use tiny generated test programs and browser-local storage:
 
 ```sh
-ZIGBA_TEST_URL=https://your-deployment.example npm run test:browser -w frontend -- \
+EVENFALL_TEST_URL=https://your-deployment.example npm run test:browser -w frontend -- \
   home-navigation.spec.ts library.spec.ts
 ```
 

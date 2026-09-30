@@ -1,7 +1,7 @@
 import type { ComponentType, ReactNode } from "react";
 
 /**
- * Props the ZiGBA player gives a game layout (frontend/src/games.ts): current
+ * Props the Evenfall player gives a game layout (web/player/src/games.ts): current
  * playback state and the self-contained player, which is rendered once.
  */
 export interface GameLayoutProps {

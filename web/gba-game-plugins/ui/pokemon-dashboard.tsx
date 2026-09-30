@@ -79,7 +79,7 @@ const ailmentColors: readonly [RegExp, string][] = [
   [/^bleed(?:ing)?$/i, "#ff786a"],
   [/^(?:slp|sleep|asleep)$/i, "#ffffff"],
 ];
-// Original ZiGBA glyphs drawn on a 3:2 grid: a starburst for contact, a
+// Original glyphs drawn on a 3:2 grid: a starburst for contact, a
 // sparkle for special attacks and a half-filled disc for status effects.
 const categoryGlyphs: Record<MoveCategory, ReactNode> = {
   physical: (

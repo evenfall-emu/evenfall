@@ -5,6 +5,8 @@
  * until it reloads. A tab reloads by itself only when that loses nothing the
  * user can see; otherwise it offers a reload, which saves the game first.
  */
+import { UPDATE_RELOAD_KEY } from "./deployed-names";
+
 export type UpdateStatus = "current" | "ready" | "reloading";
 
 /** How often an open player checks for a new version. */
@@ -14,7 +16,7 @@ const CHECK_INTERVAL_MS = 60 * 60 * 1000;
  * alternates between two versions cannot reload the page in a loop.
  */
 const AUTOMATIC_RELOAD_GAP_MS = 60 * 1000;
-const AUTOMATIC_RELOAD_KEY = "zigba-update-reloaded-at";
+const AUTOMATIC_RELOAD_KEY = UPDATE_RELOAD_KEY;
 
 export class AppUpdate {
   status: UpdateStatus = "current";

@@ -199,16 +199,16 @@ Unit tests use synthetic records. Tests that need real games skip unless you
 point these variables at files you supply; they verify the documented hashes
 before use:
 
-| Variable                                       | File                                                                                           |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `ZIGBA_HNS_ROM`                                | Heart & Soul 1.2.1 raw ROM                                                                     |
-| `ZIGBA_HNS_120_ROM`                            | Heart & Soul 1.2.0 raw ROM, with `ZIGBA_HNS_ROM`                                               |
-| `ZIGBA_HNS_STATE`, `ZIGBA_HNS_BATTLE`          | `game2.state` and `battle.state` ([hashes](docs/profiles.md#test-fixtures))                    |
-| `ZIGBA_REDUX_ROM`                              | Elite Redux 2.65 Beta2 raw ROM                                                                 |
-| `ZIGBA_REDUX_DEBUG_ROM`                        | Elite Redux 2.65 Beta2 debug build raw ROM, with `ZIGBA_REDUX_ROM`                             |
-| `ZIGBA_REDUX_STATE`, `ZIGBA_REDUX_STAGE_STATE` | `redux.state` and `redux-stage-buff.state` ([hashes](docs/profiles.md#test-fixtures))          |
-| `ZIGBA_REDUX_BETA3_ROM`                        | Elite Redux 2.65 Beta3 raw ROM                                                                 |
-| `ZIGBA_REDUX_BETA3_STATE`                      | a Beta3 overworld state, with `ZIGBA_REDUX_BETA3_ROM` ([hash](docs/profiles.md#test-fixtures)) |
+| Variable                                             | File                                                                                              |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `EVENFALL_HNS_ROM`                                   | Heart & Soul 1.2.1 raw ROM                                                                        |
+| `EVENFALL_HNS_120_ROM`                               | Heart & Soul 1.2.0 raw ROM, with `EVENFALL_HNS_ROM`                                               |
+| `EVENFALL_HNS_STATE`, `EVENFALL_HNS_BATTLE`          | `game2.state` and `battle.state` ([hashes](docs/profiles.md#test-fixtures))                       |
+| `EVENFALL_REDUX_ROM`                                 | Elite Redux 2.65 Beta2 raw ROM                                                                    |
+| `EVENFALL_REDUX_DEBUG_ROM`                           | Elite Redux 2.65 Beta2 debug build raw ROM, with `EVENFALL_REDUX_ROM`                             |
+| `EVENFALL_REDUX_STATE`, `EVENFALL_REDUX_STAGE_STATE` | `redux.state` and `redux-stage-buff.state` ([hashes](docs/profiles.md#test-fixtures))             |
+| `EVENFALL_REDUX_BETA3_ROM`                           | Elite Redux 2.65 Beta3 raw ROM                                                                    |
+| `EVENFALL_REDUX_BETA3_STATE`                         | a Beta3 overworld state, with `EVENFALL_REDUX_BETA3_ROM` ([hash](docs/profiles.md#test-fixtures)) |
 
 No ROM, save or state is committed, and none is needed for the default suites.
 

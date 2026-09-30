@@ -8,11 +8,11 @@ by CRC32 only; the DAT turns that CRC32 into the dump's name, serial, size and
 SHA-1, from which a catalog base for the patch can be recorded.
 
 ```sh
-node tools/catalog/no-intro.mjs lookup --crc32 1f1c08fb
-node tools/catalog/no-intro.mjs lookup --sha1 <40 hex digits>
-node tools/catalog/no-intro.mjs lookup --name emerald  # substring, any case
-node tools/catalog/no-intro.mjs latest                 # newest upstream DAT
-node tools/catalog/no-intro.mjs names                  # the player's name table
+node web/server/scripts/catalog/no-intro.mjs lookup --crc32 1f1c08fb
+node web/server/scripts/catalog/no-intro.mjs lookup --sha1 <40 hex digits>
+node web/server/scripts/catalog/no-intro.mjs lookup --name emerald  # substring, any case
+node web/server/scripts/catalog/no-intro.mjs latest                 # newest upstream DAT
+node web/server/scripts/catalog/no-intro.mjs names                  # the player's name table
 ```
 
 `lookup` prints JSON `{ commit, version, matches }` and exits 0 when something
@@ -43,13 +43,13 @@ license, and lists one dump per line in SHA-1 order.
 
 To move the pin:
 
-1. Run `node tools/catalog/no-intro.mjs latest`. It prints the newest
+1. Run `node web/server/scripts/catalog/no-intro.mjs latest`. It prints the newest
    upstream commit that touched the DAT, the file's SHA-256, its header
    version and entry count, and whether that matches the current pin.
 2. Try the candidate with `lookup ... --commit <sha> --sha256 <digest>`.
 3. Update `DAT_COMMIT` and `DAT_SHA256` together, and run
-   `node --test tools/catalog/*.test.mjs`.
-4. Run `node tools/catalog/no-intro.mjs names` and commit the table.
+   `vp test --project server`.
+4. Run `node web/server/scripts/catalog/no-intro.mjs names` and commit the table.
 
 The tests use a handwritten fixture and need no network.
 
@@ -89,8 +89,8 @@ does not assign `featured` or `hidden`. Visibility is per release, and a
 management write can set any of the four levels without changing the patch.
 
 ```sh
-node tools/catalog/romhacks.mjs build   # regenerate the metadata and local test inventories
-node tools/catalog/romhacks.mjs check   # fail if the seed no longer matches the collections
+node web/server/scripts/catalog/romhacks.mjs build   # regenerate the metadata and local test inventories
+node web/server/scripts/catalog/romhacks.mjs check   # fail if the seed no longer matches the collections
 ```
 
 Patch object keys are the patch SHA-1 plus its format extension. The separate
@@ -109,8 +109,8 @@ the bucket's direct endpoint rather than the Worker:
 
 ```sh
 npx wrangler deploy --config server/patches.wrangler.jsonc
-node tools/catalog/romhacks.mjs upload
-node tools/catalog/romhacks.mjs verify
+node web/server/scripts/catalog/romhacks.mjs upload
+node web/server/scripts/catalog/romhacks.mjs verify
 ```
 
 Wrangler must be authenticated to the account that owns the bucket. `upload`

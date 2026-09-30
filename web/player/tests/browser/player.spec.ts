@@ -3,7 +3,7 @@ import type { Emulator as SdkEmulator, Scenario } from "@evenfall/gba";
 
 /** Hooks that /validation.html exposes for SDK and storage tests. */
 type ValidationHooks = {
-  zigbaValidation: {
+  evenfallValidation: {
     Emulator: typeof SdkEmulator;
     acquireSaveLock(key: string): Promise<(() => void) | null>;
   };
@@ -110,7 +110,8 @@ test("worker cancellation, fault capture and save locking across tabs", async ({
 }) => {
   await sdkPage(page);
   const result = await page.evaluate(async () => {
-    const { Emulator } = (window as unknown as ValidationHooks).zigbaValidation;
+    const { Emulator } = (window as unknown as ValidationHooks)
+      .evenfallValidation;
     const a = await Emulator.create();
     const b = await Emulator.create();
     const rom = new Uint8Array([42, 0, 160, 227, 254, 255, 255, 234]);
@@ -141,7 +142,7 @@ test("worker cancellation, fault capture and save locking across tabs", async ({
   expect(result).toEqual({ status: "cancelled", same: true, captured: true });
   await page.evaluate(async () => {
     const { acquireSaveLock } = (window as unknown as ValidationHooks)
-      .zigbaValidation;
+      .evenfallValidation;
     (window as unknown as { release: () => void }).release =
       (await acquireSaveLock("lock-test"))!;
   });
@@ -150,7 +151,7 @@ test("worker cancellation, fault capture and save locking across tabs", async ({
   expect(
     await second.evaluate(async () => {
       const { acquireSaveLock } = (window as unknown as ValidationHooks)
-        .zigbaValidation;
+        .evenfallValidation;
       return (await acquireSaveLock("lock-test")) === null;
     }),
   ).toBe(true);
@@ -159,7 +160,7 @@ test("worker cancellation, fault capture and save locking across tabs", async ({
     .poll(() =>
       second.evaluate(async () => {
         const { acquireSaveLock } = (window as unknown as ValidationHooks)
-          .zigbaValidation;
+          .evenfallValidation;
         const release = await acquireSaveLock("lock-test");
         release?.();
         return !!release;
@@ -205,7 +206,8 @@ test("a recorded session replays in an isolated worker, and a failed assertion c
   };
   await sdkPage(page);
   const result = await page.evaluate(async (manifest) => {
-    const { Emulator } = (window as unknown as ValidationHooks).zigbaValidation;
+    const { Emulator } = (window as unknown as ValidationHooks)
+      .evenfallValidation;
     const rom = new Uint8Array([42, 0, 160, 227, 254, 255, 255, 234]);
     // Each run gets its own worker, as a host keeps tests off the live session.
     const isolated = async <T>(run: (worker: SdkEmulator) => Promise<T>) => {
@@ -263,9 +265,9 @@ test("a recorded session replays in an isolated worker, and a failed assertion c
   expect(result.recorded).toContain("First checkpoint");
   expect(result).toMatchObject({
     replayed: "passed",
-    manual: { format: "zigba-failure", framebuffer: 240 * 160 },
+    manual: { format: "evenfall-failure", framebuffer: 240 * 160 },
     failed: "failed",
-    capture: "zigba-failure",
+    capture: "evenfall-failure",
     unasserted: "passed",
     checkpoint: "r0 check",
     reproduced: "passed",
@@ -750,7 +752,7 @@ test("boot options override cartridge clock detection and pin a fixed epoch", as
   const result = await page.evaluate(
     async (bytes) => {
       const { Emulator } = (window as unknown as ValidationHooks)
-        .zigbaValidation;
+        .evenfallValidation;
       const emulator = await Emulator.create();
       try {
         const rom = new Uint8Array(bytes);
@@ -856,7 +858,8 @@ test("speed choices and hold-Tab boost change pacing, not machine timing", async
 test("playback speed never changes emulated results", async ({ page }) => {
   await sdkPage(page);
   const parity = await page.evaluate(async () => {
-    const { Emulator } = (window as unknown as ValidationHooks).zigbaValidation;
+    const { Emulator } = (window as unknown as ValidationHooks)
+      .evenfallValidation;
     const a = await Emulator.create(),
       b = await Emulator.create();
     try {
@@ -894,7 +897,8 @@ test("recycles worker presentation buffers across play, pause and save restorati
 }) => {
   await sdkPage(page);
   const result = await page.evaluate(async () => {
-    const { Emulator } = (window as unknown as ValidationHooks).zigbaValidation;
+    const { Emulator } = (window as unknown as ValidationHooks)
+      .evenfallValidation;
     const emulator = await Emulator.create();
     const errors: string[] = [];
     emulator.addEventListener("error", (event: Event) =>

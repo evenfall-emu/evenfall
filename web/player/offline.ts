@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Plugin } from "vite-plus";
+import { OFFLINE_CACHE_PREFIX } from "./src/deployed-names";
 
 // Cache a complete, content-versioned player/SDK together. Never cache API
 // responses or user media. A new version installs next to the running one and
@@ -26,11 +27,12 @@ export function offlinePlayer(): Plugin {
       const hash = createHash("sha256");
       for (const file of files)
         hash.update(file).update(await readFile(resolve(directory, file)));
-      const cache = `zigba-player-${hash.digest("hex").slice(0, 20)}`;
+      const cache = `${OFFLINE_CACHE_PREFIX}${hash.digest("hex").slice(0, 20)}`;
       await writeFile(
         resolve(directory, "service-worker.js"),
         `
 const CACHE = ${JSON.stringify(cache)};
+const PREFIX = ${JSON.stringify(OFFLINE_CACHE_PREFIX)};
 const FILES = ${JSON.stringify(files)};
 const urls = new Set(FILES.map(file => new URL(file, self.registration.scope).href));
 // The player's pages, relative to the scope; each one is index.html.
@@ -56,7 +58,7 @@ async function prune(page) {
   if (tabs.some(tab => tab.id !== page)) return;
   const names = await caches.keys();
   for (const name of names.slice(0, Math.max(names.indexOf(CACHE), 0))) {
-    if (name.startsWith('zigba-player-')) await caches.delete(name);
+    if (name.startsWith(PREFIX)) await caches.delete(name);
   }
 }
 self.addEventListener('fetch', event => {

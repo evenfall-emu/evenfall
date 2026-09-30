@@ -1,5 +1,5 @@
 // The player recognizing a build no committed manifest describes, from the
-// game's locators. Skips unless ZIGBA_HNS_120_ROM names the user-supplied ROM.
+// game's locators. Skips unless EVENFALL_HNS_120_ROM names the user-supplied ROM.
 import { test, expect, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -36,7 +36,7 @@ const cachedBuilds = (page: Page) =>
 test("recognizes Heart & Soul 1.2.0 from its locators, then from the cache", async ({
   page,
 }, testInfo) => {
-  const rom = process.env.ZIGBA_HNS_120_ROM;
+  const rom = process.env.EVENFALL_HNS_120_ROM;
   test.skip(!rom, "Supply the hash-verified Heart & Soul 1.2.0 ROM");
   expect(
     createHash("sha1")

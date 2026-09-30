@@ -6,7 +6,7 @@ import { rm } from "node:fs/promises";
 
 // The two-column player that game layouts get on pages narrower than 17:10
 // (src/docked.tsx), around the Player's screen markup.
-const outDir = "../artifacts/docked-test";
+const outDir = "../../artifacts/docked-test";
 
 test.beforeAll(async () => {
   await build({

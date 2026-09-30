@@ -236,13 +236,13 @@ test("first connection discovers cloud progress, rejects the wrong ROM, and then
     expect(control.downloads).toBe(0);
     await phone.evaluate(() => document.fonts.ready);
     await phone.screenshot({
-      path: "../artifacts/cloud-resume/home-mobile.png",
+      path: "../../artifacts/cloud-resume/home-mobile.png",
     });
     await phone.getByRole("button", { name: "Resume adventure" }).click();
     const dialog = phone.getByRole("dialog", { name: "Resume from cloud" });
     await expect(dialog).toContainText("never uploaded");
     await phone.screenshot({
-      path: "../artifacts/cloud-resume/choose-rom-mobile.png",
+      path: "../../artifacts/cloud-resume/choose-rom-mobile.png",
     });
     await expect(dialog.getByLabel("Choose ROM for cloud resume")).toBeHidden();
     const picker = dialog.getByRole("button", {
@@ -347,7 +347,7 @@ test("existing device progress remains an explicit alternative to a cloud checkp
   expect(await localResume(page)).toEqual(local);
   await page.evaluate(() => document.fonts.ready);
   await page.screenshot({
-    path: "../artifacts/cloud-resume/local-choice-desktop.png",
+    path: "../../artifacts/cloud-resume/local-choice-desktop.png",
   });
   await dialog
     .getByRole("button", { name: "Continue on this device instead" })
@@ -601,7 +601,7 @@ test("Player can choose a cloud-only playthrough of the loaded game", async ({
     page.getByRole("option", { name: "Cloud run · cloud" }),
   ).toBeVisible();
   await page.locator(".playthrough-select-popup").screenshot({
-    path: "../artifacts/cloud-resume/player-cloud-menu-desktop.png",
+    path: "../../artifacts/cloud-resume/player-cloud-menu-desktop.png",
   });
   await page.getByRole("option", { name: "Cloud run · cloud" }).click();
   const dialog = page.getByRole("dialog", { name: "Resume from cloud" });

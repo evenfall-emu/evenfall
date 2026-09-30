@@ -13,7 +13,7 @@ export type {
 } from "./layout";
 
 /**
- * Registration for the ZiGBA player's game registry (frontend/src/games.ts).
+ * Registration for the Evenfall player's game registry (web/player/src/games.ts).
  * Layout modules and their CSS load on demand, in their own chunks.
  */
 export const pokemonPlugin = {

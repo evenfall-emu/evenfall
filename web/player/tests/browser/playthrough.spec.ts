@@ -410,7 +410,7 @@ test("naming forms validate Unicode names and preserve failed edits for retry on
   await expect(name).toBeFocused();
   await page.evaluate(() => document.fonts.ready);
   await page.screenshot({
-    path: "../artifacts/playthrough-dialogs/new-desktop.png",
+    path: "../../artifacts/playthrough-dialogs/new-desktop.png",
   });
   await name.fill("   ");
   await name.press("Enter");
@@ -446,7 +446,7 @@ test("naming forms validate Unicode names and preserve failed edits for retry on
     .boundingBox();
   expect(titleBounds!.y).toBeGreaterThanOrEqual(bounds!.y);
   await page.screenshot({
-    path: "../artifacts/playthrough-dialogs/validation-mobile.png",
+    path: "../../artifacts/playthrough-dialogs/validation-mobile.png",
   });
   await name.fill("🌙".repeat(160));
   await name.press("Enter");
@@ -480,7 +480,7 @@ test("naming forms validate Unicode names and preserve failed edits for retry on
   );
   await expect(rename.getByRole("button", { name: "Save name" })).toBeEnabled();
   await page.screenshot({
-    path: "../artifacts/playthrough-dialogs/retry-mobile.png",
+    path: "../../artifacts/playthrough-dialogs/retry-mobile.png",
   });
   await rename.getByRole("button", { name: "Save name" }).click();
   await expect(rename).toBeHidden();
@@ -490,7 +490,7 @@ test("naming forms validate Unicode names and preserve failed edits for retry on
     "Moonlight run",
   );
   await page.screenshot({
-    path: "../artifacts/playthrough-dialogs/rename-mobile.png",
+    path: "../../artifacts/playthrough-dialogs/rename-mobile.png",
   });
   await page.mouse.click(4, 4);
   await expect(rename).toBeHidden();
@@ -563,7 +563,7 @@ test("deleting a playthrough requires confirmation and keeps the other adventure
   ).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
   await page.screenshot({
-    path: "../artifacts/playthrough-selector-desktop.png",
+    path: "../../artifacts/playthrough-selector-desktop.png",
   });
   await page.keyboard.press("Escape");
 
@@ -586,19 +586,21 @@ test("deleting a playthrough requires confirmation and keeps the other adventure
   await page.setViewportSize({ width: 390, height: 640 });
   await page.getByRole("button", { name: "Player menu" }).click();
   await trash.click();
-  await page.screenshot({ path: "../artifacts/playthrough-delete-mobile.png" });
+  await page.screenshot({
+    path: "../../artifacts/playthrough-delete-mobile.png",
+  });
   await confirm.getByRole("button", { name: "Delete playthrough" }).click();
   await expect(confirm).toBeHidden();
   await expect(selectedRun(page)).toContainText("Playthrough 1");
   await page.locator(".player-tools").screenshot({
-    path: "../artifacts/playthrough-toolbar-mobile.png",
+    path: "../../artifacts/playthrough-toolbar-mobile.png",
   });
   await selectedRun(page).click();
   await expect(
     page.getByRole("option", { name: /New playthrough/ }),
   ).toBeVisible();
   await page.locator(".playthrough-select-popup").screenshot({
-    path: "../artifacts/playthrough-selector-mobile.png",
+    path: "../../artifacts/playthrough-selector-mobile.png",
   });
   await page.keyboard.press("Escape");
   const result = await page.evaluate(

@@ -10,7 +10,7 @@ from threading import Event
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--port', type=int, default=8765)
-parser.add_argument('--directory', type=Path, default=Path('zig-out/web'))
+parser.add_argument('--directory', type=Path, default=Path('dist'))
 parser.add_argument('--fixture', action='append', default=[], metavar='NAME=PATH')
 parser.add_argument('--validation', action='store_true', help='Enable headless-test completion handshake')
 args = parser.parse_args()
@@ -81,5 +81,5 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 server = ThreadingHTTPServer(('127.0.0.1', args.port), functools.partial(Handler, directory=str(args.directory)))
-print(f'ZiGBA: http://127.0.0.1:{args.port} (loopback only)', flush=True)
+print(f'Evenfall player: http://127.0.0.1:{args.port} (loopback only)', flush=True)
 server.serve_forever()

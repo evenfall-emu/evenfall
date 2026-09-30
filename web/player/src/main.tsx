@@ -77,6 +77,7 @@ import { QuickConflictChoices } from "./quick-conflicts";
 import { gameRegistry, watchBuild, type HandheldHud } from "./games";
 import { download } from "./media";
 import { trackShare, trackView } from "./analytics";
+import { requireCurrentState } from "./state-format";
 import { cx } from "./ui/styles";
 import "./styles.css";
 
@@ -1092,9 +1093,9 @@ function App() {
     player.update({ changing: true });
     try {
       await player.pause(true);
-      player.latest = await player.emulator.loadState(
-        new Uint8Array(await file.arrayBuffer()),
-      );
+      const data = new Uint8Array(await file.arrayBuffer());
+      requireCurrentState(data, "This state file");
+      player.latest = await player.emulator.loadState(data);
       player.update({ message: "State loaded" });
       await player.checkpointState();
     } finally {
@@ -2051,7 +2052,7 @@ const paths = {
   manage: "/manage",
 } as const;
 
-// Servers answer these paths with the player (see tools/serve-web.py, the
+// Servers answer these paths with the player (see scripts/serve-web.py, the
 // Worker and offline.ts); every other path is a 404.
 const rootRoute = createRootRoute({ component: App });
 // A fresh page has no game running, so /player opens the Library instead.

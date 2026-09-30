@@ -25,3 +25,13 @@ node_modules/
 /.amp/in/
 .amp/portals/*
 /tools/bench/diag/build/
+
+# The player, its Worker and their tests.
+/web/player/dist/
+/.dist/
+.wrangler/
+/web/server/.dev.vars
+/web/server/.env*
+/web/*/test-results/
+/web/*/playwright-report/
+.vitest/

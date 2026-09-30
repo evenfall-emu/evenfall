@@ -1,7 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { InfoTip } from "../../ui/info-tip";
-import "../../../../frontend/src/console.css";
+import "../../../player/src/console.css";
 import "../../ui/dashboard.css";
 
 createRoot(document.body.appendChild(document.createElement("div"))).render(

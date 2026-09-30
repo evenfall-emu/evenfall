@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
+import { onTestFinished, test } from "vite-plus/test";
 import {
   findByCrc32,
   findByName,
@@ -198,9 +198,9 @@ test("writes the SHA-1 -> name table sorted, with its source and license", () =>
   );
 });
 
-test("verifies cached and downloaded bytes against the pinned digest", async (t) => {
+test("verifies cached and downloaded bytes against the pinned digest", async () => {
   const cacheDir = mkdtempSync(join(tmpdir(), "no-intro-"));
-  t.after(() => rmSync(cacheDir, { recursive: true, force: true }));
+  onTestFinished(() => rmSync(cacheDir, { recursive: true, force: true }));
   const good = Buffer.from(FIXTURE);
   const digest = sha256(good);
   const path = join(cacheDir, `${COMMIT}.dat`);
@@ -261,9 +261,9 @@ test("verifies cached and downloaded bytes against the pinned digest", async (t)
   );
 });
 
-test("CLI reports matches through its exit status", (t) => {
+test("CLI reports matches through its exit status", () => {
   const cacheDir = mkdtempSync(join(tmpdir(), "no-intro-"));
-  t.after(() => rmSync(cacheDir, { recursive: true, force: true }));
+  onTestFinished(() => rmSync(cacheDir, { recursive: true, force: true }));
   writeFileSync(join(cacheDir, `${COMMIT}.dat`), FIXTURE);
   const pin = [
     "--commit",

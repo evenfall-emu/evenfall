@@ -1,10 +1,11 @@
 // Local development only. `npm run dev` and `npm run db:migrate:local` use
-// Wrangler's local simulation under server/.wrangler/; the D1 ID and R2 bucket
-// below are placeholders that do not refer to any deployed resource. Never
-// run this configuration with --remote. Deployment uses ../wrangler.jsonc.
+// Wrangler's local simulation under web/server/.wrangler/; the D1 ID and R2
+// bucket below are placeholders that do not refer to any deployed resource.
+// Never run this configuration with --remote. Deployment uses
+// ../cloudflare/wrangler.jsonc.
 {
-  "$schema": "../node_modules/wrangler/config-schema.json",
-  "name": "zigba-catalog-dev",
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "evenfall-server-dev",
   "main": "./src/index.ts",
   "compatibility_date": "2026-09-20",
   "compatibility_flags": ["nodejs_compat"],
@@ -32,7 +33,7 @@
   "r2_buckets": [
     {
       "binding": "SAVES",
-      "bucket_name": "zigba-saves-local",
+      "bucket_name": "evenfall-saves-local",
       "jurisdiction": "eu",
     },
     {

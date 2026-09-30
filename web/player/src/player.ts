@@ -27,6 +27,11 @@ import { acquireSaveLock } from "./storage.js";
 import { type Emulator, type Snapshot, type LoadOptions } from "@evenfall/gba";
 import { AudioOutput, VideoOutput } from "./media";
 import { previousRewindCheckpoint } from "./rewind-model";
+import { isLegacyState, LegacyStateError } from "./state-format";
+
+/** Shown when a resume point from the previous core falls back to the battery save. */
+export const LEGACY_RESUME_MESSAGE =
+  "This resume point was saved by an older version of Evenfall and can't be loaded. Started from the in-game save instead; the old resume point is kept.";
 export class Player {
   emulator!: Emulator;
   session!: Session;
@@ -393,12 +398,23 @@ export class Player {
           "Local progress could not be saved. Export it before switching.",
         );
       await this.cloud.exclusive(async () => {
-        const remote = await this.cloud.download(
+        let remote = await this.cloud.download(
           ref,
           kind,
           target?.accountId,
           target?.etag,
         );
+        // A resume point from the previous core can't be loaded. Restore the
+        // playthrough's in-game save instead; the old state stays in the cloud.
+        let restored = kind;
+        if (kind === "resume" && isLegacyState(remote.data)) {
+          remote = await this.cloud
+            .download(ref, "battery", remote.accountId)
+            .catch(() => {
+              throw new LegacyStateError("This cloud resume point");
+            });
+          restored = "battery";
+        }
         if (target) {
           const source =
             file ??
@@ -421,7 +437,7 @@ export class Player {
             rom,
             options,
             hash,
-            remote.data,
+            restored === "resume" ? remote.data : undefined,
             "That ROM does not match this backup. Choose the exact same game version.",
           );
           if (
@@ -450,7 +466,7 @@ export class Player {
             );
         }
         this.latest =
-          kind === "resume"
+          restored === "resume"
             ? await this.emulator.loadState(remote.data)
             : await this.emulator.resetWithSave(remote.data);
         replacing = true;
@@ -466,12 +482,14 @@ export class Player {
         await this.library.adoptCloudBase(
           remote.accountId,
           ref,
-          kind,
+          restored,
           remote.etag,
         );
         this.update({
           message:
-            "Cloud progress restored and stored locally. Press Play to continue.",
+            restored === kind
+              ? "Cloud progress restored and stored locally. Press Play to continue."
+              : "The cloud resume point was saved by an older version of Evenfall and can't be loaded. Restored the cloud in-game save instead; the old resume point stays in the cloud.",
         });
         if (target) {
           await this.emulator.setRewindConfig();
@@ -489,22 +507,22 @@ export class Player {
     }
   }
   /**
-   * Loads `rom` and then `state` in an isolated Worker, so wrong media or an
-   * incompatible state never replaces this player's machine or stored
-   * progress. Returns the raw ROM, extracted when `options.zipped`.
+   * Loads `rom` and then `state`, if any, in an isolated Worker, so wrong
+   * media or an incompatible state never replaces this player's machine or
+   * stored progress. Returns the raw ROM, extracted when `options.zipped`.
    */
   private async validatedState(
     rom: Uint8Array,
     options: LoadOptions,
     hash: string,
-    state: Uint8Array,
+    state: Uint8Array | undefined,
     mismatch: string,
   ): Promise<Uint8Array> {
     const candidate = await makeEmulator();
     try {
       const cpu = await candidate.load(rom, options);
       if (cpu.romHash !== hash) throw new Error(mismatch);
-      await candidate.loadState(state);
+      if (state) await candidate.loadState(state);
       return options.zipped ? await candidate.exportRom() : rom;
     } finally {
       candidate.terminate();
@@ -793,10 +811,20 @@ export class Player {
     void this.syncQuickSlots().catch(() => {});
     this.canvas?.focus();
   }
+  /**
+   * The newest generation of `checkpoint` that loads in an isolated Worker, or
+   * undefined when every generation is a state from the previous core. Such a
+   * playthrough starts from its battery save; its old states stay stored.
+   */
   private async validatedResume(
     game: Game,
     checkpoint: ResumeCheckpoint,
-  ): Promise<ResumeGeneration> {
+  ): Promise<ResumeGeneration | undefined> {
+    const generations = [
+      checkpoint,
+      ...(checkpoint.previous ? [checkpoint.previous] : []),
+    ].filter((generation) => !isLegacyState(generation.data));
+    if (!generations.length) return undefined;
     const rom =
       this.state.game?.hash === game.hash
         ? await this.emulator.exportRom()
@@ -805,10 +833,7 @@ export class Player {
     const candidate = await makeEmulator();
     let failure: unknown;
     try {
-      for (const generation of [
-        checkpoint,
-        ...(checkpoint.previous ? [checkpoint.previous] : []),
-      ]) {
+      for (const generation of generations) {
         try {
           await candidate.load(rom, { ...generation.options, zipped: false });
           const cpu = await candidate.loadState(generation.data);
@@ -846,17 +871,20 @@ export class Player {
       await this.openInternal(
         game,
         undefined,
-        generation.options,
+        (generation ?? checkpoint).options,
         ref,
         false,
         true,
       );
-      this.latest = await this.emulator.loadState(generation.data);
-      this.lastResumeCycle = this.latest.cycle;
+      if (generation) {
+        this.latest = await this.emulator.loadState(generation.data);
+        this.lastResumeCycle = this.latest.cycle;
+      }
       this.update({
         resumeFailed: false,
-        message:
-          generation === checkpoint
+        message: !generation
+          ? LEGACY_RESUME_MESSAGE
+          : generation === checkpoint
             ? "Resumed local progress."
             : "Recovered the previous local resume point.",
         saveMessage: this.releaseLock
@@ -902,19 +930,23 @@ export class Player {
       const ref = { hash: game.hash, playthroughId: selected.id };
       if (this.matches(ref)) return;
       const checkpoint = await this.library.getResume(ref);
+      let legacy = false;
       if (checkpoint) {
         const generation = await this.validatedResume(game, checkpoint);
+        legacy = !generation;
         this.resumeBlockedRef = ref;
         await this.openInternal(
           game,
           undefined,
-          generation.options,
+          (generation ?? checkpoint).options,
           ref,
           false,
           true,
         );
-        this.latest = await this.emulator.loadState(generation.data);
-        this.lastResumeCycle = this.latest.cycle;
+        if (generation) {
+          this.latest = await this.emulator.loadState(generation.data);
+          this.lastResumeCycle = this.latest.cycle;
+        }
         this.update({ resumeFailed: false });
       } else {
         await this.openInternal(
@@ -929,9 +961,11 @@ export class Player {
       this.resumeBlockedRef = undefined;
       this.update({
         resumeFailed: false,
-        message: playthroughId
-          ? "Playthrough selected."
-          : "New playthrough started.",
+        message: legacy
+          ? LEGACY_RESUME_MESSAGE
+          : playthroughId
+            ? "Playthrough selected."
+            : "New playthrough started.",
       });
       await this.emulator.setRewindConfig();
       if (wasPlaying) await this.play(true);
@@ -1038,7 +1072,10 @@ export class Player {
       this.resumeBlockedRef = undefined;
       this.update({
         resumeFailed: false,
-        message: "Playthrough deleted.",
+        message:
+          checkpoint && !generation && survivor?.id === next.id
+            ? `Playthrough deleted. ${LEGACY_RESUME_MESSAGE}`
+            : "Playthrough deleted.",
       });
       await this.emulator.setRewindConfig();
       if (wasPlaying) await this.play(true);

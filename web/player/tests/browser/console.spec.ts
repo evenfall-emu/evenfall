@@ -10,8 +10,8 @@ const loop = {
   mimeType: "application/octet-stream",
   buffer: Buffer.from([42, 0, 160, 227, 254, 255, 255, 234]),
 };
-const timelineRom = process.env.ZIGBA_TIMELINE_ROM ?? loop;
-const timelineFrames = process.env.ZIGBA_TIMELINE_ROM ? 240 : 24;
+const timelineRom = process.env.EVENFALL_TIMELINE_ROM ?? loop;
+const timelineFrames = process.env.EVENFALL_TIMELINE_ROM ? 240 : 24;
 const sha = (bytes: Uint8Array) =>
   createHash("sha256").update(bytes).digest("hex");
 async function ready(page: Page) {
@@ -213,7 +213,7 @@ test("player and controls fit wide, short, and portrait viewports", async ({
       page.getByLabel("Open game", { exact: true }),
     ).toBeInViewport();
     await page.screenshot({
-      path: `../artifacts/ui-refresh/player-empty-${width}x${height}.png`,
+      path: `../../artifacts/ui-refresh/player-empty-${width}x${height}.png`,
     });
   }
   await page.setViewportSize({ width: 1366, height: 768 });
@@ -251,7 +251,7 @@ test("player and controls fit wide, short, and portrait viewports", async ({
     await page.getByRole("button", { name: "More options" }).click();
     if (onPhone) await page.getByRole("button", { name: "Close menu" }).click();
     await page.screenshot({
-      path: `../artifacts/ui-refresh/player-touch-${width}x${height}.png`,
+      path: `../../artifacts/ui-refresh/player-touch-${width}x${height}.png`,
     });
   }
   await expect(page.getByRole("button", { name: /^Rewind/ })).toBeEnabled();
@@ -414,9 +414,11 @@ test("console autoplays, routes keys outside the canvas, and keeps help and typi
   expect(await frames()).toBe(paused);
   await page.evaluate(() => document.fonts.ready);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await help.screenshot({ path: "../artifacts/hud/player-help-desktop.png" });
+  await help.screenshot({
+    path: "../../artifacts/hud/player-help-desktop.png",
+  });
   await page.setViewportSize({ width: 390, height: 844 });
-  await help.screenshot({ path: "../artifacts/hud/player-help-mobile.png" });
+  await help.screenshot({ path: "../../artifacts/hud/player-help-mobile.png" });
   // Phones show touch controls by default when the pointer is coarse.
   const toggle = help.getByRole("button", { name: /^(Show|Hide) touch/ });
   await toggle.scrollIntoViewIfNeeded();
@@ -429,7 +431,7 @@ test("console autoplays, routes keys outside the canvas, and keeps help and typi
     help.getByRole("button", { name: "Close dialog" }),
   ).toBeInViewport();
   await help.screenshot({
-    path: "../artifacts/hud/player-help-mobile-bottom.png",
+    path: "../../artifacts/hud/player-help-mobile-bottom.png",
   });
   expect(
     await help.evaluate((node) => node.scrollWidth <= node.clientWidth),
@@ -516,13 +518,17 @@ test("R steps once while Shift+R previews and commits exact checkpoints", async 
   expect(previewed.depth).toBe(before.depth);
   await page.evaluate(() => document.fonts.ready);
   await page.setViewportSize({ width: 1280, height: 900 });
-  await dialog.screenshot({ path: "../artifacts/rewind/timeline-desktop.png" });
+  await dialog.screenshot({
+    path: "../../artifacts/rewind/timeline-desktop.png",
+  });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(
     page.locator('.handheld[data-orientation="portrait"]'),
   ).toBeVisible();
   await expect(range).toHaveValue(midpoint);
-  await dialog.screenshot({ path: "../artifacts/rewind/timeline-mobile.png" });
+  await dialog.screenshot({
+    path: "../../artifacts/rewind/timeline-mobile.png",
+  });
   expect(
     await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth),
   ).toBe(true);
@@ -862,7 +868,7 @@ test("new console controls and persistent quick slots work", async ({
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => document.fonts.ready);
   await page.screenshot({
-    path: "../artifacts/hud/reboot-empty-mobile.png",
+    path: "../../artifacts/hud/reboot-empty-mobile.png",
     fullPage: true,
   });
   await page.setViewportSize({ width: 1280, height: 720 });
@@ -948,7 +954,7 @@ test("new console controls and persistent quick slots work", async ({
   await expect(page.locator(".console-notice")).not.toContainText(
     "Saved slot 4",
   );
-  await page.screenshot({ path: "../artifacts/hud/reboot-library.png" });
+  await page.screenshot({ path: "../../artifacts/hud/reboot-library.png" });
   await page.getByRole("button", { name: "Player", exact: true }).click();
   await expect(page.getByRole("main", { name: "Library" })).toHaveCount(0);
   await page.keyboard.press("Control+Digit4");
@@ -965,7 +971,7 @@ test("new console controls and persistent quick slots work", async ({
     "Quick save / load",
   );
   await page.screenshot({
-    path: "../artifacts/hud/reboot-fullscreen-help.png",
+    path: "../../artifacts/hud/reboot-fullscreen-help.png",
   });
   await page.getByRole("button", { name: "Show touch controls" }).click();
   await page.getByRole("button", { name: "Close dialog" }).click();
@@ -984,7 +990,7 @@ test("new console controls and persistent quick slots work", async ({
     ),
   ).toBe(true);
   await page.screenshot({
-    path: "../artifacts/hud/reboot-generic-mobile.png",
+    path: "../../artifacts/hud/reboot-generic-mobile.png",
     fullPage: true,
   });
   // Phones keep the toolbar in the player menu.
@@ -994,7 +1000,7 @@ test("new console controls and persistent quick slots work", async ({
     page.getByRole("dialog", { name: "Saves and options" }),
   ).toBeVisible();
   await page.screenshot({
-    path: "../artifacts/hud/reboot-options-mobile.png",
+    path: "../../artifacts/hud/reboot-options-mobile.png",
     fullPage: true,
   });
   expect(errors).toEqual([]);

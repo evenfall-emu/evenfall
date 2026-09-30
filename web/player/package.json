@@ -1,17 +1,15 @@
 {
-  "name": "zigba-player",
+  "name": "@evenfall/player",
   "private": true,
   "version": "0.1.0",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "scripts": {
     "dev": "vp dev --host 127.0.0.1",
-    "build": "tsc --noEmit && vp build",
-    "deploy": "wrangler deploy --config ../wrangler.jsonc",
-    "preview:deploy": "wrangler dev --config ../wrangler.jsonc",
-    "check": "tsc --noEmit",
+    "build": "vp build",
+    "preview:deploy": "wrangler dev --config ../cloudflare/wrangler.jsonc",
     "icons": "node scripts/render-brand-icons.mjs",
-    "test": "vp test run",
+    "test": "vp test",
     "test:browser": "playwright test"
   },
   "dependencies": {

@@ -54,7 +54,7 @@ test("Home is the default and preserves a playing session across navigation", as
   await expect(page.getByRole("button", { name: "About" })).toHaveCount(0);
   await page.evaluate(() => document.fonts.ready);
   await page.screenshot({
-    path: "../artifacts/home-desktop.png",
+    path: "../../artifacts/home-desktop.png",
     fullPage: true,
   });
 
@@ -101,7 +101,7 @@ test("Home navigation remains usable on mobile", async ({ page }) => {
   ).toBe(true);
   await page.evaluate(() => document.fonts.ready);
   await page.screenshot({
-    path: "../artifacts/home-mobile.png",
+    path: "../../artifacts/home-mobile.png",
     fullPage: true,
   });
 
@@ -145,7 +145,7 @@ test("shared navigation fits mobile when pixel fonts cannot load", async ({
   await expect(header(page)).toBeVisible();
   await fits(header(page).getByRole("button"));
   await page.screenshot({
-    path: "../artifacts/home-mobile-fallback.png",
+    path: "../../artifacts/home-mobile-fallback.png",
     fullPage: true,
   });
   await page.getByRole("button", { name: "Library", exact: true }).click();

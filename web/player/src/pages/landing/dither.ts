@@ -1,5 +1,5 @@
 // The fresco's ordered dither: an 8 × 8 Bayer matrix on the art grid, the
-// one tools/landing-art/build.py uses for the plates' painted fades, so fades
+// one scripts/landing-art/build.py uses for the plates' painted fades, so fades
 // drawn at runtime match them. Every pixel stays a palette color.
 
 import type { Camera } from "./camera";

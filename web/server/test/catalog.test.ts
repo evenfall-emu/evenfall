@@ -51,7 +51,7 @@ function request(
   init: RequestInit = {},
   bindings: Bindings = { DB: database, ADMIN_SECRET: adminSecret },
 ) {
-  return app.request(`https://zigba.test${path}`, init, bindings);
+  return app.request(`https://evenfall.test${path}`, init, bindings);
 }
 
 function adminHeaders(extra: Record<string, string> = {}) {
@@ -480,7 +480,7 @@ describe("catalog API", () => {
   it("supports multiple versions of one game with base relationships", async () => {
     const response = await request("/api/admin/versions/elite-redux-next", {
       method: "PUT",
-      headers: adminHeaders({ Origin: "https://zigba.test" }),
+      headers: adminHeaders({ Origin: "https://evenfall.test" }),
       body: JSON.stringify({
         gameId: "elite-redux",
         internalName: "test-second-version",

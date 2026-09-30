@@ -1,10 +1,10 @@
 // Browser-native SDK integration test. Optional fixtures are served only when
-// named explicitly on tools/serve-web.py's command line; no game is bundled here.
+// named explicitly on scripts/serve-web.py's command line; no game is bundled here.
 import { Emulator, CYCLES_PER_FRAME as F } from "@evenfall/gba";
 import audioWorkletUrl from "@evenfall/gba/audio-worklet?url&no-inline";
 import { acquireSaveLock } from "./storage.js";
 // Browser tests drive the bundled SDK and the save lock through these hooks.
-Object.assign(window, { zigbaValidation: { Emulator, acquireSaveLock } });
+Object.assign(window, { evenfallValidation: { Emulator, acquireSaveLock } });
 const results = [];
 const output = document.getElementById("result");
 function assert(value, message) {
@@ -145,7 +145,7 @@ if (new URL(location.href).searchParams.has("sdk-only")) {
       samples[i * 2] = 100;
       samples[i * 2 + 1] = -100;
     }
-    const node = new AudioWorkletNode(audio, "zigba-audio", {
+    const node = new AudioWorkletNode(audio, "evenfall-audio", {
       numberOfInputs: 0,
       outputChannelCount: [2],
       processorOptions: { samples },
@@ -222,11 +222,11 @@ if (new URL(location.href).searchParams.has("sdk-only")) {
     record(
       `PASS browser integration complete; framebuffer SHA-256=${await sha((await emulator.frame()).buffer)}`,
     );
-    document.title = "ZiGBA browser validation · PASS";
+    document.title = "Evenfall browser validation · PASS";
     output.dataset.result = "pass";
   } catch (error) {
     record(`FAIL ${error.stack ?? error}`);
-    document.title = "ZiGBA browser validation · FAIL";
+    document.title = "Evenfall browser validation · FAIL";
     output.dataset.result = "fail";
   } finally {
     await emulator?.dispose().catch(() => {});

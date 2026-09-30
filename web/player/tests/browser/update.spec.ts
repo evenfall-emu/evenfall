@@ -17,7 +17,7 @@ import { join, resolve } from "node:path";
 // Each test serves its own copy of the production build, so it can deploy new
 // versions into it.
 test.skip(
-  Boolean(process.env.ZIGBA_TEST_URL),
+  Boolean(process.env.EVENFALL_TEST_URL),
   "Deploys new versions into a local copy of the build",
 );
 
@@ -37,13 +37,13 @@ async function freePort() {
 }
 
 async function site(browser: Browser) {
-  const directory = await mkdtemp(join(tmpdir(), "zigba-update-"));
-  await cp(resolve("../zig-out/web"), directory, { recursive: true });
+  const directory = await mkdtemp(join(tmpdir(), "evenfall-update-"));
+  await cp(resolve("dist"), directory, { recursive: true });
   const port = await freePort();
   const server = spawn(
     "python3",
     [
-      resolve("../tools/serve-web.py"),
+      resolve("scripts/serve-web.py"),
       "--port",
       String(port),
       "--directory",
@@ -85,8 +85,8 @@ async function site(browser: Browser) {
         let text = (await readFile(path, "utf8")).replaceAll(worker, renamed);
         if (file === "index.html")
           text = text.replace(
-            /<meta name="zigba-test-build"[^>]*>|(?=<\/head>)/,
-            `<meta name="zigba-test-build" content="${label}">`,
+            /<meta name="evenfall-test-build"[^>]*>|(?=<\/head>)/,
+            `<meta name="evenfall-test-build" content="${label}">`,
           );
         if (file === "service-worker.js")
           text = text.replace(
@@ -105,7 +105,7 @@ async function site(browser: Browser) {
   };
 }
 
-const build = (page: Page) => page.locator('meta[name="zigba-test-build"]');
+const build = (page: Page) => page.locator('meta[name="evenfall-test-build"]');
 const notice = (page: Page) => page.locator(".update-notice");
 /**
  * Waits until the first version controls `page` and has finished its first
@@ -251,10 +251,10 @@ test("a player the user has touched asks first, then updates while hidden", asyn
       notice(page).getByRole("button", { name: "Update now" }),
     ).toBeEnabled();
     await expect(build(page)).toHaveCount(0);
-    await page.screenshot({ path: "../artifacts/update/home-prompt.png" });
+    await page.screenshot({ path: "../../artifacts/update/home-prompt.png" });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({
-      path: "../artifacts/update/home-prompt-mobile.png",
+      path: "../../artifacts/update/home-prompt-mobile.png",
     });
     await notice(page).getByRole("button", { name: "Dismiss update" }).click();
     await expect(notice(page)).toHaveCount(0);
@@ -283,7 +283,7 @@ test("a running game keeps its version and assets until its player updates, and 
     expect((await fetch(host.url + oldWorker)).status).toBe(404);
     await checkForUpdate(game);
     await expect(notice(game)).toBeVisible();
-    await game.screenshot({ path: "../artifacts/update/player-prompt.png" });
+    await game.screenshot({ path: "../../artifacts/update/player-prompt.png" });
     // A new, untouched tab activates the new version for every tab.
     const other = await host.context.newPage();
     await other.goto("/");

@@ -2,7 +2,7 @@
 
 These scripts turn generated paintings into the pixel-art plates of the
 Home page, described in
-[`frontend/src/assets/landing`](../../frontend/src/assets/landing/README.md).
+[`web/player/src/assets/landing`](../../src/assets/landing/README.md).
 They need Python 3 and ImageMagick 7 (`magick`).
 
 1. **Snap each painting to the grid.** `pixelate.py` reduces the painting to
@@ -12,8 +12,8 @@ They need Python 3 and ImageMagick 7 (`magick`).
    that row, such as stars.
 
    ```sh
-   python3 tools/landing-art/pixelate.py sunset.png 480 202 32 surface-480.png --keep-above 60
-   python3 tools/landing-art/pixelate.py underwater.png 480 200 28 underwater-480.png
+   python3 web/player/scripts/landing-art/pixelate.py sunset.png 480 202 32 surface-480.png --keep-above 60
+   python3 web/player/scripts/landing-art/pixelate.py underwater.png 480 200 28 underwater-480.png
    ```
 
 2. **Build the plates.** `build.py` adds starry sky above the sunset, ends
@@ -21,10 +21,10 @@ They need Python 3 and ImageMagick 7 (`magick`).
    from just below), cuts the underwater plate into the descent and the
    seabed, joins them with ordered-dither fades, and extends the seabed with
    sand that settles into the footer's flat floor, writing
-   `frontend/src/assets/landing/*.png`.
+   `web/player/src/assets/landing/*.png`.
 
    ```sh
-   python3 tools/landing-art/build.py surface-480.png underwater-480.png
+   python3 web/player/scripts/landing-art/build.py surface-480.png underwater-480.png
    ```
 
 3. **Cut the sprites.** `sprite.py` cuts one item out of a generated sheet
@@ -35,7 +35,7 @@ They need Python 3 and ImageMagick 7 (`magick`).
    size and the output file.
 
    ```sh
-   python3 tools/landing-art/sprite.py SHEET X Y W H WIDTH HEIGHT COLORS OUT
+   python3 web/player/scripts/landing-art/sprite.py SHEET X Y W H WIDTH HEIGHT COLORS OUT
    ```
 
 The source paintings and sheets are not kept in the repository. A

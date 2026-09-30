@@ -167,7 +167,7 @@ it("matches trainer names and classes without case, accents or punctuation", () 
   expect(names("maniac zzz")).toEqual([]);
 });
 
-const path = process.env.ZIGBA_REDUX_ROM;
+const path = process.env.EVENFALL_REDUX_ROM;
 describe.skipIf(!path)(
   "Redux trainer previews from the verified release ROM",
   () => {

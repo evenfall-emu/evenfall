@@ -2,7 +2,7 @@
    variables, fonts and generic controls come from the player's console.css. */
 /* The side columns take about a quarter of the page each, between 300 and
    460 px, and the screen the rest. Pages narrower than 17:10 get the
-   player's dock instead (frontend/src/docked.tsx). */
+   player's dock instead (web/player/src/docked.tsx). */
 .adventure-grid {
   display: grid;
   flex: 1;

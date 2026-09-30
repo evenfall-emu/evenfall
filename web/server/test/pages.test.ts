@@ -27,7 +27,7 @@ describe("player pages", () => {
     ]) {
       const { requested, fetcher } = assets();
       const response = await app.request(
-        `https://zigba.test${path}`,
+        `https://evenfall.test${path}`,
         {},
         {
           ASSETS: fetcher,
@@ -54,7 +54,7 @@ describe("player pages", () => {
       "/share/state/a/b",
     ]) {
       const response = await app.request(
-        `https://zigba.test${path}`,
+        `https://evenfall.test${path}`,
         {},
         {
           ASSETS: fetcher,

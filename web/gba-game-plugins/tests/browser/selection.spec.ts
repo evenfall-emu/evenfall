@@ -4,7 +4,7 @@ import { dashboardCss, fixtureBuild, playerCss } from "./support";
 import { resolve } from "node:path";
 import { rm, writeFile } from "node:fs/promises";
 
-const outDir = "../../zig-out/web/selection-test";
+const outDir = "../player/dist/selection-test";
 const fixturePath = resolve("tests/browser/.selection.fixture.tsx");
 
 declare global {

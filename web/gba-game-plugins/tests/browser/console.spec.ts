@@ -81,8 +81,8 @@ async function screenFillsColumn(page: Page) {
 test("Redux trainer search uses real ROM teams and portraits with an inactive-battle observation", async ({
   page,
 }) => {
-  const rom = process.env.ZIGBA_REDUX_ROM;
-  const state = process.env.ZIGBA_REDUX_STATE;
+  const rom = process.env.EVENFALL_REDUX_ROM;
+  const state = process.env.EVENFALL_REDUX_STATE;
   test.skip(!rom || !state, "User-supplied Redux ROM and snapshot required");
   await page.setViewportSize({ width: 1672, height: 1100 });
   await ready(page);
@@ -248,9 +248,9 @@ test("Redux trainer search uses real ROM teams and portraits with an inactive-ba
 test("new HnS console reads the real wild battle and clears opponents on timeline replacement", async ({
   page,
 }) => {
-  const rom = process.env.ZIGBA_HNS_ROM;
-  const battle = process.env.ZIGBA_HNS_BATTLE;
-  const party = process.env.ZIGBA_HNS_STATE;
+  const rom = process.env.EVENFALL_HNS_ROM;
+  const battle = process.env.EVENFALL_HNS_BATTLE;
+  const party = process.env.EVENFALL_HNS_STATE;
   test.skip(
     !rom || !battle || !party,
     "Supply the hash-verified HnS ROM, battle.state and game2.state",
@@ -499,11 +499,11 @@ test("new HnS console reads the real wild battle and clears opponents on timelin
 test("HnS 1.2.1 game2: real names, artwork, moves, selection and timeline replacement", async ({
   page,
 }) => {
-  const rom = process.env.ZIGBA_HNS_ROM;
-  const state = process.env.ZIGBA_HNS_STATE;
+  const rom = process.env.EVENFALL_HNS_ROM;
+  const state = process.env.EVENFALL_HNS_STATE;
   test.skip(
     !rom || !state,
-    "Set ZIGBA_HNS_ROM and ZIGBA_HNS_STATE to the documented local fixtures",
+    "Set EVENFALL_HNS_ROM and EVENFALL_HNS_STATE to the documented local fixtures",
   );
   expect(sha(await readFile(rom!))).toBe(
     "7c4f90c8b68b64d4639a37306d5302a11cd4d7c44005114ec2faa2b28b210c3d",
@@ -619,8 +619,8 @@ test("Elite Redux Pokédex links follow selection and open a separate tab", asyn
   page,
   context,
 }) => {
-  const rom = process.env.ZIGBA_REDUX_ROM;
-  const state = process.env.ZIGBA_REDUX_STATE;
+  const rom = process.env.EVENFALL_REDUX_ROM;
+  const state = process.env.EVENFALL_REDUX_STATE;
   test.skip(!rom || !state, "Supply the exact Redux Beta2 ROM and redux.state");
   await context.route("https://forwardfeed.github.io/ER-nextdex/**", (route) =>
     route.fulfill({
@@ -689,8 +689,8 @@ test("Elite Redux Pokédex links follow selection and open a separate tab", asyn
 test("Elite Redux Beta3 opens as a reviewed build with its own ability records", async ({
   page,
 }) => {
-  const rom = process.env.ZIGBA_REDUX_BETA3_ROM,
-    state = process.env.ZIGBA_REDUX_BETA3_STATE;
+  const rom = process.env.EVENFALL_REDUX_BETA3_ROM,
+    state = process.env.EVENFALL_REDUX_BETA3_STATE;
   test.skip(!rom || !state, "Supply the exact Redux Beta3 ROM and its state");
   expect(romSha(await readFile(rom!))).toBe(
     "5b38a681b6924ef3e0bb9f6cfbf22426c4c4e523",
@@ -732,8 +732,8 @@ test("Elite Redux Beta3 opens as a reviewed build with its own ability records",
 test("Elite Redux uses the shared layout with four described abilities and real battle data", async ({
   page,
 }) => {
-  const rom = process.env.ZIGBA_REDUX_ROM,
-    state = process.env.ZIGBA_REDUX_STATE;
+  const rom = process.env.EVENFALL_REDUX_ROM,
+    state = process.env.EVENFALL_REDUX_STATE;
   test.skip(!rom || !state, "Supply the exact Redux Beta2 ROM and redux.state");
   expect(romSha(await readFile(rom!))).toBe(
     "f1323126bc043f3ce931bcc670957930559eb515",
@@ -947,9 +947,9 @@ test("Elite Redux uses the shared layout with four described abilities and real 
 test("Redux battle totals include stages and reset with the loaded state", async ({
   page,
 }) => {
-  const rom = process.env.ZIGBA_REDUX_ROM;
-  const baseline = process.env.ZIGBA_REDUX_STATE;
-  const buffed = process.env.ZIGBA_REDUX_STAGE_STATE;
+  const rom = process.env.EVENFALL_REDUX_ROM;
+  const baseline = process.env.EVENFALL_REDUX_STATE;
+  const buffed = process.env.EVENFALL_REDUX_STAGE_STATE;
   test.skip(
     !rom || !baseline || !buffed,
     "Supply Redux ROM, original and stage-buffed states",

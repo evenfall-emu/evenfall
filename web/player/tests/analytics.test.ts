@@ -44,7 +44,7 @@ it("stays off without a build-time key and host, and honors the hostname guard",
     [{ ...official, VITE_POSTHOG_KEY: "" }, "play.evenfall-emu.org"],
     [{ ...official, VITE_POSTHOG_HOST: "" }, "play.evenfall-emu.org"],
     [official, "127.0.0.1"],
-    [official, "zigba.example"],
+    [official, "evenfall.example"],
   ] as const) {
     stubLocation(hostname);
     const { analyticsEnabled, posthog } = await loadAnalytics(settings);
@@ -69,7 +69,7 @@ it("stays off without a build-time key and host, and honors the hostname guard",
   vi.resetModules();
 
   // Without a hostname restriction, a self-hosted build sends from anywhere.
-  stubLocation("zigba.example");
+  stubLocation("evenfall.example");
   const selfHosted = await loadAnalytics({
     ...official,
     VITE_POSTHOG_HOSTNAME: "",

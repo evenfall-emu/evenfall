@@ -75,7 +75,7 @@ for (const mode of ["desktop", "mobile", "fullscreen"] as const) {
       0,
     );
     await page.screenshot({
-      path: `../artifacts/rewind-dialog/${process.env.REWIND_CAPTURE ?? "after"}-${mode}.png`,
+      path: `../../artifacts/rewind-dialog/${process.env.REWIND_CAPTURE ?? "after"}-${mode}.png`,
     });
   });
 }
@@ -205,7 +205,7 @@ test("one checkpoint remains selectable and commits its exact cycle", async ({
   await expect(dialog.getByText("1 checkpoint available")).toBeVisible();
   await expect(dialog.getByText("Loading…")).toHaveCount(0);
   await dialog.screenshot({
-    path: "../artifacts/rewind-dialog/after-one-checkpoint.png",
+    path: "../../artifacts/rewind-dialog/after-one-checkpoint.png",
   });
   await dialog.getByRole("slider").press("ArrowLeft");
   await dialog.getByRole("button", { name: "Rewind here" }).press("Space");

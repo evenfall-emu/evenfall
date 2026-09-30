@@ -1,7 +1,8 @@
 import "fake-indexeddb/auto";
 import { deleteDB } from "idb";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { CloudSync, type CloudStatus } from "../src/cloud";
+import { CloudSync, fetchSharedState, type CloudStatus } from "../src/cloud";
+import { LegacyStateError } from "../src/state-format";
 import { openLibrary, type Library } from "../src/library";
 
 let library: Library;
@@ -482,4 +483,44 @@ it("keeps an over-quota run local while continuing backups of existing playthrou
   );
   expect(status.message).toContain("100 cloud playthroughs");
   await expect(cloud.flush(extra)).rejects.toThrow("100 cloud playthroughs");
+});
+
+/**
+ * A share link made before the Rust core holds a ZIGBAST1 state. The player
+ * says so instead of reporting a broken link, and still accepts an Evenfall
+ * state from the same route.
+ */
+it("explains a shared state from the previous core and accepts a current one", async () => {
+  const hash = "a".repeat(40);
+  const serve = async (state: string) => {
+    const body = new Uint8Array(
+      await new Response(
+        new Blob([new TextEncoder().encode(state)])
+          .stream()
+          .pipeThrough(new CompressionStream("gzip")),
+      ).arrayBuffer(),
+    );
+    const digest = Array.from(
+      new Uint8Array(await crypto.subtle.digest("SHA-256", body)),
+      (byte) => byte.toString(16).padStart(2, "0"),
+    ).join("");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(body, {
+            headers: { "X-Zigba-Digest": digest, "X-Zigba-Rom": hash },
+          }),
+      ),
+    );
+  };
+  await serve("ZIGBAST1old");
+  const failure = await fetchSharedState("x".repeat(22)).catch((e) => e);
+  expect(failure).toBeInstanceOf(LegacyStateError);
+  expect(failure.message).toMatch(/older version of Evenfall/);
+  await serve("EVENFALLnew");
+  expect(await fetchSharedState("x".repeat(22))).toMatchObject({
+    hash,
+    data: new TextEncoder().encode("EVENFALLnew"),
+  });
 });

@@ -175,7 +175,7 @@ test("Library joins the catalog with this device's ROMs and filters it", async (
     details.getByRole("listitem").filter({ hasText: "Playthrough 1" }),
   ).toContainText("v1 · Last played just now");
   await expect(details).toContainText("On this device only");
-  await page.screenshot({ path: "../artifacts/library/desktop.png" });
+  await page.screenshot({ path: "../../artifacts/library/desktop.png" });
 
   await page.getByRole("button", { name: "View Maple Remix" }).click();
   await expect(details).toContainText("Your Maple (US) is on this device");
@@ -245,7 +245,9 @@ test("experimental releases need a persistent Library opt-in", async ({
     name: /Show experimental romhacks/,
   });
   await expect(optIn).not.toBeChecked();
-  await page.screenshot({ path: "../.amp/in/artifacts/library-default.png" });
+  await page.screenshot({
+    path: "../../.amp/in/artifacts/library-default.png",
+  });
 
   await optIn.check();
   await expect
@@ -256,7 +258,7 @@ test("experimental releases need a persistent Library opt-in", async ({
     page.getByRole("region", { name: "Game details" }),
   ).toContainText("Experimental · Release details need review");
   await page.screenshot({
-    path: "../.amp/in/artifacts/library-experimental.png",
+    path: "../../.amp/in/artifacts/library-experimental.png",
   });
   await page.reload();
   await expect.poll(() => titles(page)).toContain("Cedar Saga");
@@ -419,7 +421,7 @@ test("Update adds the latest ROM, then copies the in-game save to a new run", as
       name: "I understand compatibility is unverified.",
     })
     .click();
-  await update.screenshot({ path: "../artifacts/library/update.png" });
+  await update.screenshot({ path: "../../artifacts/library/update.png" });
   await copy.click();
   await expect(page.getByLabel(/^Game screen/)).toBeVisible();
 
@@ -522,7 +524,7 @@ test("mobile details replace the list, and Back restores its scroll and focus", 
   const details = page.getByRole("region", { name: "Game details" });
   await expect(details).toBeHidden();
   await page.screenshot({
-    path: "../artifacts/library/mobile-list.png",
+    path: "../../artifacts/library/mobile-list.png",
     fullPage: true,
   });
 
@@ -541,7 +543,7 @@ test("mobile details replace the list, and Back restores its scroll and focus", 
     page.getByRole("navigation", { name: "Main navigation" }),
   ).toBeHidden();
   await page.screenshot({
-    path: "../artifacts/library/mobile-details.png",
+    path: "../../artifacts/library/mobile-details.png",
     fullPage: true,
   });
 

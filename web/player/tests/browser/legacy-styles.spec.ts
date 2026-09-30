@@ -4,7 +4,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "node:path";
 import { rm } from "node:fs/promises";
 
-const outDir = "../artifacts/legacy-styles-test";
+const outDir = "../../artifacts/legacy-styles-test";
 
 test.beforeAll(async () => {
   await build({

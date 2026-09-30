@@ -11,7 +11,7 @@ function processor(speed: number, outputSampleRate = 80) {
   let Processor!: new (options: object) => Processor;
   vm.runInNewContext(
     readFileSync(
-      new URL("../../web/audio-worklet.js", import.meta.url),
+      new URL("../../gba/audio-worklet.js", import.meta.url),
       "utf8",
     ),
     {

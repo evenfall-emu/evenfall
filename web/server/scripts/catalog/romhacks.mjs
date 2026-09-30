@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = fileURLToPath(new URL("../../", import.meta.url));
+const root = fileURLToPath(new URL("../../../../", import.meta.url));
 const defaultPacks = {
   pokemon: join(root, ".amp/in/rom-hacks"),
   goldenSun: join(root, ".amp/in/rom-hacks-golden-sun-fire-emblem/golden-sun"),
@@ -14,10 +14,12 @@ const defaultPacks = {
     ".amp/in/rom-hacks-golden-sun-fire-emblem/fire-emblem",
   ),
 };
-const seedPath = join(root, "server/src/romhacks.json");
+const seedPath = join(root, "web/server/src/romhacks.json");
 const json = (path) => JSON.parse(readFileSync(path, "utf8"));
-const hooks = json(join(root, "tools/catalog/hooks.json"));
-const versionLabels = json(join(root, "tools/catalog/version-labels.json"));
+const hooks = json(join(root, "web/server/scripts/catalog/hooks.json"));
+const versionLabels = json(
+  join(root, "web/server/scripts/catalog/version-labels.json"),
+);
 // These Golden Sun records point to the author's forum post, release page or
 // repository. Other pageUrl values are third-party listings, not attribution.
 const goldenSunAuthorPages = new Set([0, 1, 2, 3, 4, 6, 7, 10, 11, 12, 13]);
@@ -311,7 +313,7 @@ if (
   const command = process.argv[2];
   if (!["build", "check", "upload", "verify"].includes(command)) {
     console.error(
-      "Usage: node tools/catalog/romhacks.mjs build|check|upload|verify",
+      "Usage: node web/server/scripts/catalog/romhacks.mjs build|check|upload|verify",
     );
     process.exitCode = 2;
   } else {
