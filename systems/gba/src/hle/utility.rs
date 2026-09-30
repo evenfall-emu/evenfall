@@ -33,16 +33,19 @@ impl Cpu {
         bus.elapse(12);
     }
 
-    pub fn complete_hle_interrupt_wait(&mut self, bus: &mut Bus) {
-        let Some(mask) = self.hle_interrupt_wait_mask else { return };
+    /// Whether a pending `IntrWait` ended: it did if the IRQ handler set one
+    /// of its flags; otherwise it halts again.
+    pub fn complete_hle_interrupt_wait(&mut self, bus: &mut Bus) -> bool {
+        let Some(mask) = self.hle_interrupt_wait_mask else { return false };
         let mut flags = bus.read(access(0x0300_7FF8, AccessWidth::Half)).value as u16;
         if flags & mask == 0 {
             bus.enter_halt();
-            return;
+            return false;
         }
         flags &= !mask;
         bus.write(access(0x0300_7FF8, AccessWidth::Half), u32::from(flags));
         self.hle_interrupt_wait_mask = None;
+        true
     }
 
     /// Every unit write is visible to the APU.

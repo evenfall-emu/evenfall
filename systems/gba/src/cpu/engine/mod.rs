@@ -208,7 +208,7 @@ impl Mmio {
         let (width, address) = self.access();
         let value = match (self.store, self.load) {
             (Some((value, _)), _) => {
-                if mem.registers.store(address, width, value) {
+                if mem.registers.store(address, width, value, elapsed) {
                     mem.video.mark_registers();
                 }
                 value

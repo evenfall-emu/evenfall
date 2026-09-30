@@ -1,0 +1,104 @@
+--- a/src/bus.zig
++++ b/src/bus.zig
+@@ -1089,6 +1089,10 @@
+     dma_transfer_latch: u32 = 0,
+     open_bus_value: u32 = 0,
+     bios_latch: u32 = 0xE129_F000,
++    /// Evenfall parity patch: whether the most recent opcode fetch was from
++    /// the BIOS, which opens the image to data reads. Transient; a state
++    /// load derives it from the CPU.
++    bios_code_active: bool = false,
+     current_cycle: Cycle = 0,
+     // Only a synchronous bounded Machine run may defer device progress.
+     // These fields never enter the portable state; the host sees a flushed bus.
+@@ -1955,6 +1959,7 @@
+         const first: u32 = std.mem.readInt(u16, bytes[offset..][0..2], .little);
+         const second: u32 = std.mem.readInt(u16, bytes[offset + 2 ..][0..2], .little);
+         self.fetch_kind = .sequential;
++        self.bios_code_active = false;
+         self.game_pak_code_active = true;
+         self.prefetch_disabled_bug_pending = false;
+         self.prefetch_buffer_was_disabled = false;
+@@ -2188,6 +2193,7 @@
+         }
+         if (access.source == .cpu_code) {
+             self.fetch_kind = .sequential;
++            self.bios_code_active = access.address < bios_size;
+         } else if (access.source == .cpu_data) {
+             self.fetch_kind = if (isMmio(access.address)) .sequential else .nonsequential;
+         }
+@@ -2197,7 +2203,7 @@
+         }
+ 
+         if (access.address < bios_size) {
+-            return self.completeRead(self.readBios(access.address, access.width), 1);
++            return self.completeRead(self.readProtectedBios(access.address, access.width, access.source), 1);
+         }
+ 
+         if (isEwram(access.address)) {
+@@ -5404,6 +5410,29 @@
+         return address >> 24 == ewram_base >> 24;
+     }
+ 
++    /// Evenfall parity patch: BIOS read protection with an image. An opcode
++    /// fetch reads the image and latches its aligned word; a data read sees
++    /// the image only while the most recent opcode fetch was from the BIOS;
++    /// any other read returns the latch.
++    fn readProtectedBios(self: *Bus, address: u32, width: AccessWidth, source: AccessSource) u32 {
++        if (self.bios.len == bios_size and source == .cpu_code) {
++            self.bios_latch = self.readBios(address & ~@as(u32, 3), .word);
++        } else if (self.bios.len == bios_size and !self.bios_code_active) {
++            const shift: u5 = switch (width) {
++                .byte => @intCast((address & 3) * 8),
++                .half => @intCast((address & 2) * 8),
++                .word => 0,
++            };
++            const mask: u32 = switch (width) {
++                .byte => 0xFF,
++                .half => 0xFFFF,
++                .word => 0xFFFF_FFFF,
++            };
++            return (self.bios_latch >> shift) & mask;
++        }
++        return self.readBios(address, width);
++    }
++
+     fn readBios(self: *const Bus, address: u32, width: AccessWidth) u32 {
+         if (self.bios.len != bios_size) {
+             const shift: u5 = switch (width) {
+@@ -8161,6 +8190,7 @@
+ 
+ fn isTransientStateField(name: []const u8) bool {
+     return std.mem.eql(u8, name, "game_pak_timing_key") or
++        std.mem.eql(u8, name, "bios_code_active") or
+         std.mem.eql(u8, name, "irq_line") or
+         std.mem.eql(u8, name, "game_pak_n_cycles") or
+         std.mem.eql(u8, name, "game_pak_s_cycles") or
+--- a/src/cpu.zig
++++ b/src/cpu.zig
+@@ -1622,6 +1622,9 @@
+     /// Refill through the caller's ROM/IWRAM view so a branch within the same
+     /// image reuses the classification and the inline prefetch-hit paths.
+     fn refillPipelineInRegion(self: *Cpu, bus: *Bus, region: *Bus.InstructionFetchRegion) void {
++        // Evenfall parity patch: region fetches outside the BIOS bypass
++        // Bus.read, which reopens the BIOS for a BIOS target.
++        bus.bios_code_active = false;
+         if (self.isThumb()) {
+             self.pipeline = .{
+                 .instructions = bus.fetchThumbRefillInRegion(region, self.next_instruction_address),
+--- a/src/machine.zig
++++ b/src/machine.zig
+@@ -942,6 +942,13 @@
+         // deadlines that have already elapsed.
+         out.bus.current_cycle = restored_cycle;
+         try out.bus.readState(&payload);
++        // Evenfall parity patch: the BIOS gate follows the CPU's last fetch.
++        {
++            const width: u32 = if (out.cpu.cpsr & (1 << 5) != 0) 2 else 4;
++            const next = out.cpu.next_instruction_address;
++            const last = if (out.cpu.pipeline != null) next +% width else next -% width;
++            out.bus.bios_code_active = last < 0x4000;
++        }
+         if (payload.count != payload_len) return error.InvalidSaveState;
+ 
+         var expected_payload_digest: state_codec.Digest = undefined;

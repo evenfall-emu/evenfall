@@ -659,6 +659,7 @@ fn selected_frames_preserve_affine_mosaic_raster_histories_dma_and_durable_state
         bus.dma_channels[0].latched_source = 0x0200_0000;
         bus.dma_channels[0].latched_destination = 0x0600_0100;
         bus.dma_channels[0].word_count = 1;
+        bus.dma_channels[0].latched_word_count = 1;
         bus.dma_channels[0].control = (1 << 15) | (2 << 12) | (1 << 9) | (2 << 5);
         for index in 0..256 {
             bus.palette[index * 2..index * 2 + 2]

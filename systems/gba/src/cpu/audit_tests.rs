@@ -404,13 +404,16 @@ fn execution_region_signed_loads_refuse_short_budgets_devices_and_invalid_regist
 
 #[test]
 fn execution_region_multiply_keeps_original_alias_timing_and_conditional_effects() {
+    // The last column is C after MULS or MLAS, from the multiplier model's
+    // reference implementation (zaydlang/multiplication-algorithm) for
+    // Rm = 01000003h.
     let cases = [
-        (0x7f_u32, 0x7f00_017d_u32, 1_u64),
-        (0x100, 0x300, 2),
-        (0xffff_7fff, 0xfefe_7ffd, 2),
-        (0x0100_0000, 0x0300_0000, 4),
+        (0x7f_u32, 0x7f00_017d_u32, 1_u64, false),
+        (0x100, 0x300, 2, false),
+        (0xffff_7fff, 0xfefe_7ffd, 2, true),
+        (0x0100_0000, 0x0300_0000, 4, false),
     ];
-    for (multiplier, expected_product, iterations) in cases {
+    for (multiplier, expected_product, iterations, carry) in cases {
         for accumulate in [false, true] {
             for passed in [false, true] {
                 for budget in [5, 6] {
@@ -444,9 +447,10 @@ fn execution_region_multiply_keeps_original_alias_timing_and_conditional_effects
                         };
                         assert_eq!(bus.now(), start + 1 + internal);
                         assert_eq!(cpu.registers[2], product);
+                        let c = u32::from(carry) << 29;
                         assert_eq!(
                             cpu.cpsr,
-                            if passed { 0x2000_001f | product & 0x8000_0000 } else { 0xa000_001f }
+                            if passed { 0x1f | c | product & 0x8000_0000 } else { 0xa000_001f }
                         );
                         assert_eq!(cpu.pipeline.unwrap().instructions[0], 0xef08_0000);
                     }

@@ -47,6 +47,15 @@ pub struct Config {
     pub tilt: Option<[u16; 2]>,
     #[serde(default)]
     pub rumble: bool,
+    /// Whether the machine produces host audio samples. A scenario turns it
+    /// off only when a single host call must run longer than the bounded
+    /// sample queue holds, so drained audio would depend on slicing.
+    #[serde(default = "audio_output_default")]
+    pub audio_output: bool,
+}
+
+fn audio_output_default() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -54,36 +54,38 @@ GBATEK gives the frame geometry ([LCD Dimensions and Timings][gbatek-timings]):
 
 Evenfall produces these events:
 
-| When                           | What happens                                                                                                             |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| Cycle 960 of lines 0–159       | the HBlank flag is set, the line is drawn, affine backgrounds step to the next line, HBlank DMA starts, HBlank interrupt |
-| Cycle 960 of lines 160–227     | the HBlank flag is set, HBlank interrupt                                                                                 |
-| Start of line 160              | the VBlank flag is set, VBlank interrupt, VBlank DMA starts                                                              |
-| Start of the line equal to LYC | VCOUNT-match interrupt                                                                                                   |
-| Wrap from line 227 to line 0   | affine backgrounds reload their starting point, and the frame is complete                                                |
+| When                           | What happens                                                                                     |
+| ------------------------------ | ------------------------------------------------------------------------------------------------ |
+| Cycle 960 of lines 0–159       | the line is drawn, affine backgrounds step to the next line, HBlank DMA starts, HBlank interrupt |
+| Cycle 960 of lines 160–227     | HBlank interrupt                                                                                 |
+| Cycle 1006 of every line       | the HBlank flag is set                                                                           |
+| Start of line 160              | the VBlank flag is set, VBlank interrupt, VBlank DMA starts                                      |
+| Start of the line equal to LYC | VCOUNT-match interrupt                                                                           |
+| Wrap from line 227 to line 0   | affine backgrounds reload their starting point, and the frame is complete                        |
 
 Each interrupt fires only if the game enabled it.
 The HBlank interrupt fires on all 228 lines, as GBATEK says, while HBlank DMA runs only on visible lines ([`timers-dma-interrupts.md`](timers-dma-interrupts.md)).
 
 `DISPSTAT` (`04000004h`) and `VCOUNT` (`04000006h`) let games see where the display is ([LCD I/O Interrupts and Status][gbatek-dispstat]):
 
-| Bits | Field                                      | In Evenfall                                 |
-| ---- | ------------------------------------------ | ------------------------------------------- |
-| 0    | VBlank flag, read-only                     | set on lines 160–227                        |
-| 1    | HBlank flag, read-only                     | set from cycle 960 to the end of every line |
-| 2    | VCOUNT match, read-only                    | set while `VCOUNT` equals LYC               |
-| 3–5  | VBlank, HBlank and VCOUNT-match interrupts | stored                                      |
-| 6–7  | unused                                     | not writable (write mask `FF38h`)           |
-| 8–15 | LYC, the line to match                     | stored                                      |
+| Bits | Field                                      | In Evenfall                                  |
+| ---- | ------------------------------------------ | -------------------------------------------- |
+| 0    | VBlank flag, read-only                     | set on lines 160–227                         |
+| 1    | HBlank flag, read-only                     | set from cycle 1006 to the end of every line |
+| 2    | VCOUNT match, read-only                    | set while `VCOUNT` equals LYC                |
+| 3–5  | VBlank, HBlank and VCOUNT-match interrupts | stored                                       |
+| 6–7  | unused                                     | not writable (write mask `FF38h`)            |
+| 8–15 | LYC, the line to match                     | stored                                       |
 
 `VCOUNT` reads the current line, 0–227, and ignores writes.
 
-GBATEK describes two edges Evenfall doesn't model.
-The HBlank flag stays clear for 1,006 cycles of each line, although drawing takes 960.
-The VBlank flag clears again on line 227.
-mGBA 0.10.5 agrees in outline.
-Evenfall raises the HBlank flag, interrupt and DMA together at cycle 960 and keeps the VBlank flag set through line 227.
-No available hardware test pins either edge.
+The HBlank flag stays clear for 1,006 cycles of each line, although drawing takes 960, as GBATEK states.
+The HBlank interrupt and DMA still come at cycle 960.
+The mGBA suite's "H-blank bit start" test, recorded on hardware, times the flag's edges with polling loops.
+Its fourth to sixth flip intervals match a rise at cycle 1006 or later, and no earlier cycle (`hblank_flag_rises_at_cycle_1006_after_the_hblank_irq` in [`tests/bus.rs`](../../../systems/gba/tests/bus.rs)).
+Its other checks time the flag from a `Halt` wake and also measure the BIOS ([compatibility](../../compatibility.md#mgba-suite-rom)).
+GBATEK also clears the VBlank flag again on line 227, and mGBA 0.10.5 agrees.
+Evenfall keeps it set through line 227.
 
 `PpuTiming::cycles_until_next_event` tells the bus when the next event is due.
 The bus never skips past one in a single step, so however far the host advances time, a line is always drawn before the timers, DMA or input that come after it.
@@ -426,8 +428,9 @@ A shared presentation layer with scaling and shader presets for Evenfall's graph
 
 ## Open questions
 
-- **HBlank and VBlank flag edges.** GBATEK and mGBA set the HBlank flag about 46–48 cycles after drawing ends and clear the VBlank flag on line 227.
-  Evenfall uses cycle 960 and lines 160–227.
+- **VBlank flag edge and HBlank interrupt timing.** GBATEK and mGBA clear the VBlank flag on line 227, and Evenfall keeps it through line 227.
+  The mGBA suite doesn't time that edge.
+  The HBlank interrupt and DMA stay at cycle 960, which no hardware test here pins against the flag's 1006.
   A capture of `DISPSTAT` around both edges, and of the HBlank interrupt and DMA timing, would settle it.
 - **Sprite-over-sprite priority.** Evenfall lets the lower OAM number win every overlap (GBATEK), while mGBA and NanoBoyAdvance look at the priority field first.
   Evenfall also compares each sprite only with the surface it lands on.

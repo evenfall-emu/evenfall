@@ -342,8 +342,9 @@ pub extern "C" fn ef_step() -> i32 {
         Ok(match active(state)?.step().map_err(session_error)? {
             StepOutcome::Executed(_) => 0,
             StepOutcome::Waiting(evenfall_gba::cpu::WaitReason::Halted) => 1,
-            StepOutcome::Waiting(_) => 2,
+            StepOutcome::Waiting(evenfall_gba::cpu::WaitReason::Stopped) => 2,
             StepOutcome::Faulted(_) => 3,
+            StepOutcome::Waiting(evenfall_gba::cpu::WaitReason::DmaStall) => 4,
         })
     })
 }

@@ -994,18 +994,9 @@ fn suite_dma3_trigger_rows_measured_through_timer_0() {
                 let waitcnt = if column < 8 { WAITCNT[column] } else { 0 };
                 let measured = dma_timer_reading(thumb, base, src, dst, control, waitcnt, true)
                     - dma_timer_reading(thumb, base, src, dst, control, waitcnt, false);
-                // Evenfall models the documented one-cycle prefetch gap here,
-                // one cycle below the suite's table. Keep that residual
-                // explicit rather than silently passing it.
-                let residual = u64::from(
-                    dst >> 24 == 8
-                        && src >> 24 != 8
-                        && column < 8
-                        && matches!(waitcnt, 0x4000 | 0x4004),
-                );
                 assert_eq!(
                     measured,
-                    expected[usize::from(thumb) * 10 + column] - residual,
+                    expected[usize::from(thumb) * 10 + column],
                     "{name} {} column {column} WAITCNT {waitcnt:04x}",
                     if thumb { "Thumb" } else { "ARM" }
                 );

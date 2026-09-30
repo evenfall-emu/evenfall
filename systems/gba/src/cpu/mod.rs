@@ -3,8 +3,9 @@
 pub(crate) mod engine;
 
 use crate::bus::{
-    Access, AccessKind, AccessSource, AccessWidth, Bus, InstructionFetchRegion, PowerState,
-    ThumbStream, begin_arm_iwram_slice, fetch_arm_iwram_in_slice, is_arm_iwram_slice_fetch,
+    Access, AccessKind, AccessSource, AccessWidth, BIOS_SIZE, Bus, InstructionFetchRegion,
+    PowerState, ThumbStream, begin_arm_iwram_slice, fetch_arm_iwram_in_slice,
+    is_arm_iwram_slice_fetch,
 };
 pub use crate::multiboot::{
     Encoder as MultiBootEncoder, Mode as MultiBootMode, Parameters as MultiBootParameters,
@@ -101,6 +102,20 @@ impl evenfall_cpu_arm::Bus for Bus {
 }
 
 pub const HLE_IRQ_RETURN_STUB: u32 = 0x0000_0138;
+
+/// The cycles the retail `Halt` spends between the end of the halt (the
+/// wake, or the return from the IRQ it takes) and its return from the SWI:
+/// the rest of the SWI and the refill at the caller. No document lists that
+/// BIOS code; the mGBA suite's SIO timing table, recorded on hardware, fixes
+/// the total. Each of its Normal-mode rows halts until a transfer's IRQ,
+/// and all four read their recorded value at 26.
+pub const HLE_HALT_RETURN_CYCLES: u64 = 26;
+
+/// An opcode fetch of the BIOS code HLE stands in for: one cycle on the
+/// 32-bit BIOS bus.
+pub(crate) fn hle_bios_fetch(bus: &mut Bus, address: u32, kind: AccessKind) {
+    bus.read(Access { address, width: AccessWidth::Word, kind, source: AccessSource::CpuCode });
+}
 pub const HLE_CALLBACK_RETURN_STUB: u32 = 0x0000_013c;
 pub const HLE_SOUND_JUMP_BASE: u32 = 0x0000_3e00;
 pub const HLE_SOUND_JUMP_COUNT: u32 = 36;
@@ -116,6 +131,9 @@ pub struct StepResult {
 pub enum WaitReason {
     Halted,
     Stopped,
+    /// A DMA burst owns the bus ([`Bus::dma_stalled`]); the CPU waits at an
+    /// instruction boundary until it ends.
+    DmaStall,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -165,10 +183,6 @@ pub enum FaultReason {
     },
     SoundDriverMainInternalCallback {
         target: u32,
-    },
-    DmaLivelock {
-        channel: u8,
-        started_at: u64,
     },
 }
 
@@ -530,6 +544,10 @@ pub struct Cpu {
     pub hle_irq_stack: [HleIrqFrame; 8],
     pub hle_irq_depth: u8,
     pub hle_interrupt_wait_mask: Option<u16>,
+    /// Whether an HLE `Halt` has halted the CPU and not yet returned: HLE
+    /// returns from the SWI before halting, so the retail `Halt`'s tail is
+    /// charged when the halt ends ([`HLE_HALT_RETURN_CYCLES`]).
+    pub hle_halt: bool,
     pub hle_sound_channel_clear: Option<HleSoundChannelClearContinuation>,
     pub hle_sound_driver_main: Option<HleSoundDriverMainContinuation>,
     pub hle_service: Option<HleService>,
@@ -579,6 +597,7 @@ impl Cpu {
         if !self.hle_bios
             && (self.hle_irq_depth != 0
                 || self.hle_interrupt_wait_mask.is_some()
+                || self.hle_halt
                 || self.hle_sound_channel_clear.is_some()
                 || self.hle_sound_driver_main.is_some()
                 || self.hle_service.is_some())
@@ -668,6 +687,7 @@ impl Cpu {
             hle_irq_stack: [HleIrqFrame::default(); 8],
             hle_irq_depth: 0,
             hle_interrupt_wait_mask: None,
+            hle_halt: false,
             hle_sound_channel_clear: None,
             hle_sound_driver_main: None,
             hle_service: None,
@@ -684,6 +704,28 @@ impl Cpu {
 
     pub fn read_cpsr(&self) -> u32 {
         self.cpsr
+    }
+
+    /// Whether the most recent opcode fetch was from the BIOS: at an
+    /// instruction boundary, the second pipeline slot's, or without a
+    /// pipeline the instruction just executed.
+    pub fn last_fetch_in_bios(&self) -> bool {
+        let width = if self.is_thumb() { 2 } else { 4 };
+        let address = self.core.next_instruction_address;
+        let last = if self.pipeline.is_some() {
+            address.wrapping_add(width)
+        } else {
+            address.wrapping_sub(width)
+        };
+        last < BIOS_SIZE as u32
+    }
+
+    /// Charges the retail `Halt`'s tail once an HLE `Halt` ends.
+    pub(crate) fn end_hle_halt(&mut self, bus: &mut Bus) {
+        if self.hle_halt {
+            self.hle_halt = false;
+            bus.elapse(HLE_HALT_RETURN_CYCLES);
+        }
     }
 
     pub(crate) fn refill_pipeline(&mut self, bus: &mut Bus) {
@@ -738,10 +780,63 @@ impl Cpu {
         self.registers[15] = self.core.next_instruction_address.wrapping_add(8);
     }
 
+    /// The bus cycles of the retail BIOS IRQ trampoline up to its load of
+    /// the handler address (GBATEK, BIOS Interrupt handling), which HLE
+    /// stands in for:
+    ///
+    /// ```text
+    /// 018h  b      128h
+    /// 128h  stmfd  r13!,{r0-r3,r12,r14}
+    /// 12Ch  mov    r0,4000000h
+    /// 130h  add    r14,r15,0h
+    /// 134h  ldr    r15,[r0,-4h]
+    /// ```
+    ///
+    /// The refill at the vector, the branch and its refill, and each
+    /// instruction's opcode fetch come from the 32-bit BIOS; `stmfd` stores
+    /// the six registers below the IRQ stack pointer, which HLE keeps.
+    fn charge_hle_irq_entry(&mut self, bus: &mut Bus) {
+        use AccessKind::{Nonsequential as N, Sequential as S};
+        for (address, kind) in [(0x18, N), (0x1c, S), (0x20, S), (0x128, N), (0x12c, S), (0x130, S)]
+        {
+            hle_bios_fetch(bus, address, kind);
+        }
+        let saved = [
+            self.registers[0],
+            self.registers[1],
+            self.registers[2],
+            self.registers[3],
+            self.registers[12],
+            self.registers[14],
+        ];
+        let base = self.registers[13].wrapping_sub(24);
+        for (index, value) in saved.into_iter().enumerate() {
+            bus.write(
+                Access {
+                    address: base.wrapping_add(4 * index as u32),
+                    width: AccessWidth::Word,
+                    kind: if index == 0 { N } else { S },
+                    source: AccessSource::CpuData,
+                },
+                value,
+            );
+        }
+        for (address, kind) in [(0x134, N), (0x138, S), (0x13c, S)] {
+            hle_bios_fetch(bus, address, kind);
+        }
+    }
+
     pub(crate) fn enter_irq(&mut self, bus: &mut Bus) -> Result<(), FaultReason> {
         if self.hle_bios && usize::from(self.hle_irq_depth) == self.hle_irq_stack.len() {
             return Err(FaultReason::HleIrqNestingLimit { depth: self.hle_irq_depth });
         }
+        // An exception takes 2S+1N (GBATEK, ARM CPU Instruction Cycle
+        // Times, "trap"): its first cycle fetches the interrupted code's
+        // next opcode, which is discarded, and the refill at the vector is
+        // the rest.
+        let (width, unit) =
+            if self.is_thumb() { (AccessWidth::Half, 2) } else { (AccessWidth::Word, 4) };
+        bus.fetch_instruction(self.core.next_instruction_address.wrapping_add(2 * unit), width);
         let return_address = self.core.next_instruction_address.wrapping_add(4);
         self.enter_exception(0x12, 0x18, return_address);
         if self.hle_bios {
@@ -752,6 +847,7 @@ impl Cpu {
                 saved_r12: self.registers[12],
             };
             self.hle_irq_depth += 1;
+            self.charge_hle_irq_entry(bus);
             let handler = bus
                 .read(Access {
                     address: 0x0300_7ffc,
@@ -760,6 +856,8 @@ impl Cpu {
                     source: AccessSource::CpuData,
                 })
                 .value;
+            // The load's internal cycle.
+            bus.elapse(1);
             self.registers[14] = HLE_IRQ_RETURN_STUB;
             self.irq_r14 = HLE_IRQ_RETURN_STUB;
             if handler & 1 != 0 {
@@ -775,6 +873,25 @@ impl Cpu {
         } else {
             debug_assert_eq!(self.core.next_instruction_address, 0x18);
         }
+        Ok(())
+    }
+
+    /// Takes an interrupt the CPU would take at this instruction boundary,
+    /// as the interpreter does after an instruction: for the boundary where
+    /// a DMA stall ended, since the instruction before it completed when the
+    /// burst yielded.
+    pub fn take_irq_at_boundary(&mut self, bus: &mut Bus) -> Result<(), FaultStep> {
+        if self.hle_service.is_some()
+            || bus.power_state() != PowerState::Running
+            || !bus.irq.irq_line
+            || self.cpsr & (1 << 7) != 0
+        {
+            return Ok(());
+        }
+        if let Err(reason) = self.enter_irq(bus) {
+            return Err(self.boundary_fault(bus, reason));
+        }
+        self.refill_pipeline(bus);
         Ok(())
     }
 
@@ -823,6 +940,8 @@ impl Cpu {
                             return Some(StepOutcome::Faulted(self.boundary_fault(bus, reason)));
                         }
                         self.refill_pipeline(bus);
+                    } else {
+                        self.end_hle_halt(bus);
                     }
                     None
                 }
@@ -838,7 +957,19 @@ impl Cpu {
             }
             if self.hle_irq_depth != 0 && self.core.next_instruction_address == HLE_IRQ_RETURN_STUB
             {
-                return Some(StepOutcome::Executed(self.complete_hle_irq(bus)));
+                let step = self.complete_hle_irq(bus);
+                if bus.irq.irq_line && self.cpsr & (1 << 7) == 0 {
+                    if let Err(reason) = self.enter_irq(bus) {
+                        return Some(StepOutcome::Faulted(FaultStep {
+                            instruction_address: step.instruction_address,
+                            instruction: step.instruction,
+                            instruction_set: step.instruction_set,
+                            reason,
+                        }));
+                    }
+                    self.refill_pipeline(bus);
+                }
+                return Some(StepOutcome::Executed(step));
             }
             if self.hle_service.is_some() {
                 return Some(StepOutcome::Executed(self.continue_hle_multi_boot(bus)));
@@ -906,7 +1037,8 @@ impl Cpu {
 
         if execution.branched {
             self.refill_pipeline(bus);
-        } else if self.hle_service.is_none() && bus.irq.irq_line && self.cpsr & (1 << 7) == 0 {
+        }
+        if self.hle_service.is_none() && bus.irq.irq_line && self.cpsr & (1 << 7) == 0 {
             bus.resume_power();
             if let Err(reason) = self.enter_irq(bus) {
                 self.registers[15] = self
@@ -921,7 +1053,7 @@ impl Cpu {
                 }));
             }
             self.refill_pipeline(bus);
-        } else {
+        } else if !execution.branched {
             self.registers[15] = self
                 .core
                 .next_instruction_address
@@ -1102,6 +1234,25 @@ impl Cpu {
                     self.refill_pipeline_in_region(bus, &mut region);
                 }
                 stream.armed = false;
+                if bus.irq.irq_line && self.cpsr & (1 << 7) == 0 {
+                    bus.resume_power();
+                    if let Err(reason) = self.enter_irq(bus) {
+                        *execution_fault = Some(reason);
+                        *fault_out = Some(FaultStep {
+                            instruction_address: address,
+                            instruction,
+                            instruction_set: set,
+                            reason,
+                        });
+                        return ChunkOutcome::Faulted;
+                    }
+                    self.refill_pipeline_in_region(bus, &mut region);
+                    return if bus.now() >= yield_at {
+                        ChunkOutcome::Deadline
+                    } else {
+                        ChunkOutcome::Generic
+                    };
+                }
                 if bus.now() >= yield_at {
                     return ChunkOutcome::Deadline;
                 }

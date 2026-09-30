@@ -65,7 +65,7 @@ Each instruction prints its start and end cycle, its address and its opcode:
 
 Other lines:
 
-- `wait cycle=<cycle> power=<halted|stopped>` while the CPU sleeps, unless `--quiet`.
+- `wait cycle=<cycle> power=<halted|stopped|dma_stall>` while the CPU sleeps or a DMA burst holds the bus, unless `--quiet`.
 - `emulation fault cycle=... pc=... reason=...` when the machine stops on a fault ([`cpu.md`](gba/hardware/cpu.md#undefined-versus-unpredictable)).
   The run then ends.
 - `stop cycle=<cycle> next=<address> cpsr=<CPSR> r0=<R0>` at the end of every run that got going, including one that faulted.

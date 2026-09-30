@@ -74,6 +74,13 @@ Toolchain details that trip up new probes:
   One ISR counts IRQs per source.
   Main waits for the second timer1 IRQ and reports `timer0 IRQs << 16 | timer1 IRQs << 8 | TM2CNT_L`, which the cascade rule fixes at `0x000A0202`.
   A cascade timer that counts twice per overflow reports `0x00050204`.
+- `timer_start.c` (`probe-timer-start`): the mGBA suite's timer IRQ sequence (`src/timer-irq.c`), written into IWRAM for reloads `FFFFh` down to `FFF7h` and zero to nine `NOP`s, with the IRQ off.
+  Each run enables timer 0, rewrites its reload to 0, and reads the counter after the `NOP`s.
+  The table of reads must match the suite's hardware rows, extended by one per `NOP` past the point where the suite's IRQ stops the timer.
+  The first read after the enabling write is the reload value, so the counter holds it through the cycle after the write.
+- `timer_irq_latency.c` (`probe-timer-irq-latency`): the same start sequence with the IRQ on, followed by one-cycle `add r5, r5, #1` instructions.
+  The IRQ handler records how many additions ran before it took the IRQ, for reloads `FFFFh` to `FFFAh`.
+  The suite's table fixes them at 4 to 9: the interrupt reaches the CPU four cycles after the overflow.
 - `display_irq.c` (`probe-display-irq`): VBlank, HBlank and VCount-match (line 100) IRQs counted by one ISR over exactly two frames, bracketed between entries into line 80, far from every LCD interrupt.
   GBATEK flags HBlank on all 228 lines, so the report is `456 << 16 | 2 << 8 | 2`.
   HBlank IRQs on visible lines only would report 320 in the top field.
@@ -90,6 +97,10 @@ Toolchain details that trip up new probes:
   Like mGBA, Evenfall runs HBlank DMA on visible lines only.
 - `vdma_upload.c` (`probe-vdma`): one-shot VBlank DMA3 of a solid tile into VRAM, shown full-screen.
   A missed trigger exposes the backdrop.
+- `dma_stall.c`: Direct Sound DMA that never releases the bus, until a repeating VBlank DMA0 stops the timers that request it after 64 frames.
+  The CPU must stay stalled throughout: the ROM reports 1 when its poll count stays small and the VBlank and DMA0 interrupt flags, raised only during the stall, are both set.
+  It has no validator case.
+  The [`probe-dma_stall`](../tools/parity/scenarios/probe-dma_stall.json) parity scenario checks the final PC and `r12`.
 
 ## Cartridge devices
 

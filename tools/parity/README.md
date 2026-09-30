@@ -24,7 +24,7 @@ cargo run -p evenfall-parity -- run --all
 cargo run -p evenfall-parity -- compare target/parity/traces/probe-timer_irq/oracle.trace OTHER.trace
 ```
 
-- **`oracle build`** copies ZiGBA's `src/` into `target/parity/zigba`, adds the one hook that exports its state layout, and builds a native Zig 0.16 `ReleaseFast` executable in `target/parity/bin`.
+- **`oracle build`** copies ZiGBA's `src/` into `target/parity/zigba`, adds the one hook that exports its state layout, applies the deliberate-divergence patches in `patches/` in the order `ORACLE_PATCHES` in `src/main.rs` lists them, and builds a native Zig 0.16 `ReleaseFast` executable in `target/parity/bin`.
   It checks the exported layout against `fixtures/schema-v6.bin`, whose BLAKE3 digest is in `fixtures/schema-v6.blake3`.
   `refs/zigba` itself is never changed.
 - **`oracle run`** runs a scenario on ZiGBA once per slice size, writes each trace to `target/parity/traces/<name>/slice-N.trace`, checks that every byte agrees, and writes `oracle.trace` (or a destination you give).
@@ -49,7 +49,8 @@ Scenarios are JSON, with the same `assets`, `config`, `inputs` and `checkpoints`
 - `endCycle` must equal the last checkpoint.
 - `sliceCycles` lists positive chunk sizes, such as 70224, a quarter frame.
   Audio is drained after every slice.
-- `config` selects the boot (`hle`, `skip_bios` or `external_bios`), the save type (`auto`, `none`, `sram`, `flash64k`, `flash128k`, `eeprom512`, `eeprom8k` or `flash64k_atmel`), an optional save asset, `rtcEpoch`, sensor levels and rumble.
+- `config` selects the boot (`hle`, `skip_bios` or `external_bios`), the save type (`auto`, `none`, `sram`, `flash64k`, `flash128k`, `eeprom512`, `eeprom8k` or `flash64k_atmel`), an optional save asset, `rtcEpoch`, sensor levels, rumble and `audioOutput`.
+  `audioOutput` defaults to true; false suppresses host samples, for a scenario whose single host call outlasts the sample queue.
 - Optional `terminalPc` and `terminalR12` check the final idle loop.
 - For the JoyBus probes, `hostActions` lists a cycle and a `command`, either `joybus_write` (a `u32`) or `joybus_read: true`.
   The command is scheduled 1000 cycles after the first instruction boundary at or after that cycle.

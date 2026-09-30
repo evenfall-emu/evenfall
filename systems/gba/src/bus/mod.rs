@@ -152,10 +152,52 @@ pub struct IrqRegisters {
     pub interrupt_enable_mask: u16,
     pub interrupt_request_flags: u16,
     pub interrupt_master_enabled: bool,
+    /// The cycle at which a request that has risen (IME set and an enabled
+    /// flag raised) reaches the CPU, which sees it [`IRQ_LATENCY`] cycles
+    /// late; `None` when the CPU already sees the request or there is none.
+    pub irq_line_rises_at: Option<Cycle>,
+    /// Whether the CPU sees an interrupt request: derived from the
+    /// registers and [`Self::irq_line_rises_at`].
     #[codec(skip)]
     pub irq_line: bool,
     pub post_boot: u8,
     pub power_state: PowerState,
+}
+
+/// Cycles from the cycle an interrupt request rises to the first
+/// instruction boundary at which the CPU can take it. The mGBA suite's timer
+/// IRQ table, recorded on hardware, runs four one-cycle instructions after
+/// the overflow before the IRQ preempts the fifth. A request that falls
+/// reaches the CPU at once.
+pub const IRQ_LATENCY: Cycle = 4;
+
+impl IrqRegisters {
+    /// Whether IME is set and an enabled flag is raised: the request the
+    /// interrupt controller drives, before it reaches the CPU.
+    pub fn request(&self) -> bool {
+        self.interrupt_master_enabled
+            && self.interrupt_enable_mask & self.interrupt_request_flags != 0
+    }
+
+    /// Follows the registers after a change at `cycle`: a request that
+    /// rises reaches the CPU [`IRQ_LATENCY`] cycles later.
+    pub fn update_line(&mut self, cycle: Cycle) {
+        if !self.request() {
+            self.irq_line = false;
+            self.irq_line_rises_at = None;
+        } else if !self.irq_line && self.irq_line_rises_at.is_none() {
+            self.irq_line_rises_at = Some(cycle + IRQ_LATENCY);
+        }
+    }
+
+    /// Lets a risen request reach the CPU once `cycle` gets to it.
+    #[inline(always)]
+    pub fn reach(&mut self, cycle: Cycle) {
+        if self.irq_line_rises_at.is_some_and(|at| at <= cycle) {
+            self.irq_line_rises_at = None;
+            self.irq_line = true;
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
@@ -167,10 +209,20 @@ pub enum PowerState {
     Stopped,
 }
 
+/// A DMA transfer that yielded the bus to the host part-way: the state
+/// `Bus::run_dma` keeps in locals, from the beat that just completed on.
+/// See `Bus::run_dma_burst`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DmaLivelock {
-    pub started_at: Cycle,
-    pub channel: u8,
+pub struct DmaProgress {
+    pub source: u32,
+    pub destination: u32,
+    pub control: u16,
+    pub transfer_words: u32,
+    /// The index of the beat that completed last.
+    pub beat: u32,
+    pub did_access_rom: bool,
+    pub is_audio_fifo: bool,
+    pub bulk: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -531,6 +583,11 @@ pub struct Bus {
     pub completed_frame_count: Cycle,
     #[codec(flatten)]
     pub irq: IrqRegisters,
+    /// Whether a store an engine run made moved the cycle at which an
+    /// interrupt request reaches the CPU, so that the run's device horizon
+    /// is found again when it finishes.
+    #[codec(skip)]
+    pub(crate) irq_arrival_moved: bool,
     pub waitcnt: u16,
     #[codec(skip)]
     pub game_pak_timing_key: u16,
@@ -599,13 +656,34 @@ pub struct Bus {
     pub servicing_dma: bool,
     #[codec(skip)]
     pub dma_burst_start: Cycle,
+    /// A burst that still owns the bus yielded it to the host: at
+    /// `MAX_DMA_BURST_CYCLES` inside a CPU access, or at a host deadline in
+    /// `continue_dma_stall`. `servicing_dma` stays set until it ends.
     #[codec(skip)]
-    pub dma_livelock: Option<DmaLivelock>,
+    pub dma_stalled: bool,
+    /// Where the running burst yields: its first transfer start or beat
+    /// boundary at or after this cycle.
+    #[codec(skip)]
+    pub dma_yield_at: Cycle,
+    /// The transfers a stalled burst interrupted, one per channel, and
+    /// their channels as a mask.
+    #[codec(skip)]
+    pub dma_progress: [Option<DmaProgress>; 4],
+    #[codec(skip)]
+    pub dma_progress_mask: u8,
     #[codec(skip)]
     pub active_dma_channel: Option<u8>,
     pub dma_transfer_latch: u32,
     pub open_bus_value: u32,
+    /// The word of the most recent opcode fetch from the BIOS image, which
+    /// reads of the BIOS return while the CPU runs elsewhere; in HLE mode,
+    /// the value the HLE BIOS sets.
     pub bios_latch: u32,
+    /// Whether the most recent opcode fetch was from the BIOS, which opens
+    /// the image to data reads. Not durable: a state load
+    /// derives it from the CPU ([`crate::cpu::Cpu::last_fetch_in_bios`]).
+    #[codec(skip)]
+    pub bios_code_active: bool,
     #[codec(skip)]
     pub current_cycle: Cycle,
     #[codec(skip)]
@@ -737,6 +815,7 @@ impl Bus {
             bldy: 0,
             completed_frame_count: 0,
             irq: IrqRegisters::default(),
+            irq_arrival_moved: false,
             waitcnt: 0,
             game_pak_timing_key: 0,
             game_pak_n_cycles: [5; 3],
@@ -787,11 +866,15 @@ impl Bus {
             pending_dma: 0,
             servicing_dma: false,
             dma_burst_start: 0,
-            dma_livelock: None,
+            dma_stalled: false,
+            dma_yield_at: 0,
+            dma_progress: [None; 4],
+            dma_progress_mask: 0,
             active_dma_channel: None,
             dma_transfer_latch: 0,
             open_bus_value: 0,
             bios_latch: 0xe129_f000,
+            bios_code_active: false,
             current_cycle: 0,
             batch_active: false,
             batch_device_cycle: 0,
@@ -842,7 +925,7 @@ impl Bus {
         use evenfall_state::Error;
         if self.servicing_dma
             || self.active_dma_channel.is_some()
-            || self.dma_livelock.is_some()
+            || self.dma_stalled
             || !self.external_inputs.is_empty()
             || self.external_input_index != 0
         {
@@ -873,7 +956,7 @@ impl Bus {
         self.external_inputs.clear();
         self.external_input_index = 0;
         self.servicing_dma = false;
-        self.dma_livelock = None;
+        self.clear_dma_stall();
         self.active_dma_channel = None;
         self.apu_cycle = self.current_cycle;
         self.timer_cycle = self.current_cycle;
@@ -889,7 +972,7 @@ impl Bus {
         self.object_line_index = 0xffff;
         self.scanline_memo.invalidate();
         self.reset_video_policy(1);
-        self.update_irq_line();
+        self.irq.irq_line = self.irq.request() && self.irq.irq_line_rises_at.is_none();
         self.validate_state()?;
         self.apu.write_state(&mut evenfall_state::Sink::new(None, None))?;
         Ok(())
@@ -925,7 +1008,8 @@ impl Bus {
                 affine_segments, affine_segment_counts, affine_segment_line, mosaic_segments,
                 mosaic_segment_count, mosaic_segment_line, bg_affine_parameters,
                 bg_reference_points, bg_affine_current, win0h, win1h, win0v, win1v, winin,
-                winout, mosaic, bldcnt, bldalpha, bldy, completed_frame_count, irq, waitcnt,
+                winout, mosaic, bldcnt, bldalpha, bldy, completed_frame_count, irq,
+                irq_arrival_moved, waitcnt,
                 game_pak_timing_key, game_pak_n_cycles, game_pak_s_cycles, game_pak_prefetch,
                 duty_valid_until, fetch_kind, oam_compact, oam_compact_count, oam_compact_valid,
                 object_line, object_line_count, object_line_index, game_pak_code_active,
@@ -937,10 +1021,11 @@ impl Bus {
                 uart_rx_arrival_cycle, uart_rx_arrival_value, uart_error, uart_cts_ready, rcnt,
                 joy_control, joy_receive, joy_transmit, joy_status, joy_pending_command,
                 joy_completion_cycle, joy_response, dma_start_cycles, pending_dma,
-                servicing_dma, dma_burst_start, dma_livelock, active_dma_channel,
-                dma_transfer_latch, open_bus_value, bios_latch, current_cycle, batch_active,
-                batch_device_cycle, batch_deadline, devices_deferred, apu_cycle, timer_cycle,
-                timer_deadline, fifo_clock, dma_epoch,
+                servicing_dma, dma_burst_start, dma_stalled, dma_yield_at, dma_progress,
+                dma_progress_mask, active_dma_channel,
+                dma_transfer_latch, open_bus_value, bios_latch, bios_code_active, current_cycle,
+                batch_active, batch_device_cycle, batch_deadline, devices_deferred, apu_cycle,
+                timer_cycle, timer_deadline, fifo_clock, dma_epoch,
             ],
             keep [code, rom, bios]
         );
@@ -960,6 +1045,7 @@ impl Bus {
             counter: timer_zero.counter,
             reload: timer_zero.reload,
             prescaler_phase: timer_zero.prescaler_phase,
+            starting: timer_zero.starting,
         };
         zero_without_count_up.validate_state(prescaler).map_err(|_| InvalidSaveState)?;
         for timer in &self.timers[1..] {
@@ -967,6 +1053,13 @@ impl Bus {
         }
         if let Some(gpio) = &self.cartridge_gpio {
             gpio.validate_state(self.current_cycle).map_err(|_| InvalidSaveState)?;
+        }
+        if let Some(at) = self.irq.irq_line_rises_at
+            && (!self.irq.request()
+                || at <= self.current_cycle
+                || at > self.current_cycle + IRQ_LATENCY)
+        {
+            return Err(InvalidSaveState);
         }
         for deadline in [
             self.sio_completion_cycle,
@@ -1045,14 +1138,11 @@ impl Bus {
             }
         }
         match access.source {
-            AccessSource::CpuCode => self.fetch_kind = AccessKind::Sequential,
-            AccessSource::CpuData => {
-                self.fetch_kind = if access.address >> 24 == 4 {
-                    AccessKind::Sequential
-                } else {
-                    AccessKind::Nonsequential
-                };
+            AccessSource::CpuCode => {
+                self.fetch_kind = AccessKind::Sequential;
+                self.bios_code_active = access.address < BIOS_SIZE as u32;
             }
+            AccessSource::CpuData => self.fetch_kind = AccessKind::Nonsequential,
             AccessSource::Dma => {}
         }
         if access.source == AccessSource::CpuCode && !(8..=13).contains(&(access.address >> 24)) {
@@ -1063,24 +1153,27 @@ impl Bus {
         let width = access.width;
         match address >> 24 {
             0 if address < BIOS_SIZE as u32 => {
-                self.complete_read(self.read_bios(address, width), 1)
+                let value = self.read_protected_bios(address, width, access.source);
+                self.complete_access(access, value, 1)
             }
-            2 => self.complete_read(self.read_ewram(address, width), ewram_cycles(width)),
-            3 => self.complete_read(self.read_iwram(address, width), 1),
+            2 => self.complete_access(access, self.read_ewram(address, width), ewram_cycles(width)),
+            3 => self.complete_access(access, self.read_iwram(address, width), 1),
             4 => {
                 let value = self.read_mmio(address, width);
                 self.complete_read(value, 1)
             }
-            5 => self.complete_read(self.read_palette(address, width), video_cycles(width)),
-            6 => self.complete_read(self.read_vram(address, width), video_cycles(width)),
-            7 => self.complete_read(self.read_oam(address, width), 1),
+            5 => {
+                self.complete_access(access, self.read_palette(address, width), video_cycles(width))
+            }
+            6 => self.complete_access(access, self.read_vram(address, width), video_cycles(width)),
+            7 => self.complete_access(access, self.read_oam(address, width), 1),
             8..=13
                 if width == AccessWidth::Half
                     && self.save.is_eeprom()
                     && self.is_eeprom_address(address) =>
             {
                 let started_at = self.current_cycle;
-                self.stop_game_pak_prefetch(true);
+                self.stop_game_pak_prefetch(Some(access.source));
                 let value = u32::from(self.save.read_eeprom_bit(self.current_cycle));
                 let cycles = self.game_pak_cycles(access);
                 let mut result = self.complete_read(value, cycles);
@@ -1090,7 +1183,7 @@ impl Bus {
             8..=13 => self.read_game_pak(access),
             14..=15 => {
                 let started_at = self.current_cycle;
-                self.stop_game_pak_prefetch(true);
+                self.stop_game_pak_prefetch(Some(access.source));
                 let offset = address & 0x00ff_ffff;
                 let byte = if let Some(tilt) = &self.cartridge_tilt {
                     if tilt::Tilt::accepts_read(offset) {
@@ -1133,8 +1226,7 @@ impl Bus {
         let width = access.width;
         let region = address >> 24;
         if access.source == AccessSource::CpuData {
-            self.fetch_kind =
-                if region == 4 { AccessKind::Sequential } else { AccessKind::Nonsequential };
+            self.fetch_kind = AccessKind::Nonsequential;
         }
         match region {
             2 => {
@@ -1185,13 +1277,13 @@ impl Bus {
                 self.write_oam(address, width, value);
             }
             8..=13 if width == AccessWidth::Half && self.is_eeprom_access(address) => {
-                self.stop_game_pak_prefetch(true);
+                self.stop_game_pak_prefetch(Some(access.source));
                 let cycles = self.game_pak_cycles(access);
                 self.advance(cycles);
                 self.save.write_eeprom_bit(value as u8, self.current_cycle);
             }
             8..=13 => {
-                self.stop_game_pak_prefetch(true);
+                self.stop_game_pak_prefetch(Some(access.source));
                 let cycles = self.game_pak_cycles(access);
                 self.advance(cycles);
                 if self.is_cartridge_gpio_write(access) {
@@ -1209,7 +1301,7 @@ impl Bus {
                 }
             }
             14..=15 => {
-                self.stop_game_pak_prefetch(true);
+                self.stop_game_pak_prefetch(Some(access.source));
                 self.advance(self.sram_cycles());
                 let shift = match width {
                     AccessWidth::Byte => 0,
@@ -1443,6 +1535,7 @@ impl Bus {
         let second =
             u32::from(u16::from_le_bytes(self.rom[index + 2..index + 4].try_into().unwrap()));
         self.fetch_kind = AccessKind::Sequential;
+        self.bios_code_active = false;
         self.game_pak_code_active = true;
         self.prefetch_disabled_bug_pending = false;
         self.prefetch_buffer_was_disabled = false;
@@ -1450,7 +1543,7 @@ impl Bus {
         debug_assert_eq!(self.game_pak_prefetch.countdown, duty);
         self.continue_game_pak_prefetch(2);
         self.game_pak_prefetch.head_address = next + 2;
-        self.open_bus_value = second;
+        self.open_bus_value = half_on_both_lanes(second);
         self.current_cycle = end;
         Some([first, second])
     }
@@ -1493,10 +1586,7 @@ impl Bus {
         debug_assert_eq!(self.irq.power_state, PowerState::Halted);
         debug_assert!(deadline >= self.current_cycle);
         self.apply_due_external_inputs();
-        while !self.halt_wake_pending()
-            && self.current_cycle < deadline
-            && self.dma_livelock.is_none()
-        {
+        while !self.halt_wake_pending() && self.current_cycle < deadline && !self.dma_stalled {
             let limit = deadline - self.current_cycle;
             let step = if self.batch_active && self.batch_deadline > self.current_cycle {
                 limit.min(self.batch_deadline - self.current_cycle)
@@ -1730,6 +1820,7 @@ impl Bus {
         self.dma_start_cycles = [None; 4];
         self.pending_dma = 0;
         self.servicing_dma = false;
+        self.clear_dma_stall();
         self.active_dma_channel = None;
         self.dma_transfer_latch = 0;
         self.irq.interrupt_enable_mask = 0;
@@ -1934,12 +2025,22 @@ impl Bus {
     }
 
     pub fn irq_pending(&self) -> bool {
-        self.irq.interrupt_master_enabled
-            && self.irq.interrupt_enable_mask & self.irq.interrupt_request_flags != 0
+        self.irq.request()
     }
 
+    /// Follows IE, IF and IME after a change at the current cycle. A request
+    /// that rises reaches the CPU at a device boundary: an open batch stops
+    /// there, even when the change came from outside a register write.
+    /// Out of line: it runs only when those registers change.
+    #[inline(never)]
     pub fn update_irq_line(&mut self) {
-        self.irq.irq_line = self.irq_pending();
+        self.irq.update_line(self.current_cycle);
+        if let Some(at) = self.irq.irq_line_rises_at
+            && self.batch_active
+            && at < self.batch_deadline
+        {
+            self.batch_deadline = at;
+        }
     }
 
     pub fn power_state(&self) -> PowerState {
@@ -1950,8 +2051,12 @@ impl Bus {
         self.irq.power_state = PowerState::Running;
     }
 
+    /// Whether a halted CPU wakes: an enabled flag is raised, and any
+    /// interrupt request it drives has reached the CPU, so that the CPU
+    /// wakes into the IRQ rather than running on before it.
     pub fn halt_wake_pending(&self) -> bool {
         self.irq.interrupt_enable_mask & self.irq.interrupt_request_flags != 0
+            && self.irq.irq_line_rises_at.is_none()
     }
 
     pub fn stop_wake_pending(&self) -> bool {
@@ -2138,19 +2243,47 @@ impl Bus {
         (self.timer_cycle.wrapping_sub(u64::from(self.prescaler_origin)) as u16) & 1023
     }
 
+    /// A bus read of the BIOS with its read protection (GBATEK,
+    /// Unpredictable Things: Reading from BIOS Memory). The image answers an
+    /// opcode fetch, whose aligned word it latches, and a data read while the
+    /// most recent opcode fetch was from the BIOS; any other read returns the
+    /// latch. Without an image every read returns the HLE BIOS's latch.
+    fn read_protected_bios(
+        &mut self,
+        address: u32,
+        width: AccessWidth,
+        source: AccessSource,
+    ) -> u32 {
+        if self.bios.len() != BIOS_SIZE
+            || (source != AccessSource::CpuCode && !self.bios_code_active)
+        {
+            return self.bios_latch_lane(address, width);
+        }
+        if source == AccessSource::CpuCode {
+            self.bios_latch = self.read_bios(address & !3, AccessWidth::Word);
+        }
+        self.read_bios(address, width)
+    }
+
+    fn bios_latch_lane(&self, address: u32, width: AccessWidth) -> u32 {
+        let shift = match width {
+            AccessWidth::Byte => (address & 3) * 8,
+            AccessWidth::Half => (address & 2) * 8,
+            AccessWidth::Word => 0,
+        };
+        let mask = match width {
+            AccessWidth::Byte => 0xff,
+            AccessWidth::Half => 0xffff,
+            AccessWidth::Word => u32::MAX,
+        };
+        (self.bios_latch >> shift) & mask
+    }
+
+    /// The image's bytes, unprotected, as the debugger sees them; the latch
+    /// without an image.
     fn read_bios(&self, address: u32, width: AccessWidth) -> u32 {
         if self.bios.len() != BIOS_SIZE {
-            let shift = match width {
-                AccessWidth::Byte => (address & 3) * 8,
-                AccessWidth::Half => (address & 2) * 8,
-                AccessWidth::Word => 0,
-            };
-            let mask = match width {
-                AccessWidth::Byte => 0xff,
-                AccessWidth::Half => 0xffff,
-                AccessWidth::Word => u32::MAX,
-            };
-            return (self.bios_latch >> shift) & mask;
+            return self.bios_latch_lane(address, width);
         }
         (0..width.bytes())
             .map(|offset| u32::from(self.bios[address as usize + offset]) << (offset * 8))
@@ -2347,11 +2480,15 @@ impl Bus {
         self.peek_mmio_half(address)
     }
 
+    /// The value a halfword read of a readable I/O register returns, or
+    /// `None` for an unused or write-only one, which reads as
+    /// [`Self::unused_mmio_half`] describes.
     fn peek_mmio_half(&self, address: u32) -> Option<u16> {
         if (MMIO_BASE + 0xb0..MMIO_BASE + 0xe0).contains(&address) && address & 1 == 0 {
             let offset = address - (MMIO_BASE + 0xb0);
-            let channel = &self.dma_channels[(offset / 12) as usize];
-            return Some(if offset % 12 == 10 { channel.control } else { 0 });
+            let index = (offset / 12) as usize;
+            // Only the control halfword reads back.
+            return (offset % 12 == 10).then(|| self.dma_channels[index].read_control(index));
         }
         if (MMIO_BASE + 0x100..=MMIO_BASE + 0x10e).contains(&address) && address & 1 == 0 {
             let offset = address - (MMIO_BASE + 0x100);
@@ -2360,16 +2497,15 @@ impl Bus {
         }
         let offset = address.wrapping_sub(MMIO_BASE);
         if let Some(index) = Self::background_control_index(address) {
-            return Some(self.bg_controls[index]);
+            // Bit 13, the affine overflow flag, exists only for BG2 and BG3.
+            let mask = if index < 2 { 0xdfff } else { 0xffff };
+            return Some(self.bg_controls[index] & mask);
         }
-        if Self::background_offset_register(address).is_some() {
-            return Some(0);
-        }
-        if let Some((bg, parameter)) = Self::affine_parameter_register(address) {
-            return Some(self.bg_affine_parameters[bg][parameter] as u16);
-        }
-        if Self::affine_reference_register(address).is_some() {
-            return Some(0);
+        if Self::background_offset_register(address).is_some()
+            || Self::affine_parameter_register(address).is_some()
+            || Self::affine_reference_register(address).is_some()
+        {
+            return None;
         }
         if let Some(value) = self.apu.read_half(address) {
             return Some(value);
@@ -2382,16 +2518,10 @@ impl Bus {
             0x002 => u16::from(self.green_swap_enabled),
             0x004 => self.ppu_timing.read_dispstat(),
             0x006 => self.ppu_timing.read_vcount(),
-            0x040 => self.win0h,
-            0x042 => self.win1h,
-            0x044 => self.win0v,
-            0x046 => self.win1v,
             0x048 => self.winin,
             0x04a => self.winout,
-            0x04c => self.mosaic,
             0x050 => self.bldcnt,
             0x052 => self.bldalpha,
-            0x054 => self.bldy,
             0x128 => self.read_sio_control(),
             0x12a => {
                 if self.is_uart_mode() {
@@ -2503,6 +2633,18 @@ impl Bus {
             let raw = self.bg_reference_points[bg][coord] as u32;
             return Some(if high { (raw >> 16) as u16 } else { raw as u16 });
         }
+        if let Some((bg, parameter)) = Self::affine_parameter_register(address) {
+            return Some(self.bg_affine_parameters[bg][parameter] as u16);
+        }
+        match offset {
+            0x040 => return Some(self.win0h),
+            0x042 => return Some(self.win1h),
+            0x044 => return Some(self.win0v),
+            0x046 => return Some(self.win1v),
+            0x04c => return Some(self.mosaic),
+            0x054 => return Some(self.bldy),
+            _ => {}
+        }
         if offset == 0x154 {
             return Some(self.joy_transmit as u16);
         }
@@ -2558,6 +2700,11 @@ impl Bus {
             let index = ((offset - 0x100) / 4) as usize;
             if offset & 2 != 0 {
                 self.timers[index].write_control(value, self.prescaler_counter());
+                // A cascading timer counts overflows, not cycles: it has no
+                // start delay. Timer 0 ignores the count-up bit.
+                if index != 0 && self.timers[index].count_up_enabled() {
+                    self.timers[index].starting = false;
+                }
             } else {
                 self.timers[index].write_reload(value);
             }
@@ -3117,6 +3264,9 @@ impl Bus {
         for at in self.dma_start_cycles.into_iter().flatten() {
             boundary = boundary.min(at);
         }
+        if let Some(at) = self.irq.irq_line_rises_at {
+            boundary = boundary.min(at);
+        }
         if let Some(at) = self.next_external_input_cycle() {
             boundary = boundary.min(at);
         }
@@ -3180,6 +3330,7 @@ impl Bus {
         self.ppu_timing.elapse(cycles, &mut events);
         let end = self.current_cycle + cycles;
         let mut audio_requests = 0;
+        let mut timer_irq = false;
         if !self.devices_deferred {
             audio_requests |= self.sync_apu_to(end);
         }
@@ -3197,7 +3348,7 @@ impl Bus {
                 };
                 if overflows != 0 && timer.irq_enabled() {
                     self.irq.interrupt_request_flags |= 1 << (index + 3);
-                    self.update_irq_line();
+                    timer_irq = true;
                 }
                 if index < 2
                     && overflows != 0
@@ -3215,6 +3366,9 @@ impl Bus {
             self.refresh_timer_deadline();
         }
         self.current_cycle = end;
+        if timer_irq {
+            self.update_irq_line();
+        }
         self.apply_due_external_inputs();
         for (index, at) in self.dma_start_cycles.iter_mut().enumerate() {
             if *at == Some(self.current_cycle) {
@@ -3247,6 +3401,7 @@ impl Bus {
         if audio_requests != 0 {
             self.queue_audio_dma(audio_requests);
         }
+        self.irq.reach(end);
     }
 
     fn deliver_lcd_events(&mut self, events: &crate::video::timing::Events) {
@@ -3304,12 +3459,32 @@ impl Bus {
         if self.pending_dma == 0 || self.servicing_dma {
             return;
         }
-        if self.dma_livelock.is_some() {
-            self.pending_dma = 0;
-            return;
-        }
-        self.servicing_dma = true;
         self.dma_burst_start = self.current_cycle;
+        self.dma_yield_at = self.current_cycle.saturating_add(Self::MAX_DMA_BURST_CYCLES);
+        self.run_dma_burst();
+    }
+
+    /// Longest a DMA burst runs inside the CPU access it follows: about
+    /// one second of guest time and many
+    /// times the longest single transfer. Only requests that return faster
+    /// than transfers complete keep the bus that long, and then the CPU
+    /// never reaches it again. Servicing such a burst inside one access
+    /// would never return to the host, so at this limit the burst yields
+    /// (see [`Self::run_dma_burst`]) and the machine continues it from the
+    /// next instruction boundary with [`Self::continue_dma_stall`].
+    pub const MAX_DMA_BURST_CYCLES: Cycle = 1 << 24;
+
+    /// Runs pending DMA until no request remains, resuming any transfers a
+    /// stall interrupted first. At the first transfer start or beat
+    /// boundary at or after `dma_yield_at` the burst yields instead: it
+    /// records the transfers in progress, keeps its requests, sets
+    /// `dma_stalled` and leaves `servicing_dma` set, so no other burst
+    /// starts until [`Self::continue_dma_stall`] resumes this one exactly
+    /// where it stopped.
+    #[inline(never)]
+    fn run_dma_burst(&mut self) {
+        self.servicing_dma = true;
+        self.dma_stalled = false;
         let sub_batch = !self.batch_active;
         if sub_batch {
             // advance_slow temporarily clears batch_active while preserving
@@ -3318,11 +3493,15 @@ impl Bus {
             self.batch_active = true;
             self.batch_deadline = self.next_device_boundary();
         }
-        while self.pending_dma != 0 {
+        if self.dma_progress_mask != 0 {
+            // The outermost interrupted transfer resumes the others.
+            self.run_dma(7 - self.dma_progress_mask.leading_zeros() as usize);
+        }
+        while !self.dma_stalled && self.pending_dma != 0 {
             let index = self.pending_dma.trailing_zeros() as usize;
             self.pending_dma &= !(1 << index);
             if self.dma_channels[index].enabled() {
-                if self.dma_burst_exhausted(index) {
+                if self.dma_yield_due(index) {
                     break;
                 }
                 self.run_dma(index);
@@ -3334,55 +3513,118 @@ impl Bus {
             self.batch_device_cycle = 0;
             self.batch_deadline = 0;
         }
-        self.servicing_dma = false;
+        self.servicing_dma = self.dma_stalled;
     }
 
-    pub const MAX_DMA_BURST_CYCLES: Cycle = 1 << 24;
-
-    fn dma_burst_exhausted(&mut self, index: usize) -> bool {
-        if self.current_cycle - self.dma_burst_start < Self::MAX_DMA_BURST_CYCLES {
+    /// Whether the burst yields before channel `index`'s transfer starts;
+    /// if so, its request stays pending.
+    #[inline(always)]
+    fn dma_yield_due(&mut self, index: usize) -> bool {
+        if self.current_cycle < self.dma_yield_at {
             return false;
         }
-        self.dma_livelock =
-            Some(DmaLivelock { started_at: self.dma_burst_start, channel: index as u8 });
-        self.pending_dma = 0;
+        self.pending_dma |= 1 << index;
+        self.dma_stalled = true;
         true
     }
 
-    pub fn dma_livelock(&self) -> Option<DmaLivelock> {
-        self.dma_livelock
+    /// Whether a DMA burst owns the bus across host calls: the CPU is
+    /// stalled at an instruction boundary until the burst ends.
+    pub fn dma_stalled(&self) -> bool {
+        self.dma_stalled
+    }
+
+    /// Continues a stalled burst until it releases the bus or reaches its
+    /// first transfer start or beat boundary at or after `until`.
+    pub fn continue_dma_stall(&mut self, until: Cycle) {
+        debug_assert!(self.dma_stalled && self.servicing_dma);
+        if until <= self.current_cycle {
+            return;
+        }
+        self.dma_yield_at = until;
+        self.run_dma_burst();
+    }
+
+    fn clear_dma_stall(&mut self) {
+        self.dma_stalled = false;
+        self.dma_progress = [None; 4];
+        self.dma_progress_mask = 0;
+    }
+
+    /// Records channel `index`'s transfer, which yields after `beat`.
+    #[cold]
+    #[inline(never)]
+    fn yield_dma_transfer(&mut self, index: usize, progress: DmaProgress) {
+        self.dma_stalled = true;
+        self.dma_progress[index] = Some(progress);
+        self.dma_progress_mask |= 1 << index;
     }
 
     fn run_dma(&mut self, index: usize) {
         let previous_active = self.active_dma_channel;
         self.active_dma_channel = Some(index as u8);
-        self.dma_epoch = self.dma_epoch.wrapping_add(1);
-        let mut source = self.dma_channels[index].latched_source;
-        let mut destination = self.dma_channels[index].latched_destination;
-        let control = self.dma_channels[index].control;
-        let is_audio_fifo = (1..=2).contains(&index)
-            && (control >> 12) & 3 == 3
-            && Apu::fifo_for_address(destination).is_some();
+        let resumed = self.dma_progress[index].take();
+        let (mut source, mut destination, control, is_audio_fifo, transfer_words) = match resumed {
+            Some(progress) => (
+                progress.source,
+                progress.destination,
+                progress.control,
+                progress.is_audio_fifo,
+                progress.transfer_words,
+            ),
+            None => {
+                self.dma_epoch = self.dma_epoch.wrapping_add(1);
+                let destination = self.dma_channels[index].latched_destination;
+                let control = self.dma_channels[index].control;
+                let is_audio_fifo = (1..=2).contains(&index)
+                    && (control >> 12) & 3 == 3
+                    && Apu::fifo_for_address(destination).is_some();
+                let transfer_words =
+                    if is_audio_fifo { 4 } else { self.dma_channels[index].transfer_words(index) };
+                (
+                    self.dma_channels[index].latched_source,
+                    destination,
+                    control,
+                    is_audio_fifo,
+                    transfer_words,
+                )
+            }
+        };
         let width = if is_audio_fifo || control & (1 << 10) != 0 {
             AccessWidth::Word
         } else {
             AccessWidth::Half
         };
         let unit_bytes = width.bytes() as u32;
-        let transfer_words =
-            if is_audio_fifo { 4 } else { self.dma_channels[index].transfer_words(index) };
-        if index == 3
-            && width == AccessWidth::Half
-            && self.is_eeprom_address(destination)
-            && self.save.is_auto()
-        {
-            self.save.resolve_eeprom_transfer(transfer_words);
-        }
         let mut did_access_rom = false;
-        let bulk = !is_audio_fifo
-            && (source == 0 || matches!(source >> 24, 2 | 3))
-            && matches!(destination >> 24, 2 | 3 | 6 | 7);
+        let bulk;
         let mut transferred = 0;
+        if let Some(progress) = resumed {
+            self.dma_progress_mask &= !(1 << index);
+            did_access_rom = progress.did_access_rom;
+            bulk = progress.bulk;
+            transferred = progress.beat;
+            // It yielded after this beat, where it lets higher-priority
+            // requests in.
+            self.service_higher_priority_dma(index);
+            if self.dma_stalled || self.current_cycle >= self.dma_yield_at {
+                self.yield_dma_transfer(index, progress);
+                self.active_dma_channel = previous_active;
+                return;
+            }
+            transferred += 1;
+        } else {
+            if index == 3
+                && width == AccessWidth::Half
+                && self.is_eeprom_address(destination)
+                && self.save.is_auto()
+            {
+                self.save.resolve_eeprom_transfer(transfer_words);
+            }
+            bulk = !is_audio_fifo
+                && (source == 0 || matches!(source >> 24, 2 | 3))
+                && matches!(destination >> 24, 2 | 3 | 6 | 7);
+        }
         while transferred < transfer_words {
             if bulk {
                 let remaining = transfer_words - transferred;
@@ -3427,8 +3669,21 @@ impl Bus {
                     adjusted_dma_address(destination, unit_bytes, ((control >> 5) & 3) as u8);
             }
             if transferred + 1 < transfer_words {
-                self.service_higher_priority_dma(index);
-                if self.dma_livelock.is_some() {
+                if self.current_cycle < self.dma_yield_at {
+                    self.service_higher_priority_dma(index);
+                }
+                if self.dma_stalled || self.current_cycle >= self.dma_yield_at {
+                    let progress = DmaProgress {
+                        source,
+                        destination,
+                        control,
+                        transfer_words,
+                        beat: transferred,
+                        did_access_rom,
+                        is_audio_fifo,
+                        bulk,
+                    };
+                    self.yield_dma_transfer(index, progress);
                     self.active_dma_channel = previous_active;
                     return;
                 }
@@ -3442,6 +3697,10 @@ impl Bus {
             self.dma_channels[index].reload_latched_destination();
         } else {
             self.dma_channels[index].latched_destination = destination;
+        }
+        if repeat {
+            let channel = &mut self.dma_channels[index];
+            channel.latched_word_count = channel.word_count;
         }
         if !repeat {
             self.dma_channels[index].control &= !(1 << 15);
@@ -3475,7 +3734,7 @@ impl Bus {
         destination: &mut u32,
         remaining: u32,
     ) -> u32 {
-        if !self.batch_active || self.pending_dma != 0 || self.dma_livelock.is_some() {
+        if !self.batch_active || self.pending_dma != 0 || self.dma_yield_at <= self.current_cycle {
             return 0;
         }
         #[cfg(test)]
@@ -3498,7 +3757,7 @@ impl Bus {
         let unit = width.bytes() as u32;
         let (source_control, destination_control) =
             (((control >> 7) & 3) as u8, ((control >> 5) & 3) as u8);
-        let room = self.batch_deadline - self.current_cycle;
+        let room = self.batch_deadline.min(self.dma_yield_at) - self.current_cycle;
         let mut beats = u64::from(remaining).min((room - 1) / (read_cost + write_cost)) as u32;
         if *source != 0 {
             beats = beats.min(dma_beats_in_region(*source, unit, source_control));
@@ -3743,19 +4002,31 @@ impl Bus {
         self.service_pending_dma();
     }
 
+    #[inline(always)]
     fn service_higher_priority_dma(&mut self, current_index: usize) {
         if current_index == 0 {
             return;
         }
         let higher_mask = (1u8 << current_index) - 1;
+        if self.dma_progress_mask & higher_mask != 0 {
+            // A stall interrupted a higher-priority transfer in here.
+            let index = 7 - (self.dma_progress_mask & higher_mask).leading_zeros() as usize;
+            self.run_dma(index);
+            if self.dma_stalled {
+                return;
+            }
+        }
         while self.pending_dma & higher_mask != 0 {
             let index = (self.pending_dma & higher_mask).trailing_zeros() as usize;
             self.pending_dma &= !(1 << index);
             if self.dma_channels[index].enabled() {
-                if self.dma_burst_exhausted(index) {
+                if self.dma_yield_due(index) {
                     return;
                 }
                 self.run_dma(index);
+                if self.dma_stalled {
+                    return;
+                }
             }
         }
     }
@@ -3876,18 +4147,59 @@ impl Bus {
 
     #[inline(always)]
     fn complete_read(&mut self, value: u32, cycles: Cycle) -> ReadResult {
+        self.complete_read_latching(value, value, cycles)
+    }
+
+    /// [`Self::complete_read`] for a read that leaves `latch` on the data
+    /// bus.
+    #[inline(always)]
+    fn complete_read_latching(&mut self, value: u32, latch: u32, cycles: Cycle) -> ReadResult {
         let started_at = self.current_cycle;
-        self.open_bus_value = value;
+        self.open_bus_value = latch;
         self.advance(cycles);
         self.service_pending_dma();
         ReadResult { value, cycles: self.current_cycle - started_at }
+    }
+
+    /// [`Self::complete_read`] for `access`: an opcode fetch leaves
+    /// [`Self::fetch_latch`] on the data bus, any other read its value.
+    #[inline(always)]
+    fn complete_access(&mut self, access: Access, value: u32, cycles: Cycle) -> ReadResult {
+        let latch = if access.source == AccessSource::CpuCode {
+            self.fetch_latch(access.address, access.width, value)
+        } else {
+            value
+        };
+        self.complete_read_latching(value, latch, cycles)
+    }
+
+    /// The word an opcode fetch of `value` at `address` leaves on the data
+    /// bus, which a later read of unused memory returns (GBATEK,
+    /// Unpredictable Things: Reading from Unused Memory). An ARM fetch
+    /// leaves its word. A Thumb fetch over a 16-bit bus (EWRAM, palette RAM,
+    /// VRAM, Game Pak ROM) presents its halfword on both halves; one from
+    /// the 32-bit BIOS or OAM reads the whole aligned word; IWRAM drives
+    /// only the addressed half, and the other half keeps the bus's previous
+    /// value.
+    #[inline(always)]
+    fn fetch_latch(&self, address: u32, width: AccessWidth, value: u32) -> u32 {
+        if width != AccessWidth::Half {
+            return value;
+        }
+        match address >> 24 {
+            0 if address < BIOS_SIZE as u32 => self.bios_latch,
+            2 | 5 | 6 | 8..=13 => half_on_both_lanes(value),
+            3 => iwram_half_latch(self.open_bus_value, address, value),
+            7 => self.read_oam(address & !3, AccessWidth::Word),
+            _ => value,
+        }
     }
 
     fn read_game_pak(&mut self, mut access: Access) -> ReadResult {
         let started_at = self.current_cycle;
         let value = self.read_game_pak_rom(access.address, access.width);
         if access.source != AccessSource::CpuCode {
-            self.stop_game_pak_prefetch(true);
+            self.stop_game_pak_prefetch(Some(access.source));
             let fetch_started = self.current_cycle;
             let epoch = self.dma_epoch;
             let cycles = self.game_pak_cycles(access);
@@ -3917,20 +4229,20 @@ impl Bus {
                 {
                     self.continue_game_pak_prefetch(opcode_bytes);
                 }
-                self.complete_read(value, 1);
+                self.complete_access(access, value, 1);
                 return ReadResult { value, cycles: self.current_cycle - started_at };
             }
             if self.game_pak_prefetch.countdown != 0
                 && aligned == self.game_pak_prefetch.last_address
             {
                 let remaining = self.game_pak_prefetch.countdown;
-                self.complete_read(value, remaining);
+                self.complete_access(access, value, remaining);
                 self.game_pak_prefetch.head_address = aligned.wrapping_add(u32::from(opcode_bytes));
                 self.game_pak_prefetch.count = 0;
                 return ReadResult { value, cycles: self.current_cycle - started_at };
             }
         }
-        self.stop_game_pak_prefetch(false);
+        self.stop_game_pak_prefetch(None);
         if self.prefetch_buffer_was_disabled {
             access.kind = AccessKind::Nonsequential;
             self.prefetch_buffer_was_disabled = false;
@@ -3938,7 +4250,7 @@ impl Bus {
         let fetch_started = self.current_cycle;
         let epoch = self.dma_epoch;
         let cycles = self.game_pak_cycles(access);
-        self.complete_read(value, cycles);
+        self.complete_access(access, value, cycles);
         self.reprice_interrupted_game_pak_access(access, fetch_started, cycles, epoch);
         if self.waitcnt & (1 << 14) != 0 {
             self.start_game_pak_prefetch(aligned, opcode_bytes);
@@ -3982,13 +4294,26 @@ impl Bus {
         self.duty_valid_until = prefetch_duty_valid_until(next, opcode_bytes);
     }
 
-    fn stop_game_pak_prefetch(&mut self, collision: bool) {
-        if self.game_pak_prefetch.active && collision && self.game_pak_prefetch.countdown != 0 {
-            let halfway = self.game_pak_prefetch.duty / 2 + 1;
-            if self.game_pak_prefetch.countdown == 1
-                || (self.game_pak_prefetch.opcode_bytes == 4
-                    && self.game_pak_prefetch.countdown == halfway)
-            {
+    /// Discards the buffer. A Game Pak data access (`collision` names its
+    /// source) waits one cycle for a halfword read the buffer has in flight:
+    /// a CPU access only when that read is in its last cycle, a DMA access
+    /// whenever it has begun. The mGBA suite's `ldmia` overflow and DMA
+    /// timing rows measure both rules.
+    fn stop_game_pak_prefetch(&mut self, collision: Option<AccessSource>) {
+        let prefetch = self.game_pak_prefetch;
+        if let Some(source) = collision
+            && prefetch.active
+            && prefetch.countdown != 0
+        {
+            // An ARM word is two halfword reads of half the duty each.
+            let half = if prefetch.opcode_bytes == 4 { prefetch.duty / 2 } else { prefetch.duty };
+            let left = if prefetch.countdown > half {
+                prefetch.countdown - half
+            } else {
+                prefetch.countdown
+            };
+            let waits = if source == AccessSource::Dma { left != half } else { left == 1 };
+            if waits {
                 self.advance(1);
             }
         }
@@ -4387,6 +4712,20 @@ fn vram_obj_boundary(dispcnt: u16) -> usize {
     if dispcnt & 7 >= 3 { 0x14000 } else { 0x10000 }
 }
 
+/// A halfword on a 16-bit bus, as the 32-bit data bus carries it: on both
+/// halves.
+#[inline(always)]
+pub(crate) fn half_on_both_lanes(half: u32) -> u32 {
+    half.wrapping_mul(0x0001_0001)
+}
+
+/// The data bus after IWRAM, which drives only the addressed half, presents
+/// `half` at `address`: the other half keeps `latch`'s.
+#[inline(always)]
+pub(crate) fn iwram_half_latch(latch: u32, address: u32, half: u32) -> u32 {
+    if address & 2 == 0 { (latch & 0xffff_0000) | half } else { (latch & 0xffff) | (half << 16) }
+}
+
 pub fn is_byte_wide_save_address(address: u32) -> bool {
     matches!(address >> 24, 0x0e | 0x0f)
 }
@@ -4545,6 +4884,7 @@ mod tests {
             control: 0x9000,
             latched_source: EWRAM_BASE,
             latched_destination: VRAM_BASE + 0xa0,
+            latched_word_count: 1,
         };
 
         bus.elapse(1);
@@ -4574,6 +4914,7 @@ mod tests {
             control: 0x9000,
             latched_source: EWRAM_BASE,
             latched_destination: VRAM_BASE + 0xa0,
+            latched_word_count: 1,
         };
         bus.begin_device_batch();
         bus.elapse(4);
@@ -5000,32 +5341,52 @@ mod tests {
             kind: AccessKind::Nonsequential,
             source: AccessSource::CpuData,
         };
+        // A request that rises reaches the CPU IRQ_LATENCY cycles after the
+        // cycle it rose in, and not one cycle sooner.
+        let arrives = |bus: &mut Bus| {
+            assert!(!bus.irq.irq_line);
+            assert_eq!(bus.irq.irq_line_rises_at, Some(bus.now() + IRQ_LATENCY));
+            bus.elapse(IRQ_LATENCY - 1);
+            assert!(!bus.irq.irq_line);
+            bus.elapse(1);
+            assert!(bus.irq.irq_line);
+            assert_eq!(bus.irq.irq_line_rises_at, None);
+        };
         bus.write(half(MMIO_BASE + 0x132), 0x4001);
         bus.write(half(MMIO_BASE + 0x200), 1 << 12);
         bus.write(half(MMIO_BASE + 0x208), 1);
         assert!(!bus.irq.irq_line);
         bus.set_keys(KeyState { a: true, ..KeyState::default() });
-        assert!(bus.irq.irq_line);
+        arrives(&mut bus);
         let byte = Access {
             address: MMIO_BASE + 0x203,
             width: AccessWidth::Byte,
             kind: AccessKind::Nonsequential,
             source: AccessSource::CpuData,
         };
+        // A request that falls reaches the CPU at once.
         bus.write(byte, 1 << 4);
         assert!(!bus.irq.irq_line);
         bus.set_keys(KeyState::default());
         bus.set_keys(KeyState { a: true, ..KeyState::default() });
-        assert!(bus.irq.irq_line);
+        arrives(&mut bus);
         bus.write(half(MMIO_BASE + 0x200), 0);
         assert!(!bus.irq.irq_line);
         bus.write(half(MMIO_BASE + 0x200), 1 << 12);
-        assert!(bus.irq.irq_line);
+        arrives(&mut bus);
         bus.write(half(MMIO_BASE + 0x208), 0);
         assert!(!bus.irq.irq_line);
         bus.write(half(MMIO_BASE + 0x208), 1);
-        assert!(bus.irq.irq_line);
+        arrives(&mut bus);
         bus.write(half(MMIO_BASE + 0x202), 1 << 12);
+        assert!(!bus.irq.irq_line);
+        // A request that falls before it arrives never reaches the CPU.
+        bus.set_keys(KeyState::default());
+        bus.set_keys(KeyState { a: true, ..KeyState::default() });
+        bus.elapse(1);
+        bus.write(half(MMIO_BASE + 0x202), 1 << 12);
+        assert_eq!(bus.irq.irq_line_rises_at, None);
+        bus.elapse(IRQ_LATENCY);
         assert!(!bus.irq.irq_line);
     }
 

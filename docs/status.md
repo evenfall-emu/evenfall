@@ -14,8 +14,9 @@ It passes the public and in-house test ROMs, but evidence across real games is s
 
 - **Test ROMs.** Every pinned [jsmolka/gba-tests](https://github.com/jsmolka/gba-tests) ROM and every project probe ROM passes under HLE boot.
   Under the open Cult-of-GBA BIOS, the jsmolka BIOS read-protection case fails and the others pass ([`compatibility.md`](compatibility.md)).
-- **Hardware tables.** The recorded results of the [mGBA test suite](https://github.com/mgba-emu/suite) run as ordinary tests.
-  A few timing cases still differ ([`compatibility.md`](compatibility.md)).
+- **Hardware tables.** The recorded results of the [mGBA test suite](https://github.com/mgba-emu/suite) run as ordinary tests, and every value matches.
+  The suite's own ROM also runs, under HLE boot and the replacement BIOS.
+  Under HLE, every test passes except three BIOS routine timings and two edge cases ([`compatibility.md`](compatibility.md#mgba-suite-rom)).
 - **Fast paths against references.** Every optimized path keeps a simple reference path, and a test compares the two ([`performance.md`](performance.md#where-the-speed-comes-from)).
 - **Native against WebAssembly.** Both builds produce identical state, pixels, audio, memory and saves ([`testing.md`](testing.md)).
 
@@ -28,12 +29,12 @@ Results and method are in [`performance.md`](performance.md).
 
 ## Known issues
 
-- **DMA that never releases the bus** ends in a terminal `dma_livelock` fault after about one second of guest time.
-  On hardware the CPU stalls while video and audio keep running.
+- **A DMA stall's first second runs inside one host call.** A DMA burst that never releases the bus runs inside the CPU access it follows until it has run 2^24 cycles.
+  The host call it starts in returns about one second late, and the instruction it interrupted completes before the stall instead of after it.
+  From then on the CPU stalls while video and audio keep running, as on hardware ([`gba/hardware/timers-dma-interrupts.md`](gba/hardware/timers-dma-interrupts.md#bursts-that-never-release-the-bus)).
 - **The MP2K sound-driver HLE runs inside one step.** A cyclic channel chain, or a track that jumps without waiting, would hold the host call.
   This comes from reading the code and has not been reproduced ([`gba/hardware/bios.md`](gba/hardware/bios.md)).
-- **BIOS read protection is modeled only in HLE mode.** With a BIOS image, reads from outside the BIOS return the image's bytes instead of the last opcode the BIOS fetched ([`gba/hardware/memory.md`](gba/hardware/memory.md)).
-- **Timing differences** remain against the mGBA suite's recorded results for DMA with prefetch enabled, mixed wait states and DMA from EWRAM code ([`compatibility.md`](compatibility.md)).
+- **HLE BIOS routine timing.** `Sqrt` and `CpuFastSet` take fewer cycles under HLE than the suite records for Nintendo's BIOS ([`gba/hardware/bios.md`](gba/hardware/bios.md#approximations)).
 
 ## Unverified choices
 
@@ -43,5 +44,5 @@ Each [hardware page](gba/hardware/README.md) ends with its open questions.
 
 ## What's next
 
-Broader compatibility evidence (the mGBA suite ROMs, representative games, hardware captures), fixes for the issues above, and then the next systems.
+Broader compatibility evidence (representative games, hardware captures), fixes for the issues above, and then the next systems.
 Graphical frontends will also share an optional presentation layer with shader presets, outside the deterministic core ([#1](https://github.com/evenfall-emu/evenfall/issues/1)).

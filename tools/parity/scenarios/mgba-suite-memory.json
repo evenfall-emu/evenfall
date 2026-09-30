@@ -1,0 +1,75 @@
+{
+  "name": "mgba-suite-memory",
+  "assets": {
+    "rom": "../../../tools/mgba-suite/build/suite.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto"
+  },
+  "inputs": [
+    {
+      "at": "8426880",
+      "change": {
+        "keys": 1
+      }
+    },
+    {
+      "at": "9269568",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "94661952",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "95504640",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "96628224",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "97470912",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "98594496",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "99437184",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "100560768",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "101403456",
+      "change": {
+        "keys": 0
+      }
+    }
+  ],
+  "endCycle": "102246144",
+  "checkpoints": ["94381056", "96347328", "98313600", "100279872", "102246144"],
+  "sliceCycles": ["70224", "280896", "1232"]
+}

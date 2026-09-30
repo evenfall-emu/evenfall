@@ -406,6 +406,7 @@ fn run_steps(
                         match reason {
                             evenfall_gba::cpu::WaitReason::Halted => "halted",
                             evenfall_gba::cpu::WaitReason::Stopped => "stopped",
+                            evenfall_gba::cpu::WaitReason::DmaStall => "dma_stall",
                         }
                     )?;
                 }

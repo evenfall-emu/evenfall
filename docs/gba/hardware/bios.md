@@ -46,15 +46,15 @@ A save state records the boot mode and the BIOS image's hash, and only loads int
 
 What a game can see differently:
 
-| What                                            | Real BIOS                                                                     | HLE                                                 |
-| ----------------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------- |
-| Boot                                            | the image's boot code (Nintendo's shows the logo for about two seconds)       | none: the cartridge starts at cycle 0               |
-| Reading the BIOS region                         | the image's bytes ([`memory.md`](memory.md#bios-read-protection))             | the protection value                                |
-| `SWI` entry                                     | the image's handler, in Supervisor mode, with stack writes and its own timing | no mode change or stack traffic, approximate timing |
-| Interrupt dispatch                              | the trampoline pushes `r0`–`r3`, `r12`, `lr` on the interrupt stack           | registers saved inside the CPU, no stack writes     |
-| Using internal BIOS routines as callbacks       | runs them                                                                     | typed fault ([below](#fault-containment))           |
-| `MidiKey2Freq` reading BIOS bytes               | reads them                                                                    | impossible, since there are no BIOS bytes           |
-| Booting as a MultiBoot client with no cartridge | the BIOS download loop                                                        | not implemented                                     |
+| What                                            | Real BIOS                                                                                    | HLE                                                                                                           |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Boot                                            | the image's boot code (Nintendo's shows the logo for about two seconds)                      | none: the cartridge starts at cycle 0                                                                         |
+| Reading the BIOS region                         | from outside BIOS code, the protection value ([`memory.md`](memory.md#bios-read-protection)) | the protection value                                                                                          |
+| `SWI` entry                                     | the image's handler, in Supervisor mode, with stack writes and its own timing                | no mode change or stack traffic, retail-like timing ([approximations](#approximations))                       |
+| Interrupt dispatch                              | the trampoline pushes `r0`–`r3`, `r12`, `lr` on the interrupt stack                          | registers saved inside the CPU, and the same six stores below the interrupt stack pointer, which doesn't move |
+| Using internal BIOS routines as callbacks       | runs them                                                                                    | typed fault ([below](#fault-containment))                                                                     |
+| `MidiKey2Freq` reading BIOS bytes               | reads them                                                                                   | impossible, since there are no BIOS bytes                                                                     |
+| Booting as a MultiBoot client with no cartridge | the BIOS download loop                                                                       | not implemented                                                                                               |
 
 ## State after HLE boot
 
@@ -83,6 +83,13 @@ An ARM `SWI` takes its routine number from instruction bits 23–16, and a Thumb
 In HLE mode, `Cpu::execute_hle_software_interrupt` ([`hle/dispatch.rs`](../../../systems/gba/src/hle/dispatch.rs)) runs the routine inside the `SWI` instruction itself.
 There is no switch to Supervisor mode, the next instruction is the one after the `SWI`, and a pending interrupt is taken at that point like after any instruction.
 The BIOS protection value becomes `E3A02004h`.
+
+Routines `06h` to `18h`, the arithmetic, copy, rotation and decompression calls, also make the bus accesses of the retail call around their own work.
+Before the routine come the refill at the `SWI` vector from the BIOS, which also stops the Game Pak prefetch buffer, and the dispatcher's byte read of the `SWI`'s comment field, "the BYTE at [R14-2]" ([GBATEK, ARM CPU Exceptions][gbatek-exceptions]).
+The dispatcher's remaining work is a fixed 39 cycles (`HLE_SWI_DISPATCH_CYCLES`).
+After the routine come the return's opcode fetch in the BIOS and a refill at the instruction after the `SWI`, as after any branch.
+No document lists the dispatcher's code, so the 39 cycles are fitted to the mGBA suite's timing table, recorded on hardware.
+With them, its two `Div` rows, its `Sqrt` of zero row and its `ArcTan` row match in ARM and Thumb, from ROM at every wait setting, EWRAM and IWRAM.
 
 Every memory access a routine makes goes through the timed bus, so DMA, sound, timers and video see it in order.
 Routines whose running time the game controls run over several steps ([below](#routines-that-run-over-several-steps)).
@@ -134,6 +141,13 @@ The mGBA suite's BIOS math table supplies the expected values, including the pol
 `r2` holds the count (bits 0–20), the fill flag (bit 24) and the word flag (bit 26).
 Only the word form writes its address registers back.
 `CpuFastSet` copies or fills words in whole bursts of eight, rounding the count up.
+
+Each halfword unit is a load and a store, as the real loop's `LDRH` and `STRH` make them ([GBATEK, BIOS Memory Copy][gbatek-copy]).
+From an odd source address the loaded halfword is rotated right by 8, so the copy stores its high byte.
+On the 8-bit save bus both accesses use the exact address.
+The mGBA suite's memory table, recorded on hardware, shows `00DE00BEh` copied from `DEADBEEFh` this way.
+Word units, including `CpuFastSet`'s, are the real loops' `LDMIA` and `STMIA` beats.
+They are aligned, except on the 8-bit save bus, which sees each beat's exact address ([memory](memory.md#region-behavior)).
 
 Both return after one cycle without copying when the source starts below `02000000h`.
 GBATEK documents that the real routines refuse any source reaching into the BIOS ([GBATEK, BIOS Memory Copy][gbatek-copy]).
@@ -247,22 +261,33 @@ HLE keeps the wait as state that lasts across interrupt handler calls:
 4. Each time the interrupt dispatcher returns from the outermost handler, it checks `03007FF8h` again.
    A chosen bit ends the wait and is cleared.
    Otherwise the CPU halts again.
+5. A wait that ends returns from its `SWI` 42 cycles after the interrupt return (`HLE_INTR_WAIT_RETURN_CYCLES`), and the protection value becomes `E3A02004h`, as after any `SWI`.
 
-Halt wakes on `IE & IF` whatever `IME` and the CPU's interrupt mask say, while entering the handler still obeys both ([`timers-dma-interrupts.md`](timers-dma-interrupts.md)).
+The 42 cycles stand for the real routine's flag check, its epilogue and the refills.
+No document lists that code, so they are fitted to the mGBA suite's timer count-up table, recorded on hardware.
+Its prescaled rows start a timer a fixed number of cycles after an `IntrWait` returns, and all of them match at 42 and at no neighboring value.
+The suite's memory table records the `E3A02004h` protection value after a `VBlankIntrWait`.
+
+Halt wakes on `IE & IF` whatever `IME` and the CPU's interrupt mask say, while entering the handler still obeys both ([`timers-dma-interrupts.md`](timers-dma-interrupts.md#halt-and-stop)).
+The HLE `Halt` and `CustomHalt` return 26 cycles after the halt ends (`HLE_HALT_RETURN_CYCLES`), on waking or on the return from the interrupt taken on waking.
+These are also fitted: each of the suite's Normal-mode SIO timing rows halts until a transfer's interrupt, and all four match at 26.
 
 ### The HLE interrupt dispatcher
 
 On a GBA, an interrupt jumps to the BIOS trampoline at `18h`.
 It saves `r0`–`r3`, `r12` and `lr` on the interrupt stack, calls the game's handler (whose address is at `03007FFCh`) with `lr = 00000138h`, and returns with `SUBS pc, lr, #4` ([GBATEK, GBA Interrupt Control][gbatek-irq]).
 
-In HLE mode, `Cpu::enter_irq` does the CPU's normal interrupt entry, then:
+In HLE mode, `Cpu::enter_irq` does the CPU's normal interrupt entry ([`cpu.md`](cpu.md)), then:
 
 - pushes a frame (return address, `SPSR_irq`, `r0`–`r3`, `r12`) onto an eight-entry stack inside the CPU,
-- reads the handler address from `03007FFCh` with a timed read,
+- makes the trampoline's bus accesses up to its handler load, following GBATEK's listing: the refill at `18h`, the branch to `128h` and its refill, each instruction's opcode fetch from the BIOS, and the six stores of `STMFD r13!,{r0-r3,r12,r14}` below the interrupt stack pointer, which stays where it was,
+- reads the handler address from `03007FFCh` with a timed read and one internal cycle,
 - sets `lr` to `00000138h` and jumps to the handler, in Thumb state when bit 0 of the address is set,
 - sets the BIOS protection value to `E25EF004h`.
 
-When execution reaches `00000138h` with a frame on the stack, the dispatcher pops the frame, restores `r0`–`r3`, `r12` and that frame's `SPSR_irq`, returns to the interrupted code, and sets the protection value to `E55EC002h`.
+When execution reaches `00000138h` with a frame on the stack, the dispatcher makes the return's bus accesses: the six loads of `LDMFD r13!,{r0-r3,r12,r14}`, one internal cycle and the opcode fetch of `SUBS pc, lr, #4` at `13Ch`.
+It then pops the frame, restores `r0`–`r3`, `r12` and that frame's `SPSR_irq`, returns to the interrupted code, and sets the protection value to `E55EC002h`, or `E3A02004h` when the return [ends an `IntrWait`](#intrwait-and-the-bios-interrupt-flags).
+A pending interrupt is taken right after the return, as after any branch.
 
 Handlers may re-enable interrupts and nest.
 Each level has its own frame, so an inner interrupt can't overwrite the outer one's return state.
@@ -427,7 +452,13 @@ Software that needs exact BIOS timing or rounding should use a real BIOS image.
   The decompressors and `BitUnPack` add per-iteration costs modeled on mGBA's replacement BIOS.
   `Div` charges `11 + 13 * n` cycles, where n is the difference between the leading-zero counts of divisor and dividend (at least 1).
   `Sqrt` charges 53, `ArcTan` 37 plus its multiplications, and `IntrWait` 12.
-- **Interrupt dispatch** charges the handler address read and the pipeline refills, but not the trampoline's instructions or its stack writes.
+  Routines `06h`–`18h` add the [retail call's accesses](#how-hle-runs-a-bios-call).
+- **Fitted costs.** Where no document lists the BIOS code, the retail costs are fitted to the mGBA suite's hardware tables: the `SWI` dispatcher's 39 cycles, `IntrWait`'s 42-cycle return and `Halt`'s 26-cycle return.
+  Each constant fits every row that measures it.
+- **Unfitted routine bodies.** `Sqrt`'s fixed cost doesn't grow with its input as the real routine's does.
+  The suite's `Sqrt` rows for `FFh` and `12345678h` read 115 and 1031 cycles more than HLE, and its 256-word `CpuFastSet` row 272 more.
+  Three rows don't determine how those routines' loops scale, so their costs are left as they are.
+- **Interrupt dispatch** charges the trampoline's instructions and stack traffic from GBATEK's listing.
 - **Rounding.** `BgAffineSet`, `ObjAffineSet` and `MidiKey2Freq` use single-precision math, as mGBA's HLE does, instead of the real BIOS's lookup table.
 - **Resets** take a fixed cost and skip the logo.
 - **MultiBoot delays** (2^20 cycles before the first exchange, 64-cycle polls, 604 cycles between transfers, a 2^24-cycle timeout) are Evenfall's choices, not measurements.
@@ -453,7 +484,7 @@ Rules on copying and copy protection vary by country.
 ## How it is checked
 
 - [`tests/machine_a.rs`](../../../systems/gba/tests/machine_a.rs) covers the boot state, `IntrWait` completing only after the handler sets the BIOS flags, nested interrupts keeping the outer return state, and `RegisterRamReset`'s serial reset.
-- [`tests/machine_b.rs`](../../../systems/gba/tests/machine_b.rs) covers each decompression format (including the halfword-aligned Huffman bitstream and odd run-length VRAM destinations), routines that run over several steps (a Huffman tree with no leaf, interrupts raised inside a routine, the same result however time is sliced), the nesting-limit fault, pointer checks before side effects, the MP2K sequencer starting a note, the callback read once across HBlank DMA, and the 36-entry jump list.
+- [`tests/machine_b.rs`](../../../systems/gba/tests/machine_b.rs) covers the retail call's cost around `ArcTan` and `ArcTan2`, each decompression format (including the halfword-aligned Huffman bitstream and odd run-length VRAM destinations), routines that run over several steps (a Huffman tree with no leaf, interrupts raised inside a routine, the same result however time is sliced), the nesting-limit fault, pointer checks before side effects, the MP2K sequencer starting a note, the callback read once across HBlank DMA, and the 36-entry jump list.
 - [`hle/mod.rs`](../../../systems/gba/src/hle/mod.rs) checks `ArcTan` against the mGBA suite's BIOS math table, and the all-at-once `BgAffineSet` pointer check against a record-by-record loop.
 - The probes `probe-mb2slave` (Multiplayer, two clients) and `probe-mb2mhz` (Normal 32-bit at 2 MHz) run the HLE MultiBoot sender against client ROMs that behave like the client BIOS, and check every word with their own decryption ([`probe/README.md`](../../../probe/README.md)).
 - The [validator](../../../systems/gba/tests/validator/main.rs)'s `--bios` option reruns the jsmolka test ROMs with a real BIOS image ([`testing.md`](../../testing.md#with-a-real-bios)).
@@ -465,7 +496,9 @@ Rules on copying and copy protection vary by country.
 - **No run with Nintendo's BIOS.** Nobody on the project has run a Nintendo BIOS image, so compatibility with one isn't claimed.
 - **Run-length VRAM output.** Pairing by address (Evenfall) or by count without padding (Cult-of-GBA): which one the real routine does is unverified.
 - **Interrupt handler state.** GBATEK says the handler is called in ARM state.
-  HLE calls an odd handler address in Thumb state, and doesn't write the trampoline's stack frame.
+  HLE calls an odd handler address in Thumb state.
+- **Fitted BIOS costs.** The dispatcher, `IntrWait` and `Halt` costs fit the suite's tables but come from no BIOS listing.
+  A Nintendo BIOS run of the suite, or a disassembly's cycle count, would confirm or replace them.
 - **Interrupts inside routines.** GBATEK notes that the BIOS may allow interrupts inside some routines.
   HLE takes none until a routine returns.
 - **MP2K work inside one step.** Reading the code suggests that a looping channel chain, or a track that jumps without ever waiting, would never return control to the host.
@@ -482,6 +515,7 @@ Rules on copying and copy protection vary by country.
 [gbatek-irq]: https://rust-console.github.io/gbatek-gbaonly/#gbainterruptcontrol
 [gbatek-multiboot]: https://rust-console.github.io/gbatek-gbaonly/#biosmultibootsinglegamepak
 [gbatek-copy]: https://rust-console.github.io/gbatek-gbaonly/#biosmemorycopy
+[gbatek-exceptions]: https://rust-console.github.io/gbatek-gbaonly/#armcpuexceptions
 [vbam]: https://github.com/visualboyadvance-m/visualboyadvance-m/tree/7d902083ca8657f317b7d8bc863d30ea852a79b0
 [sa2]: https://github.com/SAT-R/sa2/tree/393357f7c9d46b5c10b6c41a57b80fe3b58f3c8d
 [mgba-bios]: https://github.com/mgba-emu/mgba/blob/0.10.5/src/gba/bios.c

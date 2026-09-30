@@ -28,7 +28,13 @@ export type {
   TimedInput,
 } from "./emulator.js";
 
-export type StepReason = "executed" | "halted" | "power_stopped" | "faulted";
+export type StepReason =
+  | "executed"
+  | "halted"
+  | "power_stopped"
+  | "faulted"
+  /** A DMA burst owns the bus; the CPU waits until running lets it end. */
+  | "dma_stall";
 export type RewindCompression = "off" | "fast" | "delta";
 
 /**

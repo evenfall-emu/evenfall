@@ -1,0 +1,68 @@
+--- a/src/bus.zig
++++ b/src/bus.zig
+@@ -1015,6 +1015,10 @@ pub const Bus = struct {
+     /// one byte instead of re-deriving the AND chain per instruction. Derived
+     /// state: never serialized, recomputed after restore.
+     irq_line: bool = false,
++    /// Evenfall: each DMA channel's word count as it was when the channel
++    /// was enabled, then as it was when its last repeat ended (GBATEK, DMA
++    /// Transfers: "Upon Repeat: Reloads CNT_L"). Transient oracle state.
++    dma_latched_word_counts: [4]u16 = @splat(0),
+     post_boot: u8 = 0,
+     power_state: PowerState = .running,
+     waitcnt: u16 = 0,
+@@ -1601,6 +1605,7 @@ pub const Bus = struct {
+         self.affine_segment_line = 0xFFFF;
+         self.affine_segment_counts = [_]u8{0} ** 2;
+         self.dma_channels = [_]DmaChannel{.{}} ** 4;
++        self.dma_latched_word_counts = @splat(0);
+         // The prescaler counter is not a register and keeps running.
+         self.timers = [_]Timer{.{}} ** 4;
+         self.refreshFifoClock();
+@@ -5851,6 +5856,7 @@ pub const Bus = struct {
+                             (2 << 5) | (1 << 10);
+                     }
+                     if (newly_enabled) channel.alignLatchedAddresses();
++                    if (newly_enabled) self.dma_latched_word_counts[register.index] = channel.word_count;
+                     start_immediately = newly_enabled and channel.startTiming() == 0;
+                 },
+             }
+@@ -6928,7 +6934,7 @@ pub const Bus = struct {
+             is_audio_fifo = index >= 1 and index <= 2 and
+                 @as(u2, @truncate(control >> 12)) == 3 and
+                 Apu.fifoForAddress(destination) != null;
+-            transfer_words = if (is_audio_fifo) 4 else self.dma_channels[index].transferWords(index);
++            transfer_words = if (is_audio_fifo) 4 else self.latchedTransferWords(index);
+         }
+         const width: AccessWidth = if (is_audio_fifo or control & (1 << 10) != 0) .word else .half;
+         const unit_bytes: u32 = if (width == .word) 4 else 2;
+@@ -7024,6 +7030,7 @@ pub const Bus = struct {
+         } else {
+             self.dma_channels[index].latched_destination = destination;
+         }
++        if (repeat) self.dma_latched_word_counts[index] = self.dma_channels[index].word_count;
+         if (!repeat) self.dma_channels[index].control &= ~@as(u16, 1 << 15);
+         // A refill postpones the next delegated refill request.
+         if (is_audio_fifo) self.refreshTimerDeadline();
+@@ -7112,6 +7119,13 @@ pub const Bus = struct {
+         }
+     }
+ 
++    /// Evenfall: Channel.transferWords from the count latched at enable.
++    fn latchedTransferWords(self: *const Bus, index: usize) u32 {
++        var channel = self.dma_channels[index];
++        channel.word_count = self.dma_latched_word_counts[index];
++        return channel.transferWords(index);
++    }
++
+     inline fn limitToDmaStart(self: *const Bus, cycles: Cycle) Cycle {
+         var limited = cycles;
+         for (self.dma_start_cycles) |maybe_deadline| {
+@@ -8335,6 +8349,7 @@ fn isTransientStateField(name: []const u8) bool {
+     return std.mem.eql(u8, name, "game_pak_timing_key") or
+         std.mem.eql(u8, name, "bios_code_active") or
+         std.mem.eql(u8, name, "irq_line") or
++        std.mem.eql(u8, name, "dma_latched_word_counts") or
+         std.mem.eql(u8, name, "game_pak_n_cycles") or
+         std.mem.eql(u8, name, "game_pak_s_cycles") or
+         std.mem.eql(u8, name, "duty_valid_until") or

@@ -1,0 +1,196 @@
+{
+  "name": "mgba-suite-misc-edge-external_bios",
+  "assets": {
+    "rom": "../../../tools/mgba-suite/build/suite.gba",
+    "bios": "../../../refs/cult-gba-bios/bios.bin"
+  },
+  "config": {
+    "boot": "external_bios",
+    "saveType": "auto"
+  },
+  "inputs": [
+    {
+      "at": "50561280",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "51403968",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "52246656",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "53089344",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "53932032",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "54774720",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "55617408",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "56460096",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "57302784",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "58145472",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "58988160",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "59830848",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "60673536",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "61516224",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "62358912",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "63201600",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "64044288",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "64886976",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "65729664",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "66572352",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "67415040",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "68257728",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "69100416",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "69943104",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "70785792",
+      "change": {
+        "keys": 1
+      }
+    },
+    {
+      "at": "71628480",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "157020864",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "157863552",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "158987136",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "159829824",
+      "change": {
+        "keys": 0
+      }
+    }
+  ],
+  "endCycle": "160672512",
+  "checkpoints": ["156739968", "158706240", "160672512"],
+  "sliceCycles": ["70224", "280896", "1232"]
+}

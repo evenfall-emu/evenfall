@@ -1,0 +1,168 @@
+{
+  "name": "mgba-suite-shifter-external_bios",
+  "assets": {
+    "rom": "../../../tools/mgba-suite/build/suite.gba",
+    "bios": "../../../refs/cult-gba-bios/bios.bin"
+  },
+  "config": {
+    "boot": "external_bios",
+    "saveType": "auto"
+  },
+  "inputs": [
+    {
+      "at": "50561280",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "51403968",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "52246656",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "53089344",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "53932032",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "54774720",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "55617408",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "56460096",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "57302784",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "58145472",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "58988160",
+      "change": {
+        "keys": 1
+      }
+    },
+    {
+      "at": "59830848",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "145223232",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "146065920",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "147189504",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "148032192",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "149155776",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "149998464",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "151122048",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "151964736",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "153088320",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "153931008",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "155054592",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "155897280",
+      "change": {
+        "keys": 0
+      }
+    }
+  ],
+  "endCycle": "156739968",
+  "checkpoints": [
+    "144942336",
+    "146908608",
+    "148874880",
+    "150841152",
+    "152807424",
+    "154773696",
+    "156739968"
+  ],
+  "sliceCycles": ["70224", "280896", "1232"]
+}

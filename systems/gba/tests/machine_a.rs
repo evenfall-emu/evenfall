@@ -5,13 +5,30 @@ use evenfall_cpu_arm::{
     ProcessorMode, PsrStateOperation, SpsrOperation,
 };
 use evenfall_gba::bus::{
-    Access, AccessKind, AccessSource, AccessWidth, GamePakPrefetch, KeyState, PowerState,
-    TimedInput, TimedInputChange,
+    Access, AccessKind, AccessSource, AccessWidth, GamePakPrefetch, IRQ_LATENCY, KeyState,
+    PowerState, TimedInput, TimedInputChange,
 };
 use evenfall_gba::cpu::{ChunkOutcome, Cpu, FaultReason, InstructionSet, WaitReason};
 use evenfall_gba::machine::{
     BootMode, Config, Fault, Machine, RunError, StepOutcome, StepResult, StopReason,
 };
+
+/// Takes the interrupt registers as the test set them and lets a request
+/// that rose reach the CPU, which it does `IRQ_LATENCY` cycles later, while
+/// the CPU stays where it is.
+fn deliver_irq(machine: &mut Machine) {
+    machine.bus.update_irq_line();
+    if machine.bus.irq.irq_line_rises_at.is_some() {
+        machine.bus.elapse(IRQ_LATENCY);
+    }
+}
+
+/// Cycles from enabling a timer at reload `reload` until its request reaches
+/// the CPU: the cycle the counter holds the reload, the counts to the
+/// overflow, then the IRQ latency.
+fn timer_irq_arrival(reload: u16) -> u64 {
+    1 + (0x1_0000 - u64::from(reload)) + IRQ_LATENCY
+}
 
 fn executed_step(machine: &mut Machine) -> StepResult {
     match machine.step() {
@@ -686,7 +703,10 @@ fn run_until_resumes_halt_at_an_enabled_device_event_before_its_deadline() {
     let target = machine.now() + 8;
     let result = machine.run_until(target).unwrap();
     assert_eq!(result.reason, StopReason::InstructionBoundaryAfterDeadline);
-    assert_eq!(machine.now(), target + 2);
+    // Without IME the CPU wakes at the overflow, five cycles after the timer
+    // starts (one holding the reload, four counts), finishes the retail
+    // Halt's tail and runs the following instruction.
+    assert_eq!(machine.now(), target + 3 + evenfall_gba::cpu::HLE_HALT_RETURN_CYCLES);
     assert_eq!(machine.read_register(0), 7);
     assert_eq!(machine.bus.irq.interrupt_request_flags, 1 << 3);
     assert_eq!(machine.bus.power_state(), PowerState::Running);
@@ -704,7 +724,7 @@ fn halt_wake_enters_an_enabled_irq_before_executing_the_interrupted_instruction(
     machine.bus.update_irq_line();
     machine.bus.timers[0].write_reload(0xFFFC);
     machine.bus.timers[0].write_control((1 << 7) | (1 << 6), machine.bus.prescaler_counter());
-    machine.run_until(machine.now() + 4).unwrap();
+    machine.run_until(machine.now() + timer_irq_arrival(0xFFFC)).unwrap();
     let handler = executed_step(&mut machine);
     assert_eq!(handler.instruction_address, 0x0800_0008);
     assert_eq!(machine.read_register(0), 0);
@@ -745,8 +765,13 @@ fn hle_register_ram_reset_resets_sound_and_other_devices_without_clearing_ram() 
     machine.bus.apu.master_enabled = true;
     machine.bus.apu.sound_bias = 0xC3FE;
     machine.bus.apu.wave.ram.fill(0xA5);
-    machine.bus.timers[0] =
-        evenfall_gba::timer::Timer { reload: 1, counter: 2, control: 0x80, prescaler_phase: 3 };
+    machine.bus.timers[0] = evenfall_gba::timer::Timer {
+        reload: 1,
+        counter: 2,
+        control: 0x80,
+        prescaler_phase: 3,
+        starting: false,
+    };
     machine.bus.dma_channels[0].source = 0x0200_1234;
     machine.bus.dma_channels[0].destination = 0x0300_1234;
     machine.bus.dma_channels[0].word_count = 7;
@@ -936,7 +961,9 @@ fn haltcnt_byte_writes_select_halt_or_stop_and_halt_resumes_at_the_following_ins
         machine.bus.update_irq_line();
         machine.bus.timers[0].write_reload(0xFFFE);
         machine.bus.timers[0].write_control((1 << 7) | (1 << 6), machine.bus.prescaler_counter());
-        machine.run_until(machine.now() + 2).unwrap();
+        // No IME: the CPU wakes at the overflow, one cycle holding the
+        // reload and two counts after the timer starts.
+        machine.run_until(machine.now() + 3).unwrap();
         let resumed = executed_step(&mut machine);
         assert_eq!(resumed.instruction_address, 0x0800_000C);
         assert_eq!(machine.read_register(2), 9);
@@ -976,7 +1003,12 @@ fn mgba_timing_suite_single_loads_include_the_arm7_internal_result_cycle() {
 }
 
 #[test]
-fn arm7_defers_a_pending_irq_until_after_a_taken_branch_refill() {
+/// The ARM7TDMI checks for an interrupt at the end of every instruction, a
+/// taken branch included: the IRQ is taken once the branch has refilled the
+/// pipeline, before the target runs. The mGBA suite's timer count-up table,
+/// recorded on hardware, runs no instruction at the IRQ return address before
+/// the next IRQ of a timer that overflows while the handler runs.
+fn arm7_takes_a_pending_irq_after_a_taken_branch_refill() {
     let words =
         [0xEA00_0000, 0xE1A0_0000, 0xE1A0_0000, 0xE1A0_0000, 0xE1A0_0000, 0xE1A0_0000, 0xE1A0_0000];
     let mut rom = [0; 28];
@@ -994,14 +1026,13 @@ fn arm7_defers_a_pending_irq_until_after_a_taken_branch_refill() {
     machine.bus.irq.interrupt_enable_mask = 1;
     machine.bus.irq.interrupt_request_flags = 1;
     machine.bus.irq.interrupt_master_enabled = true;
-    machine.bus.update_irq_line();
-    executed_step(&mut machine);
-    assert_eq!(machine.read_cpsr() & 0x1F, 0x1F);
-    assert_eq!(machine.next_instruction_address(), 0x0800_0008);
-    let target = executed_step(&mut machine);
-    assert_eq!(target.instruction_address, 0x0800_0008);
+    deliver_irq(&mut machine);
+    let branch = executed_step(&mut machine);
+    assert_eq!(branch.instruction_address, 0x0800_0000);
     assert_eq!(machine.read_cpsr() & 0x1F, 0x12);
     assert_eq!(machine.next_instruction_address(), 0x0800_0010);
+    // The IRQ returns to the branch target, which has not run.
+    assert_eq!(machine.cpu.hle_irq_stack[0].return_address, 0x0800_000C);
 }
 
 #[test]
@@ -1367,7 +1398,7 @@ fn hle_intr_wait_completes_only_after_the_irq_handler_updates_the_bios_mirror() 
     machine.bus.update_irq_line();
     machine.bus.timers[0].write_reload(0xFFFC);
     machine.bus.timers[0].write_control((1 << 7) | (1 << 6), machine.bus.prescaler_counter());
-    machine.run_until(machine.now() + 4).unwrap();
+    machine.run_until(machine.now() + timer_irq_arrival(0xFFFC)).unwrap();
     let handler = executed_step(&mut machine);
     assert_eq!(handler.instruction_address, 0x0800_0008);
     machine.bus.timers[0].write_control(0, machine.bus.prescaler_counter());
@@ -1379,7 +1410,7 @@ fn hle_intr_wait_completes_only_after_the_irq_handler_updates_the_bios_mirror() 
     assert_eq!(&machine.bus.iwram[0x7FF8..0x7FFA], &1_u16.to_le_bytes());
     machine.bus.timers[0].write_reload(0xFFFC);
     machine.bus.timers[0].write_control((1 << 7) | (1 << 6), machine.bus.prescaler_counter());
-    machine.run_until(machine.now() + 4).unwrap();
+    machine.run_until(machine.now() + timer_irq_arrival(0xFFFC)).unwrap();
     let selected_handler = executed_step(&mut machine);
     assert_eq!(selected_handler.instruction_address, 0x0800_0008);
     machine.bus.timers[0].write_control(0, machine.bus.prescaler_counter());
@@ -1392,6 +1423,41 @@ fn hle_intr_wait_completes_only_after_the_irq_handler_updates_the_bios_mirror() 
     assert_eq!(&machine.bus.iwram[0x7FF8..0x7FFA], &1_u16.to_le_bytes());
     executed_step(&mut machine);
     assert_eq!(machine.read_register(4), 7);
+}
+
+/// GBATEK, Reading from BIOS Memory, and the mGBA suite's "BIOS load" row
+/// (recorded on hardware after `VBlankIntrWait`): an IRQ return leaves the
+/// protected-BIOS latch at `E55EC002h`, the opcode after the retail IRQ
+/// trampoline's return, but an `IntrWait` that this return completes goes
+/// on to return from its SWI, which leaves `E3A02004h`. A return that does
+/// not complete the wait halts again inside the BIOS with the IRQ latch.
+#[test]
+fn hle_intr_wait_completed_by_an_irq_return_leaves_the_swi_return_latch() {
+    let mut rom = [0; 12];
+    write_words(&mut rom, 0, &[0xEF04_0000, 0xE3A0_4007, 0xE12F_FF1E]);
+    let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
+    machine.cpu.registers[0] = 1;
+    machine.cpu.registers[1] = 1 << 3;
+    write_words(&mut machine.bus.iwram[..], 0x7FFC, &[0x0800_0008]);
+    executed_step(&mut machine);
+    machine.bus.irq.interrupt_enable_mask = 1 << 3;
+    for (bios_flags, latch, power) in [
+        (1_u16, 0xE55E_C002_u32, PowerState::Halted),
+        (1 | 1 << 3, 0xE3A0_2004, PowerState::Running),
+    ] {
+        machine.bus.update_irq_line();
+        machine.bus.timers[0].write_reload(0xFFFC);
+        machine.bus.timers[0].write_control((1 << 7) | (1 << 6), machine.bus.prescaler_counter());
+        machine.run_until(machine.now() + timer_irq_arrival(0xFFFC)).unwrap();
+        assert_eq!(executed_step(&mut machine).instruction_address, 0x0800_0008);
+        machine.bus.timers[0].write_control(0, machine.bus.prescaler_counter());
+        machine.bus.irq.interrupt_request_flags = 0;
+        machine.bus.update_irq_line();
+        machine.bus.iwram[0x7FF8..0x7FFA].copy_from_slice(&bios_flags.to_le_bytes());
+        executed_step(&mut machine);
+        assert_eq!(machine.bus.power_state(), power);
+        assert_eq!(machine.bus.bios_latch, latch, "BIOS flags {bios_flags:04x}");
+    }
 }
 
 #[test]
@@ -1418,7 +1484,7 @@ fn nested_hle_irq_return_does_not_complete_the_outer_intr_wait() {
     assert_eq!(machine.bus.power_state(), PowerState::Halted);
     machine.bus.irq.interrupt_enable_mask = 1;
     machine.bus.irq.interrupt_request_flags = 1;
-    machine.bus.update_irq_line();
+    deliver_irq(&mut machine);
     let outer_start = executed_step(&mut machine);
     assert_eq!(outer_start.instruction_address, 0x0800_0008);
     assert_eq!(machine.cpu.hle_irq_depth, 1);
@@ -1428,7 +1494,7 @@ fn nested_hle_irq_return_does_not_complete_the_outer_intr_wait() {
     executed_step(&mut machine);
     write_words(&mut machine.bus.iwram[..], 0x7FFC, &[0x0800_0020]);
     machine.bus.irq.interrupt_request_flags = 1 << 1;
-    machine.bus.update_irq_line();
+    deliver_irq(&mut machine);
     let interrupted = executed_step(&mut machine);
     assert_eq!(interrupted.instruction_address, 0x0800_0010);
     assert_eq!(machine.cpu.hle_irq_depth, 2);
@@ -1569,7 +1635,14 @@ fn expect_intr_wait_log_slice_invariant(source: IntrWaitSource) -> [u16; 4] {
 fn intrwait_latency_an_hblank_intr_wait_wake_is_independent_of_host_slicing() {
     assert_eq!(
         expect_intr_wait_log_slice_invariant(IntrWaitSource::Hblank),
-        [0x03D3, 0x08A3, 0x0D73, 0x1246]
+        // The first wake reads 0x03D3 + 27: timer 0, the log's clock, starts
+        // a cycle late (-1); the IRQ reaches the CPU IRQ_LATENCY cycles
+        // after its flag (+4); the exception's discarded fetch is a ROM N
+        // word after the wait's flag store (+8); and the retail trampoline
+        // runs before the handler (+16). Later wakes also depend on whether
+        // the flag was already raised when the loop called IntrWait; they
+        // are pinned from this model.
+        [0x03EE, 0x08BE, 0x0D8E, 0x125D]
     );
 }
 
@@ -1577,7 +1650,9 @@ fn intrwait_latency_an_hblank_intr_wait_wake_is_independent_of_host_slicing() {
 fn intrwait_timer_a_timer_intr_wait_wake_is_independent_of_host_slicing() {
     assert_eq!(
         expect_intr_wait_log_slice_invariant(IntrWaitSource::Timer1),
-        [0x01DC, 0x03A3, 0x0574, 0x072B]
+        // The first wake reads 0x01DC + 28, as for HBlank plus timer 1's own
+        // start cycle. Later wakes are pinned from this model, as above.
+        [0x01F8, 0x03BB, 0x058C, 0x0749]
     );
 }
 
@@ -1873,14 +1948,9 @@ fn cpu_multiple_stores_price_each_beat_across_ram_mirrors_and_mmio() {
                 bounded.read_register(if store == Store::ThumbPush { 13 } else { 2 }),
                 base + if store == Store::ThumbPush { 0 } else { 8 }
             );
-            assert_eq!(
-                bounded.bus.fetch_kind,
-                if base == 0x03FF_FFFD {
-                    AccessKind::Sequential
-                } else {
-                    AccessKind::Nonsequential
-                }
-            );
+            // Every data access breaks the fetch sequence, one to I/O
+            // included.
+            assert_eq!(bounded.bus.fetch_kind, AccessKind::Nonsequential);
             assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
         }
     }
@@ -2021,12 +2091,13 @@ fn arm_execution_region_leaves_timer_equality_and_irq_entry_to_ordinary_completi
         }
         bounded.run_until(deadline).unwrap();
         assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
-        if offset == 3 {
-            assert_eq!(bounded.read_register(0), 9);
-            assert_eq!(bounded.bus.irq.interrupt_request_flags & (1 << 3), 0);
-        }
+        // The timer holds FFFCh for a cycle, then overflows four counts later.
         if offset == 4 {
             assert_eq!(bounded.read_register(0), 12);
+            assert_eq!(bounded.bus.irq.interrupt_request_flags & (1 << 3), 0);
+        }
+        if offset == 5 {
+            assert_eq!(bounded.read_register(0), 15);
             assert_ne!(bounded.bus.irq.interrupt_request_flags & (1 << 3), 0);
         }
     }
@@ -2355,7 +2426,12 @@ fn ordinary_thumb_deadline_handoff_executes_an_hle_swi_exactly_once() {
         machine.bus.iwram[6..8].copy_from_slice(&0x46C0_u16.to_le_bytes());
     }
     let [eager, bounded] = &mut machines;
-    for (cycle, pc, r0) in [(1, 0x0300_0002, 81), (55, 0x0300_0004, 9), (56, 0x0300_0006, 10)] {
+    // From IWRAM the retail SWI adds 45 cycles to the service: the refill at
+    // the vector (2), the service-number load (1), the dispatcher (39), the
+    // return's fetch (1) and the refill at the caller (2).
+    for (cycle, pc, r0) in
+        [(1, 0x0300_0002, 81), (55 + 45, 0x0300_0004, 9), (56 + 45, 0x0300_0006, 10)]
+    {
         executed_step(eager);
         assert_eq!(bounded.run_until(cycle).unwrap().reason, StopReason::Deadline);
         assert_eq!(
@@ -2444,7 +2520,7 @@ fn ordinary_thumb_irq_faults_retain_the_executed_opcode_across_rom_and_iwram_fet
             machine.bus.irq.interrupt_enable_mask = 1;
             machine.bus.irq.interrupt_request_flags = 1;
             machine.bus.irq.interrupt_master_enabled = true;
-            machine.bus.update_irq_line();
+            deliver_irq(machine);
         }
         let [eager, bounded] = &mut machines;
         let eager_fault = match eager.step() {

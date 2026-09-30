@@ -127,6 +127,7 @@ fn scenario() -> Scenario<u16> {
             gyro_sample: None,
             tilt: None,
             rumble: false,
+            audio_output: true,
         },
         link: None,
         inputs: vec![

@@ -1,0 +1,17 @@
+{
+  "name": "probe-dma_stall",
+  "assets": {
+    "rom": "../../../probe/build/dma_stall.gba"
+  },
+  "config": {
+    "boot": "hle",
+    "saveType": "auto",
+    "audioOutput": false
+  },
+  "inputs": [],
+  "endCycle": "18539136",
+  "checkpoints": ["18539136"],
+  "sliceCycles": ["4097", "70224", "280896"],
+  "terminalPc": 134218500,
+  "terminalR12": 1
+}

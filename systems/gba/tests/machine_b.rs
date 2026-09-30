@@ -629,6 +629,12 @@ fn hle_16_bit_differential_filter_wraps_halfword_deltas() {
     assert_eq!(machine.read_register(3), 0xdead_beef);
 }
 
+/// The retail SWI's cost around the service for an ARM caller in ROM at
+/// `WAITCNT` 0: the refill at the vector (2), the service-number byte load
+/// from ROM (N, 5), the dispatcher (39), the return's fetch (1) and the ARM
+/// refill at the caller (N + S words, 8 + 6).
+const RETAIL_SWI_FROM_ROM: u64 = 2 + 5 + 39 + 1 + 14;
+
 #[test]
 fn m_gba_bios_math_table_arc_tan_cases_preserve_fixed_point_bios_intermediates() {
     let rom = [0, 0, 9, 0xef];
@@ -654,7 +660,7 @@ fn m_gba_bios_math_table_arc_tan_cases_preserve_fixed_point_bios_intermediates()
         );
         assert_eq!(machine.read_cpsr(), 0x1f);
         if input == 0 {
-            assert_eq!(result.stopped_at, 53);
+            assert_eq!(result.stopped_at, 53 + RETAIL_SWI_FROM_ROM);
         }
     }
 }
@@ -687,7 +693,7 @@ fn m_gba_bios_math_table_arc_tan2_covers_axes_and_every_quadrant() {
         );
         assert_eq!(machine.read_cpsr(), 0x1f);
         if x == 0 || y == 0 {
-            assert_eq!(result.stopped_at, 19);
+            assert_eq!(result.stopped_at, 19 + RETAIL_SWI_FROM_ROM);
         }
     }
 }
@@ -2086,6 +2092,7 @@ fn hle_sound_driver_main_samples_cgb_callback_once_across_hblank_dma() {
     dma.control = 0xa400;
     dma.latched_source = 0x0200_0200;
     dma.latched_destination = 0x0200_0128;
+    dma.latched_word_count = 1;
     machine.bus.elapse(927);
     let step = executed_step(&mut machine);
     assert_eq!(step.instruction_address, 0x0800_0000);
@@ -2684,80 +2691,372 @@ fn hle_bg_affine_set_preflight_faults_on_distant_and_wrapped_records_before_side
     assert!(machine.cpu.hle_service.is_some());
 }
 
+fn write_machine_word(machine: &mut Machine, address: u32, value: u32) {
+    machine.bus.write(
+        Access {
+            address,
+            width: AccessWidth::Word,
+            kind: AccessKind::Nonsequential,
+            source: AccessSource::CpuData,
+        },
+        value,
+    );
+}
+
+/// Direct Sound DMA1 and DMA2 refill FIFO A and B from a fixed EWRAM word
+/// while timer 0 (started here) and timer 1 (started by the ROM) overflow
+/// every three cycles: requests return faster than transfers complete.
+fn start_fifo_dma_livelock(machine: &mut Machine) {
+    write_machine_half(machine, 0x0400_0084, 0x0080);
+    write_machine_half(machine, 0x0400_0082, 0xfb00);
+    write_machine_word(machine, 0x0400_00bc, 0x0200_2000);
+    write_machine_word(machine, 0x0400_00c0, 0x0400_00a0);
+    write_machine_half(machine, 0x0400_00c6, 0xb740);
+    write_machine_word(machine, 0x0400_00c8, 0x0200_2000);
+    write_machine_word(machine, 0x0400_00cc, 0x0400_00a4);
+    write_machine_half(machine, 0x0400_00d2, 0xb740);
+    write_machine_word(machine, 0x0400_0100, 0x0080_fffd);
+}
+
+/// What a sliced run through a DMA stall observed.
+struct StalledRun {
+    /// Where the host call that reached the burst limit returned: the one
+    /// call that ends far past its deadline, because the burst runs inside
+    /// a CPU access until then.
+    limit_returned_at: u64,
+    /// The largest amount by which any later call that ended stalled passed
+    /// its deadline (calls that end running stop at instruction boundaries).
+    later_overrun: u64,
+    /// The audio drained after every call following that one.
+    later_audio: Vec<evenfall_audio::StereoSample>,
+}
+
+/// Runs to `end` in calls of `slice(call)` cycles (at most a frame, so the
+/// sample queue never overflows), draining audio after every call and
+/// calling `observe` after each one.
+fn run_through_dma_stall(
+    machine: &mut Machine,
+    end: u64,
+    mut slice: impl FnMut(usize) -> u64,
+    mut observe: impl FnMut(&mut Machine),
+) -> StalledRun {
+    let mut limit_returned_at = None;
+    let mut later_overrun = 0;
+    let mut later_audio = Vec::new();
+    let mut buffer = [Default::default(); 4096];
+    let mut call = 0;
+    while machine.now() < end {
+        let deadline = end.min(machine.now() + slice(call));
+        call += 1;
+        let result = machine.run_until(deadline).unwrap();
+        assert!(
+            matches!(
+                result.reason,
+                evenfall_gba::machine::StopReason::Deadline
+                    | evenfall_gba::machine::StopReason::InstructionBoundaryAfterDeadline
+            ),
+            "{result:?}"
+        );
+        let count = machine.drain_audio_samples(&mut buffer);
+        let late = result.stopped_at - deadline;
+        if limit_returned_at.is_none() && late > 1024 {
+            limit_returned_at = Some(result.stopped_at);
+        } else if limit_returned_at.is_some() {
+            if machine.bus.dma_stalled() {
+                later_overrun = later_overrun.max(late);
+            }
+            later_audio.extend_from_slice(&buffer[..count]);
+        }
+        observe(machine);
+    }
+    StalledRun {
+        limit_returned_at: limit_returned_at.expect("a call reaches the burst limit"),
+        later_overrun,
+        later_audio,
+    }
+}
+
+/// Everything a host can observe of a machine during a stall, where save
+/// states are refused.
+fn stall_observation(machine: &Machine) -> (u64, u64, [u32; 16], u32, u32, Vec<u16>, Vec<u8>) {
+    let snapshot = machine.inspect_cpu();
+    let mut memory = vec![0; 0x400 + 0x4_0000 + 0x8000];
+    machine.inspect_memory(0x0400_0000, &mut memory[..0x400]).unwrap();
+    machine.inspect_memory(0x0200_0000, &mut memory[0x400..0x4_0400]).unwrap();
+    machine.inspect_memory(0x0300_0000, &mut memory[0x4_0400..]).unwrap();
+    (
+        machine.now(),
+        machine.completed_frames(),
+        snapshot.registers,
+        snapshot.next_instruction_address,
+        snapshot.cpsr,
+        machine.framebuffer().to_vec(),
+        memory,
+    )
+}
+
+/// The burst yields at `MAX_DMA_BURST_CYCLES` at the same cycle under any
+/// slicing, the instruction it interrupted completes, and from then on the
+/// CPU stays stalled while video, audio and timers run and every host call
+/// returns at its deadline.
 #[test]
-fn a_dma_livelock_is_a_terminal_fault_at_the_same_cycle_under_any_host_slicing() {
+fn a_dma_livelock_stalls_the_cpu_at_the_same_cycle_under_any_host_slicing() {
     let rom = [
         0x10, 0x00, 0x9f, 0xe5, 0x10, 0x10, 0x9f, 0xe5, 0x00, 0x10, 0x80, 0xe5, 0x0c, 0x10, 0x9f,
         0xe5, 0xb0, 0x10, 0xc0, 0xe1, 0xfe, 0xff, 0xff, 0xea, 0x04, 0x01, 0x00, 0x04, 0x00, 0xff,
         0x80, 0x00, 0xfd, 0xff, 0x00, 0x00,
     ];
     let limit = evenfall_gba::bus::Bus::MAX_DMA_BURST_CYCLES;
-    let mut faults = Vec::new();
-    for policy in 0..2 {
+    let end = limit + 3 * Machine::CYCLES_PER_FRAME;
+    let mut runs = Vec::new();
+    let mut observations = Vec::new();
+    for slice in [Machine::CYCLES_PER_FRAME, 64] {
         let mut machine = machine(&rom);
-        write_machine_half(&mut machine, 0x0400_0084, 0x0080);
-        write_machine_half(&mut machine, 0x0400_0082, 0xfb00);
-        for (address, value) in [(0x0400_00bc, 0x0200_2000), (0x0400_00c0, 0x0400_00a0)] {
-            machine.bus.write(
-                Access {
-                    address,
-                    width: AccessWidth::Word,
-                    kind: AccessKind::Nonsequential,
-                    source: AccessSource::CpuData,
-                },
-                value,
-            );
+        start_fifo_dma_livelock(&mut machine);
+        let mut at_limit = None;
+        let run = run_through_dma_stall(
+            &mut machine,
+            end,
+            |_| slice,
+            |machine| {
+                if machine.bus.dma_stalled() && at_limit.is_none() {
+                    at_limit = Some(machine.inspect_cpu());
+                }
+            },
+        );
+        let started_at = machine.bus.dma_burst_start;
+        assert!(started_at > 256);
+        assert!(run.limit_returned_at >= started_at + limit);
+        assert!(run.limit_returned_at < started_at + limit + 256);
+        assert!(run.later_overrun < 16, "later calls return at their deadlines");
+        assert!(machine.bus.dma_stalled());
+        let at_limit = at_limit.unwrap();
+        let now = machine.inspect_cpu();
+        assert_eq!(
+            (at_limit.registers, at_limit.next_instruction_address, at_limit.cpsr),
+            (now.registers, now.next_instruction_address, now.cpsr),
+            "the CPU makes no progress"
+        );
+        assert!(machine.completed_frames() >= 62, "video runs");
+        let expected_samples =
+            (end - run.limit_returned_at) * u64::from(machine.audio_sample_rate()) / (1 << 24);
+        assert!(run.later_audio.len() as u64 + 1 >= expected_samples, "audio runs");
+        let before = machine.now();
+        assert_eq!(machine.step(), StepOutcome::Waiting(evenfall_gba::cpu::WaitReason::DmaStall));
+        assert_eq!(machine.now(), before, "a step during a stall does not advance");
+        assert!(matches!(
+            machine.write_state_alloc(),
+            Err(StateError::Codec(CodecError::InvalidSaveState))
+        ));
+        observations.push(stall_observation(&machine));
+        runs.push(run);
+    }
+    let mut single = machine(&rom);
+    start_fifo_dma_livelock(&mut single);
+    single.run_until(end).unwrap();
+    observations.push(stall_observation(&single));
+    assert_eq!(runs[0].limit_returned_at, runs[1].limit_returned_at);
+    assert!(runs[0].later_audio == runs[1].later_audio);
+    assert!(observations[0] == observations[1]);
+    assert!(observations[0] == observations[2]);
+}
+
+/// Cheats apply during a DMA stall as they do in HALT: at each VBlank start
+/// the stall reaches, at the same cycle under any host slicing. The cheat
+/// adds one to the word the FIFO DMAs copy, so the audio records the cycle
+/// of every application.
+#[test]
+fn cheats_apply_during_a_dma_stall_at_the_same_cycle_under_any_host_slicing() {
+    use evenfall_gba::cheats::{Cheat, Format};
+    let rom = [
+        0x10, 0x00, 0x9f, 0xe5, 0x10, 0x10, 0x9f, 0xe5, 0x00, 0x10, 0x80, 0xe5, 0x0c, 0x10, 0x9f,
+        0xe5, 0xb0, 0x10, 0xc0, 0xe1, 0xfe, 0xff, 0xff, 0xea, 0x04, 0x01, 0x00, 0x04, 0x00, 0xff,
+        0x80, 0x00, 0xfd, 0xff, 0x00, 0x00,
+    ];
+    // AR v3 raw: add one to the word at 02002000, the FIFO DMAs' source.
+    let counter =
+        vec![Cheat::parse("84202000 00000001", Some(Format::ActionReplayDecrypted)).unwrap()];
+    let end = evenfall_gba::bus::Bus::MAX_DMA_BURST_CYCLES + 3 * Machine::CYCLES_PER_FRAME;
+    let mut results = Vec::new();
+    for slice in [Machine::CYCLES_PER_FRAME, 64, 1007] {
+        let mut machine = machine(&rom);
+        start_fifo_dma_livelock(&mut machine);
+        // The call that reaches the burst limit returns at the same cycle
+        // under every slicing; the cheat is set there.
+        let mut armed = false;
+        let run = run_through_dma_stall(
+            &mut machine,
+            end,
+            |_| slice,
+            |machine| {
+                if machine.bus.dma_stalled() && !armed {
+                    machine.set_cheats(counter.clone()).unwrap();
+                    armed = true;
+                }
+            },
+        );
+        assert!(machine.bus.dma_stalled());
+        let mut word = [0; 4];
+        machine.inspect_memory(0x0200_2000, &mut word).unwrap();
+        assert!(u32::from_le_bytes(word) >= 2, "the cheat runs during the stall");
+        results.push((run.limit_returned_at, run.later_audio, stall_observation(&machine)));
+    }
+    assert!(results[0] == results[1]);
+    assert!(results[0] == results[2]);
+}
+
+/// Evenfall's own oracle for the stall's end (`docs/roadmap.md`, "DMA that
+/// never releases the bus"): the same livelock, which a repeating VBlank DMA0
+/// ends by writing a table of timer controls whose 64th entry stops both
+/// timers. The burst passes the limit before that VBlank, so the CPU stalls
+/// for several frames, during which the VBlank and DMA0 interrupt flags are
+/// raised and DMA0 keeps writing; then DMA releases the bus and the CPU's
+/// counting loop runs again, identically under any slicing.
+#[test]
+fn a_dma_stall_that_guest_dma_ends_resumes_the_cpu_identically_under_any_host_slicing() {
+    // ldr r0, =TM1CNT; ldr r1, =0x0080fffd; str r1, [r0]; 1: add r2, r2, #1; b 1b
+    let rom = [
+        0x10, 0x00, 0x9f, 0xe5, 0x10, 0x10, 0x9f, 0xe5, 0x00, 0x10, 0x80, 0xe5, 0x01, 0x20, 0x82,
+        0xe2, 0xfd, 0xff, 0xff, 0xea, 0x00, 0x00, 0x00, 0x00, 0x04, 0x01, 0x00, 0x04, 0xfd, 0xff,
+        0x80, 0x00,
+    ];
+    const TABLE: u32 = 0x0200_4000;
+    const RELEASE_VBLANK: u32 = 64;
+    let limit = evenfall_gba::bus::Bus::MAX_DMA_BURST_CYCLES;
+    let release = 197_120 + u64::from(RELEASE_VBLANK - 1) * Machine::CYCLES_PER_FRAME;
+    assert!(release > limit + 2 * Machine::CYCLES_PER_FRAME);
+    let end = release + 2 * Machine::CYCLES_PER_FRAME;
+    let setup = || {
+        let mut machine = machine(&rom);
+        for entry in 0..RELEASE_VBLANK {
+            let timer = if entry + 1 < RELEASE_VBLANK { 0x0080_fffd } else { 0x0000_fffd };
+            write_machine_word(&mut machine, TABLE + entry * 8, timer);
+            write_machine_word(&mut machine, TABLE + entry * 8 + 4, timer);
         }
-        write_machine_half(&mut machine, 0x0400_00c6, 0xb740);
-        for (address, value) in [(0x0400_00c8, 0x0200_2000), (0x0400_00cc, 0x0400_00a4)] {
-            machine.bus.write(
-                Access {
-                    address,
-                    width: AccessWidth::Word,
-                    kind: AccessKind::Nonsequential,
-                    source: AccessSource::CpuData,
-                },
-                value,
-            );
-        }
-        write_machine_half(&mut machine, 0x0400_00d2, 0xb740);
+        write_machine_half(&mut machine, 0x0400_0004, 1 << 3);
+        write_machine_word(&mut machine, 0x0400_00b0, TABLE);
+        write_machine_word(&mut machine, 0x0400_00b4, 0x0400_0100);
+        write_machine_half(&mut machine, 0x0400_00b8, 2);
+        // Enabled, VBlank, IRQ, 32-bit, repeat, destination increment/reload.
+        write_machine_half(&mut machine, 0x0400_00ba, 0xd660);
+        start_fifo_dma_livelock(&mut machine);
+        machine
+    };
+    let mut states = Vec::new();
+    let mut runs = Vec::new();
+    for policy in 0..3 {
+        let mut machine = setup();
+        let mut stalled_counter = None;
+        let mut resumed = false;
+        let sizes = [1, 3, 64, 1000, 4097, 70_224];
+        let run = run_through_dma_stall(
+            &mut machine,
+            end,
+            |call| match policy {
+                0 => Machine::CYCLES_PER_FRAME,
+                1 => 64,
+                _ => sizes[call % sizes.len()],
+            },
+            |machine| {
+                let counter = machine.inspect_cpu().registers[2];
+                if machine.bus.dma_stalled() {
+                    assert!(!resumed, "one stall");
+                    assert_eq!(*stalled_counter.get_or_insert(counter), counter);
+                    if policy == 1
+                        && machine.now() > release - Machine::CYCLES_PER_FRAME
+                        && machine.now() + 2000 < release
+                    {
+                        assert_eq!(
+                            machine.step(),
+                            StepOutcome::Waiting(evenfall_gba::cpu::WaitReason::DmaStall)
+                        );
+                        assert!(machine.write_state_alloc().is_err());
+                        let deadline = machine.now() + 777;
+                        let wait = machine.wait_until(deadline).unwrap();
+                        assert_eq!(wait.reason, evenfall_gba::cpu::WaitReason::DmaStall);
+                        assert!(!wait.woke);
+                        assert!(wait.stopped_at >= deadline && wait.stopped_at < deadline + 16);
+                    }
+                } else if stalled_counter.is_some() {
+                    resumed = true;
+                }
+            },
+        );
+        assert!(run.later_overrun < 16, "later calls return at their deadlines");
+        assert!(!machine.bus.dma_stalled());
+        assert!(resumed);
+        assert!(machine.inspect_cpu().registers[2] > stalled_counter.unwrap() + 10_000);
+        let mut flags = [0; 2];
+        machine.inspect_memory(0x0400_0202, &mut flags).unwrap();
+        assert_eq!(u16::from_le_bytes(flags) & 0x0101, 0x0101, "VBlank and DMA0 flags");
+        let mut control = [0; 2];
+        machine.inspect_memory(0x0400_0102, &mut control).unwrap();
+        assert_eq!(control, [0, 0], "DMA0 stopped timer 0");
+        assert!(matches!(machine.step(), StepOutcome::Executed(_)));
+        states.push(machine.write_state_alloc().unwrap());
+        runs.push(run);
+    }
+    let mut single = setup();
+    single.run_until(end).unwrap();
+    assert!(matches!(single.step(), StepOutcome::Executed(_)));
+    states.push(single.write_state_alloc().unwrap());
+    for run in &runs[1..] {
+        assert_eq!(run.limit_returned_at, runs[0].limit_returned_at);
+    }
+    assert!(runs[0].later_audio == runs[1].later_audio);
+    for state in &states[1..] {
+        assert!(*state == states[0]);
+    }
+}
+
+/// Evenfall's own oracle (`docs/roadmap.md`, "DMA that never releases the
+/// bus"): a burst that starts while the CPU is halted stalls it in HALT, at
+/// the same cycle and with the same results under any slicing.
+#[test]
+fn a_dma_livelock_during_halt_keeps_the_cpu_halted_under_any_host_slicing() {
+    let limit = evenfall_gba::bus::Bus::MAX_DMA_BURST_CYCLES;
+    let end = limit + 2 * Machine::CYCLES_PER_FRAME;
+    let mut observations = Vec::new();
+    let mut runs = Vec::new();
+    for slice in [Machine::CYCLES_PER_FRAME, 1000] {
+        let mut machine = machine(&[0xfe, 0xff, 0xff, 0xea]);
         machine.bus.write(
             Access {
-                address: 0x0400_0100,
-                width: AccessWidth::Word,
+                address: 0x0400_0301,
+                width: AccessWidth::Byte,
                 kind: AccessKind::Nonsequential,
                 source: AccessSource::CpuData,
             },
-            0x0080_fffd,
+            0,
         );
-        let result = if policy == 0 {
-            machine.run_until(machine.now() + 4 * limit).unwrap()
-        } else {
-            let mut result = None;
-            for slice in 0..200 {
-                let next = machine.run_until(machine.now() + 64).unwrap();
-                if matches!(next.reason, evenfall_gba::machine::StopReason::Faulted(_)) {
-                    assert_ne!(slice, 0);
-                    result = Some(next);
-                    break;
-                }
-            }
-            result.expect("expected machine fault")
-        };
-        let evenfall_gba::machine::StopReason::Faulted(fault) = result.reason else {
-            panic!("expected machine fault: {:?}", result.reason)
-        };
-        let FaultReason::DmaLivelock { started_at, .. } = fault.reason else {
-            panic!("expected DMA livelock: {:?}", fault.reason)
-        };
-        assert!(started_at > 256);
-        assert!(fault.cycle >= started_at + limit);
-        assert!(fault.cycle < started_at + limit + 256);
-        assert_eq!(result.stopped_at, fault.cycle);
-        assert_eq!(machine.step(), StepOutcome::Faulted(fault));
-        faults.push(fault);
+        assert_eq!(machine.bus.power_state(), PowerState::Halted);
+        // The bus livelock oracle's setup: both FIFOs, timers overflowing
+        // every cycle.
+        write_machine_half(&mut machine, 0x0400_0084, 0x0080);
+        write_machine_half(&mut machine, 0x0400_0082, 0xfb00);
+        write_machine_word(&mut machine, 0x0400_00bc, 0x0300_2000);
+        write_machine_word(&mut machine, 0x0400_00c0, 0x0400_00a0);
+        write_machine_half(&mut machine, 0x0400_00c6, 0xb740);
+        write_machine_word(&mut machine, 0x0400_00c8, 0x0300_2000);
+        write_machine_word(&mut machine, 0x0400_00cc, 0x0400_00a4);
+        write_machine_half(&mut machine, 0x0400_00d2, 0xb740);
+        write_machine_word(&mut machine, 0x0400_0100, 0x0080_ffff);
+        write_machine_word(&mut machine, 0x0400_0104, 0x0080_ffff);
+        assert!(!machine.bus.dma_stalled());
+        let run = run_through_dma_stall(&mut machine, end, |_| slice, |_| {});
+        assert!(run.limit_returned_at >= machine.bus.dma_burst_start + limit);
+        assert!(run.later_overrun < 16);
+        assert!(machine.bus.dma_stalled());
+        assert_eq!(machine.bus.power_state(), PowerState::Halted);
+        assert!(machine.completed_frames() >= 60);
+        let wait = machine.wait_until(end + 100).unwrap();
+        assert_eq!(wait.reason, evenfall_gba::cpu::WaitReason::DmaStall);
+        observations.push(stall_observation(&machine));
+        runs.push(run);
     }
-    assert_eq!(faults[0], faults[1]);
+    assert_eq!(runs[0].limit_returned_at, runs[1].limit_returned_at);
+    assert!(runs[0].later_audio == runs[1].later_audio);
+    assert!(observations[0] == observations[1]);
 }
 
 fn irq_obj_affine_workload(count: u32, enable: u16) -> Box<Machine> {

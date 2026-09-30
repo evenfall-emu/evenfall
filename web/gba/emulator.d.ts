@@ -171,7 +171,9 @@ export class Emulator extends EventTarget {
   parseCheat(code: string, format?: CheatFormat | "auto"): Promise<Cheat>;
   runUntil(deadline: bigint, inputs?: TimedInput[]): Promise<RunResult>;
   step(): Promise<
-    Snapshot & { reason: "executed" | "halted" | "power_stopped" | "faulted" }
+    Snapshot & {
+      reason: "executed" | "halted" | "power_stopped" | "faulted" | "dma_stall";
+    }
   >;
   frame(): Promise<Uint16Array>;
   saveState(): Promise<Uint8Array>;

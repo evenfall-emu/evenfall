@@ -108,7 +108,7 @@ pub fn run(
     Ok((trace, machine))
 }
 
-fn make_machine(
+pub(crate) fn make_machine(
     path: &Path,
     assets: &Assets,
     config: &Config,
@@ -160,7 +160,7 @@ fn make_machine(
         return Err("initial gyro sample must fit in 12 bits".into());
     }
     let initial_tilt = config.tilt.map(tilt).transpose()?;
-    Ok(Machine::new(machine::Config {
+    let mut machine = Machine::new(machine::Config {
         rom: &rom,
         bios: &bios,
         boot,
@@ -171,7 +171,9 @@ fn make_machine(
         gyro_sample: config.gyro_sample,
         tilt_sample: initial_tilt,
         rumble: config.rumble,
-    }))
+    });
+    machine.set_audio_output(config.audio_output);
+    Ok(machine)
 }
 
 pub fn run_linked(

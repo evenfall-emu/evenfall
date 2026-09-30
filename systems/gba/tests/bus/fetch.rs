@@ -468,6 +468,8 @@ fn scalar_rom_instruction_fetches_match_general_reads_through_every_prefetch_pha
     }
 }
 
+/// A halfword fetch replaces only its own half of the open-bus latch: the
+/// other half keeps the ROM word fetched before it (`04030201h`).
 #[test]
 fn active_iwram_fetches_preserve_mirrors_wrapping_widths_and_complete_bus_effects() {
     for batched in [false, true] {
@@ -486,10 +488,10 @@ fn active_iwram_fetches_preserve_mirrors_wrapping_widths_and_complete_bus_effect
         let mut region = InstructionFetchRegion::default();
         for base in [0x0300_0000, 0x03ff_8000] {
             for (offset, half, word) in [
-                (0, 0x3412, 0x7856_3412),
-                (1, 0x5634, 0x0078_5634),
-                (0x7ffe, 0xefcd, 0x3412_efcd),
-                (0x7fff, 0x12ef, 0x5634_12ef),
+                (0, 0x0403_3412, 0x7856_3412),
+                (1, 0x0403_5634, 0x0078_5634),
+                (0x7ffe, 0xefcd_0201, 0x3412_efcd),
+                (0x7fff, 0x12ef_0201, 0x5634_12ef),
             ] {
                 for kind in [AccessKind::Nonsequential, AccessKind::Sequential] {
                     assert_view_fetch_parity(

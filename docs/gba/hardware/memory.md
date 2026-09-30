@@ -83,7 +83,9 @@ A word write to palette RAM or VRAM is two halfword writes, and each one becomes
 
 **Save memory.** The save window is 8 bits wide, and every access pays the SRAM wait states.
 How 16- and 32-bit accesses map onto its single byte is described in [`cartridge.md`](cartridge.md).
-This is the only region where the CPU passes a misaligned address to the bus unchanged.
+This is the only region where the CPU passes a misaligned address to the bus unchanged (`is_byte_wide_save_address`).
+That holds for single transfers and for every beat of a block transfer, which steps by 4 from the misaligned base.
+The mGBA suite's memory table, recorded on hardware, shows it for the BIOS `CpuSet` and `CpuFastSet` word loops, which are `LDMIA` and `STMIA` ([GBATEK, BIOS Memory Copy][gbatek-copy]): a misaligned SRAM source loads the byte at that address in all four lanes.
 
 **Reading past the end of the ROM.** The cartridge shares the same wires for addresses and data.
 When the ROM has nothing at an address, the wires still hold the address the console just sent, so the read returns address bits 16–1.
@@ -103,19 +105,39 @@ The HLE BIOS checks the pointers a game passes it for the same reason ([`bios.md
 A read that reaches no chip returns **open bus**: whatever value the bus last carried.
 Buggy games read unmapped memory, typically through a stale pointer, and their behavior then depends on that leftover value.
 
-Evenfall keeps the value of the most recent read by anyone, whether a CPU instruction fetch, a CPU data read or a DMA read.
-A read of an unmapped address returns the byte or halfword of that value the address selects, and costs one cycle.
-A Thumb instruction fetch is only 16 bits, so it leaves its halfword with the upper half zero.
+Evenfall keeps the word the most recent read by anyone left on the data bus, whether a CPU instruction fetch, a CPU data read or a DMA read (`Bus.open_bus_value`).
+A read of an unmapped address returns the byte or halfword of that word the address selects, and costs one cycle.
+A data read or an ARM instruction fetch leaves the value it read.
+A Thumb instruction fetch is only 16 bits, and the word it leaves depends on the width of the region's bus ([GBATEK, Unpredictable Things: Reading from Unused Memory][gbatek-unpredictable]):
+
+| Thumb fetch from                       | Open-bus word after it                                      |
+| -------------------------------------- | ----------------------------------------------------------- |
+| EWRAM, palette RAM, VRAM, Game Pak ROM | the halfword in both halves (16-bit bus)                    |
+| BIOS, OAM                              | the whole aligned word (32-bit bus)                         |
+| IWRAM                                  | the halfword in its own half, with the other half unchanged |
+
+The CPU fetches two instructions ahead.
+A Thumb instruction at `$` that reads unused memory therefore sees `[$+4]` twice when it runs from ROM.
+From IWRAM it sees `[$+4]` beside `[$+2]`, or beside half of the word the previous instruction loaded, as GBATEK's `OldLO`/`OldHI` note describes.
+The mGBA suite's hardware tables confirm the ROM rule (`src/io-read.c`, and "DMA Prefetch" in `src/misc-edge.c`).
+The BIOS, OAM and IWRAM rules rest on GBATEK alone.
 DMA keeps its own value for sources it never reads, described in [`timers-dma-interrupts.md`](timers-dma-interrupts.md).
 
-I/O registers are a mix of readable, write-only and unused addresses, and each reads differently ([GBATEK, Unpredictable Things][gbatek-unpredictable]):
+I/O registers are a mix of readable, write-only and unused addresses.
+They read as the mGBA suite's I/O read table (`src/io-read.c`), recorded on hardware, shows, which treats a write-only halfword like an unused one.
+GBATEK's Unpredictable Things describes the same split for `DMA0SAD` and unused words.
 
-| Read                                                                                                      | Result                        |
-| --------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| a word whose two halfwords are both unused                                                                | open bus                      |
-| an unused halfword whose partner in the same word is readable                                             | zero                          |
-| an unused halfword whose partner is also unused                                                           | the matching half of open bus |
-| a write-only register (background scroll, affine reference points, DMA addresses and counts, `JOY_TRANS`) | zero                          |
+| Read                                                                        | Result                        |
+| --------------------------------------------------------------------------- | ----------------------------- |
+| a word whose two halfwords are both unused or write-only                    | open bus                      |
+| an unused or write-only halfword whose partner in the same word is readable | zero                          |
+| an unused or write-only halfword whose partner is also unused or write-only | the matching half of open bus |
+
+The write-only registers are the background scroll offsets, the affine parameters and reference points, the window bounds (`WIN0H`–`WIN1V`), `MOSAIC`, `BLDY`, the DMA addresses and counts, and the sound FIFOs.
+GBATEK's own example calls `MOSAIC` readable, which the table contradicts.
+`JOY_TRANS` reads as zero, which no measurement covers.
+Two readable registers have bits that read as zero: bit 13 of `BG0CNT` and `BG1CNT`, which only BG2 and BG3 use, and bit 11 of `DMA0CNT_H`–`DMA2CNT_H`, the Game Pak DRQ flag that only DMA3 has.
+The registers keep those written bits, which have no effect there, and byte writes merge with them.
 
 ## I/O byte lanes
 
@@ -125,7 +147,7 @@ Byte accesses need their own rules, which Evenfall takes from mGBA 0.10.5 (`GBAI
 
 - A byte read returns the addressed byte of the register.
 - A byte write keeps the other byte from the register's **written** value, not from what it reads back.
-  The difference shows for registers that read back something else or nothing: DMA addresses and counts, timer reload values (a timer reads its counter instead), background scroll, affine reference points and `JOY_TRANS`.
+  The difference shows for registers that read back something else or nothing: DMA addresses and counts, timer reload values (a timer reads its counter instead), background scroll, affine parameters and reference points, window bounds, `MOSAIC`, `BLDY` and `JOY_TRANS`.
 - Sound register bytes go to per-channel handlers ([`audio.md`](audio.md)).
 - A byte write to `IF`, the interrupt flags, clears flags only in that byte.
 - Byte writes to the read-only `VCOUNT` and `KEYINPUT` are ignored.
@@ -138,8 +160,29 @@ The BIOS protects itself from being read by games.
 A read from the BIOS region by code running outside the BIOS doesn't return BIOS data.
 It returns the last instruction the CPU fetched from the BIOS, which changes as the BIOS boots, runs services and dispatches interrupts ([GBATEK, Unpredictable Things: Reading from BIOS Memory][gbatek-unpredictable]).
 
-Evenfall models this in HLE mode, where it runs its own BIOS code and has no BIOS image at all.
-Every read of `00000000h`–`00003FFFh` returns `Bus.bios_latch`, which the HLE BIOS sets wherever the real BIOS would have fetched those instructions:
+With a BIOS image, the bus applies the protection itself (`Bus::read_protected_bios`):
+
+- **Instruction fetches** from the BIOS read the image and replace the protection value with the aligned 32-bit word they fetched, Thumb fetches included.
+  The BIOS sits on a 32-bit bus, and GBATEK's open-bus rules for Thumb code in the BIOS show both halfwords of that word.
+  With the CPU fetching two instructions ahead, a branch out of the BIOS at address A leaves the opcode at A+8 (ARM), or the BIOS word holding A+4 (Thumb).
+- **CPU data reads** see the image while the most recent instruction fetch was from the BIOS (`Bus.bios_code_active`), so BIOS code can read its own tables.
+  Otherwise they return the protection value, shifted to the accessed byte or halfword.
+  Data reads never change the value.
+- **DMA** never reads the BIOS.
+  A source below `02000000h` presents the DMA controller's own data latch, wherever the CPU runs ([`timers-dma-interrupts.md`](timers-dma-interrupts.md#shared-data-latch-and-source-zero)).
+- **The debugger's view** (`inspect_byte`) shows the image.
+
+The gate follows the CPU's fetch address, two instructions ahead of the one executing, as NanoBoyAdvance's `r15` check does.
+mGBA 0.10.5 gates on the region of the active fetch.
+Only instruction fetches set the value, as GBATEK words it and as mGBA's `biosPrefetch` does.
+NanoBoyAdvance also latches data reads that BIOS code makes of itself.
+`bios_code_active` isn't saved: every instruction's fetch sets it before the instruction runs, and loading a state derives it from the restored CPU (`Cpu::last_fetch_in_bios`).
+The execution engine, which runs BIOS code without bus fetches, sets the value when a run branches from the BIOS to IWRAM, and sets both when a run ends.
+[`tests/bios_protection.rs`](../../../systems/gba/tests/bios_protection.rs) pins these rules with synthetic images, and the engine test `bios_and_indirect_branches_run_like_stepping` compares them with stepping.
+
+In HLE mode there are no BIOS bytes.
+Every read of `00000000h`–`00003FFFh` returns `Bus.bios_latch`, which the HLE BIOS sets wherever the real BIOS would have fetched those instructions.
+Skip-BIOS boot starts with the value after boot.
 
 | Moment                                      | Value       |
 | ------------------------------------------- | ----------- |
@@ -147,12 +190,12 @@ Every read of `00000000h`–`00003FFFh` returns `Bus.bios_latch`, which the HLE 
 | after an SWI returns                        | `E3A02004h` |
 | during an IRQ handler                       | `E25EF004h` |
 | after an IRQ returns                        | `E55EC002h` |
+| after an IRQ return ends an `IntrWait`      | `E3A02004h` |
 | after an HLE sound jump-list helper returns | `E12FFF1Eh` |
 
-The jsmolka BIOS test ROM checks these values around startup, `Sqrt` and the interrupt handler, and passes under HLE boot.
-
-With a real BIOS image, the protection isn't modeled yet.
-Every read returns the image's bytes, including reads from code outside the BIOS, so the same test ROM fails its first check ([compatibility](../../compatibility.md#known-differences)).
+These are the values of Nintendo's BIOS.
+The jsmolka BIOS test ROM checks them around startup, `Sqrt` and the interrupt handler, and passes under HLE boot.
+A replacement BIOS leaves its own opcodes: the pinned Cult-of-GBA image leaves boot with `BX lr` at `94h`, so the ROM's first check reads `01000020h`, the word at `9Ch`, and fails ([compatibility](../../compatibility.md#known-differences)).
 
 ## WAITCNT and Game Pak wait states
 
@@ -191,14 +234,17 @@ Whether the CPU's next instruction fetch counts as N or S depends on what the CP
 Evenfall doesn't assume instruction fetches are always sequential:
 
 - An instruction fetch leaves the next fetch sequential.
-- A data access to memory (a load, a store, or one step of a block transfer) breaks the sequence, so the next instruction fetch is N.
-- A data access to an I/O register doesn't break the sequence.
+- A data access (a load, a store, or one step of a block transfer) breaks the sequence, so the next instruction fetch is N.
+  I/O registers are no exception.
 - A jump refills the pipeline with an N fetch at the target, then an S fetch.
 - In a block transfer, the first access is N and the rest are S.
 
 These rules come from measurements, not from reading other emulators.
 In the mGBA test suite's load and store rows, each result is exactly N − S cycles longer than fetch plus data plus internal cycles, which is the cost of the broken sequence.
-I/O accesses show no such difference.
+Those rows subtract a calibration run that only reads and writes the timer, so they can't tell whether an I/O access breaks the sequence.
+The suite's Calibration row itself can.
+With ROM code and prefetch off, hardware reads N − S more than a model where I/O accesses keep the sequence, in every wait setting and in ARM and Thumb.
+With prefetch on, the buffer serves the next fetch, and in RAM, N and S cost the same, so those columns can't tell.
 
 ## Game Pak prefetch buffer
 
@@ -218,7 +264,9 @@ GBATEK describes the behavior, and mGBA 0.10.5 and NanoBoyAdvance serve as cross
 - **Hits.** A fetch whose instruction is already buffered takes one cycle.
   A fetch of the entry still being read waits for that read to finish.
 - **Interruptions.** Any other cartridge access (a ROM read by the CPU or DMA, the save chip, EEPROM, GPIO, or any cartridge write) empties the buffer before paying its own wait states.
-  It costs one extra cycle when an entry was one cycle from done, or when an ARM word was half read.
+  An ARM word is read as two halfwords, each taking half the word's cost.
+  A CPU access waits one extra cycle when the halfword read in progress is in its last cycle.
+  A DMA access waits one extra cycle whenever a halfword read has begun.
 - **Leaving ROM.** An instruction fetch from any other region empties the buffer.
 - **`WAITCNT` changes.** The entry being read keeps its cost.
   The next one uses the new settings.
@@ -233,7 +281,7 @@ Each rule on this page has a test in [`tests/bus.rs`](../../../systems/gba/tests
 ### mGBA suite timing tables
 
 The [mGBA test suite](https://github.com/mgba-emu/suite) records how many cycles short instruction sequences take on real hardware, in `src/timing.c`.
-Building the suite's ROM needs the devkitARM toolchain, so [`tests/mgba_suite_timing.rs`](../../../systems/gba/tests/mgba_suite_timing.rs) reproduces the measurement instead.
+Besides running the suite's own ROM ([compatibility](../../compatibility.md#mgba-suite-rom)), [`tests/mgba_suite_timing.rs`](../../../systems/gba/tests/mgba_suite_timing.rs) reproduces the measurement as an ordinary test.
 Each case builds a small ROM shaped like the suite's (start a timer, run the code under test, stop the timer), runs it in Evenfall, and subtracts a calibration run with no code, as the suite does.
 Only the instruction sequences and the recorded hardware numbers come from the suite.
 
@@ -252,31 +300,35 @@ RAM rows run the same code from EWRAM and IWRAM.
 
 The DMA rules are described in [`timers-dma-interrupts.md`](timers-dma-interrupts.md), along with [`tests/mgba_suite_source.rs`](../../../systems/gba/tests/mgba_suite_source.rs), which reproduces the suite's DMA register table.
 
-Every row passes in every setting except one.
-With code in ROM, prefetch on and `WAITCNT` `4000h` or `4004h`, the hardware's IWRAM-to-ROM DMA rows read one cycle more than Evenfall.
-The test asserts Evenfall's value there, so any change shows up.
+Every row passes in every setting.
+Two groups measure the extra cycle when an access stops the prefetch buffer.
+The `ldmia` overflow rows stop it with CPU reads at every point of an ARM word fill.
+The IWRAM-to-ROM DMA rows, with ROM code, prefetch on and `WAITCNT` `4000h` or `4004h`, stop it with a DMA write one cycle into a three-cycle halfword read.
+A single rule for both accessors fails one group or the other by one cycle.
 
 ## Open questions
 
-- **Real-BIOS read protection.** With a BIOS image, reads from outside the BIOS return the image's bytes instead of the protected value.
-- **How open bus is composed.** Evenfall returns the last value read, and a Thumb fetch stores only its halfword.
-  On hardware the value in Thumb state depends on the region and on the prefetched instructions (GBATEK, Unpredictable Things).
-  A game that reads unmapped memory by mistake can depend on it, for instance a runaway string copy that only stops when open bus happens to read `FFh`.
+- **What sets the BIOS protection value.** Whether a data read that BIOS code makes of the BIOS replaces the value, and whether a Thumb fetch latches the whole BIOS word, are untested on hardware.
+  Evenfall follows GBATEK's "opcode" wording and the 32-bit BIOS bus.
+  Telling them apart needs a Nintendo BIOS and a probe that reads the value after such accesses.
+- **Open bus outside ROM code.** The Thumb rules for BIOS, OAM and IWRAM code follow GBATEK without a hardware measurement here.
+  Halfword and byte data reads leave their value zero-extended, and writes leave the open-bus word alone.
+  The 16-bit buses presumably drive both halves for data too, which only a following read of unused memory in the same instruction (an `LDM` step) or a DMA could observe.
 - **Video-memory contention.** GBATEK adds one cycle when the CPU accesses video memory while the display is reading it.
   Evenfall charges fixed costs.
-- **Affine parameter reads.** `BG2PA`–`BG3PD` read back their written values, although GBATEK lists them as write-only.
-  The other write-only video registers read as zero.
 - **EWRAM wait control.** The undocumented register at `04000800h` that changes EWRAM's speed isn't modeled.
   Writes to it are ignored.
-- **DMA timing difference.** The one-cycle IWRAM-to-ROM difference above has no known cause.
 - **`nop ; b pc`.** The suite's row with this label reuses the `b pc` test code, so the two-instruction version has never been measured.
-- **Prefetch collision cycle.** The extra cycle when a data access interrupts an almost-finished prefetch follows NanoBoyAdvance.
-  No hardware measurement isolates it.
+- **Prefetch collision cycle.** The suite's tables fit a CPU read that waits only for a halfword read in its last cycle, and a DMA write that waits for any halfword read in progress.
+  They don't say whether the difference follows the accessor or the direction of the access: no row has a CPU store to ROM, and no DMA read of ROM meets a read with more than one cycle left.
+  Evenfall splits the rule by accessor.
+  A probe that stops a three-cycle prefetch read one cycle in with a CPU `STRH` to ROM, and with a DMA from ROM, would decide.
 - **Turning prefetch off.** The forced N fetch after disabling the buffer comes from other emulators, not from GBATEK.
 
 [gbatek-map]: https://rust-console.github.io/gbatek-gbaonly/#gbamemorymap
 [gbatek-unpredictable]: https://rust-console.github.io/gbatek-gbaonly/#gbaunpredictablethings
 [gbatek-system]: https://rust-console.github.io/gbatek-gbaonly/#gbasystemcontrol
 [gbatek-prefetch]: https://rust-console.github.io/gbatek-gbaonly/#gbagamepakprefetch
+[gbatek-copy]: https://rust-console.github.io/gbatek-gbaonly/#biosmemorycopy
 [mgba-memory]: https://github.com/mgba-emu/mgba/blob/0.10.5/src/gba/memory.c
 [nba-ppu]: https://github.com/nba-emu/NanoBoyAdvance/blob/55b5cf0ae3d929582ac5bfd486558173502b8354/src/nba/src/hw/ppu/ppu.hh#L59-L115

@@ -5,7 +5,10 @@
 
 use evenfall_state::Codec;
 
+mod multiply;
 mod thumb;
+
+pub use multiply::{MultiplyKind, multiply_carry};
 
 pub type Cycle = u64;
 
@@ -757,6 +760,13 @@ fn byte_wide_save_address(address: u32) -> bool {
     address >> 25 == 7
 }
 
+/// The address a block-transfer beat at `address` presents to the bus:
+/// aligned, except on the 8-bit save bus, which sees it exactly (the mGBA
+/// suite's SRAM `CpuSet`/`CpuFastSet` rows).
+fn block_address(address: u32) -> u32 {
+    if byte_wide_save_address(address) { address } else { address & !3 }
+}
+
 impl Core {
     pub fn execute_arm<B: Bus>(
         &mut self,
@@ -923,13 +933,18 @@ impl Core {
             return Err(unpredictable(ArmInstructionClass::Multiply, offending));
         }
         let multiplier = self.registers[rs];
-        let mut result = self.registers[rm].wrapping_mul(multiplier);
-        if accumulate {
-            result = result.wrapping_add(self.registers[rn]);
-        }
+        let multiplicand = self.registers[rm];
+        let accumulator = if accumulate { self.registers[rn] } else { 0 };
+        let result = multiplicand.wrapping_mul(multiplier).wrapping_add(accumulator);
         self.registers[rd] = result;
         if instruction & (1 << 20) != 0 {
-            self.set_logical_flags(result, None);
+            let carry = multiply_carry(
+                MultiplyKind::Short,
+                multiplicand,
+                multiplier,
+                u64::from(accumulator),
+            );
+            self.set_logical_flags(result, Some(carry));
         }
         bus.elapse_cpu_internal(
             Self::multiply_iterations(multiplier, true) + u64::from(accumulate),
@@ -961,22 +976,27 @@ impl Core {
         let signed = instruction & (1 << 22) != 0;
         let accumulate = instruction & (1 << 21) != 0;
         let multiplier = self.registers[rs];
-        let mut product = if signed {
-            (i64::from(self.registers[rm] as i32) * i64::from(multiplier as i32)) as u64
+        let multiplicand = self.registers[rm];
+        let accumulator = if accumulate {
+            (u64::from(self.registers[hi]) << 32) | u64::from(self.registers[lo])
         } else {
-            u64::from(self.registers[rm]) * u64::from(multiplier)
+            0
         };
-        if accumulate {
-            product = product.wrapping_add(
-                (u64::from(self.registers[hi]) << 32) | u64::from(self.registers[lo]),
-            );
+        let product = if signed {
+            (i64::from(multiplicand as i32) * i64::from(multiplier as i32)) as u64
+        } else {
+            u64::from(multiplicand) * u64::from(multiplier)
         }
+        .wrapping_add(accumulator);
         self.registers[lo] = product as u32;
         self.registers[hi] = (product >> 32) as u32;
         if instruction & (1 << 20) != 0 {
-            self.cpsr = (self.cpsr & !0xc000_0000)
+            let kind = if signed { MultiplyKind::LongSigned } else { MultiplyKind::LongUnsigned };
+            let carry = multiply_carry(kind, multiplicand, multiplier, accumulator);
+            self.cpsr = (self.cpsr & !0xe000_0000)
                 | ((product >> 32) as u32 & 0x8000_0000)
-                | (u32::from(product == 0) << 30);
+                | (u32::from(product == 0) << 30)
+                | (u32::from(carry) << 29);
         }
         bus.elapse_cpu_internal(
             Self::multiply_iterations(multiplier, signed) + 1 + u64::from(accumulate),
@@ -1170,7 +1190,7 @@ impl Core {
         {
             let kind = if index == 0 { AccessKind::Nonsequential } else { AccessKind::Sequential };
             if load {
-                let read = bus.read_cpu_data(address & !3, AccessWidth::Word, kind);
+                let read = bus.read_cpu_data(block_address(address), AccessWidth::Word, kind);
                 if register == 15 {
                     loaded_pc = Some(read);
                 } else if user_bank && !exception_return {
@@ -1188,7 +1208,7 @@ impl Core {
                 } else {
                     self.registers[register]
                 };
-                bus.write_cpu_word(address & !3, value, kind);
+                bus.write_cpu_word(block_address(address), value, kind);
             }
             address = address.wrapping_add(4);
         }
@@ -1519,6 +1539,187 @@ mod tests {
         cpu.execute_arm(&mut bus, 0xe003_0392).unwrap();
         assert_eq!(cpu.registers[3], 0x0200_0000);
         assert_eq!(bus.internal, 4);
+    }
+
+    /// The mGBA suite's multiply-long table (`src/multiply-long.c`), recorded
+    /// on hardware: `SMULLS r9, r8, r0, r1` and `UMULLS r9, r8, r0, r1` from
+    /// cleared flags, with `r0` and `r1` each of 0, 1, -1, `7FFFFFFFh`,
+    /// `80000000h` and `80000001h`. Each row is `(r0, r1, [r8, r9, CPSR] for
+    /// SMULLS, [r8, r9, CPSR] for UMULLS)`; C comes from the multiplier's
+    /// carry-save vectors ([`multiply_carry`]).
+    #[test]
+    fn flag_setting_long_multiplies_match_the_mgba_suite_hardware_table() {
+        #[rustfmt::skip]
+        let table: [(u32, u32, [u32; 3], [u32; 3]); 36] = [
+            (0x00000000, 0x00000000, [0x00000000, 0x00000000, 0x4000001f], [0x00000000, 0x00000000, 0x4000001f]), // 0 *   0
+            (0x00000001, 0x00000000, [0x00000000, 0x00000000, 0x4000001f], [0x00000000, 0x00000000, 0x4000001f]), // 1 *   0
+            (0xffffffff, 0x00000000, [0x00000000, 0x00000000, 0x4000001f], [0x00000000, 0x00000000, 0x4000001f]), // -1 *   0
+            (0x7fffffff, 0x00000000, [0x00000000, 0x00000000, 0x4000001f], [0x00000000, 0x00000000, 0x4000001f]), // $7F *   0
+            (0x80000000, 0x00000000, [0x00000000, 0x00000000, 0x4000001f], [0x00000000, 0x00000000, 0x4000001f]), // $80 *   0
+            (0x80000001, 0x00000000, [0x00000000, 0x00000000, 0x4000001f], [0x00000000, 0x00000000, 0x4000001f]), // $81 *   0
+            (0x00000000, 0x00000001, [0x00000000, 0x00000000, 0x4000001f], [0x00000000, 0x00000000, 0x4000001f]), // 0 *   1
+            (0x00000001, 0x00000001, [0x00000000, 0x00000001, 0x0000001f], [0x00000000, 0x00000001, 0x0000001f]), // 1 *   1
+            (0xffffffff, 0x00000001, [0xffffffff, 0xffffffff, 0x8000001f], [0x00000000, 0xffffffff, 0x0000001f]), // -1 *   1
+            (0x7fffffff, 0x00000001, [0x00000000, 0x7fffffff, 0x0000001f], [0x00000000, 0x7fffffff, 0x0000001f]), // $7F *   1
+            (0x80000000, 0x00000001, [0xffffffff, 0x80000000, 0x8000001f], [0x00000000, 0x80000000, 0x0000001f]), // $80 *   1
+            (0x80000001, 0x00000001, [0xffffffff, 0x80000001, 0x8000001f], [0x00000000, 0x80000001, 0x0000001f]), // $81 *   1
+            (0x00000000, 0xffffffff, [0x00000000, 0x00000000, 0x4000001f], [0x00000000, 0x00000000, 0x4000001f]), // 0 *  -1
+            (0x00000001, 0xffffffff, [0xffffffff, 0xffffffff, 0x8000001f], [0x00000000, 0xffffffff, 0x0000001f]), // 1 *  -1
+            (0xffffffff, 0xffffffff, [0x00000000, 0x00000001, 0x0000001f], [0xfffffffe, 0x00000001, 0xa000001f]), // -1 *  -1
+            (0x7fffffff, 0xffffffff, [0xffffffff, 0x80000001, 0x8000001f], [0x7ffffffe, 0x80000001, 0x2000001f]), // $7F *  -1
+            (0x80000000, 0xffffffff, [0x00000000, 0x80000000, 0x0000001f], [0x7fffffff, 0x80000000, 0x0000001f]), // $80 *  -1
+            (0x80000001, 0xffffffff, [0x00000000, 0x7fffffff, 0x0000001f], [0x80000000, 0x7fffffff, 0x8000001f]), // $81 *  -1
+            (0x00000000, 0x7fffffff, [0x00000000, 0x00000000, 0x4000001f], [0x00000000, 0x00000000, 0x4000001f]), // 0 * $7F
+            (0x00000001, 0x7fffffff, [0x00000000, 0x7fffffff, 0x0000001f], [0x00000000, 0x7fffffff, 0x0000001f]), // 1 * $7F
+            (0xffffffff, 0x7fffffff, [0xffffffff, 0x80000001, 0xa000001f], [0x7ffffffe, 0x80000001, 0x2000001f]), // -1 * $7F
+            (0x7fffffff, 0x7fffffff, [0x3fffffff, 0x00000001, 0x0000001f], [0x3fffffff, 0x00000001, 0x0000001f]), // $7F * $7F
+            (0x80000000, 0x7fffffff, [0xc0000000, 0x80000000, 0xa000001f], [0x3fffffff, 0x80000000, 0x2000001f]), // $80 * $7F
+            (0x80000001, 0x7fffffff, [0xc0000000, 0xffffffff, 0xa000001f], [0x3fffffff, 0xffffffff, 0x2000001f]), // $81 * $7F
+            (0x00000000, 0x80000000, [0x00000000, 0x00000000, 0x6000001f], [0x00000000, 0x00000000, 0x4000001f]), // 0 * $80
+            (0x00000001, 0x80000000, [0xffffffff, 0x80000000, 0xa000001f], [0x00000000, 0x80000000, 0x0000001f]), // 1 * $80
+            (0xffffffff, 0x80000000, [0x00000000, 0x80000000, 0x0000001f], [0x7fffffff, 0x80000000, 0x2000001f]), // -1 * $80
+            (0x7fffffff, 0x80000000, [0xc0000000, 0x80000000, 0xa000001f], [0x3fffffff, 0x80000000, 0x0000001f]), // $7F * $80
+            (0x80000000, 0x80000000, [0x40000000, 0x00000000, 0x0000001f], [0x40000000, 0x00000000, 0x2000001f]), // $80 * $80
+            (0x80000001, 0x80000000, [0x3fffffff, 0x80000000, 0x0000001f], [0x40000000, 0x80000000, 0x2000001f]), // $81 * $80
+            (0x00000000, 0x80000001, [0x00000000, 0x00000000, 0x6000001f], [0x00000000, 0x00000000, 0x4000001f]), // 0 * $81
+            (0x00000001, 0x80000001, [0xffffffff, 0x80000001, 0xa000001f], [0x00000000, 0x80000001, 0x0000001f]), // 1 * $81
+            (0xffffffff, 0x80000001, [0x00000000, 0x7fffffff, 0x0000001f], [0x80000000, 0x7fffffff, 0xa000001f]), // -1 * $81
+            (0x7fffffff, 0x80000001, [0xc0000000, 0xffffffff, 0xa000001f], [0x3fffffff, 0xffffffff, 0x0000001f]), // $7F * $81
+            (0x80000000, 0x80000001, [0x3fffffff, 0x80000000, 0x0000001f], [0x40000000, 0x80000000, 0x2000001f]), // $80 * $81
+            (0x80000001, 0x80000001, [0x3fffffff, 0x00000001, 0x0000001f], [0x40000001, 0x00000001, 0x2000001f]), // $81 * $81
+        ];
+        for (rm, rs, smull, umull) in table {
+            for (instruction, expected) in [(0xe0d8_9190, smull), (0xe098_9190, umull)] {
+                let mut cpu = Core::new(0x0800_0040, 0x1f);
+                (cpu.registers[0], cpu.registers[1]) = (rm, rs);
+                cpu.execute_arm(&mut TraceBus::default(), instruction).unwrap();
+                let got = [cpu.registers[8], cpu.registers[9], cpu.cpsr];
+                assert_eq!(got, expected, "{instruction:08x} with {rm:08x} * {rs:08x}");
+            }
+        }
+    }
+
+    /// C after every flag-setting multiply form, for multipliers of one to
+    /// four cycles with C clear and set: `(form, Rm, Rs, RdLo or Rn, RdHi,
+    /// C)`, with forms 0 to 5 `MULS`, `MLAS`, `UMULLS`, `UMLALS`, `SMULLS`,
+    /// `SMLALS`. The expected C comes from the model's published reference
+    /// implementation (zaydlang/multiplication-algorithm, `impl.h`), run on
+    /// these operands; Thumb `MUL` repeats the `MULS` rows with Rd as the
+    /// multiplier.
+    #[test]
+    fn flag_setting_multiplies_take_c_from_the_reference_multiplier_model() {
+        #[rustfmt::skip]
+        let table: [(usize, u32, u32, u32, u32, bool); 48] = [
+            (0, 0x3d9c2a99, 0xffffff74, 0x00005681, 0xffff9a8b, false),
+            (0, 0x000000ff, 0xffffff1e, 0x00007b41, 0x372f9f5e, true),
+            (0, 0x7fffffff, 0xfffff7c1, 0xffffff2b, 0xffff4095, false),
+            (0, 0x00000000, 0xffff34f1, 0x000000c0, 0x00000100, true),
+            (0, 0x7fffffff, 0xffcca63e, 0x00000060, 0x00000055, false),
+            (0, 0xadb46ced, 0x009e8185, 0x0000d7ac, 0x00009c6d, true),
+            (0, 0xffff737e, 0x7fffffff, 0x00000025, 0x80000001, false),
+            (0, 0x000000ce, 0x80000001, 0x00000040, 0xffffb488, true),
+            (1, 0x12d6098f, 0xffffff50, 0xffff1378, 0x80000001, false),
+            (1, 0x000000ff, 0xffffff56, 0xaa3e1a05, 0xffffffa9, true),
+            (1, 0xffff6f9a, 0x00000a76, 0xffffffc1, 0xffffff5d, false),
+            (1, 0x00000050, 0xffff489d, 0x0000002b, 0x5563793d, true),
+            (1, 0xffff60c3, 0x00975297, 0xe8edad59, 0xc28f9e00, false),
+            (1, 0xffffd16c, 0xff9dad72, 0x28c873ad, 0x395e8c2d, true),
+            (1, 0xffff87e3, 0x34d7b4ca, 0x00000099, 0xffff47db, false),
+            (1, 0x000000ff, 0xb9fd3852, 0xfffff3b5, 0xffffffdd, true),
+            (2, 0x0000003b, 0x00000000, 0xffffffff, 0xffffab34, false),
+            (2, 0xffffad56, 0x0000009f, 0x000000cb, 0x00008534, true),
+            (2, 0x00000097, 0x0000982b, 0x0000007b, 0xffffe409, false),
+            (2, 0xffffff10, 0x00005e4b, 0xe84eeb2d, 0xbf3d19d2, true),
+            (2, 0xb15beb14, 0x00e9ec5a, 0x0000c5ad, 0x000000d6, false),
+            (2, 0x00007107, 0x004b5014, 0x000017fd, 0xffff38e7, true),
+            (2, 0x000000a3, 0x74a9d8b5, 0xffff5e38, 0x1c3e9a83, false),
+            (2, 0xffffff7a, 0xffffffff, 0xffffae32, 0x000000c0, true),
+            (3, 0x7fffffff, 0x000000d0, 0x9aa07b96, 0xfffffceb, false),
+            (3, 0xffffffed, 0x00000088, 0x000000ff, 0xffffffff, true),
+            (3, 0x000000be, 0x00009f5d, 0xffff132a, 0xffffff68, false),
+            (3, 0xffffff04, 0x00005f1f, 0xffffa8ee, 0x00004659, true),
+            (3, 0xfee39156, 0x008f0cc3, 0x0000009e, 0xff70fd38, false),
+            (3, 0x7e6ff20b, 0x00d23a69, 0x0000a0b9, 0x00004a8f, true),
+            (3, 0xffffffd6, 0x22a2894e, 0x8afce860, 0xc1decd0a, false),
+            (3, 0x0000b164, 0xffffffcb, 0x0000e64d, 0x09e5b47f, true),
+            (4, 0x00000007, 0xffffffff, 0xffffffff, 0x3c603a02, false),
+            (4, 0xffffff9d, 0x00000089, 0x0000553f, 0xffff4d27, true),
+            (4, 0xffffffff, 0xffff1e4f, 0xffffffb9, 0x0000a25e, false),
+            (4, 0x0000994e, 0xffff1149, 0xffff2db6, 0xffffff3b, true),
+            (4, 0x95f10095, 0xff5c07d1, 0x00000001, 0x8982a97d, false),
+            (4, 0x80000001, 0xff1cb1e5, 0x7fffffff, 0xffffff01, true),
+            (4, 0xffffffff, 0x25b35f9d, 0xffffff73, 0xffffa505, false),
+            (4, 0xa140cdfa, 0x7772e516, 0xffffffff, 0x00004425, true),
+            (5, 0x000022a9, 0x00000007, 0xc0f0296d, 0xfffff0fc, false),
+            (5, 0x00000020, 0xffffff70, 0x0000008d, 0x8125e110, true),
+            (5, 0x00000b0a, 0x0000b024, 0xffffe03c, 0xffffff9f, false),
+            (5, 0xffff7cc2, 0xffff76ad, 0x80000001, 0x268db523, true),
+            (5, 0x47ebf780, 0x007061cc, 0xffffffd4, 0xe6da189b, false),
+            (5, 0x14f47aff, 0x00ffdc1b, 0x00000067, 0xffffb13e, true),
+            (5, 0x928a572f, 0x80000000, 0x0000b395, 0x00000036, false),
+            (5, 0xffff61bb, 0x7fffffff, 0x00000000, 0x000031d8, true),
+        ];
+        const ARM: [u32; 6] =
+            [0xe012_0190, 0xe032_3190, 0xe095_4190, 0xe0b5_4190, 0xe0d5_4190, 0xe0f5_4190];
+        for (form, rm, rs, low, high, carry) in table {
+            let mut cpu = Core::new(0x0800_0040, 0x1f);
+            cpu.registers[..6].copy_from_slice(&[rm, rs, 0, low, low, high]);
+            cpu.execute_arm(&mut TraceBus::default(), ARM[form]).unwrap();
+            let context = format!("form {form}: {rm:08x} * {rs:08x} + {high:08x}:{low:08x}");
+            assert_eq!(carry, cpu.cpsr & (1 << 29) != 0, "{context}");
+            if form == 0 {
+                let mut cpu = Core::new(0x0800_0040, 0x3f);
+                (cpu.registers[0], cpu.registers[1]) = (rm, rs);
+                cpu.execute_thumb(&mut TraceBus::default(), 0x4341); // MUL r1, r0
+                assert_eq!(rm.wrapping_mul(rs), cpu.registers[1], "Thumb {context}");
+                assert_eq!(carry, cpu.cpsr & (1 << 29) != 0, "Thumb {context}");
+            }
+        }
+    }
+
+    /// The mGBA suite's memory table (`swi B 32` and `swi C 32` rows,
+    /// recorded on hardware): the retail CpuSet and CpuFastSet, whose word
+    /// loops are `LDMIA`/`STMIA` (GBATEK, BIOS Memory Copy), load and store
+    /// the SRAM byte at an unaligned address itself. A block transfer gives
+    /// the 8-bit save bus its exact addresses, stepping by 4 from the base,
+    /// as a single transfer does; every other region sees them aligned.
+    #[test]
+    fn block_transfers_present_exact_addresses_to_the_save_bus() {
+        use AccessKind::{Nonsequential as N, Sequential as S};
+        use AccessWidth::Word;
+        let arm = |base: u32, instruction: u32| {
+            let mut cpu = Core::new(0x0800_0040, 0x1f);
+            (cpu.registers[0], cpu.registers[1], cpu.registers[2]) =
+                (base, 0x1111_1111, 0x2222_2222);
+            let mut bus = TraceBus::default();
+            cpu.execute_arm(&mut bus, instruction).unwrap();
+            (cpu.registers[0], bus.reads, bus.writes)
+        };
+        // LDMIA r0!, {r1, r2}
+        let (base, reads, _) = arm(0x0e00_0001, 0xe8b0_0006);
+        assert_eq!(reads, [(0x0e00_0001, Word, N), (0x0e00_0005, Word, S)]);
+        assert_eq!(base, 0x0e00_0009);
+        let (_, reads, _) = arm(0x0300_0001, 0xe8b0_0006);
+        assert_eq!(reads, [(0x0300_0000, Word, N), (0x0300_0004, Word, S)]);
+        // STMIA r0, {r1, r2}
+        let (_, _, writes) = arm(0x0e00_0003, 0xe880_0006);
+        assert_eq!(
+            writes,
+            [(0x0e00_0003, Word, N, 0x1111_1111), (0x0e00_0007, Word, S, 0x2222_2222)]
+        );
+
+        let thumb = |base: u32, instruction: u16| {
+            let mut cpu = Core::new(0x0800_0040, 0x3f);
+            (cpu.registers[0], cpu.registers[1], cpu.registers[13]) = (base, 0x1111_1111, base);
+            let mut bus = TraceBus::default();
+            cpu.execute_thumb(&mut bus, instruction);
+            (bus.reads, bus.writes)
+        };
+        // LDMIA r0!, {r1}; STMIA r0!, {r1}; POP {r1}; PUSH {r1}
+        assert_eq!(thumb(0x0e00_0002, 0xc802).0, [(0x0e00_0002, Word, N)]);
+        assert_eq!(thumb(0x0e00_0002, 0xc002).1, [(0x0e00_0002, Word, N, 0x1111_1111)]);
+        assert_eq!(thumb(0x0e00_0003, 0xbc02).0, [(0x0e00_0003, Word, N)]);
+        assert_eq!(thumb(0x0e00_0007, 0xb402).1, [(0x0e00_0003, Word, N, 0x1111_1111)]);
     }
 
     /// BX selects ARM only for an even target, without rounding a Thumb return to a word.

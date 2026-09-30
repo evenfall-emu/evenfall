@@ -1,0 +1,100 @@
+{
+  "name": "mgba-suite-timer-irq-external_bios",
+  "assets": {
+    "rom": "../../../tools/mgba-suite/build/suite.gba",
+    "bios": "../../../refs/cult-gba-bios/bios.bin"
+  },
+  "config": {
+    "boot": "external_bios",
+    "saveType": "auto"
+  },
+  "inputs": [
+    {
+      "at": "50561280",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "51403968",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "52246656",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "53089344",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "53932032",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "54774720",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "55617408",
+      "change": {
+        "keys": 128
+      }
+    },
+    {
+      "at": "56460096",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "57302784",
+      "change": {
+        "keys": 1
+      }
+    },
+    {
+      "at": "58145472",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "143537856",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "144380544",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "145504128",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "146346816",
+      "change": {
+        "keys": 0
+      }
+    }
+  ],
+  "endCycle": "147189504",
+  "checkpoints": ["143256960", "145223232", "147189504"],
+  "sliceCycles": ["70224", "280896", "1232"]
+}

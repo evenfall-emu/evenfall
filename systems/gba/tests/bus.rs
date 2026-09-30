@@ -205,38 +205,79 @@ fn default_game_pak_sram_and_wram_access_costs_match_the_gbatek_totals() {
 
 #[test]
 fn cached_irq_line_follows_ie_if_ime_writes_and_keypad_edges() {
+    use evenfall_gba::bus::IRQ_LATENCY;
     let mut bus = Bus::init(&[]);
+    // A request that rises reaches the CPU IRQ_LATENCY cycles later.
+    let arrives = |bus: &mut Bus| {
+        assert!(bus.irq_pending());
+        assert!(!bus.irq.irq_line);
+        bus.elapse(IRQ_LATENCY - 1);
+        assert!(!bus.irq.irq_line);
+        bus.elapse(1);
+        assert!(bus.irq.irq_line);
+    };
     write_half(&mut bus, 0x0400_0132, 0x4001);
     write_half(&mut bus, 0x0400_0200, 1 << 12);
     write_half(&mut bus, 0x0400_0208, 1);
     assert!(!bus.irq.irq_line);
     bus.set_keys(KeyState { a: true, ..Default::default() });
-    assert!(bus.irq.irq_line);
-    assert!(bus.irq_pending());
+    arrives(&mut bus);
+    // A request that falls reaches the CPU at once.
     write_byte(&mut bus, 0x0400_0203, 1 << 4);
     assert!(!bus.irq.irq_line);
     bus.set_keys(Default::default());
     bus.set_keys(KeyState { a: true, ..Default::default() });
-    assert!(bus.irq.irq_line);
+    arrives(&mut bus);
     write_half(&mut bus, 0x0400_0200, 0);
     assert!(!bus.irq.irq_line);
     write_half(&mut bus, 0x0400_0200, 1 << 12);
-    assert!(bus.irq.irq_line);
+    arrives(&mut bus);
     write_half(&mut bus, 0x0400_0208, 0);
     assert!(!bus.irq.irq_line);
     write_half(&mut bus, 0x0400_0208, 1);
-    assert!(bus.irq.irq_line);
+    arrives(&mut bus);
     write_half(&mut bus, 0x0400_0202, 1 << 12);
     assert!(!bus.irq.irq_line);
 }
 
+/// A request raised outside a register write, as HLE `IntrWait` raises one
+/// by setting IME, reaches the CPU on time inside a device batch too: the
+/// batch's next boundary is not an LCD event hundreds of cycles away.
+#[test]
+fn an_irq_request_raised_outside_a_write_arrives_on_time_when_batched_and_eager() {
+    use evenfall_gba::bus::IRQ_LATENCY;
+    for batch in [false, true] {
+        let mut bus = Bus::init(&[]);
+        write_half(&mut bus, 0x0400_0200, 1 << 3);
+        write_half(&mut bus, 0x0400_0100, 0xffff);
+        write_half(&mut bus, 0x0400_0102, 0x00c0);
+        bus.elapse(4);
+        write_half(&mut bus, 0x0400_0102, 0);
+        assert_eq!(bus.irq.interrupt_request_flags, 1 << 3);
+        if batch {
+            bus.begin_device_batch();
+        }
+        bus.irq.interrupt_master_enabled = true;
+        bus.update_irq_line();
+        bus.elapse(IRQ_LATENCY - 1);
+        assert!(!bus.irq.irq_line, "batch {batch}");
+        bus.elapse(8);
+        assert!(bus.irq.irq_line, "batch {batch}");
+        if batch {
+            bus.end_device_batch();
+        }
+    }
+}
+
+/// The HBlank flag rises after the HBlank IRQ, so the line's flag is read at
+/// cycle 1006 (`hblank_flag_rises_at_cycle_1006_after_the_hblank_irq`).
 #[test]
 fn lcd_timing_follows_the_gbatek_960_1232_cycle_line_and_228_line_frame() {
     let mut bus = Bus::init(&[]);
     write_half(&mut bus, 0x0400_0004, 1 << 3);
-    bus.elapse(959);
+    bus.elapse(1005);
     assert_ne!(0, read_half(&mut bus, 0x0400_0004) & (1 << 1));
-    bus.elapse(271);
+    bus.elapse(225);
     assert_eq!(1, read_half(&mut bus, 0x0400_0006));
     bus.elapse(160 * 1232 - bus.now());
     assert_eq!(160, read_half(&mut bus, 0x0400_0006));
@@ -246,6 +287,33 @@ fn lcd_timing_follows_the_gbatek_960_1232_cycle_line_and_228_line_frame() {
     assert_eq!(0, bus.completed_frames());
     bus.elapse(1);
     assert_eq!(1, bus.completed_frames());
+}
+
+/// GBATEK, LCD I/O Interrupts and Status: "Although the drawing time is
+/// only 960 cycles (240*4), the H-Blank flag is "0" for a total of 1006
+/// cycles", in every line. The HBlank IRQ stays at cycle 960, the end of the
+/// drawing time. The mGBA suite's "H-blank bit start" flip intervals,
+/// recorded on hardware, place the rise at cycle 1006 or later.
+#[test]
+fn hblank_flag_rises_at_cycle_1006_after_the_hblank_irq() {
+    let mut bus = Bus::init(&[]);
+    write_half(&mut bus, 0x0400_0004, 1 << 4);
+    // A read of DISPSTAT sees the cycle it starts at and takes one.
+    let flag = |bus: &mut Bus| read_half(bus, 0x0400_0004) & (1 << 1) != 0;
+    let irq = |bus: &Bus| bus.irq.interrupt_request_flags & (1 << 1) != 0;
+    for line in [0, 1, 160, 227] {
+        let start = line * 1232;
+        bus.elapse(start + 959 - bus.now());
+        assert!(!flag(&mut bus), "line {line}, cycle 959");
+        assert!(irq(&bus), "line {line}: the HBlank IRQ at cycle 960");
+        bus.irq.interrupt_request_flags = 0;
+        bus.elapse(start + 1005 - bus.now());
+        assert!(!flag(&mut bus), "line {line}, cycle 1005");
+        assert!(flag(&mut bus), "line {line}, cycle 1006");
+        bus.elapse(start + 1231 - bus.now());
+        assert!(flag(&mut bus), "line {line}, cycle 1231");
+        assert!(!flag(&mut bus), "line {line}, cycle 1232");
+    }
 }
 
 #[test]
@@ -295,13 +363,148 @@ fn unmapped_and_unused_mmio_reads_distinguish_open_bus_words_from_paired_zero_ha
         AccessSource::CpuData,
     ));
     assert_eq!(0x1234, half.value);
+    // MOSAIC is write-only, so 4Eh reads open bus (see below); 66h is unused
+    // beside the readable SOUND1CNT_X.
     let paired = bus.read(access(
-        0x0400_004e,
+        0x0400_0066,
         AccessWidth::Half,
         AccessKind::Nonsequential,
         AccessSource::CpuData,
     ));
     assert_eq!(0, paired.value);
+}
+
+/// Loads the word `12345678h` from ROM as a code fetch, so the next I/O
+/// read sees it as open bus: an asymmetric value whose two halves and four
+/// bytes differ.
+fn prime_open_bus(bus: &mut Bus) {
+    bus.read(access(
+        0x0800_0000,
+        AccessWidth::Word,
+        AccessKind::Nonsequential,
+        AccessSource::CpuCode,
+    ));
+}
+
+/// The mGBA suite's I/O read table (`src/io-read.c`, recorded on hardware):
+/// a write-only register reads as open bus when no half of its word reads
+/// back (the scroll offsets, affine parameters and reference points, window
+/// bounds, `MOSAIC` and `BLDY` with the unused halves beside them, and the
+/// DMA addresses), and as zero beside a readable half (`DMAxCNT_L`).
+/// `BG0CNT`/`BG1CNT` bit 13 and `DMA0CNT_H`–`DMA2CNT_H` bit 11 read as zero.
+/// GBATEK, Unpredictable Things, describes the same split for `DMA0SAD` and
+/// unused words. Byte writes still merge with the written value.
+#[test]
+fn write_only_mmio_reads_follow_the_recorded_hardware_table() {
+    let mut bus = Bus::init(&[0x78, 0x56, 0x34, 0x12]);
+    let dma_addresses =
+        (0..4).flat_map(|channel| (0..8).step_by(2).map(move |o| 0xb0 + 12 * channel + o));
+    let write_only: Vec<u32> =
+        (0x10..0x48).step_by(2).chain([0x4c, 0x4e, 0x54, 0x56]).chain(dma_addresses).collect();
+    for &offset in &write_only {
+        let address = 0x0400_0000 + offset;
+        write_half(&mut bus, address, 0xffff);
+        prime_open_bus(&mut bus);
+        let expected = if offset & 2 == 0 { 0x5678 } else { 0x1234 };
+        assert_eq!(expected, read_half(&mut bus, address), "half {address:08x}");
+        for lane in 0..2 {
+            prime_open_bus(&mut bus);
+            let expected = (0x1234_5678_u32 >> ((offset & 2) * 8 + lane * 8)) as u8;
+            assert_eq!(expected, read_byte(&mut bus, address + lane), "byte {address:08x}");
+        }
+        if offset & 2 == 0 {
+            prime_open_bus(&mut bus);
+            assert_eq!(0x1234_5678, read_word(&mut bus, address), "word {address:08x}");
+        }
+    }
+
+    for (channel, readable) in [0x77e0, 0x77e0, 0x77e0, 0x7fe0].into_iter().enumerate() {
+        let count = 0x0400_00b8 + 12 * channel as u32;
+        write_half(&mut bus, count, 0xffff);
+        write_half(&mut bus, count + 2, 0x7fff);
+        prime_open_bus(&mut bus);
+        assert_eq!(0, read_half(&mut bus, count), "DMA{channel}CNT_L");
+        prime_open_bus(&mut bus);
+        assert_eq!(readable, read_half(&mut bus, count + 2), "DMA{channel}CNT_H");
+        prime_open_bus(&mut bus);
+        assert_eq!(u32::from(readable) << 16, read_word(&mut bus, count), "DMA{channel}CNT");
+    }
+
+    for (index, readable) in [0xdfff, 0xdfff, 0xffff, 0xffff].into_iter().enumerate() {
+        let control = 0x0400_0008 + 2 * index as u32;
+        write_half(&mut bus, control, 0xffff);
+        assert_eq!(readable, read_half(&mut bus, control), "BG{index}CNT");
+        assert_eq!(0xffff, bus.bg_controls[index], "BG{index}CNT keeps the written value");
+    }
+
+    write_half(&mut bus, 0x0400_0020, 0x1234);
+    write_byte(&mut bus, 0x0400_0021, 0xab);
+    assert_eq!(0xab34_u16 as i16, bus.bg_affine_parameters[0][0]);
+    write_half(&mut bus, 0x0400_0040, 0x1234);
+    write_byte(&mut bus, 0x0400_0040, 0xcd);
+    assert_eq!(0x12cd, bus.win0h);
+    write_half(&mut bus, 0x0400_004c, 0x1234);
+    write_byte(&mut bus, 0x0400_004d, 0x56);
+    assert_eq!(0x5634, bus.mosaic);
+    write_half(&mut bus, 0x0400_0054, 0x0007);
+    write_byte(&mut bus, 0x0400_0054, 0x10);
+    assert_eq!(0x0010, bus.bldy);
+}
+
+/// GBATEK, Unpredictable Things (Reading from Unused Memory): a Thumb
+/// opcode fetch leaves its halfword on both halves of the data bus when it
+/// comes over a 16-bit bus (EWRAM, palette RAM, VRAM, Game Pak ROM), the
+/// whole aligned word when it comes from the 32-bit BIOS or OAM, and only
+/// its own half from IWRAM, whose other half keeps the bus's previous
+/// value. ARM fetches and data reads leave the value read.
+#[test]
+fn thumb_opcode_fetches_compose_the_open_bus_word_per_region() {
+    let bios: Vec<u8> = (0..16 * 1024_u32).map(|i| (i * 7 + 3) as u8).collect();
+    let mut rom = vec![0u8; 0x100];
+    rom[0x10..0x14].copy_from_slice(&0x8765_4321_u32.to_le_bytes());
+    let mut bus = Bus::init_with_bios(&rom, &bios);
+    for (address, value) in [
+        (0x0200_0010, 0x2222_1111),
+        (0x0300_0010, 0x3333_4444),
+        (0x0300_0020, 0xdead_beef),
+        (0x0500_0010, 0x5555_6666),
+        (0x0600_0010, 0x7777_0666),
+        (0x0700_0010, 0x0999_8888),
+    ] {
+        write_word(&mut bus, address, value);
+    }
+    let fetch = |bus: &mut Bus, address: u32, width: AccessWidth| {
+        bus.read(access(address, width, AccessKind::Sequential, AccessSource::CpuCode)).value
+    };
+    let seed = |bus: &mut Bus| {
+        assert_eq!(0xdead_beef, read_word(bus, 0x0300_0020));
+        assert_eq!(0xdead_beef, bus.open_bus_value);
+    };
+    let bios_word = u32::from_le_bytes(bios[4..8].try_into().unwrap());
+    for (address, half, latch) in [
+        (0x0800_0012, 0x8765, 0x8765_8765),
+        (0x0200_0012, 0x2222, 0x2222_2222),
+        (0x0500_0010, 0x6666, 0x6666_6666),
+        (0x0600_0012, 0x7777, 0x7777_7777),
+        (0x0700_0012, 0x0999, 0x0999_8888),
+        (0x0000_0006, bios_word >> 16, bios_word),
+        (0x0300_0010, 0x4444, 0xdead_4444),
+        (0x0300_0012, 0x3333, 0x3333_beef),
+    ] {
+        seed(&mut bus);
+        assert_eq!(half, fetch(&mut bus, address, AccessWidth::Half), "{address:08x}");
+        assert_eq!(latch, bus.open_bus_value, "latch after a Thumb fetch at {address:08x}");
+    }
+    // Two IWRAM fetches fill both halves.
+    seed(&mut bus);
+    fetch(&mut bus, 0x0300_0010, AccessWidth::Half);
+    fetch(&mut bus, 0x0300_0012, AccessWidth::Half);
+    assert_eq!(0x3333_4444, bus.open_bus_value);
+    // An ARM fetch and a halfword data read leave the value read.
+    assert_eq!(0x8765_4321, fetch(&mut bus, 0x0800_0010, AccessWidth::Word));
+    assert_eq!(0x8765_4321, bus.open_bus_value);
+    assert_eq!(0x8765, read_half(&mut bus, 0x0800_0012));
+    assert_eq!(0x8765, bus.open_bus_value);
 }
 
 #[test]
@@ -1009,6 +1212,8 @@ fn fifo_reset_clears_queued_words_but_preserves_the_active_playback_word() {
     write_word(&mut bus, 0x0400_00a0, 0x0403_0201);
     write_half(&mut bus, 0x0400_0100, 0xffff);
     write_half(&mut bus, 0x0400_0102, 1 << 7);
+    // The timer holds its reload through the cycle after the enabling write.
+    bus.elapse(1);
     bus.elapse(1);
     assert_eq!(4, bus.current_audio_sample().left);
     write_half(&mut bus, 0x0400_0082, routing | (1 << 11));
@@ -1039,6 +1244,8 @@ fn fifo_halfword_write_commits_a_whole_word_slot_with_untouched_lanes() {
     write_half(&mut bus, 0x0400_00a0, 0x0201);
     write_half(&mut bus, 0x0400_0100, 0xffff);
     write_half(&mut bus, 0x0400_0102, 1 << 7);
+    // The timer holds its reload through the cycle after the enabling write.
+    bus.elapse(1);
     for sample in [4, 8, 0, 0] {
         bus.elapse(1);
         assert_eq!(sample, bus.current_audio_sample().left);
@@ -1055,6 +1262,8 @@ fn mixed_audio_is_biased_and_clipped_to_the_ten_bit_dac_range() {
     }
     write_half(&mut bus, 0x0400_0100, 0xffff);
     write_half(&mut bus, 0x0400_0102, 1 << 7);
+    // The timer holds its reload through the cycle after the enabling write.
+    bus.elapse(1);
     bus.elapse(1);
     assert_eq!(510, bus.current_audio_sample().left);
     assert_eq!(0, bus.current_audio_sample().right);
@@ -1472,13 +1681,16 @@ fn timer_zero_unused_count_up_bit_preserves_the_exact_batched_irq_deadline() {
         }
         let started_at = bus.now();
         bus.begin_device_batch();
-        bus.elapse(1);
+        // Enabled by a write, the timer holds its reload for one cycle; set
+        // directly, it counts at once.
+        bus.elapse(1 + u64::from(!direct_state));
         assert_eq!(0, bus.irq.interrupt_request_flags);
         assert!(!bus.irq.irq_line);
         bus.elapse(1);
-        assert_eq!(started_at + 2, bus.now());
+        assert_eq!(started_at + 2 + u64::from(!direct_state), bus.now());
         assert_eq!(1 << 3, bus.irq.interrupt_request_flags);
-        assert!(bus.irq.irq_line);
+        // The request reaches the CPU IRQ_LATENCY cycles after the overflow.
+        assert_eq!(Some(bus.now() + evenfall_gba::bus::IRQ_LATENCY), bus.irq.irq_line_rises_at);
         bus.end_device_batch();
     }
 }
@@ -1604,7 +1816,9 @@ fn change_running_prescaler(
     bus.elapse(delay - 1);
     write_half(bus, 0x0400_0102, 0x00c0 | new_select as u16);
     let written_at = bus.now();
-    let ticks_left = 2 - (written_at / old_divisor - enabled_at / old_divisor);
+    // A prescaler edge in the cycle after the enabling write does not count.
+    let skipped = u64::from((enabled_at + 1).is_multiple_of(old_divisor));
+    let ticks_left = 2 - (written_at / old_divisor - enabled_at / old_divisor - skipped);
     (written_at / new_divisor + ticks_left) * new_divisor - written_at
 }
 
@@ -2146,6 +2360,7 @@ fn no_event_materialization_retains_simultaneous_input_serial_lcd_timer_and_dma_
     bus.dma_channels[3].control = 0xc000;
     bus.dma_channels[3].latched_source = 0x0400_0202;
     bus.dma_channels[3].latched_destination = 0x0300_0000;
+    bus.dma_channels[3].latched_word_count = 1;
     bus.dma_start_cycles[3] = Some(960);
     let inputs = [TimedInput {
         at: 960,
@@ -2210,8 +2425,11 @@ fn audio_dma_refill_timing_is_invariant_to_elapsed_cycle_chunking() {
     assert_eq!(0x11 * 4, coarse_samples[1].left);
 }
 
+/// At the limit the burst yields but keeps the bus: the access it
+/// interrupted completes without DMA, and the burst then resumes where it
+/// stopped and runs to whatever deadline its host sets.
 #[test]
-fn a_dma_burst_that_never_releases_the_bus_latches_a_livelock_and_returns() {
+fn a_dma_burst_that_never_releases_the_bus_yields_at_the_limit_and_resumes() {
     let mut bus = Bus::init(&[]);
     write_half(&mut bus, 0x0400_0084, 0x0080);
     write_half(&mut bus, 0x0400_0082, 0xfb00);
@@ -2225,13 +2443,21 @@ fn a_dma_burst_that_never_releases_the_bus_latches_a_livelock_and_returns() {
     write_word(&mut bus, 0x0400_0104, 0x0080_ffff);
     let started_at = bus.now();
     bus.elapse(1);
-    let livelock = bus.dma_livelock().expect("DMA livelock");
-    assert!(livelock.channel == 1 || livelock.channel == 2);
-    assert!(livelock.started_at >= started_at);
-    assert!(bus.now() - livelock.started_at >= Bus::MAX_DMA_BURST_CYCLES);
+    assert!(bus.dma_stalled());
+    assert!(bus.dma_burst_start >= started_at);
+    assert!(bus.now() - bus.dma_burst_start >= Bus::MAX_DMA_BURST_CYCLES);
     let after = bus.now();
+    let transfers = bus.dma_epoch;
     bus.elapse(100);
     assert_eq!(after + 100, bus.now());
+    assert_eq!(transfers, bus.dma_epoch, "the interrupted access completes without DMA");
+    assert!(bus.dma_stalled());
+    for deadline in [bus.now() + 1, bus.now() + 1000, bus.now() + 70_224] {
+        bus.continue_dma_stall(deadline);
+        assert!(bus.dma_stalled());
+        assert!(bus.now() >= deadline && bus.now() < deadline + 16, "{} {deadline}", bus.now());
+    }
+    assert!(bus.dma_epoch.wrapping_sub(transfers) > 70_224 / 64, "the burst runs on");
 }
 
 #[test]
@@ -2287,7 +2513,9 @@ fn a_halted_batch_wakes_at_the_lcd_or_timer_event_after_post_halt_charges_and_cu
                         assert!(!bus.idle_halt_until(bus.now() + split));
                     }
                     assert!(bus.idle_halt_until(bus.now() + 5000));
-                    assert_eq!(if timer { 702 } else { 960 }, bus.now());
+                    // The timer, enabled at cycle 2, holds its reload for one
+                    // cycle and overflows 700 counts later.
+                    assert_eq!(if timer { 703 } else { 960 }, bus.now());
                     assert_eq!(
                         if timer { 1 << 3 } else { 1 << 1 },
                         bus.irq.interrupt_request_flags
@@ -2318,6 +2546,7 @@ fn one_cycle_endpoint_preserves_simultaneous_timer_hblank_and_dma_ordering() {
     bus.dma_channels[0].control = (2 << 12) | (1 << 15);
     bus.dma_channels[0].latched_source = 0x0300_0100;
     bus.dma_channels[0].latched_destination = 0x0300_0200;
+    bus.dma_channels[0].latched_word_count = 1;
     let boundary = bus.read(access(
         0x0300_0000,
         AccessWidth::Word,
@@ -2331,4 +2560,33 @@ fn one_cycle_endpoint_preserves_simultaneous_timer_hblank_and_dma_ordering() {
     assert_eq!((1 << 1) | (1 << 3) | (1 << 4), bus.irq.interrupt_request_flags);
     assert_eq!(0x7fff, bus.framebuffer()[0]);
     assert_eq!(Some(963), bus.dma_start_cycles[0]);
+}
+
+/// GBATEK, DMA Transfers ("Source and Destination Address and Word Count
+/// Registers"): enabling a channel copies `CNT_L` into its internal counter,
+/// and each repeat reloads it from `CNT_L`. The mGBA suite's "DMA count
+/// latching" (`src/misc-edge.c`, recorded on hardware) rewrites `DMA3CNT_L`
+/// to 4 after enabling a repeating VBlank transfer of 2 halfwords to a fixed
+/// destination: the first transfer ends on halfword 1, the repeat on 5.
+#[test]
+fn dma_word_count_latches_on_enable_and_reloads_on_repeat() {
+    let mut bus = Bus::init(&[]);
+    for index in 0..32 {
+        write_half(&mut bus, 0x0200_0000 + 2 * index, index as u16);
+    }
+    write_half(&mut bus, 0x0200_0100, 0xffff);
+    write_word(&mut bus, 0x0400_00d4, 0x0200_0000);
+    write_word(&mut bus, 0x0400_00d8, 0x0200_0100);
+    // VBlank start, repeat, halfwords, source increments, destination fixed.
+    let control = 1 << 12 | 1 << 9 | 2 << 5;
+    write_word(&mut bus, 0x0400_00dc, control << 16 | 2);
+    write_half(&mut bus, 0x0400_00de, (control | 1 << 15) as u16);
+    write_half(&mut bus, 0x0400_00dc, 4);
+    let vblank = 160 * 1232;
+    bus.elapse(vblank + 100 - bus.now());
+    assert_eq!(1, read_half(&mut bus, 0x0200_0100));
+    assert_eq!(0x0200_0004, bus.dma_channels[3].latched_source);
+    bus.elapse(228 * 1232);
+    assert_eq!(5, read_half(&mut bus, 0x0200_0100));
+    assert_eq!(0x0200_000c, bus.dma_channels[3].latched_source);
 }

@@ -36,9 +36,14 @@ static uint32_t fnv1a(const volatile uint8_t *p, uint32_t n, uint32_t h) {
     return h;
 }
 
+/* TM1:TM0 as one count. TM0 may wrap between the two reads, so the high
+ * half is read again until it is stable around the low one. */
 static uint32_t elapsed32(void) {
-    uint32_t lo = MEM_IO[REG_TM0CNT_L / 2];
-    uint32_t hi = MEM_IO[REG_TM1CNT_L / 2];
+    uint32_t hi, lo;
+    do {
+        hi = MEM_IO[REG_TM1CNT_L / 2];
+        lo = MEM_IO[REG_TM0CNT_L / 2];
+    } while (MEM_IO[REG_TM1CNT_L / 2] != hi);
     return (hi << 16) | lo;
 }
 

@@ -1,0 +1,153 @@
+--- a/src/cpu.zig
++++ b/src/cpu.zig
+@@ -2701,14 +2701,19 @@ pub const Cpu = struct {
+         const addend_register: u4 = @truncate(instruction >> 12);
+         const multiplier_register: u4 = @truncate(instruction >> 8);
+         const multiplicand_register: u4 = @truncate(instruction);
+-        var result = self.registers[multiplicand_register] *% self.registers[multiplier_register];
+-        if (accumulate) result +%= self.registers[addend_register];
++        const multiplicand = self.registers[multiplicand_register];
++        const addend: u32 = if (accumulate) self.registers[addend_register] else 0;
++        var result = multiplicand *% self.registers[multiplier_register];
++        if (accumulate) result +%= addend;
+         // Capture the multiplier before the destination write: Rd may
+         // alias Rs (mul r3, r3, r2), and timing must use the original
+         // multiplier, not the product.
+         const multiplier = self.registers[multiplier_register];
+         self.registers[destination] = result;
+-        if (update_flags) self.setLogicalFlags(result);
++        if (update_flags) {
++            self.setLogicalFlags(result);
++            self.setMultiplyCarry(multiplyCarry(.short, multiplicand, multiplier, addend));
++        }
+ 
+         return multiplyIterations(multiplier, true) +
+             @intFromBool(accumulate);
+@@ -2783,11 +2788,11 @@ pub const Cpu = struct {
+                 @as(i64, @as(i32, @bitCast(multiplier))))
+         else
+             @as(u64, multiplicand) * @as(u64, multiplier);
+-        if (accumulate) {
+-            const addend = (@as(u64, self.registers[high_register]) << 32) |
+-                self.registers[low_register];
+-            product +%= addend;
+-        }
++        const addend: u64 = if (accumulate)
++            (@as(u64, self.registers[high_register]) << 32) | self.registers[low_register]
++        else
++            0;
++        product +%= addend;
+ 
+         self.registers[low_register] = @truncate(product);
+         self.registers[high_register] = @truncate(product >> 32);
+@@ -2797,12 +2802,19 @@ pub const Cpu = struct {
+             self.cpsr &= ~(negative_flag | zero_flag);
+             if (product & (@as(u64, 1) << 63) != 0) self.cpsr |= negative_flag;
+             if (product == 0) self.cpsr |= zero_flag;
++            const kind: MultiplyKind = if (signed) .long_signed else .long_unsigned;
++            self.setMultiplyCarry(multiplyCarry(kind, multiplicand, multiplier, addend));
+         }
+ 
+         bus.elapseCpuInternal(multiplyIterations(multiplier, signed) + 1 + @intFromBool(accumulate));
+         return .{};
+     }
+ 
++    inline fn setMultiplyCarry(self: *Cpu, carry: bool) void {
++        const carry_flag: u32 = 1 << 29;
++        self.cpsr = (self.cpsr & ~carry_flag) | (@as(u32, @intFromBool(carry)) << 29);
++    }
++
+     /// One iteration per significant multiplier byte beyond the first. A
+     /// signed multiplier's leading ones are insignificant, so fold them to
+     /// leading zeros; the nested all-zero/all-ones tests become thresholds.
+@@ -3547,6 +3559,8 @@ pub const Cpu = struct {
+                         const timing_operand = lhs;
+                         self.registers[destination] = result;
+                         self.setLogicalFlags(result);
++                        // MULS Rd, Rs, Rd: Rd is the multiplier.
++                        self.setMultiplyCarry(multiplyCarry(.short, rhs, lhs, 0));
+                         bus.elapseCpuInternal(multiplyIterations(timing_operand, true));
+                     },
+                     0x0, 0x1, 0xC, 0xE, 0xF => {
+@@ -9023,3 +9037,81 @@ test "CPU state rejects impossible bulk HLE service progress" {
+     } });
+     try expectInvalidCpuState(unaligned_records, 0);
+ }
++
++// Evenfall: the C flag of the ARM7TDMI's flag-setting multiplies, as
++// Evenfall's crates/cpu-arm/src/multiply.rs models it (zayd, "Solving the
++// Mystery of ARM7TDMI Multiply Carry Flag"): the carry-out of the barrel
++// shift that realigns the multiplier's carry-save carry vector.
++const MultiplyKind = enum { short, long_unsigned, long_signed };
++
++const low_33: u64 = (1 << 33) - 1;
++const low_34: u64 = (1 << 34) - 1;
++
++fn multiplyCarry(kind: MultiplyKind, multiplicand_in: u32, multiplier: u32, accumulator: u64) bool {
++    const signed = kind != .long_unsigned;
++    const multiplicand = multiplyWiden(multiplicand_in, signed);
++    var booth = multiplyWiden(multiplier, signed);
++    var sum = accumulator;
++    var carry: u64 = if (multiplier & 1 != 0) ~multiplicand else 0;
++    var accumulator_high = accumulator >> 34;
++    var settled = std.math.rotr(u128, @as(u128, carry & 1), 1);
++    sum >>= 1;
++    carry >>= 1;
++    var cycles: usize = 0;
++    while (true) {
++        const vectors = multiplyCompress(sum, carry, multiplicand, booth, &accumulator_high);
++        settled = std.math.rotr(u128, settled | @as(u128, vectors[1] & 0xFF), 8);
++        sum = vectors[0] >> 8;
++        carry = vectors[1] >> 8;
++        booth = multiplyShift33(booth, 8);
++        cycles += 1;
++        if (booth == 0 or (signed and booth == low_33)) break;
++    }
++    settled |= @as(u128, carry);
++    const rotations = [_]u7{ 23, 15, 7, 31 };
++    const realigned = std.math.rotr(u128, settled, rotations[cycles - 1]);
++    const bit: u7 = if (kind == .short and cycles == 4) 95 else 127;
++    return (realigned >> bit) & 1 != 0;
++}
++
++fn multiplyWiden(value: u32, signed: bool) u64 {
++    if (!signed) return value;
++    return @as(u64, @bitCast(@as(i64, @as(i32, @bitCast(value))))) & low_34;
++}
++
++fn multiplyCompress(sum_in: u64, carry_in: u64, multiplicand: u64, booth: u64, accumulator_high: *u64) [2]u64 {
++    var sum = sum_in;
++    var carry = carry_in;
++    var settled_sum: u64 = 0;
++    var settled_carry: u64 = 0;
++    for (0..4) |stage| {
++        const shift: u6 = @intCast(2 * stage);
++        sum &= low_33;
++        carry &= low_33;
++        const window = (booth >> shift) & 7;
++        const addend: u64 = switch (window) {
++            1, 2 => multiplicand,
++            3 => multiplicand << 1,
++            4 => ~(multiplicand << 1),
++            5, 6 => ~multiplicand,
++            else => 0,
++        } & low_34;
++        const negated: u64 = @intFromBool(window >= 4 and window <= 6);
++        const low = addend & low_33;
++        const stage_sum = sum ^ low ^ carry;
++        const stage_carry = (((sum & low) | (low & carry) | (carry & sum)) << 1) | negated;
++        settled_sum |= (stage_sum & 3) << shift;
++        settled_carry |= (stage_carry & 3) << shift;
++        const top = (accumulator_high.* & 1) + @intFromBool((carry >> 32) & 1 == 0) +
++            @intFromBool((addend >> 33) & 1 == 0);
++        sum = (stage_sum >> 2) | (top << 31);
++        carry = (stage_carry >> 2) | (@as(u64, @intFromBool((accumulator_high.* >> 1) & 1 == 0)) << 32);
++        accumulator_high.* >>= 2;
++    }
++    return .{ settled_sum | (sum << 8), settled_carry | (carry << 8) };
++}
++
++fn multiplyShift33(value: u64, shift: u6) u64 {
++    const extended: i64 = @as(i64, @bitCast(value << 31)) >> 31;
++    return @as(u64, @bitCast(extended >> shift)) & low_33;
++}

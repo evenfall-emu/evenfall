@@ -41,6 +41,16 @@ macro_rules! frame_case {
 pub(super) fn cases() -> Vec<Case> {
     vec![
         report_case!("timer", "timer_irq", 10 << 16 | 2 << 8 | 2, Config::default(), None),
+        Case {
+            name: "probe-timer-start",
+            roms: &["timer_start.gba"],
+            run: |ctx| table(ctx, &timer_start_reads()),
+        },
+        Case {
+            name: "probe-timer-irq-latency",
+            roms: &["timer_irq_latency.gba"],
+            run: |ctx| table(ctx, &TIMER_IRQ_ADDITIONS),
+        },
         report_case!("display-irq", "display_irq", 456 << 16 | 2 << 8 | 2, Config::default(), None),
         report_case!(
             "keypad",
@@ -247,6 +257,77 @@ fn report(ctx: &Context, expected: u32, config: Config<'_>, hook: Option<Hook>) 
     let mut machine = ctx.boot(0, config);
     run_to_idle(ctx, &mut machine, hook, None)?;
     expect_report(&machine, expected)
+}
+
+/// The mGBA suite's "Timer IRQ tests" table (`src/timer-irq.c`, recorded on
+/// hardware): for reload V from FFFFh down to FFF7h, what the counter reads
+/// after 0 to 9 NOPs. `IRQ` marks the reads that return the IRQ handler's
+/// stopped value (51h or 52h) instead.
+const IRQ: i32 = i32::MAX;
+const SUITE_TIMER_IRQ_ROWS: [[i32; 10]; 9] = [
+    [0, 1, 2, 3, IRQ, IRQ, IRQ, IRQ, IRQ, IRQ],
+    [0, 1, 2, 3, 4, IRQ, IRQ, IRQ, IRQ, IRQ],
+    [-1, 0, 1, 2, 3, 4, IRQ, IRQ, IRQ, IRQ],
+    [-2, -1, 0, 1, 2, 3, 4, IRQ, IRQ, IRQ],
+    [-3, -2, -1, 0, 1, 2, 3, 4, IRQ, IRQ],
+    [-4, -3, -2, -1, 0, 1, 2, 3, 4, IRQ],
+    [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4],
+    [-6, -5, -4, -3, -2, -1, 0, 1, 2, 3],
+    [-7, -6, -5, -4, -3, -2, -1, 0, 1, 2],
+];
+
+/// `timer_start.c`'s reads: the suite's rows with the IRQ off. Timer 0
+/// counts once per cycle and each NOP takes one, so a read the IRQ
+/// preempted on hardware is the one before it plus one.
+fn timer_start_reads() -> Vec<u32> {
+    let mut reads = Vec::new();
+    for row in SUITE_TIMER_IRQ_ROWS {
+        let mut previous = 0;
+        for read in row {
+            previous = if read == IRQ { previous + 1 } else { read };
+            reads.push(u32::from(previous as u16));
+        }
+    }
+    reads
+}
+
+/// `timer_irq_latency.c`'s counts for V from FFFFh to FFFAh: how many
+/// one-cycle instructions ran after the start sequence before the IRQ, which
+/// is the NOP count at which the suite's row first reads the handler's value.
+const TIMER_IRQ_ADDITIONS: [u32; 6] = [4, 5, 6, 7, 8, 9];
+
+/// A probe that stores a table at the start of EWRAM, in its element width
+/// (halfwords for more than 16 entries, words otherwise), and reports the
+/// entry count.
+fn table(ctx: &Context, expected: &[u32]) -> Result {
+    let mut machine = ctx.boot(0, Config::default());
+    run_to_idle(ctx, &mut machine, None, None)?;
+    expect_report(&machine, expected.len() as u32)?;
+    let width = if expected.len() > 16 { 2 } else { 4 };
+    let mut bytes = vec![0; expected.len() * width];
+    machine
+        .inspect_memory(0x0200_0000, &mut bytes)
+        .map_err(|error| format!("cannot read the table: {error:?}"))?;
+    let got: Vec<u32> = bytes
+        .chunks(width)
+        .map(|entry| entry.iter().rev().fold(0, |value, &byte| value << 8 | u32::from(byte)))
+        .collect();
+    let wrong: Vec<String> = got
+        .iter()
+        .zip(expected)
+        .enumerate()
+        .filter(|(_, (got, want))| got != want)
+        .map(|(index, (got, want))| format!("[{index}] {got:x} (want {want:x})"))
+        .collect();
+    if !wrong.is_empty() {
+        return Err(format!(
+            "{} of {} entries differ: {}",
+            wrong.len(),
+            got.len(),
+            wrong.join(", ")
+        ));
+    }
+    Ok(())
 }
 
 fn frame(ctx: &Context, pixel: Pixel) -> Result {

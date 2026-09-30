@@ -465,6 +465,44 @@ test("STOP and unsupported guest code remain explicit terminal results", async (
   }
 });
 
+test("a DMA burst that holds the bus reports dma_stall while video runs on", async () => {
+  // Direct Sound DMA1/DMA2 refill FIFO A/B from IWRAM while timers 0 and 1
+  // overflow every cycle, then the CPU counts in r2.
+  const rom = Buffer.from(
+    "0103a0e38010a0e3b418c0e1fb1ca0e3b218c0e13c109fe5bc1080e538109fe5" +
+      "c01080e534109fe5b61cc0e124109fe5c81080e528109fe5cc1080e51c109fe5" +
+      "b21dc0e11c109fe5001180e5041180e5012082e2fdffffea00200003a0000004" +
+      "40b70000a4000004ffff8000",
+    "hex",
+  );
+  const core = await WasmCore.create(wasm);
+  try {
+    core.load(new Uint8Array(rom));
+    // The call that reaches the in-access limit returns about 2^24 cycles
+    // late; the CPU is stalled from then on.
+    assert.equal(
+      core.runUntil(F).reason,
+      "instruction_boundary_after_deadline",
+    );
+    const stalled = core.inspect();
+    assert.ok(stalled.cycle > 1n << 24n);
+    const step = core.step();
+    assert.equal(step.reason, "dma_stall");
+    assert.equal(step.cycle, stalled.cycle);
+    assert.throws(() => core.saveState());
+    const deadline = stalled.cycle + F;
+    const run = core.runUntil(deadline);
+    assert.ok(run.cycle >= deadline && run.cycle < deadline + 16n);
+    const after = core.inspect();
+    assert.equal(after.frames, stalled.frames + 1n);
+    assert.deepEqual(after.registers, stalled.registers);
+    assert.equal(after.nextInstructionAddress, stalled.nextInstructionAddress);
+    assert.equal(core.step().reason, "dma_stall");
+  } finally {
+    core.dispose();
+  }
+});
+
 const extra = process.env.EVENFALL_TEST_ROMS
   ? JSON.parse(process.env.EVENFALL_TEST_ROMS)
   : [];
