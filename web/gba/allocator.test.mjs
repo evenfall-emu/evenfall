@@ -1,10 +1,10 @@
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { wasm } from "./scripts/wasm-test.mjs";
 
 test(
   "Rust wasm allocator grows by actual large allocation size and reuses released space",
-  { skip: !wasm && "Rust WASM not built: web/gba/evenfall-gba.wasm" },
+  { skip: !wasm },
   async () => {
     const module = new WebAssembly.Module(wasm);
     assert.deepEqual(WebAssembly.Module.imports(module), []);
@@ -34,7 +34,7 @@ test(
 
 test(
   "Rust ABI reuses freed large buffers, preserves live bytes across growth, and survives OOM",
-  { skip: !wasm && "Rust WASM not built: web/gba/evenfall-gba.wasm" },
+  { skip: !wasm },
   () => {
     // Checks the allocator only through observable behavior, not through
     // its internal bitmap or resize details.
@@ -106,7 +106,7 @@ test(
 
 test(
   "caller-sized read, state, and bundle outputs fail fallibly while the session remains usable",
-  { skip: !wasm && "Rust WASM not built: web/gba/evenfall-gba.wasm" },
+  { skip: !wasm },
   () => {
     for (const [occupiedMiB, stateFails] of [
       [6.25, false],

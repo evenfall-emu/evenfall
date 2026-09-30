@@ -172,7 +172,7 @@ const sum = (a: Term | null, b: Term | null): Term =>
  * writes, and control flow forgets everything.
  */
 function evaluate(rom: Uint8Array, from: number, to: number): (Term | null)[] {
-  const regs: (Term | null)[] = new Array(16).fill(null);
+  const regs: (Term | null)[] = Array.from({ length: 16 }, () => null);
   for (let pc = from; pc < to; pc += 2) {
     const i = rom[pc] | (rom[pc + 1] << 8);
     const rd = i & 7,

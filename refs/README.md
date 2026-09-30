@@ -6,7 +6,7 @@ The checkouts are kept out of Git, and this file records where they come from.
 ROMs, BIOS dumps, saves and other user content are never part of setup.
 
 ```sh
-tools/setup-refs.sh                   # every reference
+tools/setup-refs.sh                   # every reference except zigba, fetched only when named
 tools/setup-refs.sh gba-tests suite   # chosen references, by directory name
 ```
 
@@ -23,7 +23,7 @@ It skips a checkout already at its pin, and refuses to replace one with local ch
 | `delta/`          | <https://github.com/rileytestut/Delta>                     | `c1d3d068e019e6493eed45654569db3cc5beb86a`          | AGPL-3.0    | where the VBA-M benchmark comes from: Delta pins `gbadeltacore/` here  |
 | `gbadeltacore/`   | <https://github.com/rileytestut/GBADeltaCore>              | `869c34aeca9dd2b3fbd329092bb2743b0ae80c98`          | none stated | Delta's VBA-M build (sources, flags, setup) and its bundled SFML (zlib) |
 | `vbam/`           | <https://github.com/visualboyadvance-m/visualboyadvance-m> | `453fa0decf179360926fb417725a794aa496d6e3`          | GPL-2.0     | performance comparison: the VBA-M core `gbadeltacore/` pins            |
-| `zigba/`          | <https://github.com/evenfall-emu/zigba>                    | `add59e5957b75f29d084813336ee20e300fc0b6e`          | AGPL-3.0    | Evenfall's predecessor, for the internal parity and benchmark tools    |
+| `zigba/`          | <https://github.com/evenfall-emu/zigba>                    | `add59e5957b75f29d084813336ee20e300fc0b6e`          | AGPL-3.0    | Evenfall's predecessor, for the optional `zigba` benchmark adapter |
 
 Other emulators are studied and compared against, never copied.
 An emulator's behavior is a comparison point, not a hardware specification.

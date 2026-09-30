@@ -8,7 +8,7 @@
 //! a character minus `' '` and palette bank 1 marks a failing line. The ROM
 //! draws only the first 29 characters of a test name.
 
-use crate::rust_backend;
+use crate::gba;
 use evenfall_gba::machine::Machine;
 use evenfall_replay::{InputChange, Scenario, Trace};
 use serde::Serialize;
@@ -78,7 +78,7 @@ fn scenario_name(suite: &Suite, boot: Boot) -> String {
 }
 
 pub fn scenario_path(root: &Path, suite: &Suite, boot: Boot) -> PathBuf {
-    root.join(format!("tools/parity/scenarios/{}.json", scenario_name(suite, boot)))
+    root.join(format!("tools/scenarios/manifests/{}.json", scenario_name(suite, boot)))
 }
 
 /// The list's RIGHT key: the page's last row, then the next page, then the
@@ -325,49 +325,36 @@ fn summary(results: &Results) -> String {
     )
 }
 
-/// Prints each suite's results from the first Rust schedule's trace written
-/// by `evenfall-parity run`, and whether the ZiGBA oracle's trace shows the
-/// same results. The list is read from Evenfall's save states. ZiGBA's states
-/// use its own format, so its results are the same exactly when every
-/// checkpoint's frame, which draws the list, and SRAM log match Evenfall's.
-/// Returns an error when a trace is missing or unreadable or when the two
-/// cores' checkpoints differ; failing suite tests are results, not errors.
+/// Prints each suite's results from the first schedule's trace written by
+/// `evenfall-scenarios run`, reading the list from its save states. Returns
+/// an error when a trace is missing or unreadable; failing suite tests are
+/// results, not errors.
 pub fn report(root: &Path, traces: &Path, with_log: bool) -> Result<(), Box<dyn Error>> {
     let mut problems = 0;
     let mut out = String::new();
     for (boot, suite) in BOOTS.into_iter().flat_map(|boot| SUITES.iter().map(move |s| (boot, s))) {
         let scenario_file = scenario_path(root, suite, boot);
         let scenario: Scenario<InputChange> = serde_json::from_slice(&fs::read(&scenario_file)?)?;
-        let mut machine =
-            rust_backend::make_machine(&scenario_file, &scenario.assets, &scenario.config)?;
-        let dir = traces.join(&scenario.name);
-        let read = |file: &str| -> Result<Trace, Box<dyn Error>> {
-            Trace::read(fs::File::open(dir.join(file))?).map_err(|e| format!("{file}: {e}").into())
-        };
-        let traces = read("oracle.trace").and_then(|zigba| {
-            let evenfall = read("rust-slice-0.trace")?;
-            let results = extract(&mut machine, &evenfall, suite)
-                .map_err(|e| format!("rust-slice-0.trace: {e}"))?;
-            Ok((zigba, evenfall, results))
-        });
-        let (zigba, evenfall, (results, log)) = match traces {
-            Ok(traces) => traces,
+        let mut machine = gba::make_machine(&scenario_file, &scenario.assets, &scenario.config)?;
+        let file = traces.join(&scenario.name).join("slice-0.trace");
+        let results = fs::File::open(&file)
+            .and_then(Trace::read)
+            .map_err(Box::<dyn Error>::from)
+            .and_then(|trace| extract(&mut machine, &trace, suite));
+        let (results, log) = match results {
+            Ok(results) => results,
             Err(error) => {
-                eprintln!("{}: {error}", scenario.name);
+                eprintln!("{}: slice-0.trace: {error}", scenario.name);
                 problems += 1;
                 continue;
             }
         };
-        let same = zigba.0.len() == evenfall.0.len()
-            && zigba.0.iter().zip(&evenfall.0).all(|(z, e)| z.frame == e.frame && z.save == e.save);
-        problems += usize::from(!same);
         writeln!(
             out,
-            "{} ({}): {}; ZiGBA {}",
+            "{} ({}): {}",
             suite.title,
             if boot == Boot::Hle { "HLE" } else { "Cult-of-GBA BIOS" },
-            summary(&results),
-            if same { "same" } else { "DIFFERENT" }
+            summary(&results)
         )?;
         for (index, (name, pass)) in results.tests.iter().enumerate() {
             if !pass {
@@ -383,7 +370,7 @@ pub fn report(root: &Path, traces: &Path, with_log: bool) -> Result<(), Box<dyn 
     }
     print!("{out}");
     if problems > 0 {
-        return Err(format!("{problems} suites lack traces or differ between cores").into());
+        return Err(format!("{problems} suites lack readable traces").into());
     }
     Ok(())
 }

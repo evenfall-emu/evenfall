@@ -286,7 +286,6 @@ test("ring wrap preserves order and budget rebasing; failed snapshots expose a r
     assert.equal(recorder.capture().history.budgetSnapshots, 25);
     replayFailureBundle(b, recorder.capture());
     assert.deepEqual(a.saveState(), b.saveState());
-    const saveState = a.saveState;
     a.saveState = () => {
       throw new Error("snapshot unavailable");
     };
@@ -301,7 +300,7 @@ test("ring wrap preserves order and budget rebasing; failed snapshots expose a r
       assert.equal(recorder.operationCount, 4);
       assert.ok(recorder.historyBytes <= recorder.maxHistoryBytes);
     } finally {
-      a.saveState = saveState;
+      delete a.saveState;
     }
   } finally {
     a.dispose();

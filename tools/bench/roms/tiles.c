@@ -99,7 +99,7 @@ static void compute_frame(uint32_t frame) {
     uint32_t wx = 40 + (uint32_t)((sine256(frame) * 40 >> 8) + 40);
     uint32_t wy = 30 + (uint32_t)((sine256(frame * 2 + 64) * 20 >> 8) + 20);
     /* The right edge stays clear of the screen's: near x=235, pinned mGBA
-     * places it differently from ZiGBA and NanoBoyAdvance. */
+     * places it differently from NanoBoyAdvance. */
     window[0] = (uint16_t)(wx << 8 | (wx + 96));
     window[1] = (uint16_t)(wy << 8 | (wy + 80));
 }

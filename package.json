@@ -8,12 +8,11 @@
     "web/*"
   ],
   "scripts": {
-    "check": "vp check && npm run typecheck",
-    "typecheck": "npm run check --workspaces --if-present",
+    "check": "vp check",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",
     "lint": "vp lint",
-    "test": "npm run test -w @evenfall/gba"
+    "test": "vp test"
   },
   "engines": {
     "node": "^24.11.0 || >=26.0.0"

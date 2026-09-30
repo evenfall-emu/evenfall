@@ -300,7 +300,7 @@ export async function runScenario(core, manifest, assets, options = {}) {
       options.capture === false
         ? null
         : new FailureRecorder(core, {
-            ...(options.capture ?? {}),
+            ...options.capture,
             identity: { manifest: m, build: result.build },
           });
     const execution = recorder ?? core;

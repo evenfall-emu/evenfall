@@ -45,17 +45,17 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo test --workspace --release
-npm run fmt:check
-npm run check
-npm run build:wasm -w @evenfall/gba && npm test
+vp fmt --check
+vp check
+npm run build:wasm -w @evenfall/gba && vp test
 ```
 
 | You changed                                        | Run                                                                        |
 | -------------------------------------------------- | -------------------------------------------------------------------------- |
 | the core (`systems/gba`, `crates/`)                | `cargo test` in debug and release, and the validator with `--require-roms` |
 | a hot path (CPU engine, bus, DMA, APU, compositor) | the above, and `node tools/bench/inline-stability.mjs`, which must exit 0  |
-| the WebAssembly module or SDK (`web/gba`)          | `npm run build:wasm -w @evenfall/gba`, `npm run check`, `npm test`         |
-| documentation only                                 | `npm run fmt:check` and `git diff --check`                                 |
+| the WebAssembly module or SDK (`web/gba`)          | `npm run build:wasm -w @evenfall/gba`, `vp check`, `vp test`               |
+| documentation only                                 | `vp fmt --check` and `git diff --check`                                    |
 
 For emulation changes, add a focused test at the narrowest stable place (normally `Machine`, `Bus` or the device that owns the behavior), with expected values from an independent source rather than from the code under test.
 When a behavior can only be seen end to end, a small probe ROM in `probe/` with its expected result in the validator is the preferred evidence.
@@ -63,7 +63,7 @@ When a behavior can only be seen end to end, a small probe ROM in `probe/` with 
 ## Pull requests
 
 - Keep each pull request to one change, and explain the visible behavior and its evidence in the description.
-- Format Rust with `cargo fmt` and everything else with `npm run fmt`.
+- Format Rust with `cargo fmt` and everything else with `vp fmt`.
 - Write commit subjects as short imperative sentences, such as "Keep a running timer's prescaler phase below its new divisor".
 - Update the documentation for any behavior, API or save-state format you change: hardware behavior in [`docs/gba/hardware/`](docs/gba/hardware/README.md), formats and runtime design in [`docs/design/`](docs/design/save-states.md).
   Documentation describes the current system, and history belongs in commit messages.

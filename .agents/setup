@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Prepares an Amp orb (Debian 12) to build, test and run the parity harness:
-# the pinned Rust toolchain, Zig 0.16 for the ZiGBA oracle, Node for the SDK,
-# and the Arm GNU toolchain for the probe ROMs. Idempotent and non-interactive.
+# Prepares an Amp orb (Debian 12) to build, test and run the scenario runner:
+# the pinned Rust toolchain, Node for the SDK, and the Arm GNU toolchain for
+# the probe ROMs. Idempotent and non-interactive.
 set -euo pipefail
 
 started=$SECONDS
@@ -49,11 +49,6 @@ install_archive() {
 }
 
 install_archive \
-    zig 0.16.0 \
-    https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz \
-    70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00 \
-    zig-x86_64-linux-0.16.0 zig
-install_archive \
     node 24.11.0 \
     https://nodejs.org/dist/v24.11.0/node-v24.11.0-linux-x64.tar.xz \
     46da9a098973ab7ba4fca76945581ecb2eaf468de347173897044382f10e0a0a \
@@ -64,7 +59,6 @@ install_archive \
     597893282ac8c6ab1a4073977f2362990184599643b4c5ee34870a8215783a16 \
     arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi bin/arm-none-eabi-gcc
 
-ln -sfn "$toolchains/zig-0.16.0/zig" "$local_bin/zig"
 for command in node npm npx corepack; do
     ln -sfn "$toolchains/node-24.11.0/bin/$command" "$local_bin/$command"
 done
@@ -100,7 +94,7 @@ rustup show active-toolchain >/dev/null 2>&1 || rustup toolchain install
 rustup show active-toolchain
 
 step "Fetching pinned references"
-tools/setup-refs.sh zigba gba-tests cult-gba-bios suite
+tools/setup-refs.sh gba-tests cult-gba-bios suite
 
 step "Fetching Cargo dependencies"
 cargo fetch --locked

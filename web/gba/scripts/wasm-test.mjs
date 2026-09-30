@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 
 export const wasm = await readFile(
   new URL("../evenfall-gba.wasm", import.meta.url),
@@ -15,11 +15,8 @@ export const scalarWasm = await readFile(
   throw error;
 });
 
+const missing = "Rust WASM not built: web/gba/evenfall-gba.wasm";
+
 export const wasmTest = wasm
   ? test
-  : (name, fn) =>
-      test(
-        name,
-        { skip: "Rust WASM not built: web/gba/evenfall-gba.wasm" },
-        fn,
-      );
+  : (name) => test(name, (context) => context.skip(missing));

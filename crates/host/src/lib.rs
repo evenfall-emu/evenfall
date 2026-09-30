@@ -1,7 +1,7 @@
 //! The host-facing interface every Evenfall system implements.
 //!
 //! A system is a deterministic machine with no host I/O. Hosts (the CLI, the
-//! WebAssembly adapter, the parity harness, benchmarks and tests) feed it
+//! WebAssembly adapter, the scenario runner, benchmarks and tests) feed it
 //! bytes and timestamped input and read back pixels, samples, save media and
 //! state. The same media, configuration and timestamped inputs produce the
 //! same observations however a host slices execution into calls.

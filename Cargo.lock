@@ -232,22 +232,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "evenfall-parity"
-version = "0.1.0"
-dependencies = [
- "evenfall-gba",
- "evenfall-host",
- "evenfall-replay",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "evenfall-replay"
 version = "0.1.0"
 dependencies = [
  "blake3",
  "evenfall-host",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "evenfall-scenarios"
+version = "0.1.0"
+dependencies = [
+ "evenfall-gba",
+ "evenfall-host",
+ "evenfall-replay",
  "serde",
  "serde_json",
 ]

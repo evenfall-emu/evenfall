@@ -55,6 +55,7 @@ test("gameplay journal reproduces machine state and both CLI formats", async () 
       ],
     ]) {
       const child = spawnSync(process.execPath, args, {
+        cwd: new URL("..", import.meta.url),
         encoding: "utf8",
         timeout: 30000,
       });

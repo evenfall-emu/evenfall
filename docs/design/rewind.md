@@ -1,7 +1,7 @@
 # Rewind
 
 Rewind lets a player step back through recent play.
-While the game runs, the session saves a complete [`ZIGBAST1` save state](save-states.md) every second or so into an in-memory history.
+While the game runs, the session saves a complete [save state](save-states.md) every second or so into an in-memory history.
 Rewinding picks one of those states and loads it with the same loader as any save state, so there is no separate restore path to keep correct.
 Rewind never changes how the guest runs, and none of its settings or history end up in a portable save state.
 
@@ -99,11 +99,8 @@ When removing entries leaves an old anchor with a single dependent, the buffer r
 
 A copy delta (entry encoding 3) describes the new state as a sequence of literal bytes and copies of at least 12 bytes from anywhere in the anchor.
 
-Copying from anywhere, and not only from the same offset, matters because a state's layout shifts.
-When a field's encoded length changes, for example an `Option` becoming `Some`, everything after it moves.
-A same-offset comparison would see every following byte as changed and store it again.
-A copy delta pays for one change of displacement and carries on copying.
-Data that moved elsewhere in the state is still found.
+Save states have a fixed layout, so most unchanged bytes sit at the same offset in both states, and the encoder always tries that first.
+Copying from anywhere catches the rest: data a game moved within its own memory, such as a shifted buffer or a scrolled map, is copied instead of stored again.
 
 To find copies, the buffer keeps the current anchor decoded, along with an `AnchorIndex`.
 The index is a 128 Ki-slot table (512 KiB) that maps the 8 bytes at every fourth offset of the anchor to their position.
@@ -114,16 +111,9 @@ The encoded delta starts with a list of varint ops (literal length, copy length,
 The literal bytes follow the ops.
 Bytes after the last copy are stored as trailing literals.
 
-### Word-run deltas
-
-Older bundles use a simpler delta (entry encoding 2).
-It compares the new state with the anchor 32-bit word by 32-bit word at the same offsets, after zero-extending or truncating the anchor to the new state's size.
-It stores varint skip and copy run headers, then the changed words, then any trailing partial word.
-Evenfall still reads this format but no longer writes it.
-
 ### Framing and decoding
 
-Both kinds of delta start with the target length and the raw delta length as two `u32`, followed by raw DEFLATE.
+A copy delta starts with the target length and the raw delta length as two `u32`, followed by raw DEFLATE.
 Complete compressed states start with the raw length as a `u64`, followed by raw DEFLATE.
 
 Stored bytes can come from an imported file, so decoding treats them as untrusted.
@@ -133,7 +123,7 @@ It limits a state to 2 MiB and a raw delta to 4 MiB, and checks every run, copy 
 ### Compressor
 
 Evenfall writes raw DEFLATE with **miniz_oxide**.
-Imported entries are never recompressed, so an imported bundle exports with its entries unchanged.
+Imported entries are never recompressed, so a bundle exports with its entries unchanged.
 
 zstd with the anchor as a dictionary stores about 10% less during play.
 Its C library would add about 520 KB to the WebAssembly module (120 KB gzipped), against 14 KB for the copy delta, and would need a C toolchain in the build, which is why rewind doesn't use it.
@@ -179,14 +169,12 @@ It says nothing about who made the bundle.
 
 ### Format
 
-Bundles are little-endian and versioned separately from save states.
-Version 2 adds copy deltas to the original version 1.
-The writer emits version 1 whenever no entry is a copy delta, so older readers can still load it.
-A version 1 bundle that contains a copy delta is rejected.
+Bundles are little-endian, with magic `EFREWIND` and version 3, the only version accepted.
+Bundles contain save states, so a new state format also needs a new bundle version.
 
 | Section               | Contents                                                      |
 | --------------------- | ------------------------------------------------------------- |
-| Header                | magic `ZGBRWD\0\0` (8 bytes), version `u32` = 1 or 2          |
+| Header                | magic `EFREWIND` (8 bytes), version `u32` = 3                 |
 | Live state            | `u32` length, then a complete portable state of at most 2 MiB |
 | Policy                | the retention settings and buffer counters, listed below      |
 | Anchors               | per anchor, its id `u32`, stored length `u32` and bytes       |
@@ -195,7 +183,7 @@ A version 1 bundle that contains a copy delta is rejected.
 
 The policy section holds, in order, the budget `u32`, interval `u16`, compression `u8` (0 off, 1 fast, 2 delta), age exponent as `f64` bits, Q8 speed `u16`, next sequence `u64`, last-capture flag `u8` and frame `u64`, current-anchor flag `u8` and id `u32`, next anchor id `u32`, anchor count `u32` and entry count `u32`.
 
-Each entry holds its frame, cycle and sequence (`u64` each), its encoding `u8` (0 raw, 1 deflate, 2 word-run delta, 3 copy delta), its anchor id `u32`, its stored length `u32` and the stored bytes.
+Each entry holds its frame, cycle and sequence (`u64` each), its encoding `u8` (0 raw, 1 deflate, 3 copy delta), its anchor id `u32`, its stored length `u32` and the stored bytes.
 
 ## How it is checked
 
@@ -203,7 +191,7 @@ The buffer's tests live in [`crates/state/tests/rewind.rs`](../../crates/state/t
 The session's tests live in [`systems/gba/src/session.rs`](../../systems/gba/src/session.rs), and the browser tests in `web/gba` exercise the SDK.
 No test yet covers rewind under allocation failure, or a full rewind session in a browser.
 
-A [bundle written by Evenfall's predecessor](../../crates/state/tests/fixtures/zigba-rewind-bundle.bin) checks that Evenfall imports it, decodes every checkpoint to the expected state, and exports the imported entries unchanged.
+`bundle_round_trip_and_corrupt_history_rejection` writes and reloads bundles, and checks that corrupt ones are rejected with the live state and history untouched.
 
 ## Known limits
 
