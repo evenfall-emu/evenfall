@@ -200,21 +200,21 @@ This follows GBATEK, with mGBA and NanoBoyAdvance as cross-checks.
 
 OAM holds 128 sprite entries of three 16-bit attributes each, with 32 groups of affine parameters interleaved between them ([LCD OBJ - OAM Attributes][gbatek-oam]):
 
-| Attribute | Bits  | Field                                                                          |
-| --------- | ----- | ------------------------------------------------------------------------------ |
-| 0         | 0–7   | Y, wrapping at 256                                                             |
-| 0         | 8     | affine                                                                         |
-| 0         | 9     | double size (affine) or hidden (regular)                                       |
-| 0         | 10–11 | mode: normal, semi-transparent, sprite window; 3 is prohibited and never drawn |
-| 0         | 12    | mosaic                                                                         |
-| 0         | 13    | 256 colors                                                                     |
-| 0         | 14–15 | shape: square, wide, tall; 3 is prohibited and never drawn                     |
-| 1         | 0–8   | X, wrapping at 512                                                             |
-| 1         | 9–13  | affine parameter group (affine), or bits 12 and 13 for flips (regular)         |
-| 1         | 14–15 | size                                                                           |
-| 2         | 0–9   | first tile number                                                              |
-| 2         | 10–11 | priority relative to backgrounds                                               |
-| 2         | 12–15 | palette bank (16-color sprites)                                                |
+| Attribute | Bits  | Field                                                                        |
+| --------- | ----- | ---------------------------------------------------------------------------- |
+| 0         | 0–7   | Y, wrapping at 256                                                           |
+| 0         | 8     | affine                                                                       |
+| 0         | 9     | double size (affine) or hidden (regular)                                     |
+| 0         | 10–11 | mode: normal, semi-transparent, sprite window (3 is prohibited, never drawn) |
+| 0         | 12    | mosaic                                                                       |
+| 0         | 13    | 256 colors                                                                   |
+| 0         | 14–15 | shape: square, wide, tall (3 is prohibited, never drawn)                     |
+| 1         | 0–8   | X, wrapping at 512                                                           |
+| 1         | 9–13  | affine parameter group (affine), or bits 12 and 13 for flips (regular)       |
+| 1         | 14–15 | size                                                                         |
+| 2         | 0–9   | first tile number                                                            |
+| 2         | 10–11 | priority relative to backgrounds                                             |
+| 2         | 12–15 | palette bank (16-color sprites)                                              |
 
 Sprites take their tiles from VRAM at `10000h` and their colors from the sprite half of palette RAM (entries 256–511).
 A sprite whose X lies past the right edge wraps around to the left edge once X plus its width reaches 512, and its off-screen part is clipped.

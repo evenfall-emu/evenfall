@@ -255,8 +255,3 @@ The [benchmark README](../tools/bench/README.md) documents the runner, the harne
 The [divan benches](../systems/gba/benches/hot_paths.rs) time APU runs, state encoding and a mode-3 frame through the bus in isolation.
 They help locate a cost, but only the ROM comparison says whether a change made the emulator faster.
 The `profiling` profile is `release` with full debug info, for `perf`.
-
-## Open questions
-
-- How do these ratios hold on real games, and in the browser?
-  The benchmark ROMs are synthetic and weigh every path the same.
