@@ -2,6 +2,8 @@
 /artifacts/
 /refs/*
 !/refs/README.md
+# The private internal-docs repository, cloned in place (see AGENTS.md).
+/internal-docs/
 /probe/build/
 /tools/bench/roms/build/
 /tools/mgba-suite/build/

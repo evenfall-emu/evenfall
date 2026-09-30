@@ -20,9 +20,11 @@ Public documentation lives in `docs/`, internal notes in `internal-docs/`.
 | Web player or its server         | [`docs/player.md`](docs/player.md) and [`docs/server.md`](docs/server.md)                               |
 | Plans and known follow-ups       | [`internal-docs/roadmap.md`](internal-docs/roadmap.md)                                                  |
 
-`internal-docs/` is a private Git submodule holding the methodology, the roadmap, measurement logs and investigations.
-Fetch it with `git submodule update --init internal-docs`.
-A change there is a commit inside the submodule, then a commit in Evenfall that bumps the submodule pointer.
+`internal-docs/` is a separate private repository holding the methodology, the roadmap, measurement logs and investigations.
+Clone it in place with `git clone git@github.com:evenfall-emu/internal-docs.git internal-docs`.
+Evenfall's `.gitignore` excludes that directory.
+A change there is a commit and a push in that repository, with no commit in Evenfall.
+In a Git worktree, symlink `internal-docs` to the main checkout's clone, as for `refs/`.
 
 ## Layout
 
