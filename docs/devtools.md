@@ -1,36 +1,27 @@
-# Deterministic developer tools
+# Developer tools
 
-Evenfall's developer tools turn a bug report into a reproducible artifact. They
-have three parts:
+Emulator bugs are hard to report because they are hard to reproduce: "the game froze somewhere in the second dungeon" is not something another developer can run.
+Evenfall is deterministic, so a bug can be turned into a file that reproduces it exactly, on any machine.
+The developer tools do that, in three parts:
 
-- **Scenarios**: a JSON manifest of assets, timed inputs and checkpoints with
-  expected hashes, run deterministically from a cold boot.
-- **Failure capture**: a bounded recorder that keeps recent snapshots and
-  operations around a running core and packages them as a failure bundle when
-  something goes wrong.
-- **Replay**: restoring a bundle's newest snapshot and replaying its
-  operations, with identity and result checks at every step.
+- **Scenarios.** A JSON file listing the ROM, the button presses with their exact cycles, and checkpoints with expected hashes.
+  It runs from a cold boot and says which checkpoint failed.
+- **Failure capture.** A recorder that keeps recent snapshots and operations around a running game, and packages them into a failure bundle when something goes wrong.
+- **Replay.** Restoring a bundle's newest snapshot and replaying its operations, checking identities and results at every step.
 
-The tools are JavaScript modules over the ordinary synchronous `WasmCore`
-interface of the [`@evenfall/gba`](sdk.md) package. They use the same Rust
-WASM binary as the SDK, need no special instrumentation, and do not change the
-hardware model, so a reproduction runs on the binary that showed the problem.
-The command-line tools own filesystem access and reports; the modules own
-orchestration and bounded capture; `Machine` owns emulation. For
-instruction-level traces, use the native runner's `--trace` option
-([`cli.md`](cli.md)).
+The tools are JavaScript modules on top of the SDK's synchronous `WasmCore` ([`sdk.md`](sdk.md)).
+They use the same WebAssembly binary as the SDK, with no special build, and don't touch the hardware model, so a reproduction runs on the exact binary that showed the problem.
+The command-line tools handle files and reports, the modules handle running and capturing, and `Machine` does the emulation.
+For a trace of individual instructions, use the native runner's `--trace` option ([`cli.md`](cli.md)).
 
-Every `Emulator` session also records gameplay by default (see
-[Recording in `Emulator` sessions](#recording-in-emulator-sessions)). A
-session exports its recording as a scenario and captures failures, and a
-separate `Emulator` runs scenarios and replays captures in its own worker
-without touching another session. Exported files run with the command-line
-tools below.
+Every `Emulator` session also records play by default ([below](#recording-in-emulator-sessions)).
+A session can export its recording as a scenario and captures failures on its own.
+A separate `Emulator` runs scenarios and replays captures in its own Worker, without touching another session.
 
 ## Quick start
 
-From the repository root, generate and run a scenario for a project-owned
-eight-byte ARM program. No game or BIOS is needed:
+From the repository root, generate and run a scenario for a tiny test program that ships with the tools.
+No game or BIOS is needed:
 
 ```sh
 npm ci
@@ -39,32 +30,30 @@ node web/gba/scripts/run-scenario.mjs --example /tmp/evenfall-example
 node web/gba/scripts/run-scenario.mjs /tmp/evenfall-example/scenario.json /tmp/evenfall-result
 ```
 
-`--example [directory]` writes `loop.gba` and `scenario.json` into the
-directory (default `scenario-example`). The second command runs the manifest
-and writes `result.json` into the output directory, which must not exist yet
-so earlier evidence is never overwritten.
+`--example [directory]` writes `loop.gba` and `scenario.json` into the directory (default `scenario-example`).
+The second command runs the scenario and writes `result.json` into the output directory.
+That directory must not exist yet, so earlier results are never overwritten.
 
 ```text
 node web/gba/scripts/run-scenario.mjs MANIFEST [OUTPUT_DIR] [WASM_PATH]
 node web/gba/scripts/run-scenario.mjs --example [DIRECTORY]
 ```
 
-`OUTPUT_DIR` defaults to `scenario-result-<timestamp>` and `WASM_PATH` to
-`web/gba/evenfall-gba.wasm`; the WASM file's SHA-256 is recorded as the build
-identity. The runner prints a one-line JSON summary and exits with:
+`OUTPUT_DIR` defaults to `scenario-result-<timestamp>`, and `WASM_PATH` to `web/gba/evenfall-gba.wasm`.
+The WebAssembly file's SHA-256 is recorded as the build identity.
+The runner prints a one-line JSON summary and exits with:
 
-| Status | Meaning                                                                |
-| ------ | ---------------------------------------------------------------------- |
-| 0      | Every checkpoint passed.                                               |
-| 1      | The scenario failed or was cancelled.                                  |
-| 2      | Invalid manifest, missing or mismatched asset, or another setup error. |
+| Status | Meaning                                                          |
+| ------ | ---------------------------------------------------------------- |
+| 0      | every checkpoint passed                                          |
+| 1      | the scenario failed or was cancelled                             |
+| 2      | invalid manifest, missing or wrong asset, or another setup error |
 
-These codes suit CI and `git bisect run`; a bisect wrapper should map status 2
-to bisect's skip code, 125.
+These codes work in CI and with `git bisect run`, where a wrapper should turn status 2 into bisect's "skip" code, 125.
 
-## Scenario manifests
+## Writing a scenario
 
-The generated example is a complete version-2 manifest:
+The generated example is a complete manifest:
 
 ```json
 {
@@ -111,51 +100,46 @@ The generated example is a complete version-2 manifest:
 }
 ```
 
-Unknown fields are rejected, so a misspelled expectation cannot silently
-become a passing test. Cycles are absolute unsigned 64-bit values written as
-decimal strings. Input assets are identified by SHA-1; observed outputs
-(frames, audio, saves, states and memory) by SHA-256.
+Unknown fields are rejected, so a misspelled expectation can't silently turn into a passing test.
+Cycles are absolute 64-bit values, written as decimal strings.
+Inputs (ROM, BIOS, saves) are identified by SHA-1, the way No-Intro catalogs identify ROM dumps, and outputs (frames, audio, saves, states, memory) by SHA-256.
+Only version 2 is accepted.
 
-Version-1 manifests identified assets by SHA-256. The SDK validates version-2
-manifests; Evenfall's `upgrade-scenario.mjs` CLI is not part of this workspace.
+The fields:
 
-| Field         | Contract                                                                                                                                                                                                                                                                                                                    |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `assets`      | `rom` (required), and optionally `bios`, `save` (initial battery save) and `state` (a save state loaded after boot). Each has the `sha1` of its raw bytes, as No-Intro DATs identify dumps, and, for the command-line tools, a `path` relative to the manifest. The ROM must be a raw image; ZIP archives are not accepted. |
-| `config`      | Explicit `boot` (`hle`, or `bios` when a BIOS asset is present), `saveType` (one of `SAVE_TYPES`, including `auto`), `rtc` (boolean), `rtcEpoch` (Unix seconds up to 253402300799) and output `sampleRate` (8,000–192,000).                                                                                                 |
-| `inputs`      | Up to 1,024 ordered `{at, keys}` entries; `keys` is the button mask from `KEYS`. Same-cycle entries keep their order. No input may follow the final checkpoint.                                                                                                                                                             |
-| `checkpoints` | 1–10,000 ordered entries, each with a unique `name`, a cycle `at`, an optional `expect` and up to 64 named `memory` regions of at most 1 MiB. Checkpoints may share a cycle.                                                                                                                                                |
-| `expect`      | Any of: exact `cycle` and `reason`; sparse CPU values (`registers` by index, `cpsr`, `nextInstructionAddress`); SHA-256 values `frameSha256`, `audioSha256`, `saveSha256` and `stateSha256`. A memory region carries its own optional `sha256`.                                                                             |
-| `limits`      | Absolute `maxCycles` (every input and checkpoint must fall within it), `maxRuns` (1–1,000,000 execution slices), `chunkCycles` (1–70,224 cycles per slice) and cumulative `maxAudioBytes` (up to 256 MiB). These bound emulated work, not wall time.                                                                        |
+- **`assets`**: the `rom` (required), and optionally a `bios`, a `save` (the starting battery save) and a `state` (a save state loaded after boot).
+  Each has the `sha1` of its bytes and, for the command-line tools, a `path` relative to the manifest.
+  The ROM must be a raw image, not a ZIP.
+- **`config`**: `boot` (`hle`, or `bios` when a BIOS asset is present), `saveType` (one of `SAVE_TYPES`, including `auto`), `rtc` (on or off), `rtcEpoch` (Unix seconds, up to 253402300799) and the audio `sampleRate` (8,000 to 192,000).
+  All of them must be given, so a scenario never depends on a default.
+- **`inputs`**: up to 1,024 `{at, keys}` entries in cycle order, where `keys` is a button mask built from `KEYS`.
+  Entries at the same cycle keep their order.
+  No input may come after the last checkpoint.
+- **`checkpoints`**: 1 to 10,000 entries in order, each with a unique `name`, a cycle `at`, an optional `expect`, and up to 64 named `memory` regions of at most 1 MiB.
+  Checkpoints may share a cycle.
+- **`expect`**: any of an exact `cycle` and `reason`, some CPU values (`registers` by number, `cpsr`, `nextInstructionAddress`), and the hashes `frameSha256`, `audioSha256`, `saveSha256` and `stateSha256`.
+  A memory region carries its own optional `sha256`.
+- **`limits`**: `maxCycles` (every input and checkpoint must fall within it), `maxRuns` (1 to 1,000,000 slices), `chunkCycles` (1 to 70,224 cycles per slice) and the total `maxAudioBytes` (up to 256 MiB).
+  They bound emulated work, not wall-clock time, so a scenario fails the same way on a fast and a slow machine.
 
-## Scenario results
+## What a result contains
 
-Every checkpoint records the actual stopping cycle and reason, any fault, the
-CPU registers, the SHA-256 of the frame, audio and battery save, the hashes of
-requested memory regions, and a machine-state hash when the machine has not
-faulted.
+Every checkpoint records the actual stopping cycle and reason, any fault, the CPU registers, the SHA-256 of the frame, the audio and the battery save, the hashes of the requested memory regions, and a hash of the whole machine state when it hasn't faulted.
 
-- Frames are 240×160 native BGR555, 16-bit little-endian.
-- Audio is interleaved signed 16-bit little-endian stereo at the configured
-  rate. Its hash covers the samples drained since the previous checkpoint, or
-  since the start.
-- The runner advances in slices of `chunkCycles` and drains audio after each.
-  An instruction that crosses a checkpoint can consume inputs up to the final
-  checkpoint; the checkpoint's actual cycle says when its observation was
-  made.
-- A checkpoint without expectations still fails on an unexpected fault or
-  STOP. To expect one, set `expect.reason` on the final checkpoint, with no
-  inputs left unconsumed.
+- Frames are 240x160 pixels of 15-bit BGR color, 16-bit little-endian.
+- Audio is interleaved signed 16-bit little-endian stereo at the configured rate.
+  Its hash covers the samples produced since the previous checkpoint, or since the start.
+- The runner advances in slices of `chunkCycles` and collects audio after each.
+  An instruction can run past a checkpoint's cycle, so the checkpoint records the cycle at which it was actually observed.
+- A checkpoint with no expectations still fails on an unexpected fault or STOP.
+  To expect one, set `expect.reason` on the last checkpoint, with no inputs left.
 
-On the first failing checkpoint, the runner stops and writes `frame.bgr555le`,
-`audio.s16le`, `battery.sav` and `memory-N.bin` for each requested region. A
-failed `result.json` also contains a `capture` failure bundle, unless capture
-was disabled.
+At the first failing checkpoint, the runner stops and writes `frame.bgr555le`, `audio.s16le`, `battery.sav` and a `memory-N.bin` per requested region.
+A failed `result.json` also contains a `capture` failure bundle, unless capture was turned off.
 
-Review the source of an expected hash before accepting it. A hash recorded from
-the current implementation is a regression baseline, not an independent
-oracle, and neither a passing scenario nor a successful replay establishes
-agreement with real hardware.
+Check where an expected hash came from before trusting it.
+A hash recorded from the current code only guards against regressions.
+A passing scenario, or a successful replay, doesn't show that Evenfall matches real hardware.
 
 ## Replaying a captured failure
 
@@ -167,23 +151,19 @@ node web/gba/scripts/replay-capture.mjs /tmp/evenfall-result/result.json /tmp/ev
 node web/gba/scripts/replay-capture.mjs RESULT_OR_BUNDLE_JSON MANIFEST_JSON [WASM_PATH]
 ```
 
-The first argument is a failed `result.json` or an extracted bundle. Supply
-the original manifest and its assets, and optionally the original WASM (default
-`web/gba/evenfall-gba.wasm`). The tool verifies asset and build identities,
-restores the newest retained snapshot, replays the recorded operations, and
-compares the captured CPU state, frame, save and machine state. A successful
-reproduction prints `status: "reproduced"` and exits 0; an identity mismatch,
-replay divergence or missing snapshot exits 2.
+The first argument is a failed `result.json` or a bundle saved on its own.
+Pass the original manifest with its assets, and optionally the original WebAssembly file (default `web/gba/evenfall-gba.wasm`).
+The tool checks the asset and build identities, restores the newest snapshot, replays the recorded operations, and compares the CPU state, frame, save and machine state with the captured ones.
+A successful reproduction prints `status: "reproduced"` and exits 0.
+A mismatched identity, a replay that diverges, or a missing snapshot exits 2.
 
-Replay reproduces the captured failure state, not a passing assertion. To test
-a new emulator revision, run the cold-boot scenario again instead of bypassing
-the build-identity check.
+Replay reproduces the failure on the build that captured it.
+To test whether a newer build fixed the bug, run the cold-boot scenario again instead of bypassing the build check.
 
-## Programmatic use
+## Using the tools from code
 
-The modules run in Node or in a dedicated browser Worker, on a `WasmCore` that
-no other code drives at the same time. In a checkout, relative imports from
-`web/gba/` work as well as the package names.
+The modules run in Node or in a dedicated browser Worker, on a `WasmCore` that nothing else drives at the same time.
+In a checkout, relative imports from `web/gba/` work as well as the package names.
 
 ```js
 import { WasmCore } from "@evenfall/gba/core";
@@ -198,7 +178,7 @@ try {
     {
       build: { wasmSha256 },
       onArtifact(name, ownedBytes) {
-        /* retain locally */
+        /* keep it */
       },
       capture: { maxSnapshots: 3, maxHistoryBytes: 4 * 1024 * 1024 },
     },
@@ -208,24 +188,21 @@ try {
 }
 ```
 
-`runScenario(core, manifest, assets, options)` loads the assets into the core
-and owns it for the call. Supply every declared asset as bytes under its asset
-name, and no undeclared ones. Validation and asset-identity errors reject
-before anything is loaded; execution and checkpoint failures resolve with
-`status: "failed"`. Options:
+`runScenario(core, manifest, assets, options)` loads the assets and owns the core for the call.
+Pass every declared asset as bytes, under its asset name, and nothing else.
+Invalid manifests and wrong assets reject before anything loads, while failed checkpoints resolve with `status: "failed"`.
 
-| Option         | Meaning                                                                                                 |
-| -------------- | ------------------------------------------------------------------------------------------------------- |
-| `build`        | Build identity recorded in the result and in failure bundles.                                           |
-| `capture`      | Recorder limits (see [Capture budgets](#capture-budgets)), or `false` to skip capture and its overhead. |
-| `signal`       | An `AbortSignal`; aborting resolves with `status: "cancelled"`.                                         |
-| `yieldControl` | An async callback awaited every few slices, so a long scenario can yield to its host.                   |
-| `onProgress`   | Called with each checkpoint's observations.                                                             |
-| `onArtifact`   | Receives owned artifact bytes.                                                                          |
-| `allArtifacts` | Also emit `checkpoint-N.bgr555le` and `checkpoint-N.s16le` for every checkpoint.                        |
+| Option         | Meaning                                                                                        |
+| -------------- | ---------------------------------------------------------------------------------------------- |
+| `build`        | the build identity recorded in the result and in failure bundles                               |
+| `capture`      | recorder limits ([Capture budgets](#capture-budgets)), or `false` to skip capture and its cost |
+| `signal`       | an `AbortSignal`, and aborting resolves with `status: "cancelled"`                             |
+| `yieldControl` | an async callback awaited every few slices, so a long scenario lets its host breathe           |
+| `onProgress`   | called with each checkpoint's observations                                                     |
+| `onArtifact`   | receives the bytes of each artifact, which the callee owns                                     |
+| `allArtifacts` | also emit `checkpoint-N.bgr555le` and `checkpoint-N.s16le` for every checkpoint                |
 
-For interactive diagnostic scripts, wrap an already loaded core in a
-`FailureRecorder`:
+For an interactive diagnostic script, wrap an already loaded core in a `FailureRecorder`:
 
 ```js
 import { FailureRecorder } from "@evenfall/gba/devtools/capture";
@@ -233,7 +210,7 @@ import { FailureRecorder } from "@evenfall/gba/devtools/capture";
 const recording = new FailureRecorder(core, {
   identity: { build: { wasmSha256 }, config: bootConfiguration },
   onCapture(bundle) {
-    /* retain locally */
+    /* keep it */
   },
 });
 recording.runUntil(1000n, [{ at: 100n, keys: 1 }]);
@@ -242,109 +219,80 @@ const bundle = recording.capture("manual", { note: "First incorrect scene" });
 // recording.assert(condition, "Unexpected register", { expected, actual });
 ```
 
-Route `runUntil`, `step`, `setKeys` and `drainAudio` through the recorder; it
-forwards read-only inspection, frame, memory and save access. A state-changing
-call that bypasses the recorder cannot be replayed, so create a new recorder
-after loading a ROM or state directly. Faults and thrown execution errors
-capture automatically, and `assert` captures and then throws. The original
-execution error is rethrown even if `onCapture` fails.
+Send `runUntil`, `step`, `setKeys` and `drainAudio` through the recorder.
+It passes read-only calls (inspection, frames, memory, saves) straight through.
+A call that changes state without going through the recorder can't be replayed, so create a new recorder after loading a ROM or state directly.
+Faults and thrown errors are captured automatically, and `assert` captures before it throws.
+The original error is thrown again even if `onCapture` fails.
 
-`replayFailureBundle(core, bundle, { identity })` replays into a separately
-loaded core, and `replayFailureBundleAsync` does the same with cancellation
-and periodic yields. Every identity key recorded in the bundle must match the
-supplied identity. Unlike the command-line tool, these functions cannot derive
-a WASM hash, so construct the recorder with the complete build and boot
-identity you will supply at replay. `validateFailureBundle` checks the fields a
-viewer reads before it renders an untrusted bundle.
+`replayFailureBundle(core, bundle, { identity })` replays into a separately loaded core, and `replayFailureBundleAsync` does the same with cancellation and periodic yields.
+Every identity field recorded in the bundle must match the one supplied.
+These functions can't hash the WebAssembly file themselves, so build the recorder with the full build and boot identity you will supply at replay.
+`validateFailureBundle` checks the fields a viewer reads before it shows an untrusted bundle.
 
 ## Recording in `Emulator` sessions
 
-An `Emulator` session routes its execution through a gameplay recording
-([`web/gba/devtools/journal.js`](../web/gba/devtools/journal.js)), which combines a
-`FailureRecorder` with an input journal:
+An `Emulator` session sends everything it runs through a gameplay recording ([`journal.js`](../web/gba/devtools/journal.js)), which combines a `FailureRecorder` with a log of inputs:
 
-- Each load, reset and state load starts a fresh recording. A rewind or
-  rewind-bundle load starts a new segment from the restored state.
-- The journal keeps the timed inputs of the current segment.
-  `exportScenario(name?)` turns it into a manifest and its assets, starting
-  from a cold boot or from the segment's initial state, and ending with an
-  `End` checkpoint. The journal stops growing at 1,024 inputs, which freezes
-  the exportable prefix.
-- A guest fault captures a failure bundle and emits it as a `capture` event;
-  `capture(note?)` pauses and captures on demand, and `checkpoint(name)` adds a
-  named checkpoint to the export.
-- `recording(false)` turns recording off. Execution while it is off leaves a
-  gap: older snapshots are dropped, capture reports that replay is
-  unavailable, and `exportScenario()` fails until `recording(true)` or
-  `newSegment()` starts a new segment from the current state.
-- During realtime play the periodic snapshot interval is about 60 frames times
-  the playback speed, so the retained history covers roughly the same
-  wall-clock span at every speed.
+- Loading a ROM, resetting and loading a state each start a fresh recording.
+  Rewinding or loading a rewind bundle starts a new segment from the restored state.
+- The log keeps the timed inputs of the current segment.
+  `exportScenario(name?)` turns it into a manifest and its assets, starting from a cold boot or from the segment's first state, and ending with an `End` checkpoint.
+  The log stops growing at 1,024 inputs, so only that first stretch can be exported.
+- A guest fault captures a failure bundle and sends it as a `capture` event.
+  `capture(note?)` pauses and captures on demand, and `checkpoint(name)` adds a named checkpoint to the export.
+- `recording(false)` turns recording off.
+  Anything run while it is off leaves a gap: older snapshots are dropped, a capture says replay is unavailable, and `exportScenario()` fails until `recording(true)` or `newSegment()` starts a new segment from the current state.
+- During play, a snapshot is taken about every 60 frames times the playback speed, so the history covers about the same stretch of real time at any speed.
 
 ## Capture budgets
 
-| Limit                                                 | Default   |
-| ----------------------------------------------------- | --------- |
-| Retained snapshots (`maxSnapshots`)                   | 3         |
-| Raw snapshot bytes (`maxSnapshotBytes`)               | 16 MiB    |
-| Retained operations (`maxOperations`)                 | 4,096     |
-| Serialized history bytes (`maxHistoryBytes`)          | 4 MiB     |
-| Periodic snapshot interval (`snapshotIntervalCycles`) | 60 frames |
+| Limit                                        | Default   |
+| -------------------------------------------- | --------- |
+| Snapshots kept (`maxSnapshots`)              | 3         |
+| Raw snapshot bytes (`maxSnapshotBytes`)      | 16 MiB    |
+| Operations kept (`maxOperations`)            | 4,096     |
+| Serialized history bytes (`maxHistoryBytes`) | 4 MiB     |
+| Snapshot interval (`snapshotIntervalCycles`) | 60 frames |
 
-Before ordinary history overflows, the recorder takes a fresh snapshot and
-rebases its history on it, so a later fault still has an anchor. These extra
-snapshots are counted in `history.budgetSnapshots`; tiny budgets increase
-snapshot overhead. A single operation or snapshot larger than its budget makes
-replay unavailable.
+Before the history overflows, the recorder takes a fresh snapshot and starts the history again from it, so a later fault still has a starting point.
+These extra snapshots are counted in `history.budgetSnapshots`, and very small budgets make them frequent.
+A single operation or snapshot bigger than its budget makes replay unavailable.
 
-A capture also holds copies of the retained history, the encoded snapshots,
-the frame, the save and, when the machine has not faulted, one final state.
-Base64 and JSON export add further memory beyond the ring budgets. Before
-relying on a bundle, check `history.replayable`, the dropped counts and
-`snapshotError`.
+A capture also holds copies of the history, the encoded snapshots, the frame, the save, and one final state when the machine hasn't faulted.
+Exporting as Base64 and JSON takes more memory on top of the budgets.
+Before relying on a bundle, check `history.replayable`, the dropped counts and `snapshotError`.
 
-## Reproduction rules
+## Rules for reliable reproductions
 
-- Use emulated cycle timestamps and keep actual stopping cycles. Instructions
-  are atomic and can cross a requested deadline. The core reports how many
-  inputs a run consumed, not the instruction at which each applied: a recorded
-  input lies somewhere within its run's cycle interval and must not be
-  presented as an exact observed time.
-- Keep the cold-boot manifest, initial battery save and timed inputs alongside
-  any snapshot shortcut. Snapshots are tied to their state format and to the
-  ROM and BIOS, so a core change can make them unusable, and a cold boot also
-  exercises the initialization that a snapshot skips.
-- Capture keeps a snapshot from before the failure, because a faulted machine
-  cannot write one. Bounded history either keeps every operation since its
-  replay anchor or reports that replay is unavailable.
-- Reports contain copied observations, never views into mutable WASM memory.
-- Snapshots do not include the host audio resampler, and loading one resets
-  its phase. Exact resampled-audio comparisons need cold-boot runs with the
-  same output rate and drain schedule; a snapshot continuation does not
-  continue the original host audio stream exactly. Frame, CPU, memory, save
-  and machine-state comparisons are unaffected.
+- **Use emulated cycles.** Record the cycle each run actually stopped at.
+  An instruction can't be split, so it can run past a requested deadline.
+  The core reports how many inputs a run consumed, not the instruction at which each took effect, so a recorded input lies somewhere within its run and shouldn't be presented as an exact time.
+- **Keep the cold-boot version.** Keep the manifest, the starting battery save and the inputs next to any snapshot shortcut.
+  Snapshots are tied to the state format, the ROM and the BIOS, so a core change can make them unusable, and a cold boot also runs the start-up code a snapshot skips.
+- **Snapshots come before the failure.** A faulted machine can't be saved, so capture keeps an earlier snapshot.
+  The history either holds every operation since that snapshot or says replay is unavailable.
+- **Results are copies.** Reports hold copied observations, never views into WebAssembly memory that could change.
+- **Host audio restarts.** Snapshots don't include the host resampler, and loading one resets it.
+  Comparing resampled audio exactly needs cold-boot runs with the same output rate and collection schedule.
+  Frame, CPU, memory, save and state comparisons are unaffected.
 
 ## Privacy
 
-ROM and BIOS files are supplied separately and never embedded in a bundle. A
-bundle's snapshots and memory regions can still contain guest program data
-and save progress, so leaving out the ROM and BIOS does not make a bundle
-anonymous or safe to publish automatically. The tools write local files and
-upload nothing.
+ROM and BIOS files are passed separately and never stored in a bundle.
+A bundle's snapshots and memory regions can still contain game data and save progress, so leaving out the ROM doesn't make a bundle anonymous or safe to publish.
+The tools write local files and upload nothing.
 
-## Testing
+## How it is checked
 
-Build the Rust WASM binary with `npm run build:wasm -w @evenfall/gba`, then
-`npm test` runs the scenario runner, failure capture and command-line replay
-against the real core; it needs Node 24 or later. Without the binary, WASM
-tests skip.
-[`testing.md`](testing.md) lists the other suites.
+Build the WebAssembly binary with `npm run build:wasm -w @evenfall/gba`, then `npm test` (Node 24 or later) runs the scenario runner, failure capture and command-line replay against the real core.
+Without the binary, the WebAssembly tests are skipped.
+[`testing.md`](testing.md) lists the other test suites.
 
-## Limits
+## Known limits
 
 - Scenarios take raw ROM images only, not ZIP archives.
-- A scenario holds at most 1,024 inputs, and an exported session recording
-  stops collecting inputs at the same count.
-- Replay needs a retained snapshot; a bundle whose history had a gap is
-  evidence, not a reproduction.
-- The tools compare against recorded results, not against hardware.
+- A scenario holds at most 1,024 inputs, and a session recording stops collecting inputs at the same count.
+- Replay needs a kept snapshot.
+  A bundle whose history has a gap is evidence, not a reproduction.
+- The tools compare with recorded results, not with hardware.
