@@ -1,4 +1,4 @@
-//! Deterministic host-facing hardware seam, translated from `machine.zig`.
+//! Deterministic host-facing hardware seam.
 
 use crate::bus::{self, Bus, KeyState, Media, TimedInput};
 use crate::cartridge::{save::Type as SaveType, tilt::Sample as TiltSample};
@@ -26,7 +26,7 @@ pub struct Fault {
 }
 
 impl Fault {
-    /// One stable, host-agnostic diagnostic line, as in ZiGBA.
+    /// One stable, host-agnostic diagnostic line.
     pub fn write_diagnostic(&self, writer: &mut impl Write) -> std::io::Result<()> {
         write!(
             writer,
@@ -1134,8 +1134,8 @@ impl evenfall_host::System for Machine {
 mod tests {
     use super::*;
 
-    /// ZiGBA's stable diagnostic line includes width, instruction set, cycle,
-    /// and the reason payload; Debug's CamelCase names would be incompatible.
+    /// The stable diagnostic line includes width, instruction set, cycle and
+    /// the reason payload in snake_case, not Debug's CamelCase names.
     #[test]
     fn fault_writes_stable_diagnostic_line() {
         let fault = Fault {

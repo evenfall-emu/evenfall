@@ -1,4 +1,4 @@
-//! Owned, host-independent session translated from `session.zig`.
+//! Owned, host-independent session.
 
 use crate::bus::{KeyState, Media, TimedInput};
 use crate::cartridge::{self, save::Type as SaveType};
@@ -688,8 +688,8 @@ mod tests {
         ));
     }
 
-    /// Zig: "owned buffer creation consumes exactly the uploaded allocation"
-    /// and "upload ownership transfers only on successful construction".
+    /// A successful construction adopts the uploaded allocation as the ROM,
+    /// and a failed one hands the same allocation back to the caller.
     #[test]
     fn owned_buffer_transfers_only_after_successful_construction() {
         let buffer = [LOOP_ROM, &[0xa5, 0x36]].concat();
@@ -730,9 +730,8 @@ mod tests {
         assert_eq!(returned, LOOP_ROM);
     }
 
-    /// Zig: "buffered snapshots match streamed state bytes for owned and borrowed media".
-    /// The mutable borrowed-ROM mutation/rejection half is deliberately not
-    /// ported: Machine copies or adopts immutable shared media at construction.
+    /// Machine copies or adopts media as immutable shared bytes at
+    /// construction, so owned and shared media are the only cases.
     #[test]
     fn buffered_snapshots_match_streamed_state_bytes_for_owned_and_shared_media() {
         for save_type in [
@@ -772,9 +771,8 @@ mod tests {
         }
     }
 
-    /// Zig: "borrowed BIOS identity stays live while owned BIOS snapshots stay stable".
-    /// The live-mutation half is deliberately not ported: both Rust paths
-    /// snapshot caller bytes into immutable shared media at construction.
+    /// Both construction paths snapshot the caller's BIOS bytes into immutable
+    /// shared media, so later changes to those bytes cannot reach the machine.
     #[test]
     fn bios_identity_is_fixed_at_construction_and_foreign_bios_is_rejected() {
         let mut caller_bios = vec![0; 16_384];
@@ -829,7 +827,8 @@ mod tests {
         assert_eq!(session.write_state().unwrap(), loaded.write_state().unwrap());
     }
 
-    /// Zig: "session imports save memory with arbitrary trailing bytes but rejects a short save"
+    /// A save with trailing bytes imports its prefix, while a short save or
+    /// one whose size implies another save type is rejected.
     #[test]
     fn session_imports_save_prefix_and_rejects_short_or_conflicting_saves() {
         let rom = b"....FLASH1M_V103";
@@ -933,7 +932,8 @@ mod tests {
         assert_eq!(session.rewind_depth(), 0);
     }
 
-    /// Zig: "session validates rewind configs and preserves history on reconfig failure"
+    /// Session creation rejects an invalid rewind config, and a failed
+    /// reconfiguration keeps the existing history.
     #[test]
     fn invalid_rewind_reconfiguration_preserves_history() {
         assert!(matches!(
@@ -1087,11 +1087,9 @@ mod tests {
         }
     }
 
-    /// Zig: "rewind bundles reject corrupt envelopes metadata codecs and foreign media atomically".
-    /// Also checks the owned-import rollback boundary from "rewind bundle allocation
-    /// failures preserve both live state and old history" for recoverable errors.
-    /// Zig's injected allocator-failure half is deliberately not ported: a
-    /// Rust allocation failure normally aborts instead of returning an error.
+    /// A recoverable owned-import failure also preserves both the live state
+    /// and the old history. Allocation failure is not injected: a Rust
+    /// allocation failure normally aborts instead of returning an error.
     #[test]
     fn rewind_bundles_reject_corrupt_envelopes_metadata_codecs_and_foreign_media_atomically() {
         let mut session = Session::create(Config {
@@ -1151,7 +1149,8 @@ mod tests {
         ));
     }
 
-    /// Zig: "bundle restores empty tiny-budget and evicted multi-anchor histories after branching"
+    /// Covers empty and tiny-budget histories and evicted histories that
+    /// span several anchors.
     #[test]
     fn bundle_restores_empty_tiny_budget_and_evicted_histories_after_branching() {
         for budget in [0, 1, 400_000, rewind::DEFAULT_BUDGET_BYTES] {
@@ -1266,7 +1265,6 @@ mod tests {
         assert_eq!(selective.write_state().unwrap(), full.write_state().unwrap());
     }
 
-    /// Zig: "selective recovery reserves bounded history and preserves failing instruction pixels"
     #[test]
     fn selective_recovery_bounds_history_and_preserves_faulting_instruction_pixels() {
         let rom = video_recovery_rom(true);
@@ -1328,7 +1326,6 @@ mod tests {
         assert_eq!(session.write_state().unwrap(), fresh.write_state().unwrap());
     }
 
-    /// Zig: "internal video yields preserve STOP serial horizon and unreachable future inputs"
     #[test]
     fn internal_video_yields_preserve_stop_serial_horizon_and_future_inputs() {
         let rom = [0, 0, 3, 0xef, 0xfe, 0xff, 0xff, 0xea]; // Stop; b .
