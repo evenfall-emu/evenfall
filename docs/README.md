@@ -26,8 +26,8 @@ then pick the section below that matches what you want to do.
 - [`gba/hardware/`](gba/hardware/README.md): how the GBA behaves and how the
   core models it, subsystem by subsystem.
 - [`design/`](design/save-states.md): formats and runtime:
-  [save states](design/save-states.md), [rewind](design/rewind.md) and the
-  [web runtime](design/web-runtime.md).
+  [save states](design/save-states.md), [rewind](design/rewind.md), the
+  [web runtime](design/web-runtime.md) and [cheats](design/cheats.md).
 - [`testing.md`](testing.md): the test layers, ROM validators and parity runs.
 - [`../probe/README.md`](../probe/README.md): the bare-metal probe ROMs.
 - [`../refs/README.md`](../refs/README.md): pinned external references.

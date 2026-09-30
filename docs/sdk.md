@@ -17,7 +17,8 @@ interface (see [Versioning](#versioning)).
   [Node and headless use](#node-and-headless-use)
 - [The `Emulator` API](#the-emulator-api) · [Events](#events) ·
   [Execution and failure contract](#execution-and-failure-contract)
-- [Speed and presentation](#speed-and-presentation) · [Audio](#audio) ·
+- [Cheats](#cheats) · [Speed and presentation](#speed-and-presentation) ·
+  [Audio](#audio) ·
   [Rewind and rewind bundles](#rewind-and-rewind-bundles) ·
   [Persistence](#persistence)
 - [Recording and developer tools](#recording-and-developer-tools) ·
@@ -50,7 +51,7 @@ other licensing terms, contact
 
 | Import                                   | Contents                                                                                                                                              |
 | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@evenfall/gba`                          | `Emulator` (asynchronous, one Worker per session), `KEYS`, `CYCLES_PER_FRAME`, `SAVE_TYPES`, and the shared types                                     |
+| `@evenfall/gba`                          | `Emulator` (asynchronous, one Worker per session), `KEYS`, `CYCLES_PER_FRAME`, `SAVE_TYPES`, `CHEAT_FORMATS`, and the shared types                    |
 | `@evenfall/gba/core`                     | `WasmCore`: the synchronous single-instance adapter for Node and Workers                                                                              |
 | `@evenfall/gba/devtools/scenario`        | `runScenario`, `validateScenario`, `sha1`, `sha256`, `jsonSafe`                                                                                       |
 | `@evenfall/gba/devtools/capture`         | `FailureRecorder`, `validateFailureBundle`, `replayFailureBundle`, `replayFailureBundleAsync`                                                         |
@@ -184,6 +185,7 @@ values: do not convert long-running counters to `number`.
 | Lifecycle               | `Emulator.create(options?)`, `load(image, options?)`, `dispose()`, `terminate(message?)`                                                                            |
 | Realtime play           | `play()`, `pause()`, `setSpeed(multiplier)`, `setKeys(mask)`                                                                                                        |
 | Manual execution        | `runUntil(deadline, inputs?)`, `step()`                                                                                                                             |
+| Cheats                  | `setCheats(cheats)`, `cheats()`, `parseCheat(code, format?)`                                                                                                        |
 | Observation             | `inspect()`, `frame()`, `readMemory(address, length)`, `captureMemory()`, `exportRom()`                                                                             |
 | Saves and state         | `exportSave()`, `reset()`, `resetWithSave(save)`, `saveState()`, `loadState(bytes)`                                                                                 |
 | Rewind                  | `setRewindConfig(...)`, `rewind(steps?)`, `rewindDepth()`, `rewindCheckpoints()`, `rewindFrame(index)`, `saveRewindBundle()`, `loadRewindBundle(bytes)`             |
@@ -290,6 +292,42 @@ Failed calls reject with an `Error` whose message names the cause:
 
 Load and state errors carry the core's error name, for example `NoGbaInZip`,
 `SaveTypeConflict` or `SaveStateRomMismatch`.
+
+## Cheats
+
+`setCheats(cheats)` replaces the active cheats with a list of
+`{ code, format? }` entries and resolves to the canonical active list of
+`{ format, code }`. `format` is `"auto"` (the default) or one of
+`CHEAT_FORMATS`: `raw`, `gameshark` (GameShark Advance, Action Replay v1/v2),
+`gameshark-decrypted`, `action-replay` (Action Replay v3, also sold as
+GameShark v3), `action-replay-decrypted` and `codebreaker`. An empty list
+removes every cheat. `cheats()` returns the active list, and
+`parseCheat(code, format?)` detects and normalizes one code without changing
+the session. The SDK keeps no names or disabled cheats: the host owns its
+cheat list and passes the enabled ones.
+
+```ts
+await emulator.setCheats([
+  { code: "D8BAE4D9 4864DCE5\nA86CDBA5 19BA49B3" }, // Emerald master (AR v3)
+  { code: "C051CCF6 975E8DA1" }, // Infinite money
+  { format: "codebreaker", code: "82005274 0001" },
+]);
+```
+
+A change takes effect at the next VBlank start, and cheats run at the first
+instruction boundary at or after every VBlank start, so results do not depend
+on playback speed or slicing. `setCheats` is allowed while playing. An invalid
+or unsupported code rejects with `InvalidCheat: cheat N: line L: …`; ROM patch
+codes and GameShark v1/v2 `DEADFACE` codes are unsupported, and detection that
+finds several plausible formats asks for an explicit one.
+
+The cheat set is part of the machine state: `saveState()` includes it, and
+`loadState()`, `rewind()` and rewind bundles restore the set their state was
+saved with, clearing it for a state saved without cheats. Call `cheats()`
+after them to refresh a host's display. `reset()` keeps the cheats; `load()`
+starts without. Recordings capture each change at its cycle, and exported
+scenarios list them in an optional `cheats` field. The design, formats and
+evidence are in [`design/cheats.md`](design/cheats.md).
 
 ## Speed and presentation
 
