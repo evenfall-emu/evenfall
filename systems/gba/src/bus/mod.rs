@@ -1120,7 +1120,7 @@ impl Bus {
                     && self.is_eeprom_address(address) =>
             {
                 let started_at = self.current_cycle;
-                self.stop_game_pak_prefetch(true);
+                self.stop_game_pak_prefetch(Some(access.source));
                 let value = u32::from(self.save.read_eeprom_bit(self.current_cycle));
                 let cycles = self.game_pak_cycles(access);
                 let mut result = self.complete_read(value, cycles);
@@ -1130,7 +1130,7 @@ impl Bus {
             8..=13 => self.read_game_pak(access),
             14..=15 => {
                 let started_at = self.current_cycle;
-                self.stop_game_pak_prefetch(true);
+                self.stop_game_pak_prefetch(Some(access.source));
                 let offset = address & 0x00ff_ffff;
                 let byte = if let Some(tilt) = &self.cartridge_tilt {
                     if tilt::Tilt::accepts_read(offset) {
@@ -1225,13 +1225,13 @@ impl Bus {
                 self.write_oam(address, width, value);
             }
             8..=13 if width == AccessWidth::Half && self.is_eeprom_access(address) => {
-                self.stop_game_pak_prefetch(true);
+                self.stop_game_pak_prefetch(Some(access.source));
                 let cycles = self.game_pak_cycles(access);
                 self.advance(cycles);
                 self.save.write_eeprom_bit(value as u8, self.current_cycle);
             }
             8..=13 => {
-                self.stop_game_pak_prefetch(true);
+                self.stop_game_pak_prefetch(Some(access.source));
                 let cycles = self.game_pak_cycles(access);
                 self.advance(cycles);
                 if self.is_cartridge_gpio_write(access) {
@@ -1249,7 +1249,7 @@ impl Bus {
                 }
             }
             14..=15 => {
-                self.stop_game_pak_prefetch(true);
+                self.stop_game_pak_prefetch(Some(access.source));
                 self.advance(self.sram_cycles());
                 let shift = match width {
                     AccessWidth::Byte => 0,
@@ -4040,7 +4040,7 @@ impl Bus {
         let started_at = self.current_cycle;
         let value = self.read_game_pak_rom(access.address, access.width);
         if access.source != AccessSource::CpuCode {
-            self.stop_game_pak_prefetch(true);
+            self.stop_game_pak_prefetch(Some(access.source));
             let fetch_started = self.current_cycle;
             let epoch = self.dma_epoch;
             let cycles = self.game_pak_cycles(access);
@@ -4083,7 +4083,7 @@ impl Bus {
                 return ReadResult { value, cycles: self.current_cycle - started_at };
             }
         }
-        self.stop_game_pak_prefetch(false);
+        self.stop_game_pak_prefetch(None);
         if self.prefetch_buffer_was_disabled {
             access.kind = AccessKind::Nonsequential;
             self.prefetch_buffer_was_disabled = false;
@@ -4135,13 +4135,26 @@ impl Bus {
         self.duty_valid_until = prefetch_duty_valid_until(next, opcode_bytes);
     }
 
-    fn stop_game_pak_prefetch(&mut self, collision: bool) {
-        if self.game_pak_prefetch.active && collision && self.game_pak_prefetch.countdown != 0 {
-            let halfway = self.game_pak_prefetch.duty / 2 + 1;
-            if self.game_pak_prefetch.countdown == 1
-                || (self.game_pak_prefetch.opcode_bytes == 4
-                    && self.game_pak_prefetch.countdown == halfway)
-            {
+    /// Discards the buffer. A Game Pak data access (`collision` names its
+    /// source) waits one cycle for a halfword read the buffer has in flight:
+    /// a CPU access only when that read is in its last cycle, a DMA access
+    /// whenever it has begun. The mGBA suite's `ldmia` overflow and DMA
+    /// timing rows measure both rules.
+    fn stop_game_pak_prefetch(&mut self, collision: Option<AccessSource>) {
+        let prefetch = self.game_pak_prefetch;
+        if let Some(source) = collision
+            && prefetch.active
+            && prefetch.countdown != 0
+        {
+            // An ARM word is two halfword reads of half the duty each.
+            let half = if prefetch.opcode_bytes == 4 { prefetch.duty / 2 } else { prefetch.duty };
+            let left = if prefetch.countdown > half {
+                prefetch.countdown - half
+            } else {
+                prefetch.countdown
+            };
+            let waits = if source == AccessSource::Dma { left != half } else { left == 1 };
+            if waits {
                 self.advance(1);
             }
         }

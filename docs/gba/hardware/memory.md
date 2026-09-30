@@ -336,8 +336,11 @@ against mGBA 0.10.5 and NanoBoyAdvance with GBATEK as the behavioral source:
   fetch of the unit still in flight waits for the rest of that unit's duty.
 - **Stops.** Any Game Pak data access (a ROM read by the CPU or DMA, SRAM,
   EEPROM, GPIO, or any Game Pak write) discards the buffer before paying its
-  own wait states. It costs one extra cycle when a unit is one cycle from
-  completing, or when an ARM word fill is at its halfway point.
+  own wait states. An ARM word fill is two halfword reads of half its duty.
+  A CPU access waits one extra cycle when the halfword read in flight is in
+  its last cycle. A DMA access waits one extra cycle whenever a halfword
+  read has begun; Evenfall diverges from ZiGBA here
+  ([roadmap](../../roadmap.md#mgba-suite-rom-findings)).
 - **Leaving ROM.** An opcode fetch from any other region discards the buffer.
 - **`WAITCNT` changes.** The unit in flight keeps its duty; the next unit is
   priced with the new settings.
@@ -390,10 +393,12 @@ The DMA rules the last group pins are described in
 [`tests/mgba_suite_source.rs`](../../../systems/gba/tests/mgba_suite_source.rs),
 which reproduces the suite's DMA register-protocol table.
 
-Every row passes in every column except one DMA residual: the suite's
-IWRAM-to-ROM rows read one cycle more than ZiGBA with ROM code, prefetch on
-and `WAITCNT` `4000h` or `4004h`. The fixture asserts ZiGBA's value there so
-that any change is visible.
+Every row passes in every column. Two groups measure the prefetch collision
+cycle: the `ldmia` overflow rows stop the buffer with CPU reads at every
+point of an ARM word fill, and the IWRAM-to-ROM DMA rows, with ROM code,
+prefetch on and `WAITCNT` `4000h` or `4004h`, stop it with a DMA write one
+cycle into a three-cycle halfword read. ZiGBA's single rule fails the DMA
+rows by one cycle.
 
 ## Open questions
 
@@ -414,14 +419,16 @@ that any change is visible.
 - **EWRAM wait control.** The undocumented internal memory control register
   at `04000800h` is not modeled; writes to it are ignored and EWRAM always
   costs 3/3/6 cycles.
-- **DMA timing residual.** The IWRAM-to-ROM offset above has no identified
-  mechanism.
 - **`nop ; b pc`.** The suite's `nop ; b pc` row reuses the `b pc` test
   function, which has no leading `nop`, so the real two-instruction shape is
   unmeasured and no oracle is pinned for it.
-- **Prefetch collision cycle.** The extra cycle when data traffic stops a
-  unit about to complete follows NanoBoyAdvance's model; it has not been
-  isolated by a hardware measurement here.
+- **Prefetch collision cycle.** The suite's tables fit a CPU read that
+  waits only for a halfword read in its last cycle and a DMA write that
+  waits for any halfword read in flight. They do not say whether the
+  difference follows the accessor or the direction: no row has a CPU store
+  to ROM, and no DMA read of ROM meets a read in progress with more than
+  one cycle left. A probe that stops a three-cycle prefetch read one cycle
+  in with a CPU `STRH` to ROM, and with a DMA from ROM, would decide.
 - **Prefetch disable transition.** The forced N fetch after turning the
   buffer off is part of the cross-checked emulator model, not a GBATEK
   statement.

@@ -255,12 +255,19 @@ rows show this charge at every prefetch-off wait-state column, for ARM and
 Thumb code, and never for EWRAM code, where N and S are equal, or for opcodes
 served from the prefetch buffer.
 
+With ROM code and prefetch on, the transfer's first Game Pak access stops
+the prefetch buffer. It waits one cycle whenever the buffer's halfword read
+has begun, where a CPU access waits only for a read in its last cycle
+([memory](memory.md#game-pak-prefetch-buffer)). The suite's IWRAM-to-ROM
+rows measure this at `WAITCNT` `4000h` and `4004h`, where the IWRAM read
+lets a three-cycle prefetch read begin before the ROM write; Evenfall
+diverges from ZiGBA here.
+
 [`tests/mgba_suite_timing.rs`](../../../systems/gba/tests/mgba_suite_timing.rs)
 runs all sixteen of the suite's DMA rows (16- and 32-bit units, IWRAM or ROM
 source and destination, one and sixteen units) in ARM and Thumb, from ROM at
 all eight wait-state columns and from EWRAM and IWRAM, and reads the result
-through timer 0 as the suite does. Every value matches except the one residual
-listed under [Open questions](#open-questions).
+through timer 0 as the suite does. Every value matches.
 
 ### Addresses
 
@@ -457,9 +464,9 @@ no armed serial event reports `power_stopped` without advancing its clock
   fact.
 - **Repeat reload of a misaligned `DAD`.** No hardware capture isolates the
   reload path.
-- **IWRAM-to-ROM DMA under prefetch.** With ROM code, the prefetch buffer
-  enabled and `WAITCNT` `4000h` or `4004h`, the suite's IWRAM-to-ROM rows
-  read one cycle more than ZiGBA, in ARM and Thumb.
+- **DMA prefetch collision.** Whether a DMA read of ROM, not only a DMA
+  write, waits for a prefetch read with more than one cycle left is
+  unmeasured ([memory](memory.md#open-questions)).
 - **Interrupted Game Pak access.** The N − S charge for a CPU Game Pak access
   that a DMA interrupts fits every prefetch-off suite column, but the bus
   mechanism behind it, including why a transfer starting on the access's

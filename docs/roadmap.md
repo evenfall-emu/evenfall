@@ -176,7 +176,11 @@ suites must still pass.
   228-line frame" reads the flag at 1006.
 - **DMA count latch.** Latch `DMAxCNT_L` when the enable bit rises and reload
   it only on repeat. Evidence: "DMA count latching". Every DMA suite test
-  must keep passing.
+  must keep passing. Between the enabling write and the transfer, a
+  rewritten `DMAxCNT_L` holds a different count from the latched one, and
+  a state saved there must keep both; the durable channel keeps only the
+  register, so the fix needs a new durable field and a new state version,
+  which waits on the owner's decision.
 - **Decision: flag-setting multiplies set C from the multiplier's carry
   vector** (a deliberate guest-visible difference from ZiGBA, which leaves
   C unchanged). Every failing check of the mGBA suite's multiply-long table
@@ -247,6 +251,33 @@ suites must still pass.
   effect: BIOS-region reads after an interrupt wait under HLE. No
   state-layout change. The parity harness applies
   [`intr-wait-latch.patch`](../tools/parity/patches/intr-wait-latch.patch).
+- **Decision: a DMA Game Pak access waits for any prefetch read in flight**
+  (a deliberate guest-visible difference from ZiGBA). A Game Pak data access
+  that stops the prefetch buffer while it reads a halfword waits one cycle:
+  a CPU access only when that read is in its last cycle, as before; a DMA
+  access whenever the read has begun. Evidence: the mGBA suite's timing
+  table (`src/timing.c`, recorded on hardware). Its IWRAM-to-ROM DMA3 rows,
+  started from ROM code with prefetch on and a three-cycle WS0 S wait
+  (`WAITCNT` `4000h`, `4004h`), reach their ROM write one cycle into a
+  prefetch read and record one cycle more than the last-cycle rule gives,
+  in ARM and Thumb, while every other DMA row matches. Its `ldmia` rows that
+  overflow from OAM into ROM stop the buffer with CPU reads at every point
+  of an ARM word fill and match only the last-cycle rule, including one
+  cycle into the second halfword, where the DMA row waits
+  ([memory](gba/hardware/memory.md#game-pak-prefetch-buffer)). GBATEK does
+  not describe the collision; NanoBoyAdvance, which ZiGBA follows, applies
+  the last-cycle rule to both. The table cannot separate "DMA versus CPU"
+  from "write versus read": its only DMA collision inside a read is a write,
+  and no row stores to ROM from the CPU. A CPU store to ROM, or a DMA from
+  ROM, that stops a three-cycle prefetch read one cycle in would decide.
+  Compatibility effect: DMA to or from the Game Pak started while ROM code
+  runs with prefetch on. With the two-cycle WS0 S wait of the `WAITCNT`
+  `4317h` that GBATEK reports for manufactured cartridges, only a prefetch
+  read that starts on a 128 KiB boundary, and so costs N, lasts long enough
+  for the rules to differ. No
+  state-layout change. The parity harness applies
+  [`dma-prefetch-collision.patch`](../tools/parity/patches/dma-prefetch-collision.patch).
+  The hardware-table fixture asserts the recorded values for these rows.
 - **Timer enable and IRQ latency.** The timer IRQ suite and the Calibration
   row show a timer counting one cycle early after its enabling write and an
   overflow IRQ taken several cycles early. Pinned NanoBoyAdvance applies a
@@ -255,7 +286,12 @@ suites must still pass.
   prefetch-off ROM columns one to three cycles low, so the model is still
   incomplete. Isolate the enable delay and the IF-to-IRQ-entry delay with
   probes before changing either; the timer count-up and SIO timing suites
-  then show how much of the rest is BIOS cost.
+  then show how much of the rest is BIOS cost. Both delays outlast the
+  instruction that starts them, so a state saved inside one must record it:
+  the durable timer holds only its reload, counter, control and prescaler
+  phase, and the interrupt registers only `IE`, `IF` and `IME`. Either
+  change therefore needs a new durable field and a new state version, which
+  waits on the owner's decision.
 - **HLE BIOS costs.** The timing suite records retail cycle counts for
   `Div`, `Sqrt`, `ArcTan` and `CpuSet`, and the IRQ-timed suites read the
   retail trampoline's cost. Charging them would make HLE timing-faithful for

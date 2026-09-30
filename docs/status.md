@@ -104,6 +104,11 @@ match:
 - **The HBlank flag** rises at cycle 1006 of each line, 46 cycles after the
   HBlank IRQ, as GBATEK states; ZiGBA raises it with the IRQ at 960
   ([`gba/hardware/video.md`](gba/hardware/video.md#lcd-timing)).
+- **A DMA Game Pak access** that stops the prefetch buffer waits one cycle
+  whenever a halfword read has begun, as the mGBA suite's DMA timing rows
+  record; ZiGBA waits only for a read in its last cycle, the rule CPU
+  accesses keep
+  ([`gba/hardware/memory.md`](gba/hardware/memory.md#game-pak-prefetch-buffer)).
 
 The others change no emulated result:
 
@@ -132,8 +137,8 @@ where a deliberate difference above replaces one:
   inferred from the code and has not been reproduced
   ([`gba/hardware/bios.md`](gba/hardware/bios.md)).
 - **Timing residuals** remain against the mGBA suite's recorded results for
-  DMA with prefetch enabled, mixed wait states and DMA from EWRAM code
-  ([`compatibility.md`](compatibility.md)).
+  timer start and IRQ latency and for HLE BIOS service costs
+  ([`compatibility.md`](compatibility.md#mgba-suite-rom)).
 
 The player and the account server still live in ZiGBA's repository; what
 moving them here needs is listed in [`roadmap.md`](roadmap.md).

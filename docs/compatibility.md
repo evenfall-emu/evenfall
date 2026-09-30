@@ -154,21 +154,21 @@ tests" the multiplayer rows time out without a link partner, which the
 suite's table expects; they are not counted as results. Tests not named below
 pass.
 
-| Suite                  | Fails under HLE                                                                                                        | Fails under Cult-of-GBA BIOS                                             | Causes                                                                                                                                      |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Memory tests           | pass                                                                                                                   | SRAM mirror load; BIOS load; BIOS out-of-bounds load; out-of-bounds load | [replacement BIOS](#hle-and-replacement-bios-effects)                                                                                       |
-| I/O read tests         | pass                                                                                                                   | pass                                                                     |                                                                                                                                             |
-| Timing tests           | Calibration; BIOS Division, Division 2, Sqrt, Sqrt 2, Sqrt 3, ArcTan; CpuSet; Trivial and Short DMA (16 and 32/to ROM) | same, except BIOS ArcTan passes                                          | [timer and IRQ latency](#timer-and-irq-latency), [HLE and BIOS timing](#hle-and-replacement-bios-effects), [DMA residual](#known-residuals) |
-| Timer count-up tests   | every test                                                                                                             | every test                                                               | [timer and IRQ latency](#timer-and-irq-latency)                                                                                             |
-| Timer IRQ tests        | every test                                                                                                             | every test                                                               | [timer and IRQ latency](#timer-and-irq-latency)                                                                                             |
-| Shifter tests          | pass                                                                                                                   | pass                                                                     |                                                                                                                                             |
-| Carry tests            | pass                                                                                                                   | pass                                                                     |                                                                                                                                             |
-| Multiply long tests    | pass                                                                                                                   | pass                                                                     |                                                                                                                                             |
-| BIOS math tests        | pass                                                                                                                   | `ArcTan2` with a zero first operand and a nonzero second; `Div` by zero  | [replacement BIOS](#hle-and-replacement-bios-effects)                                                                                       |
-| DMA tests              | pass                                                                                                                   | pass                                                                     |                                                                                                                                             |
-| SIO register R/W tests | pass                                                                                                                   | pass                                                                     |                                                                                                                                             |
-| SIO timing tests       | Normal8/256k, Normal8/2M, Normal32/256k, Normal32/2M                                                                   | same                                                                     | [timer and IRQ latency](#timer-and-irq-latency)                                                                                             |
-| Misc. edge case tests  | DMA Prefetch, H-blank bit start, DMA count latching                                                                    | same                                                                     | [DMA Prefetch](#dma-prefetch), [HBlank flag](#hblank-flag), [DMA count latch](#dma-count-latch)                                             |
+| Suite                  | Fails under HLE                                                              | Fails under Cult-of-GBA BIOS                                             | Causes                                                                                                    |
+| ---------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| Memory tests           | pass                                                                         | SRAM mirror load; BIOS load; BIOS out-of-bounds load; out-of-bounds load | [replacement BIOS](#hle-and-replacement-bios-effects)                                                     |
+| I/O read tests         | pass                                                                         | pass                                                                     |                                                                                                           |
+| Timing tests           | Calibration; BIOS Division, Division 2, Sqrt, Sqrt 2, Sqrt 3, ArcTan; CpuSet | same, except BIOS ArcTan passes                                          | [timer and IRQ latency](#timer-and-irq-latency), [HLE and BIOS timing](#hle-and-replacement-bios-effects) |
+| Timer count-up tests   | every test                                                                   | every test                                                               | [timer and IRQ latency](#timer-and-irq-latency)                                                           |
+| Timer IRQ tests        | every test                                                                   | every test                                                               | [timer and IRQ latency](#timer-and-irq-latency)                                                           |
+| Shifter tests          | pass                                                                         | pass                                                                     |                                                                                                           |
+| Carry tests            | pass                                                                         | pass                                                                     |                                                                                                           |
+| Multiply long tests    | pass                                                                         | pass                                                                     |                                                                                                           |
+| BIOS math tests        | pass                                                                         | `ArcTan2` with a zero first operand and a nonzero second; `Div` by zero  | [replacement BIOS](#hle-and-replacement-bios-effects)                                                     |
+| DMA tests              | pass                                                                         | pass                                                                     |                                                                                                           |
+| SIO register R/W tests | pass                                                                         | pass                                                                     |                                                                                                           |
+| SIO timing tests       | Normal8/256k, Normal8/2M, Normal32/256k, Normal32/2M                         | same                                                                     | [timer and IRQ latency](#timer-and-irq-latency)                                                           |
+| Misc. edge case tests  | DMA Prefetch, H-blank bit start, DMA count latching                          | same                                                                     | [DMA Prefetch](#dma-prefetch), [HBlank flag](#hblank-flag), [DMA count latch](#dma-count-latch)           |
 
 ### Deviations from the recorded hardware
 
@@ -249,12 +249,6 @@ reads 54 cycles early under HLE and 9 under the replacement BIOS.
   mirror load". The BIOS-region loads fail as the
   [external BIOS protection latch](#known-divergences) describes.
 
-### Known residuals
-
-The four "to ROM" DMA timing rows fail only with ROM code, prefetch on and
-`WAITCNT` `4000h` or `4004h`, one cycle below the table: the residual the
-[hardware-table fixture](#mgba-suite-hardware-tables) already pins.
-
 ### Unexplained results
 
 - **Prefetch-off calibration.** With prefetch off, the Calibration row's ROM
@@ -274,12 +268,8 @@ generated by the core.
 | [`mgba_suite_timing.rs`](../systems/gba/tests/mgba_suite_timing.rs) | `src/timing.c` and DMA timing rows | ARM/Thumb fetch, branch, load/store, blocks, multiplies, BX and DMA3 timer results across ROM/RAM waits |
 | [`mgba_suite_source.rs`](../systems/gba/tests/mgba_suite_source.rs) | `src/dma.c`                        | immediate DMA source masks, SRAM aliasing, stepping and shared latch                                    |
 
-The timing fixture subtracts the suite-style empty-body calibration. Its
-DMA trigger oracle intentionally pins ZiGBA's one-cycle-low result for
-IWRAM-to-ROM transfers executed from ROM with prefetch enabled and `WAITCNT`
-`0x4000` or `0x4004`; the recorded hardware table reads one cycle higher.
-This is an open timing residual, not a passing claim for those hardware
-columns. The suite's “nop ; b pc” row reuses the branch test's code, so that
+The timing fixture subtracts the suite-style empty-body calibration and
+asserts every recorded DMA trigger value. The suite's “nop ; b pc” row reuses the branch test's code, so that
 label has no distinct oracle. The suite ROM's own results, including these
 rows, are in [mGBA suite ROM](#mgba-suite-rom).
 
