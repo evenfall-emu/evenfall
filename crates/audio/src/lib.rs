@@ -138,7 +138,6 @@ mod tests {
         StereoSample { left, right: 0 }
     }
 
-    /// "audio resampler preserves equal-rate samples across calls"
     #[test]
     fn preserves_equal_rate_samples_across_calls() {
         let mut resampler = Resampler::new(48_000, 48_000).unwrap();
@@ -154,7 +153,6 @@ mod tests {
         assert_eq!(output[..3], [first[0], first[1], second[0]]);
     }
 
-    /// "audio resampler reports unconsumed input when output fills mid-interval"
     #[test]
     fn reports_unconsumed_input_when_output_fills_mid_interval() {
         let mut resampler = Resampler::new(1, 4).unwrap();
@@ -174,7 +172,6 @@ mod tests {
         );
     }
 
-    /// "audio resampler downsampling keeps rational phase without drift"
     #[test]
     fn downsampling_keeps_rational_phase_without_drift() {
         let mut resampler = Resampler::new(4, 2).unwrap();
@@ -187,7 +184,6 @@ mod tests {
         assert_eq!([output[0].left, output[1].left, output[2].left], [0, 20, 40]);
     }
 
-    /// "audio resampler reset discards interpolation history"
     #[test]
     fn reset_discards_interpolation_history() {
         let mut resampler = Resampler::new(2, 4).unwrap();
