@@ -1435,6 +1435,41 @@ fn hle_intr_wait_completes_only_after_the_irq_handler_updates_the_bios_mirror() 
     assert_eq!(machine.read_register(4), 7);
 }
 
+/// GBATEK, Reading from BIOS Memory, and the mGBA suite's "BIOS load" row
+/// (recorded on hardware after `VBlankIntrWait`): an IRQ return leaves the
+/// protected-BIOS latch at `E55EC002h`, the opcode after the retail IRQ
+/// trampoline's return, but an `IntrWait` that this return completes goes
+/// on to return from its SWI, which leaves `E3A02004h`. A return that does
+/// not complete the wait halts again inside the BIOS with the IRQ latch.
+#[test]
+fn hle_intr_wait_completed_by_an_irq_return_leaves_the_swi_return_latch() {
+    let mut rom = [0; 12];
+    write_words(&mut rom, 0, &[0xEF04_0000, 0xE3A0_4007, 0xE12F_FF1E]);
+    let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
+    machine.cpu.registers[0] = 1;
+    machine.cpu.registers[1] = 1 << 3;
+    write_words(&mut machine.bus.iwram[..], 0x7FFC, &[0x0800_0008]);
+    executed_step(&mut machine);
+    machine.bus.irq.interrupt_enable_mask = 1 << 3;
+    for (bios_flags, latch, power) in [
+        (1_u16, 0xE55E_C002_u32, PowerState::Halted),
+        (1 | 1 << 3, 0xE3A0_2004, PowerState::Running),
+    ] {
+        machine.bus.update_irq_line();
+        machine.bus.timers[0].write_reload(0xFFFC);
+        machine.bus.timers[0].write_control((1 << 7) | (1 << 6), machine.bus.prescaler_counter());
+        machine.run_until(machine.now() + 4).unwrap();
+        assert_eq!(executed_step(&mut machine).instruction_address, 0x0800_0008);
+        machine.bus.timers[0].write_control(0, machine.bus.prescaler_counter());
+        machine.bus.irq.interrupt_request_flags = 0;
+        machine.bus.update_irq_line();
+        machine.bus.iwram[0x7FF8..0x7FFA].copy_from_slice(&bios_flags.to_le_bytes());
+        executed_step(&mut machine);
+        assert_eq!(machine.bus.power_state(), power);
+        assert_eq!(machine.bus.bios_latch, latch, "BIOS flags {bios_flags:04x}");
+    }
+}
+
 /// Zig: `nested HLE IRQ return does not complete the outer IntrWait`.
 #[test]
 fn nested_hle_irq_return_does_not_complete_the_outer_intr_wait() {

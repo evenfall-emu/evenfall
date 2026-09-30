@@ -316,7 +316,11 @@ address is stored at `03007FFCh` with `lr = 00000138h`, and returns with
 When execution reaches `00000138h` with a frame on the stack, the dispatcher
 performs the old stream's sequential fetch, pops the frame, restores
 `r0`–`r3` and `r12`, restores that frame's own `SPSR_irq`, returns to the
-interrupted code, and sets the latch to `E55EC002h`.
+interrupted code, and sets the latch to `E55EC002h`. If that return ends a
+pending `IntrWait`, the retail BIOS would go on to return from the SWI, so
+the latch becomes `E3A02004h` instead, as the mGBA suite's "BIOS load" row
+records after `VBlankIntrWait`; ZiGBA keeps `E55EC002h`
+([`roadmap.md`](../../roadmap.md#mgba-suite-rom-findings)).
 
 Handlers may re-enable IRQs and nest. Each nesting level has its own frame,
 so an inner IRQ cannot overwrite the outer return state, and the saved

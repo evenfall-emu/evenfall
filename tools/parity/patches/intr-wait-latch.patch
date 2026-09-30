@@ -1,0 +1,43 @@
+--- a/src/cpu.zig
++++ b/src/cpu.zig
+@@ -4300,8 +4300,10 @@ pub const Cpu = struct {
+         self.refillPipeline(bus);
+         // IntrWait owns the outer HLE IRQ return. A nested return must resume
+         // that handler so it can publish the selected BIOS IRQ mirror bit.
+-        if (self.hle_irq_depth == 0) self.completeHleInterruptWait(bus);
+-        bus.setBiosLatch(0xE55E_C002);
++        const wait_ended = self.hle_irq_depth == 0 and self.completeHleInterruptWait(bus);
++        // Evenfall: an IntrWait this return ends goes on to return from its
++        // SWI, which leaves the SWI latch.
++        bus.setBiosLatch(if (wait_ended) 0xE3A0_2004 else 0xE55E_C002);
+ 
+         return .{
+             .instruction_address = hle_irq_return_stub,
+@@ -6827,8 +6829,8 @@ pub const Cpu = struct {
+         bus.elapse(45);
+     }
+ 
+-    fn completeHleInterruptWait(self: *Cpu, bus: *Bus) void {
+-        const mask = self.hle_interrupt_wait_mask orelse return;
++    fn completeHleInterruptWait(self: *Cpu, bus: *Bus) bool {
++        const mask = self.hle_interrupt_wait_mask orelse return false;
+         var flags: u16 = @truncate(bus.read(.{
+             .address = 0x0300_7FF8,
+             .width = .half,
+@@ -6837,7 +6839,7 @@ pub const Cpu = struct {
+         }).value);
+         if (flags & mask == 0) {
+             bus.enterHalt();
+-            return;
++            return false;
+         }
+         flags &= ~mask;
+         _ = bus.write(.{
+@@ -6847,6 +6849,7 @@ pub const Cpu = struct {
+             .source = .cpu_data,
+         }, flags);
+         self.hle_interrupt_wait_mask = null;
++        return true;
+     }
+ 
+     fn executeHleDivision(self: *Cpu, bus: *Bus, swap_operands: bool) void {

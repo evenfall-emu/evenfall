@@ -156,7 +156,7 @@ pass.
 
 | Suite                  | Fails under HLE                                                                                                                                                                                                                                       | Fails under Cult-of-GBA BIOS                                                                    | Causes                                                                                                                                                                                                      |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Memory tests           | BIOS load | SRAM mirror load; BIOS load; BIOS out-of-bounds load; out-of-bounds load | [HLE `IntrWait` latch](#hle-intrwait-latch), [replacement BIOS](#hle-and-replacement-bios-effects) |
+| Memory tests           | pass | SRAM mirror load; BIOS load; BIOS out-of-bounds load; out-of-bounds load | [replacement BIOS](#hle-and-replacement-bios-effects) |
 | I/O read tests         | pass | pass | |
 | Timing tests           | Calibration; BIOS Division, Division 2, Sqrt, Sqrt 2, Sqrt 3, ArcTan; CpuSet; Trivial and Short DMA (16 and 32/to ROM)                                                                                                                                | same, except BIOS ArcTan passes                                                                 | [timer and IRQ latency](#timer-and-irq-latency), [HLE and BIOS timing](#hle-and-replacement-bios-effects), [DMA residual](#known-residuals)                                                                 |
 | Timer count-up tests   | every test                                                                                                                                                                                                                                            | every test                                                                                      | [timer and IRQ latency](#timer-and-irq-latency)                                                                                                                                                             |
@@ -205,13 +205,6 @@ On hardware the first transfer copies 2 units and the repeat 4: the count is
 latched when the enable bit rises, like the addresses, and reloaded from
 `DMA3CNT_L` on repeat. The core reads `DMAxCNT_L` whenever a transfer
 starts, so the first transfer copies 4.
-
-#### HLE `IntrWait` latch
-
-"BIOS load" calls `VBlankIntrWait` with `IME` clear, which the BIOS sets
-itself, then reads the BIOS region. Hardware returns `E3A02004h`, the latch
-after an SWI returns. HLE leaves `E55EC002h`, the latch after an IRQ returns,
-because the wait's completing IRQ return is the last latch update.
 
 #### Timer and IRQ latency
 

@@ -220,9 +220,19 @@ suites must still pass.
   work state keeps bit 0 of both addresses in its existing fields; no
   state-layout change. The parity harness applies
   [`cpu-set-halfword.patch`](../tools/parity/patches/cpu-set-halfword.patch).
-- **HLE `IntrWait` latch.** Leave the post-SWI latch `E3A02004h` when an
-  `IntrWait` completes after its IRQ returns. Evidence: "BIOS load" under
-  HLE.
+- **Decision: an HLE `IntrWait` that an IRQ return ends leaves the SWI
+  latch** (a deliberate guest-visible difference from ZiGBA). The HLE
+  IRQ return sets the protected-BIOS latch to `E55EC002h`, the opcode after
+  the retail trampoline's return; when that return ends a pending
+  `IntrWait`, the retail BIOS goes on to return from the SWI, so the latch
+  becomes `E3A02004h`. A return that leaves the wait pending keeps
+  `E55EC002h`. Evidence: GBATEK, "Reading from BIOS Memory" (the opcode at
+  `[0188h+8]` after SWI execution), and the mGBA suite's "BIOS load" row,
+  which reads `E3A02004h` after `VBlankIntrWait` on hardware
+  ([memory](gba/hardware/memory.md#bios-read-protection)). Compatibility
+  effect: BIOS-region reads after an interrupt wait under HLE. No
+  state-layout change. The parity harness applies
+  [`intr-wait-latch.patch`](../tools/parity/patches/intr-wait-latch.patch).
 - **Timer enable and IRQ latency.** The timer IRQ suite and the Calibration
   row show a timer counting one cycle early after its enabling write and an
   overflow IRQ taken several cycles early. Pinned NanoBoyAdvance applies a

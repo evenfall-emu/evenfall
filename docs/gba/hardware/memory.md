@@ -241,6 +241,7 @@ post-boot value.
 | after an SWI returns                        | `E3A02004h` |
 | during an IRQ handler                       | `E25EF004h` |
 | after an IRQ returns                        | `E55EC002h` |
+| after an IRQ return ends an `IntrWait`      | `E3A02004h` |
 | after an HLE sound jump-list helper returns | `E12FFF1Eh` |
 
 The jsmolka BIOS test ROM checks the latch around startup, `Sqrt` and the IRQ

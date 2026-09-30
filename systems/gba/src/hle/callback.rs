@@ -32,10 +32,11 @@ impl Cpu {
         self.registers[15] =
             self.next_instruction_address.wrapping_add(if self.is_thumb() { 4 } else { 8 });
         self.refill_pipeline(bus);
-        if self.hle_irq_depth == 0 {
-            self.complete_hle_interrupt_wait(bus);
-        }
-        bus.set_bios_latch(0xE55E_C002);
+        let wait_ended = self.hle_irq_depth == 0 && self.complete_hle_interrupt_wait(bus);
+        // The retail trampoline's return leaves its IRQ latch; an IntrWait
+        // it ends then returns from its SWI, which leaves the SWI latch
+        // (GBATEK, Reading from BIOS Memory).
+        bus.set_bios_latch(if wait_ended { 0xE3A0_2004 } else { 0xE55E_C002 });
         StepResult {
             instruction_address: HLE_IRQ_RETURN_STUB,
             instruction: 0xE25E_F004,

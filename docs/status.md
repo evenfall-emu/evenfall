@@ -98,6 +98,9 @@ match:
 - **Block transfers on SRAM** present each beat's exact address to the
   8-bit save bus, as single transfers do; ZiGBA aligns them
   ([`gba/hardware/memory.md`](gba/hardware/memory.md#region-behavior)).
+- **HLE `IntrWait`** leaves the SWI-return BIOS latch when an IRQ return
+  ends the wait, where ZiGBA leaves the IRQ-return latch
+  ([`gba/hardware/bios.md`](gba/hardware/bios.md#intrwait-and-the-bios-irq-mirror)).
 
 The others change no emulated result:
 
