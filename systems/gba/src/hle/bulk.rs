@@ -1,6 +1,6 @@
 //! Suspendable BIOS copy, affine and decompression services.
 //!
-//! Each loop stops only at ZiGBA's guest-cycle iteration boundaries. The
+//! Each loop stops only at guest-cycle iteration boundaries. The
 //! caller retains `HleBulkWork` without changing the BIOS latch or taking an
 //! interrupt until the loop finishes.
 
@@ -781,8 +781,9 @@ fn write_decompression_byte(
 mod tests {
     use super::*;
 
-    /// ZiGBA machine_test: "HLE CpuSet copies halfwords or words and writes back only word address registers".
-    /// The split case also checks that suspension leaves result registers alone until completion.
+    /// CpuSet copies halfwords or words and writes back only the word
+    /// address registers. The split case also checks that suspension leaves
+    /// the result registers alone until completion.
     #[test]
     fn hle_cpu_set_writeback_and_suspension() {
         for (word, count) in [(false, 3_u32), (true, 2)] {

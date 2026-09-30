@@ -127,7 +127,7 @@ impl Default for Verification {
 }
 
 /// `R` must have a unique byte representation (no uninitialized padding).
-/// The Bus's scanline register key uses `#[repr(C)]` with fields in Zig order.
+/// The Bus's scanline register key uses `#[repr(C)]` for that reason.
 #[derive(Clone)]
 pub struct Memo<R: Copy + PartialEq + Default, const L: usize> {
     pub changes_registers: bool,

@@ -1,4 +1,4 @@
-//! HLE BIOS services ported from ZiGBA's `cpu.zig`.
+//! HLE BIOS services.
 
 mod bulk;
 mod callback;
@@ -198,7 +198,7 @@ fn hle_arc_tan2(x: i32, y: i32) -> (u16, Option<HleArcTanResult>) {
 }
 
 impl Cpu {
-    /// CPU half of ZiGBA's SoftReset and HardReset, after the bus-side reset.
+    /// CPU half of SoftReset and HardReset, after the bus-side reset.
     pub fn reset_hle_cpu(&mut self, entry_address: u32) {
         self.switch_banked_mode(0x1F);
         self.registers[..13].fill(0);
@@ -223,7 +223,7 @@ impl Cpu {
         self.hle_service = None;
     }
 
-    /// ZiGBA `executeHleDivision`: returns the bus stall to charge after the register writes.
+    /// Returns the bus stall to charge after the register writes.
     pub fn execute_hle_division(&mut self, swap_operands: bool) -> u64 {
         let numerator_bits = self.registers[usize::from(swap_operands)];
         let denominator_bits = self.registers[usize::from(!swap_operands)];
@@ -246,7 +246,7 @@ impl Cpu {
         11 + 13 * u64::from(difference.max(1) as u8)
     }
 
-    /// ZiGBA `executeHleArcTan`: register writes precede the cycle charge.
+    /// Register writes precede the cycle charge.
     pub fn execute_hle_arc_tan(&mut self) -> u64 {
         let result = hle_arc_tan(self.registers[0] as i32);
         self.registers[0] = i32::from(result.angle) as u32;
@@ -255,7 +255,7 @@ impl Cpu {
         result.cycles
     }
 
-    /// ZiGBA `executeHleArcTan2`: axes leave r1 intact; r3 becomes 0x170.
+    /// Axes leave r1 intact; r3 becomes 0x170.
     pub fn execute_hle_arc_tan2(&mut self) -> u64 {
         let (angle, result) = hle_arc_tan2(self.registers[0] as i32, self.registers[1] as i32);
         self.registers[0] = u32::from(angle);
@@ -334,7 +334,7 @@ mod tests {
             );
         }
 
-        // ZiGBA's seeded cases scatter both streams near MMIO boundaries and wraparound.
+        // Seeded cases scatter both streams near MMIO boundaries and wraparound.
         let mut seed = 0x0E0E_AFF1_u32;
         let mut random = || {
             seed ^= seed << 13;
@@ -488,7 +488,7 @@ mod tests {
         }
     }
 
-    /// ZiGBA machine_test: "HLE SoftReset branches according to the boot flag and clears the IRQ stack".
+    /// SoftReset branches according to the boot flag and clears the IRQ stack.
     #[test]
     fn hle_soft_reset_restores_cpu_banks_and_clears_continuations() {
         let mut cpu = Cpu::init(0x0800_0000, 0x92, true);

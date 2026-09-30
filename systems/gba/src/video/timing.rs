@@ -202,7 +202,7 @@ mod tests {
         assert!(events.vcount_irq);
     }
 
-    // Independent per-boundary oracle from ZiGBA's stepToRawBoundaryForTest.
+    // Independent per-boundary oracle for the event-skipping paths.
     fn step_to_raw_boundary_for_test(timing: &mut PpuTiming) -> (Cycle, bool) {
         let hblank = timing.cycle_in_line < 960;
         let cycles = Cycle::from(if hblank { 960 } else { 1232 } - timing.cycle_in_line);

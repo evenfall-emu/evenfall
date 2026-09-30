@@ -531,7 +531,7 @@ fn vector_color_effects_match_the_per_dot_effects_unit() {
     assert_eq!(vector.frame_pixels[first], 9 | (10 << 10));
 }
 
-/// ZiGBA: "mixed mid-scanline palette and BG VRAM writes retain their independent histories"
+/// Palette and BG VRAM writes in the same scanline keep independent histories.
 #[test]
 fn mixed_palette_and_bg_vram_history_resolves_each_at_its_own_dot() {
     let mut bus = Bus::init(&[]);
@@ -557,7 +557,7 @@ fn mixed_palette_and_bg_vram_history_resolves_each_at_its_own_dot() {
     assert_eq!(bus.vram_byte_for(&view, 110, 0x120), 0x34);
 }
 
-/// ZiGBA: "mid-scanline Mode 3 affine write preserves pixels rendered before completion"
+/// A mid-scanline affine write keeps the pixels rendered before it.
 #[test]
 fn affine_matrix_split_preserves_accumulated_source_coordinate() {
     let mut bus = Bus::init(&[]);
@@ -573,7 +573,7 @@ fn affine_matrix_split_preserves_accumulated_source_coordinate() {
     assert_eq!(after.ref_x + after.pa * 101, 102 * 256);
 }
 
-/// ZiGBA: "memoized scanlines notice every change to the memory they read"
+/// Memoized scanlines notice every change to the memory they read.
 #[test]
 fn memoized_scanline_invalidates_on_a_changed_bitmap_page() {
     let mut bus = Bus::init(&[]);
@@ -699,9 +699,9 @@ fn memoized_scanlines_notice_every_change_to_the_memory_they_read() {
                             &bus.palette[..]
                         };
                         let value = u16::from_le_bytes([memory[offset], memory[offset + 1]]) ^ mask;
-                        // Zig calls the memory write method directly, without
-                        // recording a raster segment. Write in VBlank here so
-                        // the public bus path preserves that same condition.
+                        // The change must not record a raster segment. Writing
+                        // in VBlank keeps the public bus path from recording
+                        // one.
                         let timing = bus.ppu_timing;
                         bus.ppu_timing.line = SCREEN_HEIGHT as u16;
                         write_half(bus, base + offset as u32, value);
@@ -931,7 +931,7 @@ fn memoized_scanlines_match_fresh_renders_after_every_kind_of_input_change() {
     }
 }
 
-/// ZiGBA: "front-to-back BG passes keep the two front-most BG pixels"
+/// Front-to-back BG passes keep the two front-most BG pixels.
 #[test]
 fn front_to_back_passes_preserve_priority_and_the_next_visible_bg() {
     let mut bus = Bus::init(&[]);
@@ -1149,7 +1149,7 @@ fn vram_history_selects_the_reference_only_for_pages_the_line_reads() {
     }
 }
 
-/// ZiGBA: "front-to-back BG passes keep the two front-most BG pixels"
+/// Front-to-back BG passes keep the two front-most BG pixels.
 #[test]
 fn front_to_back_bg_passes_match_independently_rendered_layers() {
     let mut seed = 0xF20B_ACC5;
