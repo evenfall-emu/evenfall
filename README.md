@@ -11,8 +11,7 @@ It replaces ZiGBA, our earlier emulator written in Zig, whose save states still 
 Later systems (Nintendo DS, N64, GameCube, Wii) will share its crates as they are extracted from concrete uses.
 
 > Evenfall does not include BIOS images or games.
-> Bring your own legally
-> obtained files.
+> Bring your own legally obtained files.
 > Evenfall is not affiliated with or endorsed by Nintendo.
 
 ## What is here
@@ -28,7 +27,7 @@ Later systems (Nintendo DS, N64, GameCube, Wii) will share its crates as they ar
 
 ## Build and test
 
-The toolchain is pinned in `rust-toolchain.toml` (stable Rust; `rustup` installs it on first use).
+The toolchain is pinned in `rust-toolchain.toml`: stable Rust, which `rustup` installs on first use.
 
 ```sh
 cargo test --workspace                    # every Rust test
@@ -36,7 +35,8 @@ cargo run --release -p evenfall-gba -- run --steps 5000000 --frame-hash rom.gba
 npm ci && npm run build:wasm -w @evenfall/gba && npm test
 ```
 
-The ROM validators (which need `arm-none-eabi-gcc` for the probe ROMs) are described in [`docs/testing.md`](docs/testing.md), and the benchmarks in [`docs/performance.md`](docs/performance.md).
+[`docs/testing.md`](docs/testing.md) describes the other test layers, including the test ROMs, which need `arm-none-eabi-gcc` for the probes.
+[`docs/performance.md`](docs/performance.md) describes the benchmarks.
 
 ## License
 
