@@ -201,7 +201,7 @@ for (const kind of opts.targets.split(",")) {
     );
     const changed = [...names]
       .filter((n) => base.get(n) !== other.get(n))
-      .sort();
+      .sort((x, y) => (x < y ? -1 : x > y ? 1 : 0));
     console.log(
       `${kind}: threshold 250 -> ${THRESHOLDS[i]}: ${changed.length} of ${names.size} functions change`,
     );

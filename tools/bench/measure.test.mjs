@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vite-plus/test";
 import { parseObservation, roundOrder, summarize } from "./measure.mjs";
 
 const line = (fields = {}) =>
