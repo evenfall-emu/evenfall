@@ -156,10 +156,24 @@ suites must still pass.
   wrapping widths and complete bus effects" expects the composed halfword
   latch. "DMA Prefetch" now reads the DMA's last value; its break address
   still differs (see the HBlank item below).
-- **HBlank flag edge.** Raise `DISPSTAT`'s HBlank flag about 46 cycles after
-  the HBlank IRQ and DMA request (GBATEK's 1,006 cycles into the line).
-  Evidence: "H-blank bit start" flip intervals. The suite does not time the
-  VBlank flag's line-227 edge.
+- **Decision: the HBlank flag rises at cycle 1006** (a deliberate
+  guest-visible difference from ZiGBA, which raises it with the HBlank IRQ
+  at 960). The IRQ and HBlank DMA request stay at 960. Evidence: GBATEK, "LCD
+  I/O Interrupts and Status" (the flag "is "0" for a total of 1006
+  cycles"), and the mGBA suite's "H-blank bit start" flips 4 to 6, which
+  match for a rise at 1006 or later and for no earlier cycle
+  ([video](gba/hardware/video.md#lcd-timing)). The test still fails: its
+  first flips and its wake interval run through the `Halt` wake path, whose
+  BIOS cost HLE does not charge (flip 1 reads 89 cycles short under HLE, 49
+  under the replacement BIOS), and the wake interval differs from the
+  recorded 1,232 by three Thumb instructions that this build of the suite
+  schedules after the second `Halt` and not after the first, so no emulator
+  can reproduce it with this ROM build
+  ([compatibility](compatibility.md#hblank-flag)). No state-layout change:
+  the flag is derived from the line position. The parity harness applies
+  [`hblank-flag.patch`](../tools/parity/patches/hblank-flag.patch). The
+  ported test "LCD timing follows the GBATEK 960/1232-cycle line and
+  228-line frame" reads the flag at 1006.
 - **DMA count latch.** Latch `DMAxCNT_L` when the enable bit rises and reload
   it only on repeat. Evidence: "DMA count latching". Every DMA suite test
   must keep passing.

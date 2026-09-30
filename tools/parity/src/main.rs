@@ -42,6 +42,7 @@ const ORACLE_PATCHES: &[&str] = &[
     "cpu-set-halfword.patch",
     "sram-block.patch",
     "intr-wait-latch.patch",
+    "hblank-flag.patch",
 ];
 
 fn build() -> Result<(), Box<dyn Error>> {

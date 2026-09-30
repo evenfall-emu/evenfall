@@ -5,6 +5,12 @@ use evenfall_state::Codec;
 
 pub const VISIBLE_LINE_COUNT: usize = 160;
 
+/// The cycle of each line at which DISPSTAT's HBlank flag rises, 46 cycles
+/// after the HBlank IRQ and DMA request at the end of the drawing time
+/// (GBATEK, LCD I/O Interrupts and Status: the flag "is "0" for a total of
+/// 1006 cycles").
+pub const HBLANK_FLAG_CYCLE: u16 = 1006;
+
 /// Visible lines whose HBlank began, as a bitset: delivery visits only the
 /// completed lines instead of scanning every line on every LCD event.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -59,7 +65,7 @@ impl PpuTiming {
         if self.line >= 160 {
             value |= 1 << 0;
         }
-        if self.cycle_in_line >= 960 {
+        if self.cycle_in_line >= HBLANK_FLAG_CYCLE {
             value |= 1 << 1;
         }
         if self.line == self.vcount_compare() {

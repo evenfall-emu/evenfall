@@ -237,13 +237,16 @@ fn cached_irq_line_follows_ie_if_ime_writes_and_keypad_edges() {
 }
 
 /// ZiGBA: "LCD timing follows the GBATEK 960/1232-cycle line and 228-line frame"
+///
+/// The HBlank flag it reads at cycle 960 in ZiGBA now rises at 1006
+/// (`hblank_flag_rises_at_cycle_1006_after_the_hblank_irq`).
 #[test]
 fn lcd_timing_follows_the_gbatek_960_1232_cycle_line_and_228_line_frame() {
     let mut bus = Bus::init(&[]);
     write_half(&mut bus, 0x0400_0004, 1 << 3);
-    bus.elapse(959);
+    bus.elapse(1005);
     assert_ne!(0, read_half(&mut bus, 0x0400_0004) & (1 << 1));
-    bus.elapse(271);
+    bus.elapse(225);
     assert_eq!(1, read_half(&mut bus, 0x0400_0006));
     bus.elapse(160 * 1232 - bus.now());
     assert_eq!(160, read_half(&mut bus, 0x0400_0006));
@@ -253,6 +256,33 @@ fn lcd_timing_follows_the_gbatek_960_1232_cycle_line_and_228_line_frame() {
     assert_eq!(0, bus.completed_frames());
     bus.elapse(1);
     assert_eq!(1, bus.completed_frames());
+}
+
+/// GBATEK, LCD I/O Interrupts and Status: "Although the drawing time is
+/// only 960 cycles (240*4), the H-Blank flag is "0" for a total of 1006
+/// cycles", in every line. The HBlank IRQ stays at cycle 960, the end of the
+/// drawing time. The mGBA suite's "H-blank bit start" flip intervals,
+/// recorded on hardware, place the rise at cycle 1006 or later.
+#[test]
+fn hblank_flag_rises_at_cycle_1006_after_the_hblank_irq() {
+    let mut bus = Bus::init(&[]);
+    write_half(&mut bus, 0x0400_0004, 1 << 4);
+    // A read of DISPSTAT sees the cycle it starts at and takes one.
+    let flag = |bus: &mut Bus| read_half(bus, 0x0400_0004) & (1 << 1) != 0;
+    let irq = |bus: &Bus| bus.irq.interrupt_request_flags & (1 << 1) != 0;
+    for line in [0, 1, 160, 227] {
+        let start = line * 1232;
+        bus.elapse(start + 959 - bus.now());
+        assert!(!flag(&mut bus), "line {line}, cycle 959");
+        assert!(irq(&bus), "line {line}: the HBlank IRQ at cycle 960");
+        bus.irq.interrupt_request_flags = 0;
+        bus.elapse(start + 1005 - bus.now());
+        assert!(!flag(&mut bus), "line {line}, cycle 1005");
+        assert!(flag(&mut bus), "line {line}, cycle 1006");
+        bus.elapse(start + 1231 - bus.now());
+        assert!(flag(&mut bus), "line {line}, cycle 1231");
+        assert!(!flag(&mut bus), "line {line}, cycle 1232");
+    }
 }
 
 /// ZiGBA: "aligned MMIO words compose adjacent halfword registers in one cycle"

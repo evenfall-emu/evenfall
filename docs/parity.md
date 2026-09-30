@@ -152,6 +152,7 @@ this order:
 | [`cpu-set-halfword.patch`](../tools/parity/patches/cpu-set-halfword.patch) | HLE halfword `CpuSet` loads and stores like `LDRH` and `STRH`              | unchanged      |
 | [`sram-block.patch`](../tools/parity/patches/sram-block.patch) | block transfers and HLE word copies give the SRAM bus exact addresses      | unchanged      |
 | [`intr-wait-latch.patch`](../tools/parity/patches/intr-wait-latch.patch) | an HLE `IntrWait` ended by an IRQ return leaves the SWI latch              | unchanged      |
+| [`hblank-flag.patch`](../tools/parity/patches/hblank-flag.patch) | the HBlank flag rises at cycle 1006, 46 cycles after the HBlank IRQ         | unchanged      |
 
 Each changes the Rust core and the oracle alike, so every scenario still
 compares byte for byte; none adds a durable field, so the schema check still

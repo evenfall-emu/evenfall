@@ -101,6 +101,9 @@ match:
 - **HLE `IntrWait`** leaves the SWI-return BIOS latch when an IRQ return
   ends the wait, where ZiGBA leaves the IRQ-return latch
   ([`gba/hardware/bios.md`](gba/hardware/bios.md#intrwait-and-the-bios-irq-mirror)).
+- **The HBlank flag** rises at cycle 1006 of each line, 46 cycles after the
+  HBlank IRQ, as GBATEK states; ZiGBA raises it with the IRQ at 960
+  ([`gba/hardware/video.md`](gba/hardware/video.md#lcd-timing)).
 
 The others change no emulated result:
 

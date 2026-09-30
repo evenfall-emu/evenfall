@@ -37,8 +37,9 @@ ZiGBA delivers LCD events at these positions:
 
 | Position                       | Effect                                                                                                                         |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| Cycle 960 of lines 0–159       | HBlank flag set; the line is rendered; enabled affine reference points advance; HBlank DMA is requested; HBlank IRQ if enabled |
-| Cycle 960 of lines 160–227     | HBlank flag set; HBlank IRQ if enabled                                                                                         |
+| Cycle 960 of lines 0–159       | the line is rendered; enabled affine reference points advance; HBlank DMA is requested; HBlank IRQ if enabled                  |
+| Cycle 960 of lines 160–227     | HBlank IRQ if enabled                                                                                                          |
+| Cycle 1006 of every line       | HBlank flag set                                                                                                                |
 | Start of line 160              | VBlank flag set; VBlank IRQ if enabled; VBlank DMA is requested                                                                |
 | Start of the line equal to LYC | VCOUNT-match IRQ if enabled                                                                                                    |
 | Wrap from line 227 to line 0   | affine reference points reload; the frame is complete                                                                          |
@@ -54,7 +55,7 @@ two frames. HBlank DMA fires only on visible lines
 | Bits | Field                                       | ZiGBA                                       |
 | ---- | ------------------------------------------- | ------------------------------------------- |
 | 0    | VBlank flag, read-only                      | set on lines 160–227                        |
-| 1    | HBlank flag, read-only                      | set from cycle 960 to the end of every line |
+| 1    | HBlank flag, read-only                      | set from cycle 1006 to the end of every line |
 | 2    | VCOUNT match, read-only                     | set while `VCOUNT` equals LYC               |
 | 3–5  | VBlank, HBlank and VCOUNT-match IRQ enables | stored                                      |
 | 6–7  | unused                                      | not writable (write mask `FF38h`)           |
@@ -62,13 +63,20 @@ two frames. HBlank DMA fires only on visible lines
 
 `VCOUNT` reads the current line, 0–227; writes are ignored.
 
-GBATEK adds two details ZiGBA does not model: the HBlank flag stays clear for
-1,006 cycles of each line although drawing takes 960, and the VBlank flag is
-clear again on line 227. Pinned mGBA 0.10.5 agrees in outline, using a
-1,008-cycle drawing period and clearing the VBlank flag at line 227. ZiGBA
-raises the flag, the IRQ and HBlank DMA together at cycle 960 and keeps the
-VBlank flag through line 227. No hardware test available to the project pins
-either edge (see [Open questions](#open-questions)).
+The HBlank flag stays clear for 1,006 cycles of each line although drawing
+takes 960, as GBATEK states; the IRQ and HBlank DMA still come at cycle 960.
+The mGBA suite's "H-blank bit start" test, recorded on hardware, times the
+flag's edges with polling loops: its fourth to sixth flip intervals match
+for a rise at cycle 1006 or later and not for any earlier cycle. Its other
+checks time the flag from a `Halt` wake, so they include the BIOS IRQ path's
+cost (see [compatibility](../../compatibility.md#hblank-flag)). ZiGBA raises
+the flag with the IRQ at cycle 960; this is a deliberate difference
+([`roadmap.md`](../../roadmap.md#mgba-suite-rom-findings)), pinned by
+"hblank flag rises at cycle 1006 after the hblank irq" in
+[`tests/bus.rs`](../../../systems/gba/tests/bus.rs). GBATEK also clears the
+VBlank flag again on line 227, which the core does not model; pinned mGBA
+0.10.5 agrees in outline, using a 1,008-cycle drawing period and clearing
+the VBlank flag at line 227.
 
 `PpuTiming::cycles_until_next_event` gives the bus the next boundary that
 delivers an event: every visible HBlank, VBlank entry, the frame wrap, and,
@@ -534,10 +542,10 @@ example with color correction, without touching it.
 
 ## Open questions
 
-- **HBlank and VBlank flag edges.** GBATEK and mGBA put the HBlank flag about
-  46–48 cycles after drawing ends and clear the VBlank flag on line 227;
-  ZiGBA uses cycle 960 and lines 160–227. A capture of `DISPSTAT` around both
-  edges, and of the HBlank IRQ and DMA timing, would settle it.
+- **VBlank flag edge and HBlank IRQ timing.** GBATEK and mGBA clear the
+  VBlank flag on line 227; the core keeps it through line 227, and the mGBA
+  suite does not time that edge. The HBlank IRQ and DMA request stay at cycle
+  960, which no hardware test here pins against the flag's 1006.
 - **OBJ-to-OBJ priority.** ZiGBA lets the lower OAM number win every OBJ
   overlap (GBATEK); mGBA and NanoBoyAdvance resolve by priority field first.
   ZiGBA also compares each OBJ only with the surface it lands on, so a

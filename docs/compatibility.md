@@ -190,12 +190,22 @@ where in the line the HBlank DMA starts.
 #### HBlank flag
 
 "H-blank bit start" wakes on the HBlank IRQ, then times the `DISPSTAT`
-HBlank flag's edges with timer 0. On hardware the flag is clear for about
-1,004 cycles and set for about 228 in each 1,232-cycle line, so it rises
-about 46 cycles after the IRQ. The core raises flag, IRQ and HBlank DMA
-together at cycle 960, as the [video page](gba/hardware/video.md#open-questions)
-describes. The interval between two HBlank wakes also reads 3 cycles longer
-than the recorded 1,232; see [unexplained results](#unexplained-results).
+HBlank flag's edges with timer 0. The core raises the flag at cycle 1006 of
+each line, 46 cycles after the IRQ, as GBATEK states
+([video](gba/hardware/video.md#lcd-timing)), and the fourth to sixth flip
+intervals match the table. The other checks still fail, for reasons outside
+the flag:
+
+- The first flip interval is timed from the timer read after the second
+  `Halt` wake, so it includes the BIOS IRQ path, which HLE does not charge:
+  it reads 89 cycles short under HLE and 49 under the replacement BIOS
+  ([HLE costs](#hle-and-replacement-bios-effects)); the second and third
+  flips inherit its polling phase.
+- The interval between the two `Halt` wakes reads 1,235 cycles instead of
+  1,232. In this build of the suite, the compiler schedules three Thumb
+  `MOVS` between the second `Halt` and its timer read that do not follow
+  the first, three IWRAM cycles that any emulator, and hardware running this
+  build, would count. The recorded table came from a build without them.
 
 #### DMA count latch
 
@@ -250,9 +260,6 @@ The four "to ROM" DMA timing rows fail only with ROM code, prefetch on and
 - **Prefetch-off calibration.** With prefetch off, the Calibration row's ROM
   columns read zero to two cycles below the table, while every other column
   reads one above; no single timer-start delay fits both.
-- **HBlank IRQ interval.** Two consecutive `Halt` wakes on the HBlank IRQ
-  are 1,235 cycles apart instead of the recorded 1,232, under both boot
-  modes.
 
 ## mGBA suite hardware tables
 
