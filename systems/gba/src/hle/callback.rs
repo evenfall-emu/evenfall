@@ -24,28 +24,40 @@ impl Cpu {
     /// entry stored below the IRQ stack pointer, then `subs r15,r14,4h` at
     /// 13Ch fetches its opcode and refills at the return address. The
     /// registers come from the HLE frame.
+    ///
+    /// `Bus::fused_hle_irq_return` makes the accesses in one step when
+    /// nothing can observe them in between; the accesses here are its
+    /// reference.
     pub fn complete_hle_irq(&mut self, bus: &mut Bus) -> StepResult {
-        if self.pipeline.is_some() {
-            bus.read(Access {
-                address: HLE_IRQ_RETURN_STUB + 8,
-                width: AccessWidth::Word,
-                kind: AccessKind::Sequential,
-                source: AccessSource::CpuCode,
-            });
-        } else {
-            bus.elapse(1);
-        }
         let base = self.registers[13].wrapping_sub(24);
-        for index in 0..6 {
-            bus.read(Access {
-                address: base.wrapping_add(4 * index),
-                width: AccessWidth::Word,
-                kind: if index == 0 { AccessKind::Nonsequential } else { AccessKind::Sequential },
-                source: AccessSource::CpuData,
-            });
+        if self.pipeline.is_none() || !bus.fused_hle_irq_return(base) {
+            if self.pipeline.is_some() {
+                bus.read(Access {
+                    address: HLE_IRQ_RETURN_STUB + 8,
+                    width: AccessWidth::Word,
+                    kind: AccessKind::Sequential,
+                    source: AccessSource::CpuCode,
+                });
+            } else {
+                bus.elapse(1);
+            }
+            for index in 0..6 {
+                bus.read(Access {
+                    address: base.wrapping_add(4 * index),
+                    width: AccessWidth::Word,
+                    kind: if index == 0 {
+                        AccessKind::Nonsequential
+                    } else {
+                        AccessKind::Sequential
+                    },
+                    source: AccessSource::CpuData,
+                });
+            }
+            bus.elapse(1);
+            hle_bios_fetch(bus, HLE_IRQ_RETURN_STUB + 12, AccessKind::Nonsequential);
         }
-        bus.elapse(1);
-        hle_bios_fetch(bus, HLE_IRQ_RETURN_STUB + 12, AccessKind::Nonsequential);
+        #[cfg(test)]
+        bus.trace_hle_trampoline();
         debug_assert_ne!(self.hle_irq_depth, 0);
         self.hle_irq_depth -= 1;
         let frame = self.hle_irq_stack[usize::from(self.hle_irq_depth)];
