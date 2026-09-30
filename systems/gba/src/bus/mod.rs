@@ -2336,11 +2336,15 @@ impl Bus {
         self.peek_mmio_half(address)
     }
 
+    /// The value a halfword read of a readable I/O register returns, or
+    /// `None` for an unused or write-only one, which reads as
+    /// [`Self::unused_mmio_half`] describes.
     fn peek_mmio_half(&self, address: u32) -> Option<u16> {
         if (MMIO_BASE + 0xb0..MMIO_BASE + 0xe0).contains(&address) && address & 1 == 0 {
             let offset = address - (MMIO_BASE + 0xb0);
-            let channel = &self.dma_channels[(offset / 12) as usize];
-            return Some(if offset % 12 == 10 { channel.control } else { 0 });
+            let index = (offset / 12) as usize;
+            // Only the control halfword reads back.
+            return (offset % 12 == 10).then(|| self.dma_channels[index].read_control(index));
         }
         if (MMIO_BASE + 0x100..=MMIO_BASE + 0x10e).contains(&address) && address & 1 == 0 {
             let offset = address - (MMIO_BASE + 0x100);
@@ -2349,16 +2353,15 @@ impl Bus {
         }
         let offset = address.wrapping_sub(MMIO_BASE);
         if let Some(index) = Self::background_control_index(address) {
-            return Some(self.bg_controls[index]);
+            // Bit 13, the affine overflow flag, exists only for BG2 and BG3.
+            let mask = if index < 2 { 0xdfff } else { 0xffff };
+            return Some(self.bg_controls[index] & mask);
         }
-        if Self::background_offset_register(address).is_some() {
-            return Some(0);
-        }
-        if let Some((bg, parameter)) = Self::affine_parameter_register(address) {
-            return Some(self.bg_affine_parameters[bg][parameter] as u16);
-        }
-        if Self::affine_reference_register(address).is_some() {
-            return Some(0);
+        if Self::background_offset_register(address).is_some()
+            || Self::affine_parameter_register(address).is_some()
+            || Self::affine_reference_register(address).is_some()
+        {
+            return None;
         }
         if let Some(value) = self.apu.read_half(address) {
             return Some(value);
@@ -2371,16 +2374,10 @@ impl Bus {
             0x002 => u16::from(self.green_swap_enabled),
             0x004 => self.ppu_timing.read_dispstat(),
             0x006 => self.ppu_timing.read_vcount(),
-            0x040 => self.win0h,
-            0x042 => self.win1h,
-            0x044 => self.win0v,
-            0x046 => self.win1v,
             0x048 => self.winin,
             0x04a => self.winout,
-            0x04c => self.mosaic,
             0x050 => self.bldcnt,
             0x052 => self.bldalpha,
-            0x054 => self.bldy,
             0x128 => self.read_sio_control(),
             0x12a => {
                 if self.is_uart_mode() {
@@ -2491,6 +2488,18 @@ impl Bus {
         if let Some((bg, coord, high)) = Self::affine_reference_register(address) {
             let raw = self.bg_reference_points[bg][coord] as u32;
             return Some(if high { (raw >> 16) as u16 } else { raw as u16 });
+        }
+        if let Some((bg, parameter)) = Self::affine_parameter_register(address) {
+            return Some(self.bg_affine_parameters[bg][parameter] as u16);
+        }
+        match offset {
+            0x040 => return Some(self.win0h),
+            0x042 => return Some(self.win1h),
+            0x044 => return Some(self.win0v),
+            0x046 => return Some(self.win1v),
+            0x04c => return Some(self.mosaic),
+            0x054 => return Some(self.bldy),
+            _ => {}
         }
         if offset == 0x154 {
             return Some(self.joy_transmit as u16);

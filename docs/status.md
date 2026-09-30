@@ -3,10 +3,10 @@
 Evenfall has one system so far: a Game Boy Advance core ported from ZiGBA.
 The port is exact. On every workload the parity harness runs, it produces
 the same frames, audio samples, battery-save bytes and save-state bytes as
-ZiGBA at the pinned commit, however execution is sliced, apart from two
+ZiGBA at the pinned commit, however execution is sliced, apart from
 deliberate guest-visible differences that the harness applies to ZiGBA too
-(BIOS read protection with a BIOS image, and a DMA stall where ZiGBA faults).
-It therefore inherits ZiGBA's compatibility, and its limits: the core implements every
+(listed [below](#deliberate-differences-from-zigba)). It otherwise inherits
+ZiGBA's compatibility, and its limits: the core implements every
 major GBA subsystem, but evidence across real games is thin and nothing has
 been checked against captures from physical hardware. What complete would
 mean is defined in [`methodology.md`](methodology.md#goals).
@@ -68,8 +68,9 @@ remaining gaps are in [`performance.md`](performance.md).
 
 ## Deliberate differences from ZiGBA
 
-Each is recorded with its evidence in [`roadmap.md`](roadmap.md). Two change
-guest behavior, and the parity harness patches its ZiGBA copy to match:
+Each is recorded with its evidence in [`roadmap.md`](roadmap.md). These
+change guest behavior, and the parity harness patches its ZiGBA copy to
+match:
 
 - With a BIOS image, reads of the BIOS from outside it return the last
   opcode the BIOS fetched, as on hardware; ZiGBA returns the image's bytes
@@ -80,6 +81,10 @@ guest behavior, and the parity harness patches its ZiGBA copy to match:
   host calls return at their deadlines, and the CPU resumes if the guest's
   DMA ever releases the bus
   ([`gba/hardware/timers-dma-interrupts.md`](gba/hardware/timers-dma-interrupts.md#bursts-that-never-release-the-bus)).
+- **Write-only I/O registers** read as open bus, or as zero beside a
+  readable half, as the mGBA suite's hardware table records; ZiGBA reads
+  some back and others as zero
+  ([`gba/hardware/memory.md`](gba/hardware/memory.md#open-bus-and-unused-io)).
 
 The others change no emulated result:
 

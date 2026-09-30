@@ -16,7 +16,8 @@ cargo run -p evenfall-parity -- compare target/parity/traces/probe-timer_irq/ora
 
 `oracle build` copies ZiGBA `src/` into `target/parity/zigba`, adds the
 schema-export hook and the deliberate-divergence patches in `patches/` there
-(`bios-protection.patch`, `dma-stall.patch`; see
+(`bios-protection.patch`, `dma-stall.patch`, then the mGBA suite fixes
+starting with `io-read.patch`; see
 [GBA differential parity](../../docs/parity.md#oracle-source-and-fixture)),
 builds a Zig 0.16 ReleaseFast native executable in
 `target/parity/bin`, and checks the exported schema against

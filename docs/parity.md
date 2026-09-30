@@ -139,3 +139,15 @@ changes; `probe-dma_stall` exercises the patched path. Its manifest sets
 limit runs about one second of guest time, more than the host sample queue
 holds, so drained audio would depend on slicing. The key defaults to true
 and only suppresses host samples; emulated sound is unchanged.
+
+The remaining patches apply the fixes that the mGBA suite ROM's hardware
+tables justify ([`roadmap.md`](roadmap.md#mgba-suite-rom-findings)), in
+this order:
+
+| Patch                                                         | Guest-visible change                                                       | Durable layout |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------- | -------------- |
+| [`io-read.patch`](../tools/parity/patches/io-read.patch)       | write-only I/O registers read as open bus or zero; two read-only bit masks | unchanged      |
+
+Each changes the Rust core and the oracle alike, so every scenario still
+compares byte for byte; none adds a durable field, so the schema check still
+holds.

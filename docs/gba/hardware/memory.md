@@ -106,19 +106,35 @@ its halfword there, with the upper half zero.
 DMA has its own latch for sources it never reads; see
 [`timers-dma-interrupts.md`](timers-dma-interrupts.md).
 
-I/O reads follow GBATEK's distinction between unused and write-only ports
-([GBATEK, Unpredictable Things][gbatek-unpredictable]):
+I/O reads follow the mGBA suite's I/O read table (`src/io-read.c`),
+recorded on hardware, which treats a write-only halfword like an unused one
+([GBATEK, Unpredictable Things][gbatek-unpredictable], describes the same
+split for `DMA0SAD` and unused words):
 
-| Read                                                                                                      | Result                        |
-| --------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| a word whose two halfwords are both unused                                                                | open bus                      |
-| an unused halfword whose partner in the same word is readable                                             | zero                          |
-| an unused halfword whose partner is also unused                                                           | the matching half of open bus |
-| a write-only register (BG scroll offsets, affine reference points, DMA addresses and counts, `JOY_TRANS`) | zero                          |
+| Read                                                                                | Result                        |
+| ----------------------------------------------------------------------------------- | ----------------------------- |
+| a word whose two halfwords are both unused or write-only                            | open bus                      |
+| an unused or write-only halfword whose partner in the same word is readable         | zero                          |
+| an unused or write-only halfword whose partner is also unused or write-only         | the matching half of open bus |
+
+The write-only registers are the BG scroll offsets, the affine parameters
+and reference points, the window bounds (`WIN0H`–`WIN1V`), `MOSAIC`, `BLDY`,
+the DMA addresses and counts and the sound FIFOs. `JOY_TRANS` reads as zero,
+ZiGBA's unmeasured choice. Two readable registers have bits that read as
+zero: bit 13 of `BG0CNT` and `BG1CNT`, which only BG2 and BG3 use, and bit
+11 of `DMA0CNT_H`–`DMA2CNT_H`, the Game Pak DRQ flag only DMA3 has. The
+registers keep the written bits, which have no effect there, and byte writes
+merge with them. GBATEK's own example calls `MOSAIC` readable, which the
+table contradicts. This differs from ZiGBA, which reads the affine
+parameters, window bounds, `MOSAIC` and `BLDY` back and the other write-only
+registers as zero ([`roadmap.md`](../../roadmap.md#mgba-suite-rom-findings)).
 
 Pinned by "unmapped and unused MMIO reads distinguish open-bus words from
-paired zero halves" in
-[ZiGBA's `bus_test.zig`](../../../refs/zigba/test/bus_test.zig).
+paired zero halves" (ported from
+[ZiGBA's `bus_test.zig`](../../../refs/zigba/test/bus_test.zig), with its
+paired-zero example moved from `4Eh` to `66h`) and
+"write-only MMIO reads follow the recorded hardware table" in
+[`tests/bus.rs`](../../../systems/gba/tests/bus.rs).
 
 ## I/O byte lanes
 
@@ -131,7 +147,8 @@ NanoBoyAdvance's byte-register dispatch:
 - A byte write merges with the other lane taken from the device's **write**
   state, not its read value. This matters for registers that do not read back:
   DMA source, destination and count, timer reload values (the counter reads
-  differently), BG scroll offsets, affine reference points and `JOY_TRANS`.
+  differently), BG scroll offsets, affine parameters and reference points,
+  window bounds, `MOSAIC`, `BLDY` and `JOY_TRANS`.
 - Sound register bytes go to per-channel byte handlers
   ([`audio.md`](audio.md)).
 - A byte write to `IF` clears flags only in the written lane.
@@ -367,9 +384,6 @@ that any change is visible.
 - **Video-memory contention.** GBATEK's memory map adds one cycle when the
   CPU accesses video memory while the LCD does; ZiGBA charges palette, VRAM
   and OAM accesses fixed cycles.
-- **Affine parameter reads.** `BG2PA`–`BG3PD` read back their written values,
-  although GBATEK lists them as write-only; the other write-only video
-  registers read as zero.
 - **EWRAM wait control.** The undocumented internal memory control register
   at `04000800h` is not modeled; writes to it are ignored and EWRAM always
   costs 3/3/6 cycles.

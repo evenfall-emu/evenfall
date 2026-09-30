@@ -367,7 +367,7 @@ fn arm_ram_engine_matches_interpreter_for_random_code() {
         *byte = random.next() as u8;
     }
     let (mut runs, mut refusals, mut instructions, mut irq_entries) = (0, 0, 0, 0);
-    for trial in 0..3000 {
+    for trial in 0..5000 {
         let ewram_code = trial % 3 == 2;
         let pc = if ewram_code { 0x0203_0000 } else { 0x0300_1000 } + (random.below(64) * 4);
         let length = 8 + random.below(40);
@@ -396,8 +396,12 @@ fn arm_ram_engine_matches_interpreter_for_random_code() {
             cpu,
             lead(&mut random),
         );
-        for attempt in 0..6 {
-            let budget = 1 + u64::from(random.below(if attempt == 0 { 40 } else { 400 }));
+        // Drawn up front, so that where a trial stops does not change the
+        // programs later trials draw.
+        let budgets: [u64; 6] = std::array::from_fn(|attempt| {
+            1 + u64::from(random.below(if attempt == 0 { 40 } else { 400 }))
+        });
+        for (attempt, budget) in budgets.into_iter().enumerate() {
             let yield_at = pair.engine_bus.now() + budget;
             let before = pair.engine_bus.now();
             if pair.compare(yield_at, &format!("trial {trial} attempt {attempt}")) {

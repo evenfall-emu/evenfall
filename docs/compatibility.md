@@ -157,7 +157,7 @@ pass.
 | Suite                  | Fails under HLE                                                                                                                                                                                                                                       | Fails under Cult-of-GBA BIOS                                                                    | Causes                                                                                                                                                                                                      |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Memory tests           | ROM, ROM out-of-bounds, IWRAM, EWRAM, palette, VRAM, VRAM OBJ and OAM loads and their mirrors; SRAM loads and stores and their mirrors; BIOS load                                                                                                     | SRAM loads and stores and their mirrors; BIOS load; BIOS out-of-bounds load; out-of-bounds load | [HLE `CpuSet` halfwords](#hle-cpuset-halfword-copies), [SRAM block transfers](#block-transfers-on-sram), [HLE `IntrWait` latch](#hle-intrwait-latch), [replacement BIOS](#hle-and-replacement-bios-effects) |
-| I/O read tests         | `BG0CNT`, `BG1CNT`; scroll, affine, window, `MOSAIC` and `BLDY` registers; `DMA0`–`DMA3` `SAD`/`DAD`; `DMA0CNT_HI`–`DMA2CNT_HI`; `FIFO_A_HI`, `FIFO_B_HI`; the unused upper halves at `4Eh`, `56h`, `5Ah`, `5Eh`, `8Eh`, `AAh`, `AEh` and `E2h`–`FEh` | same                                                                                            | [write-only and unused I/O](#write-only-and-unused-io-reads), [Thumb open bus](#thumb-open-bus)                                                                                                             |
+| I/O read tests         | the upper halves of write-only and unused words: `BG0VOFS`–`BG3VOFS`, `BG2PB`, `BG2PD`, `BG2X_HI`, `BG2Y_HI` and their BG3 counterparts, `WIN1H`, `WIN1V`, `DMA0`–`DMA3` `SAD_HI`/`DAD_HI`, `FIFO_A_HI`, `FIFO_B_HI`, and `4Eh`, `56h`, `5Ah`, `5Eh`, `8Eh`, `AAh`, `AEh`, `E2h`–`FEh` | same                                                                                            | [Thumb open bus](#thumb-open-bus)                                                                                                                                                                           |
 | Timing tests           | Calibration; BIOS Division, Division 2, Sqrt, Sqrt 2, Sqrt 3, ArcTan; CpuSet; Trivial and Short DMA (16 and 32/to ROM)                                                                                                                                | same, except BIOS ArcTan passes                                                                 | [timer and IRQ latency](#timer-and-irq-latency), [HLE and BIOS timing](#hle-and-replacement-bios-effects), [DMA residual](#known-residuals)                                                                 |
 | Timer count-up tests   | every test                                                                                                                                                                                                                                            | every test                                                                                      | [timer and IRQ latency](#timer-and-irq-latency)                                                                                                                                                             |
 | Timer IRQ tests        | every test                                                                                                                                                                                                                                            | every test                                                                                      | [timer and IRQ latency](#timer-and-irq-latency)                                                                                                                                                             |
@@ -176,30 +176,16 @@ Each of these is a core behavior that the suite's hardware table
 contradicts, inherited unchanged from ZiGBA. Candidate fixes and what they
 must preserve are in [`roadmap.md`](roadmap.md#mgba-suite-rom-findings).
 
-#### Write-only and unused I/O reads
+#### Thumb open bus
 
 The I/O read suite (`src/io-read.c`) reads each register with `LDRH` from
 Thumb ROM code whose next words are `DEADDEADh`, so open bus reads `DEADh`.
-On hardware, write-only registers read as open bus when the other half of
-their word is also unreadable: the BG scroll offsets, affine parameters and
-reference points, window bounds, `MOSAIC` and `BLDY` with the unused
-halfwords beside them, and the DMA addresses. The core returns zero for
-scroll offsets,
-reference points and DMA addresses, and the written value for affine
-parameters, window bounds, `MOSAIC` and `BLDY`
-([`memory.md`](gba/hardware/memory.md#open-bus-and-unused-io)). The table
-also records that bit 13 of `BG0CNT` and `BG1CNT` and bit 11 of
-`DMA0CNT_H`–`DMA2CNT_H` read as zero; the core reads them back.
-
-#### Thumb open bus
-
-In Thumb state the core's open-bus word carries the fetched halfword in its
-low half and zero above it. The hardware tables show the halfword in both
-halves when Thumb code runs from ROM. In words the core already treats as
-unused, the low halves read `DEADh` and pass, while the upper halves (`5Ah`,
-`5Eh`, `8Eh`, `AAh`, `AEh`, `E2h`–`FEh`, `FIFO_A_HI`, `FIFO_B_HI`) read zero
-instead of `DEADh`; the upper halves of write-only words need this fix as
-well as the previous one. "DMA Prefetch" reads upward from `10000000h` and
+Write-only and unused halves already read as open bus
+([`memory.md`](gba/hardware/memory.md#open-bus-and-unused-io)). In Thumb
+state, though, the core's open-bus word carries the fetched halfword in its
+low half and zero above it, while the hardware tables show the halfword in
+both halves when Thumb code runs from ROM. The low halves read `DEADh` and
+pass; the upper halves read zero instead of `DEADh`. "DMA Prefetch" reads upward from `10000000h` and
 expects every value to hold a Thumb opcode from `4000h`–`403Fh` in each half
 until an HBlank DMA's last word, `DEAD0000h`,
 appears on the bus at `10002A94h`; the core stops at the first read,

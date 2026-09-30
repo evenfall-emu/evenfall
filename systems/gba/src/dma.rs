@@ -43,6 +43,12 @@ impl Channel {
         let mask = if index == 3 { 0x0fff } else { 0x07ff };
         self.destination = (self.destination & 0xffff) | (u32::from(value & mask) << 16);
     }
+    /// `DMAxCNT_H` as a read returns it: bit 11, the Game Pak DRQ flag,
+    /// exists only on DMA3 and reads as zero on the other channels (the mGBA
+    /// suite's I/O read table).
+    pub fn read_control(&self, index: usize) -> u16 {
+        if index == 3 { self.control } else { self.control & !(1 << 11) }
+    }
     pub fn write_control(&mut self, value: u16) -> bool {
         let was_enabled = self.enabled();
         self.control = value & 0xffe0;

@@ -107,14 +107,27 @@ change, `evenfall-parity mgba-suite report` must show the named tests
 passing and no other test changing, and the jsmolka, probe and hardware-table
 suites must still pass.
 
-- **Write-only and unused I/O reads.** Return open bus for a write-only or
-  unused halfword whose word has no readable half, zero for one beside a
-  readable half, and mask bit 13 of `BG0CNT`/`BG1CNT` and bit 11 of
-  `DMA0CNT_H`–`DMA2CNT_H` on reads. Evidence: the I/O read table
-  (`src/io-read.c`), which also agrees with GBATEK's "Unpredictable Things".
-  The ZiGBA test "unmapped and unused MMIO reads distinguish open-bus words
-  from paired zero halves" and the affine read-back in
-  [`memory.md`](gba/hardware/memory.md#open-questions) change with it.
+- **Decision: write-only I/O reads as open bus** (a deliberate guest-visible
+  difference from ZiGBA). A write-only register reads like an unused one:
+  open bus when no half of its word is readable, zero beside a readable
+  half. The write-only registers are the BG scroll offsets, affine
+  parameters and reference points, window bounds, `MOSAIC`, `BLDY`, the DMA
+  addresses and counts and the sound FIFOs; ZiGBA reads the first four
+  groups' written values or zero. Reads of `BG0CNT`/`BG1CNT` clear bit 13
+  and reads of `DMA0CNT_H`–`DMA2CNT_H` clear bit 11; the registers keep the
+  written bits, which have no effect there. Evidence: the mGBA suite's I/O
+  read table (`src/io-read.c`, recorded on hardware), which GBATEK's
+  "Unpredictable Things" agrees with for `DMA0SAD` and unused words; its
+  `MOSAIC` example, which calls the register readable, is contradicted by the
+  table ([memory](gba/hardware/memory.md#open-bus-and-unused-io)).
+  Compatibility effect: guest reads of those registers see open bus or zero
+  instead of stored values; the pre-decoded engine leaves loads of the DMA
+  addresses to the interpreter, which holds the open-bus latch. No
+  state-layout change. The parity harness applies
+  [`io-read.patch`](../tools/parity/patches/io-read.patch) to its ZiGBA copy.
+  The ported test "unmapped and unused MMIO reads distinguish open-bus words
+  from paired zero halves" takes its paired-zero example at `66h` instead of
+  `4Eh`.
 - **Thumb open-bus composition.** Compose the Thumb open-bus word from the
   prefetched opcodes per region, as GBATEK describes; for ROM code the suite
   shows the halfword in both halves. Evidence: the upper halves of unused I/O

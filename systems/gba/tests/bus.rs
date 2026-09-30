@@ -304,13 +304,92 @@ fn unmapped_and_unused_mmio_reads_distinguish_open_bus_words_from_paired_zero_ha
         AccessSource::CpuData,
     ));
     assert_eq!(0x1234, half.value);
+    // Evenfall reads MOSAIC as write-only, so ZiGBA's 4Eh example reads open
+    // bus (see below); 66h is unused beside the readable SOUND1CNT_X.
     let paired = bus.read(access(
-        0x0400_004e,
+        0x0400_0066,
         AccessWidth::Half,
         AccessKind::Nonsequential,
         AccessSource::CpuData,
     ));
     assert_eq!(0, paired.value);
+}
+
+/// Loads the word `12345678h` from ROM as a code fetch, so the next I/O
+/// read sees it as open bus: an asymmetric value whose two halves and four
+/// bytes differ.
+fn prime_open_bus(bus: &mut Bus) {
+    bus.read(access(
+        0x0800_0000,
+        AccessWidth::Word,
+        AccessKind::Nonsequential,
+        AccessSource::CpuCode,
+    ));
+}
+
+/// The mGBA suite's I/O read table (`src/io-read.c`, recorded on hardware):
+/// a write-only register reads as open bus when no half of its word reads
+/// back (the scroll offsets, affine parameters and reference points, window
+/// bounds, `MOSAIC` and `BLDY` with the unused halves beside them, and the
+/// DMA addresses), and as zero beside a readable half (`DMAxCNT_L`).
+/// `BG0CNT`/`BG1CNT` bit 13 and `DMA0CNT_H`–`DMA2CNT_H` bit 11 read as zero.
+/// GBATEK, Unpredictable Things, describes the same split for `DMA0SAD` and
+/// unused words. Byte writes still merge with the written value.
+#[test]
+fn write_only_mmio_reads_follow_the_recorded_hardware_table() {
+    let mut bus = Bus::init(&[0x78, 0x56, 0x34, 0x12]);
+    let dma_addresses =
+        (0..4).flat_map(|channel| (0..8).step_by(2).map(move |o| 0xb0 + 12 * channel + o));
+    let write_only: Vec<u32> =
+        (0x10..0x48).step_by(2).chain([0x4c, 0x4e, 0x54, 0x56]).chain(dma_addresses).collect();
+    for &offset in &write_only {
+        let address = 0x0400_0000 + offset;
+        write_half(&mut bus, address, 0xffff);
+        prime_open_bus(&mut bus);
+        let expected = if offset & 2 == 0 { 0x5678 } else { 0x1234 };
+        assert_eq!(expected, read_half(&mut bus, address), "half {address:08x}");
+        for lane in 0..2 {
+            prime_open_bus(&mut bus);
+            let expected = (0x1234_5678_u32 >> ((offset & 2) * 8 + lane * 8)) as u8;
+            assert_eq!(expected, read_byte(&mut bus, address + lane), "byte {address:08x}");
+        }
+        if offset & 2 == 0 {
+            prime_open_bus(&mut bus);
+            assert_eq!(0x1234_5678, read_word(&mut bus, address), "word {address:08x}");
+        }
+    }
+
+    for (channel, readable) in [0x77e0, 0x77e0, 0x77e0, 0x7fe0].into_iter().enumerate() {
+        let count = 0x0400_00b8 + 12 * channel as u32;
+        write_half(&mut bus, count, 0xffff);
+        write_half(&mut bus, count + 2, 0x7fff);
+        prime_open_bus(&mut bus);
+        assert_eq!(0, read_half(&mut bus, count), "DMA{channel}CNT_L");
+        prime_open_bus(&mut bus);
+        assert_eq!(readable, read_half(&mut bus, count + 2), "DMA{channel}CNT_H");
+        prime_open_bus(&mut bus);
+        assert_eq!(u32::from(readable) << 16, read_word(&mut bus, count), "DMA{channel}CNT");
+    }
+
+    for (index, readable) in [0xdfff, 0xdfff, 0xffff, 0xffff].into_iter().enumerate() {
+        let control = 0x0400_0008 + 2 * index as u32;
+        write_half(&mut bus, control, 0xffff);
+        assert_eq!(readable, read_half(&mut bus, control), "BG{index}CNT");
+        assert_eq!(0xffff, bus.bg_controls[index], "BG{index}CNT keeps the written value");
+    }
+
+    write_half(&mut bus, 0x0400_0020, 0x1234);
+    write_byte(&mut bus, 0x0400_0021, 0xab);
+    assert_eq!(0xab34_u16 as i16, bus.bg_affine_parameters[0][0]);
+    write_half(&mut bus, 0x0400_0040, 0x1234);
+    write_byte(&mut bus, 0x0400_0040, 0xcd);
+    assert_eq!(0x12cd, bus.win0h);
+    write_half(&mut bus, 0x0400_004c, 0x1234);
+    write_byte(&mut bus, 0x0400_004d, 0x56);
+    assert_eq!(0x5634, bus.mosaic);
+    write_half(&mut bus, 0x0400_0054, 0x0007);
+    write_byte(&mut bus, 0x0400_0054, 0x10);
+    assert_eq!(0x0010, bus.bldy);
 }
 
 /// ZiGBA: "unused and read-only MMIO writes are ignored"

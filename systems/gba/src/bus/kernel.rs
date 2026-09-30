@@ -21,9 +21,10 @@ pub(crate) struct EngineMemory<'a> {
 }
 
 /// The MMIO registers an engine run reads and writes itself: IE, IF, IME,
-/// POSTFLG and HALTCNT, the DMA source, destination and word count
-/// latches, for loads DISPSTAT and VCOUNT, and for halfword and word stores
-/// the affine parameters and reference points. Their accesses schedule no
+/// POSTFLG and HALTCNT, for stores the DMA source, destination and word
+/// count latches, for loads the DMA count and control words, DISPSTAT and
+/// VCOUNT, and for halfword and word stores the affine parameters and
+/// reference points. Their accesses schedule no
 /// device event and read no device state but the PPU's position, which the
 /// run knows from its clock (no PPU event falls inside a run), so they need
 /// neither the device batch nor the bus's clock. The bus's own MMIO paths
@@ -48,8 +49,11 @@ impl RunRegisters<'_> {
         // Offsets from DMA0SAD: one compare tells the DMA latches apart.
         let offset = address.wrapping_sub(MMIO_BASE + 0xb0);
         if offset < 0x30 {
-            // A bus-aligned access stays within one 12-byte channel.
-            return !store || offset % 12 + width.bytes() as u32 <= 10;
+            // A bus-aligned access stays within one 12-byte channel. Stores
+            // take the address and count latches; loads take the count and
+            // control word only, as the addresses read as open bus, which a
+            // run does not hold.
+            return if store { offset % 12 + width.bytes() as u32 <= 10 } else { offset % 12 >= 8 };
         }
         // A bus-aligned load at DISPSTAT or VCOUNT reads only those.
         if !store && address.wrapping_sub(MMIO_BASE + 0x004) < 4 {
@@ -87,10 +91,11 @@ impl RunRegisters<'_> {
         if offset >= 0x30 {
             return self.irq.load(address, width);
         }
-        // Only the control halfword reads back.
+        // Only the control halfword reads back; the count beside it reads as
+        // zero.
         let half = |offset: u32| {
-            let channel = &self.dma[(offset / 12) as usize];
-            u32::from(if offset % 12 == 10 { channel.control } else { 0 })
+            let index = (offset / 12) as usize;
+            u32::from(if offset % 12 == 10 { self.dma[index].read_control(index) } else { 0 })
         };
         match width {
             AccessWidth::Word => half(offset) | half(offset + 2) << 16,
@@ -913,6 +918,9 @@ mod tests {
         let (mut loads, mut stores, mut dma, mut affine) = (0, 0, 0, 0);
         for _ in 0..16_000 {
             let mut bus = Bus::init(&[]);
+            // A run does not hold the open-bus latch: no load it makes may
+            // read it.
+            bus.open_bus_value = next();
             bus.irq.interrupt_enable_mask = next() as u16 & 0x3fff;
             bus.irq.interrupt_request_flags = next() as u16 & 0x3fff;
             bus.irq.interrupt_master_enabled = next() & 1 != 0;
@@ -1048,9 +1056,9 @@ mod tests {
 
     /// [`RunRegisters::holds`] admits exactly the accesses whose every byte
     /// is IE, IF or IME, or for stores POSTFLG or HALTCNT, or is a DMA
-    /// register other than, for stores, a control register, or for loads
-    /// DISPSTAT or VCOUNT, or for halfword and word stores an affine
-    /// parameter or reference point.
+    /// register other than, for stores, a control register, and for loads
+    /// an address register, or for loads DISPSTAT or VCOUNT, or for halfword
+    /// and word stores an affine parameter or reference point.
     #[test]
     fn run_registers_hold_exactly_their_bytes() {
         for store in [false, true] {
@@ -1067,7 +1075,9 @@ mod tests {
                         && width != AccessWidth::Byte
                         && bytes.clone().all(|byte| (0x020..=0x03f).contains(&byte));
                     let dma = bytes.clone().all(|byte| {
-                        (0xb0..0xe0).contains(&byte) && !(store && (byte - 0xb0) % 12 >= 10)
+                        let register = (byte.wrapping_sub(0xb0)) % 12;
+                        (0xb0..0xe0).contains(&byte)
+                            && if store { register < 10 } else { register >= 8 }
                     });
                     let address = MMIO_BASE + offset;
                     assert_eq!(
