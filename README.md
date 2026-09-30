@@ -7,8 +7,6 @@ Evenfall builds retro console emulators from scratch, in Rust, for every platfor
 It starts with the Game Boy Advance, with more consoles to come.
 Its player is made for rediscovering games and their ROM hacks.
 
-![The Evenfall player](docs/assets/player.png)
-
 **[Play at play.evenfall-emu.org](https://play.evenfall-emu.org)**.
 The emulator runs in your browser, and your games never leave your device.
 
