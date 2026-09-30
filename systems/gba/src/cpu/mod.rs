@@ -1826,7 +1826,8 @@ mod tests {
     }
 
     /// A taken Thumb branch and a POP {pc} must admit both refill fetches,
-    /// not only the opcode and data beat. One cycle short refuses the *whole* instruction without changing its pipeline.
+    /// not only the opcode and data beat. One cycle short refuses the *whole*
+    /// instruction without changing its pipeline.
     #[test]
     fn thumb_rom_branch_refill_requires_its_full_horizon() {
         for opcode in [0xe7fe_u16, 0xbd00] {
