@@ -13,10 +13,10 @@ history changes guest execution or enters a portable save state.
 After a bounded `advance`, `run_slice_with_input` or `step`, `Session` checks
 the completed frame count. A due capture obtains a canonical state (including
 the exact framebuffer when selective video has skipped work) and pushes it
-with its frame and cycle. Failures do not fail emulation; recording a skipped
+with its frame and cycle. Failures do not fail emulation: recording a skipped
 attempt prevents repeated attempts at each subsequent frame. The default
-interval is 60 frames. Requested speed is a Q8 scale from 0.5× to 16×, so the
-capture interval is `ceil(interval × speed)`; changing speed does not change
+interval is 60 frames. Requested speed is a Q8 scale from 0.5x to 16x, so the
+capture interval is `ceil(interval * speed)`; changing speed does not change
 the guest or discard history.
 
 | Setting               | Value                      |
@@ -29,11 +29,20 @@ the guest or discard history.
 The budget charges stored payloads, anchors and 64 bytes per entry, not the
 current decoded anchor, metadata or allocator overhead. When over budget or
 entry cap, the buffer keeps the newest and normally the oldest and removes
-the interior entry with the smallest age- and byte-weighted gap score. Two
-entries retain the newest; a sole newest entry remains even if it exceeds a
-very small budget. Ties prefer removing the older candidate. The default age
-exponent is 0.5; zero removes age bias and one weighs age linearly. A capture
-sequence, not host wall time, determines spacing.
+the interior entry with the smallest age- and byte-weighted gap score.
+Two entries retain the newest: a sole newest entry remains even if it exceeds a
+very small budget.
+
+Ties prefer removing the older candidate.
+
+The most impactful behavior knob you can tune is the age exponent: moving it
+close to 1 biases the engine to keep recent snapshots, and make larger gaps in
+longer sessions. Moving it below 0.5 rapidly move to an uniform distribution where
+age doesn't matter. i.e. 1 is linear, 0 is unbiased.
+The default age exponent is 0.5, this keeps a decent amount of recent states for
+the first minutes, but rapidely makes room for longer session to have more reasonable
+gaps. (e.g. 1min gap at 24h session for 15MB budget is achievable easily on small
+games.)
 
 ## Anchored copy-delta storage
 
@@ -159,13 +168,8 @@ checking that Rust re-exports the imported entries unchanged. ZiGBA's raw
 DEFLATE decoder also accepts Rust's miniz_oxide frames. Byte-identical
 compressed output is deliberately not a compatibility requirement.
 
-## Limits and open questions
+## Known limits
 
 - If the host cannot attain the requested playback speed, wall-clock capture
   spacing increases. Capture and anchor folding run in the emulation thread.
 - Already-queued host audio is not continuous across a restore.
-- Decoded anchor storage, the anchor index, metadata and allocator overhead
-  exceed the configured history budget; imported bundles validate every
-  checkpoint.
-- Longer-session retention and copy-delta sizes
-  remain to be measured on representative states.
