@@ -1,0 +1,143 @@
+# Written by machine::tests::state_layout_matches_the_fixture.
+magic EVENFALL
+version 7
+header 133 bytes
+schema f96699ab81e5a74f23d0c0221cbbfd9b01e552ecd74390d6d036f59bf14af42a
+
+# Payload offset, length and field. The save medium comes last.
+      0       8 cycle
+      8     641 cpu
+      8      64 cpu.registers
+     72       4 cpu.cpsr
+     76       4 cpu.next_instruction_address
+     80      10 cpu.pipeline
+     90      20 cpu.user_r8_12
+    110       4 cpu.user_r13
+    114       4 cpu.user_r14
+    118      28 cpu.fiq_r8_14
+    146       4 cpu.spsr_fiq
+    150       4 cpu.irq_r13
+    154       4 cpu.irq_r14
+    158       4 cpu.spsr_irq
+    162       4 cpu.supervisor_r13
+    166       4 cpu.supervisor_r14
+    170       4 cpu.spsr_supervisor
+    174       4 cpu.abort_r13
+    178       4 cpu.abort_r14
+    182       4 cpu.spsr_abort
+    186       4 cpu.undefined_r13
+    190       4 cpu.undefined_r14
+    194       4 cpu.spsr_undefined
+    198       1 cpu.hle_bios
+    199     224 cpu.hle_irq_stack
+    423       1 cpu.hle_irq_depth
+    424       3 cpu.hle_interrupt_wait_mask
+    427      42 cpu.hle_sound_channel_clear
+    469     119 cpu.hle_sound_driver_main
+    588      61 cpu.hle_service
+    649  478112 bus
+    649  262144 bus.ewram
+ 262793   32768 bus.iwram
+ 295561    1024 bus.palette
+ 296585   98304 bus.vram
+ 394889    1024 bus.oam
+ 395913   76800 bus.frame_pixels
+ 472713      53 bus.cartridge_gpio
+ 472766      10 bus.cartridge_tilt
+ 472776      56 bus.timers
+ 472832       2 bus.prescaler_origin
+ 472834      80 bus.dma_channels
+ 472914     247 bus.apu
+ 473161       6 bus.ppu_timing
+ 473167       2 bus.dispcnt
+ 473169       1 bus.green_swap_enabled
+ 473170       8 bus.bg_controls
+ 473178       8 bus.bg_horizontal_offsets
+ 473186       8 bus.bg_vertical_offsets
+ 473194    1536 bus.scroll_segments
+ 474730       4 bus.scroll_segment_counts
+ 474734       2 bus.scroll_segment_line
+ 474736     256 bus.backdrop_segments
+ 474992       1 bus.backdrop_segment_count
+ 474993       2 bus.backdrop_segment_line
+ 474995     896 bus.win_segments
+ 475891       1 bus.win_segment_count
+ 475892       2 bus.win_segment_line
+ 475894     512 bus.blend_segments
+ 476406       1 bus.blend_segment_count
+ 476407       2 bus.blend_segment_line
+ 476409    1792 bus.affine_segments
+ 478201       2 bus.affine_segment_counts
+ 478203       2 bus.affine_segment_line
+ 478205     256 bus.mosaic_segments
+ 478461       1 bus.mosaic_segment_count
+ 478462       2 bus.mosaic_segment_line
+ 478464      16 bus.bg_affine_parameters
+ 478480      16 bus.bg_reference_points
+ 478496      16 bus.bg_affine_current
+ 478512       2 bus.win0h
+ 478514       2 bus.win1h
+ 478516       2 bus.win0v
+ 478518       2 bus.win1v
+ 478520       2 bus.winin
+ 478522       2 bus.winout
+ 478524       2 bus.mosaic
+ 478526       2 bus.bldcnt
+ 478528       2 bus.bldalpha
+ 478530       2 bus.bldy
+ 478532       8 bus.completed_frame_count
+ 478540       2 bus.interrupt_enable_mask
+ 478542       2 bus.interrupt_request_flags
+ 478544       1 bus.interrupt_master_enabled
+ 478545       1 bus.post_boot
+ 478546       1 bus.power_state
+ 478547       2 bus.waitcnt
+ 478549      28 bus.game_pak_prefetch
+ 478577       1 bus.fetch_kind
+ 478578       1 bus.game_pak_code_active
+ 478579       1 bus.prefetch_disabled_bug_pending
+ 478580       1 bus.prefetch_buffer_was_disabled
+ 478581      10 bus.keys
+ 478591       2 bus.keypad_control
+ 478593       1 bus.keypad_condition_met
+ 478594       8 bus.sio_data
+ 478602       2 bus.sio_control
+ 478604       2 bus.sio_send
+ 478606       9 bus.sio_start_cycle
+ 478615       9 bus.sio_completion_cycle
+ 478624       4 bus.sio_receive_value
+ 478628       8 bus.sio_multiplayer_receive
+ 478636       1 bus.sio_multiplayer_id
+ 478637       7 bus.uart_tx_fifo
+ 478644       7 bus.uart_rx_fifo
+ 478651       2 bus.uart_tx_active
+ 478653       9 bus.uart_tx_completion_cycle
+ 478662       1 bus.uart_tx_peer_scheduled
+ 478663       9 bus.uart_rx_arrival_cycle
+ 478672       1 bus.uart_rx_arrival_value
+ 478673       1 bus.uart_error
+ 478674       1 bus.uart_cts_ready
+ 478675       2 bus.rcnt
+ 478677       2 bus.joy_control
+ 478679       4 bus.joy_receive
+ 478683       4 bus.joy_transmit
+ 478687       2 bus.joy_status
+ 478689       6 bus.joy_pending_command
+ 478695       9 bus.joy_completion_cycle
+ 478704       7 bus.joy_response
+ 478711      36 bus.dma_start_cycles
+ 478747       1 bus.pending_dma
+ 478748       4 bus.dma_transfer_latch
+ 478752       4 bus.open_bus_value
+ 478756       4 bus.bios_latch
+ 478760       1 bus.save
+
+# Payload length by save type.
+None 478761
+Auto 478768
+Sram 511529
+Flash64k 609847
+Flash64kAtmel 609847
+Flash128k 609847
+Eeprom512 486985
+Eeprom8k 486985

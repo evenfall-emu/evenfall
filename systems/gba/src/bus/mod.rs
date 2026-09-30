@@ -411,7 +411,7 @@ pub struct ThumbStream {
 }
 
 #[derive(Codec)]
-#[codec(module = "zigba.bus.state.v6")]
+#[codec(module = "evenfall.gba.bus")]
 pub struct Bus {
     pub ewram: Box<[u8; EWRAM_SIZE]>,
     pub iwram: Box<[u8; IWRAM_SIZE]>,
@@ -420,6 +420,8 @@ pub struct Bus {
     pub palette: [u8; PALETTE_SIZE],
     pub vram: Box<[u8; VRAM_SIZE]>,
     pub oam: [u8; OAM_SIZE],
+    /// Encoded last: its length depends on the save type.
+    #[codec(last)]
     pub save: SaveDevice,
     pub frame_pixels: Box<[u16; SCREEN_WIDTH * SCREEN_HEIGHT]>,
     #[codec(skip)]

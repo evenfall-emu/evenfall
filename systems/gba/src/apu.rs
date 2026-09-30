@@ -636,7 +636,7 @@ impl FifoClock {
 
 /// Master-clock sound hardware and the downstream host sample queue.
 #[derive(Clone, Debug, PartialEq, Eq, Codec)]
-#[codec(module = "zigba.apu.state.v5")]
+#[codec(module = "evenfall.gba.apu")]
 pub struct Apu {
     pub sound1_control_l: u16,
     pub sound1_control_h: u16,

@@ -1,4 +1,5 @@
-//! Rewind word-run deltas and framed raw DEFLATE storage.
+//! Rewind history: states as copy/literal deltas against anchors, in framed
+//! raw DEFLATE storage.
 use crate::{Codec, Error, Result, Sink, Source, rewind_inflate};
 use alloc::vec::Vec;
 use core::ops::Range;
@@ -6,7 +7,7 @@ const INVALID: Error = Error::InvalidSaveState;
 pub const MAX_DECODED_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_BUNDLE_BYTES: usize = 68 * 1024 * 1024;
 
-/// ZiGBA's `u64le(raw_len)` followed by a raw DEFLATE stream.
+/// `u64le(raw_len)` followed by a raw DEFLATE stream.
 pub fn deflate(raw: &[u8], level: u8) -> Vec<u8> {
     let mut result = Vec::new();
     result.extend_from_slice(&(raw.len() as u64).to_le_bytes());
@@ -50,106 +51,6 @@ fn get_varint(bytes: &[u8], pos: &mut usize) -> Result<usize> {
         shift += 7;
     }
 }
-fn same(base: &[u8], target: &[u8], i: usize) -> bool {
-    let lo = i * 4;
-    let mut padded = [0; 4];
-    if let Some(bytes) = base.get(lo..) {
-        let count = bytes.len().min(4);
-        padded[..count].copy_from_slice(&bytes[..count]);
-    }
-    padded == target[lo..lo + 4]
-}
-
-/// Headers (`skip_words`, `copy_words`) precede changed words, then trailing bytes.
-pub fn diff(base: &[u8], target: &[u8]) -> Vec<u8> {
-    let words = target.len() / 4;
-    let mut headers = Vec::new();
-    let mut payload = Vec::new();
-    let mut i = 0;
-    while i < words {
-        let run_start = i;
-        while i < words && same(base, target, i) {
-            i += 1;
-        }
-        if i == words {
-            break;
-        }
-        let copy_start = i;
-        while i < words {
-            if !same(base, target, i) {
-                i += 1;
-            } else if i + 1 < words && !same(base, target, i + 1) {
-                i += 2;
-            } else {
-                break;
-            }
-        }
-        varint(&mut headers, copy_start - run_start);
-        varint(&mut headers, i - copy_start);
-        payload.extend_from_slice(&target[copy_start * 4..i * 4]);
-    }
-    let mut out = Vec::new();
-    varint(&mut out, headers.len());
-    out.extend_from_slice(&headers);
-    out.extend_from_slice(&payload);
-    out.extend_from_slice(&target[words * 4..]);
-    out
-}
-pub fn patch(base: &[u8], delta: &[u8], target_len: usize) -> Result<Vec<u8>> {
-    if target_len > MAX_DECODED_BYTES {
-        return Err(INVALID);
-    }
-    let mut out = alloc::vec![0; target_len];
-    let shared = base.len().min(target_len);
-    out[..shared].copy_from_slice(&base[..shared]);
-    let words = target_len / 4;
-    let mut pos = 0;
-    let header_len = get_varint(delta, &mut pos)?;
-    if header_len > delta.len() - pos {
-        return Err(INVALID);
-    }
-    let headers = &delta[pos..pos + header_len];
-    let mut body = pos + header_len;
-    let mut header_pos = 0;
-    let mut word = 0;
-    while header_pos < headers.len() {
-        let skip = get_varint(headers, &mut header_pos)?;
-        let copy = get_varint(headers, &mut header_pos)?;
-        if skip > words - word || copy > words - word - skip || copy * 4 > delta.len() - body {
-            return Err(INVALID);
-        }
-        word += skip;
-        out[word * 4..(word + copy) * 4].copy_from_slice(&delta[body..body + copy * 4]);
-        body += copy * 4;
-        word += copy;
-    }
-    if delta.len() - body != target_len - words * 4 {
-        return Err(INVALID);
-    }
-    out[words * 4..].copy_from_slice(&delta[body..]);
-    Ok(out)
-}
-
-pub fn encode_delta(base: &[u8], target: &[u8]) -> Vec<u8> {
-    let delta = diff(base, target);
-    let mut out = Vec::new();
-    out.extend_from_slice(&(target.len() as u32).to_le_bytes());
-    out.extend_from_slice(&(delta.len() as u32).to_le_bytes());
-    out.extend_from_slice(&miniz_oxide::deflate::compress_to_vec(&delta, 1));
-    out
-}
-pub fn decode_delta(base: &[u8], stored: &[u8]) -> Result<Vec<u8>> {
-    let header = stored.get(..8).ok_or(INVALID)?;
-    let target_len = u32::from_le_bytes(header[..4].try_into().map_err(|_| INVALID)?) as usize;
-    let delta_len = u32::from_le_bytes(header[4..].try_into().map_err(|_| INVALID)?) as usize;
-    if target_len > MAX_DECODED_BYTES || delta_len > MAX_DECODED_BYTES * 2 {
-        return Err(INVALID);
-    }
-    let mut delta = alloc::vec![0; delta_len];
-    rewind_inflate::decode(&stored[8..], &mut delta)?;
-    patch(base, &delta, target_len)
-}
-
 const INDEX_BITS: u32 = 17;
 const MIN_COPY: usize = 12;
 /// A copy this long at the previous displacement is taken without searching.
@@ -319,6 +220,9 @@ pub const MAX_BUDGET_BYTES: u32 = 64 * 1024 * 1024;
 pub const MAX_ENTRIES: usize = 4096;
 pub const ENTRY_OVERHEAD_BYTES: usize = 64;
 pub const SPEED_SCALE_ONE: u16 = 256;
+const BUNDLE_MAGIC: &[u8; 8] = b"EFREWIND";
+/// Bundles embed save states, so a new state version needs a new bundle version.
+const BUNDLE_VERSION: u32 = 3;
 
 // Exact 192-bit product for p=0 and p=1 eviction comparisons.
 fn product3(a: u64, b: u64, c: u64) -> (u64, u64, u64) {
@@ -333,14 +237,12 @@ fn product3(a: u64, b: u64, c: u64) -> (u64, u64, u64) {
 pub enum Encoding {
     Raw = 0,
     Deflate = 1,
-    /// Word runs against an anchor; read from ZiGBA and version 1 bundles.
-    Delta = 2,
     /// Copy/literal difference against an anchor; written by `Compression::Delta`.
     CopyDelta = 3,
 }
 impl Encoding {
     fn uses_anchor(self) -> bool {
-        matches!(self, Self::Delta | Self::CopyDelta)
+        self == Self::CopyDelta
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -593,19 +495,14 @@ impl RewindBuffer {
         match entry.encoding {
             Encoding::Raw => Ok(stored.to_vec()),
             Encoding::Deflate => inflate(stored),
-            Encoding::Delta | Encoding::CopyDelta => {
-                let decode = if entry.encoding == Encoding::Delta {
-                    decode_delta
-                } else {
-                    decode_copy_delta
-                };
+            Encoding::CopyDelta => {
                 if entry.anchor == self.current_anchor
                     && let Some(raw) = &self.current_anchor_raw
                 {
-                    return decode(raw, stored);
+                    return decode_copy_delta(raw, stored);
                 }
                 let i = self.anchor_index(entry.anchor).ok_or(INVALID)?;
-                decode(&inflate(self.anchors[i].stored.bytes(bundle))?, stored)
+                decode_copy_delta(&inflate(self.anchors[i].stored.bytes(bundle))?, stored)
             }
         }
     }
@@ -793,10 +690,8 @@ impl RewindBuffer {
         out.try_reserve_exact(len).map_err(|_| Error::OutOfMemory)?;
         {
             let mut sink = Sink::new(Some(&mut out), None);
-            sink.write_all(b"ZGBRWD\0\0")?;
-            // Version 2 only when needed, so ZiGBA still reads other bundles.
-            let copy_delta = self.entries.iter().any(|e| e.encoding == Encoding::CopyDelta);
-            (if copy_delta { 2u32 } else { 1 }).encode(&mut sink)?;
+            sink.write_all(BUNDLE_MAGIC)?;
+            BUNDLE_VERSION.encode(&mut sink)?;
             (live.len() as u32).encode(&mut sink)?;
             sink.write_all(live)?;
             self.write_history(&mut sink)?;
@@ -883,11 +778,11 @@ impl RewindBuffer {
         let mut source = Source::new(body);
         let mut magic = [0; 8];
         source.read_all(&mut magic)?;
-        if &magic != b"ZGBRWD\0\0" {
+        if &magic != BUNDLE_MAGIC {
             return Err(Error::InvalidRewindBundle);
         }
         let version: u32 = read_value(&mut source)?;
-        if !(1..=2).contains(&version) {
+        if version != BUNDLE_VERSION {
             return Err(Error::UnsupportedRewindBundleVersion);
         }
         let live = read_bytes(&mut source, MAX_DECODED_BYTES)?.to_vec();
@@ -964,9 +859,6 @@ impl RewindBuffer {
                 },
                 copy_payloads,
             )?;
-            if encoding == Encoding::CopyDelta && version == 1 {
-                return Err(Error::InvalidRewindBundle);
-            }
             if encoding.uses_anchor() {
                 let i = history.anchor_index(anchor).ok_or(Error::InvalidRewindBundle)?;
                 history.anchors[i].refs += 1;
@@ -1041,7 +933,6 @@ fn encoding(raw: u8) -> Result<Encoding> {
     match raw {
         0 => Ok(Encoding::Raw),
         1 => Ok(Encoding::Deflate),
-        2 => Ok(Encoding::Delta),
         3 => Ok(Encoding::CopyDelta),
         _ => Err(Error::InvalidRewindBundle),
     }
@@ -1051,7 +942,7 @@ fn encoding(raw: u8) -> Result<Encoding> {
 mod tests {
     use super::*;
 
-    // Same scene/region-change pattern as Zig's syntheticState; the PRNG is
+    // Scene and region changes like a game's; the PRNG is
     // local to this fixture, so expected states do not come from decode().
     fn synthetic_state(len: usize, step: u64) -> Vec<u8> {
         let mut state = alloc::vec![0; len];
@@ -1087,7 +978,6 @@ mod tests {
         assert_eq!(buffer.decode(index).unwrap(), synthetic_state(len, step));
     }
 
-    /// Zig: "adopted histories survive compaction eviction anchor folding and branching"
     #[test]
     fn adopted_histories_survive_compaction_eviction_anchor_folding_and_branching() {
         let len = 8192;
@@ -1168,7 +1058,6 @@ mod tests {
         expect_decodes(&loaded, 1, len);
     }
 
-    /// Zig: "delta entries are small, share one anchor, and decode exactly"
     #[test]
     fn delta_entries_are_small_share_one_anchor_and_decode_exactly() {
         let len = 64 * 1024;
@@ -1189,7 +1078,6 @@ mod tests {
         }
     }
 
-    /// Zig: "budget eviction keeps newest and oldest and coarsens with age"
     #[test]
     fn budget_eviction_keeps_newest_and_oldest_and_coarsens_with_age() {
         let len = 16 * 1024;
@@ -1217,7 +1105,6 @@ mod tests {
         }
     }
 
-    /// Zig: "entry cap bounds history that never reaches the byte budget"
     #[test]
     fn entry_cap_bounds_history_that_never_reaches_the_byte_budget() {
         let mut buffer = RewindBuffer::new(RewindConfig {
@@ -1235,7 +1122,6 @@ mod tests {
         assert_eq!(buffer.newest().unwrap().frame, (MAX_ENTRIES + 50) as u64);
     }
 
-    /// Zig: "truncateNewer keeps the target as newest and releases anchors"
     #[test]
     fn truncate_newer_keeps_the_target_as_newest_and_releases_anchors() {
         let len = 8 * 1024;
@@ -1262,7 +1148,7 @@ mod tests {
     fn invalid_owned_bundle_returns_the_original_upload() {
         let mut bundle =
             RewindBuffer::new(RewindConfig::default()).unwrap().write_bundle(b"live").unwrap();
-        bundle[8] = 3;
+        bundle[8] = 4;
         let digest = blake3::hash(&bundle[..bundle.len() - 32]);
         let end = bundle.len() - 32;
         bundle[end..].copy_from_slice(digest.as_bytes());

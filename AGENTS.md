@@ -89,19 +89,29 @@ a hook the parity harness needs is a patch the harness applies.
 
 ## Save-state codec
 
-The GBA core reads and writes ZiGBA's `ZIGBAST1` save states byte for byte.
-`crates/state` reproduces ZiGBA's reflection-driven codec with
-`#[derive(Codec)]`:
+The GBA core writes Evenfall's own save states: magic `EVENFALL`, version 7.
+`crates/state` derives the codec with `#[derive(Codec)]`, and the payload has
+a fixed layout, so a state's length depends only on the save type:
 
-- A durable struct lists its fields in ZiGBA's declaration order, with
-  ZiGBA's field names, because both the payload and the schema digest follow
-  that order. Rust's memory layout is unaffected.
-- Non-byte integer widths carry `#[codec(bits = N)]`; enums carry their Zig
-  tag width; variant names convert to Zig's `snake_case` names.
-- Transient fields (caches, host bookkeeping) carry `#[codec(skip)]` exactly
-  where ZiGBA's `isTransientStateField` lists them.
-- The schema digest computed from the Rust types must equal ZiGBA's version 6
-  digest; a mismatch means the durable layout differs.
+- Durable fields encode in declaration order, little-endian, each integer in
+  the fewest whole bytes its width needs. The schema digest covers every
+  field's name and type, so adding, removing, reordering, renaming or retyping
+  a durable field changes it. Rust's memory layout is unaffected.
+- Every `Option` and union takes a fixed slot: a presence or tag byte, then
+  the value, zero-filled to the largest payload. Payload types need a fixed
+  length (`Codec::ENCODED_LEN`); the build fails otherwise.
+- The one field whose length depends on its value, the save medium, carries
+  `#[codec(last)]` so that nothing after it moves.
+- Non-byte integer widths carry `#[codec(bits = N)]` and fieldless enums
+  `#[codec(tag_bits = N)]`. Variant names appear in the schema in
+  `snake_case`.
+- Transient fields (caches, host bookkeeping, anything rebuilt on load) carry
+  `#[codec(skip)]`.
+- `systems/gba/tests/fixtures/state-layout.txt` records the version, the
+  schema digest and each field's offset and length. A layout change is a new
+  format: bump `Machine::STATE_VERSION` and the rewind bundle version (bundles
+  embed states), then regenerate the fixture as its test describes. States of
+  other versions stop loading.
 
 ## Rust conventions
 

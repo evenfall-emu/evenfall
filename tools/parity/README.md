@@ -1,7 +1,13 @@
 # Parity harness
 
+> **Deprecated.**
+> Evenfall writes its own save-state format, so this harness no longer compares save states with ZiGBA.
+> It still runs, and it stays as a behavioral cross-check until it is removed.
+> CI runs it only on demand, from the `Parity` workflow.
+
 Evenfall's GBA core replaced ZiGBA, an earlier emulator written in Zig.
-This internal tool checks that the two still agree byte for byte: it runs the same scenario on both, sliced into different chunk sizes, and compares frames, audio, battery saves and complete save states at every checkpoint.
+This internal tool checks that the two still agree: it runs the same scenario on both, sliced into different chunk sizes, and compares frames, audio, battery saves and CPU registers at every checkpoint.
+Save states are compared only between slices of the same emulator, because the two formats differ.
 [`internal-docs/parity.md`](../../internal-docs/parity.md) explains what this does and doesn't prove, and how to read a trace.
 
 ## Running it
@@ -24,11 +30,12 @@ cargo run -p evenfall-parity -- compare target/parity/traces/probe-timer_irq/ora
 - **`oracle run`** runs a scenario on ZiGBA once per slice size, writes each trace to `target/parity/traces/<name>/slice-N.trace`, checks that every byte agrees, and writes `oracle.trace` (or a destination you give).
   It fails on a stopped or faulted machine, or a failed check of the final program counter or `r12`.
 - **`run SCENARIO`** first runs the ZiGBA oracle again, checking that its slices agree.
-  It then starts a fresh Evenfall `Machine` for each slice size, writes `rust-slice-N.trace`, checks that Evenfall's slices agree, and compares every checkpoint with ZiGBA.
-  A state mismatch names the narrowest field that differs, from the save-state codec's field tracer, or the header or digest.
+  It then starts a fresh Evenfall `Machine` for each slice size, writes `rust-slice-N.trace`, checks that Evenfall's slices agree, and compares every checkpoint with ZiGBA, save states excepted.
+  A state mismatch between Evenfall's slices names the narrowest field that differs, from the save-state codec's field tracer, or the header or digest.
   For an earlier checkpoint it reloads that state before tracing.
 - **`run --all`** runs every scenario and reports failures per scenario instead of stopping at the first.
 - **`compare`** prints the first difference of each kind and exits non-zero.
+  It compares save states only when both traces use the same state format.
 
 `run` and `run --all` exit non-zero on any mismatch or error.
 Keep the trace files when you investigate a difference with `compare`.
@@ -69,5 +76,5 @@ After a 32-bit checkpoint count, each checkpoint holds:
 A blob is a `u32` byte length, the 32-byte BLAKE3 hash of the bytes, then the bytes.
 The frame is 240x160 15-bit BGR pixels (`u16` little-endian).
 The audio is interleaved `i16` little-endian stereo since the previous checkpoint.
-The state is the complete `ZIGBAST1` file, not just its payload.
+The state is the complete save-state file in the emulator's own format, not just its payload.
 Corrupt, truncated and trailing data are rejected, and the ROM and BIOS are never embedded.

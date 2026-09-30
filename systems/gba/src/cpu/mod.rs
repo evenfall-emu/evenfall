@@ -521,7 +521,7 @@ impl Default for HleService {
     }
 }
 
-/// ZiGBA's single flat `Cpu`: the core prefix precedes all HLE fields.
+/// The durable CPU: the ARM core's fields, flattened, precede all HLE fields.
 #[derive(Clone, Debug, PartialEq, Eq, Codec)]
 pub struct Cpu {
     #[codec(flatten)]
@@ -537,7 +537,7 @@ pub struct Cpu {
 
 impl Cpu {
     pub fn write_state_schema(sink: &mut evenfall_state::Sink<'_>) -> evenfall_state::Result<()> {
-        evenfall_state::schema_name(sink, "zigba.cpu.state.v6")?;
+        evenfall_state::schema_name(sink, "evenfall.gba.cpu")?;
         Self::schema(sink)
     }
 
@@ -1170,44 +1170,6 @@ mod tests {
         assert_eq!(
             restored.read_state(&mut Source::new(&bytes), cycle),
             Err(Error::InvalidSaveState)
-        );
-    }
-
-    /// ZiGBA `state_codec.writeSchemaName("zigba.cpu.state.v6"); writeSchema(Cpu)`.
-    #[test]
-    fn cpu_schema_matches_zigba_v6() {
-        let mut hash = blake3::Hasher::new();
-        Cpu::write_state_schema(&mut evenfall_state::Sink::new(None, Some(&mut hash))).unwrap();
-        assert_eq!(
-            hash.finalize().to_hex().as_str(),
-            "75595acc72ede48e7c4c08b601062ccd2da112163cc71959695a2d85ce93e3c0"
-        );
-    }
-
-    /// ZiGBA `Cpu.writeState`: an active IRQ frame, fetched opcodes and the
-    /// inactive stack tail use the same padding-free bytes as the Zig codec.
-    #[test]
-    fn cpu_payload_matches_zigba_v6() {
-        let mut cpu = Cpu::init(0x0800_0020, 0x1f, true);
-        cpu.registers[0] = 0x1234_5678;
-        cpu.registers[3] = 0x0200_00a7;
-        cpu.pipeline = Some(Pipeline {
-            instructions: [0xe3a0_0017, 0xe280_1002],
-            instruction_set: InstructionSet::Arm,
-        });
-        cpu.hle_irq_depth = 1;
-        cpu.hle_irq_stack[0] = HleIrqFrame {
-            return_address: 0x0800_0018,
-            saved_spsr_irq: 0x3f,
-            saved_r0_r3: [4, 3, 2, 1],
-            saved_r12: 0x55aa_1f00,
-        };
-        cpu.hle_irq_stack[7] = HleIrqFrame { return_address: 0xdead_beef, ..Default::default() };
-        let mut hash = blake3::Hasher::new();
-        cpu.write_state(&mut evenfall_state::Sink::new(None, Some(&mut hash)), 64).unwrap();
-        assert_eq!(
-            hash.finalize().to_hex().as_str(),
-            "046107270e9ccccaca6de8dc936670a4dffda7fbe832d5da5f51ca5a21c8bac6"
         );
     }
 
