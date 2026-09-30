@@ -9,7 +9,6 @@
     "db:migrate:local": "wrangler d1 migrations apply zigba-catalog --local --config wrangler.jsonc",
     "db:migrate:remote": "wrangler d1 migrations apply zigba-catalog --remote --config ../cloudflare/wrangler.jsonc",
     "dev": "wrangler dev --config wrangler.jsonc",
-    "dev:patches": "wrangler dev --config ../cloudflare/patches.wrangler.jsonc --port 8788 --persist-to .wrangler/state",
     "test": "vp test"
   },
   "dependencies": {

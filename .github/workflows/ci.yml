@@ -98,7 +98,6 @@ jobs:
       # The same script and dry runs as the Workers Builds projects.
       - run: bash web/cloudflare/build.sh
       - run: npx wrangler deploy --dry-run --config web/cloudflare/wrangler.jsonc
-      - run: npx wrangler deploy --dry-run --config web/cloudflare/patches.wrangler.jsonc
 
   validators:
     runs-on: ubuntu-latest

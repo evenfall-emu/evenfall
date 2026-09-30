@@ -53,7 +53,7 @@ To move the pin:
 
 The tests use a handwritten fixture and need no network.
 
-## Romhack releases and patch CDN
+## Romhack releases and patch hosting
 
 [`romhacks.mjs`](romhacks.mjs) normalizes the local Pokémon, Golden Sun and
 Fire Emblem collections under `.amp/in/` to one release shape. It validates
@@ -93,22 +93,17 @@ node web/server/scripts/catalog/romhacks.mjs build   # regenerate the metadata a
 node web/server/scripts/catalog/romhacks.mjs check   # fail if the seed no longer matches the collections
 ```
 
-Patch object keys are the patch SHA-1 plus its format extension. The separate
-read-only [`zigba-patches`](../../server/src/patches.ts) Worker has an EU R2
-binding to `evenfall-patches` and a route on `patches.evenfall-emu.org/*`. The
-existing R2 custom domain supplies the proxied DNS record; the Worker route
-intercepts requests before the bucket's public origin. This keeps patch
-handling off the catalog/account Worker and separate from `zigba-saves`. The
-Worker adds browser CORS for `play.evenfall-emu.org` and local development,
-serves only content-addressed patch paths, and refuses writes. No bucket CORS
-policy is required for responses served by this Worker.
+Patch object keys are the patch SHA-1 plus its format extension. The EU
+`evenfall-patches` R2 bucket serves them directly on its custom domain,
+`patches.evenfall-emu.org`, with the metadata stored on each object: every
+upload sets `Cache-Control: public, max-age=31536000, immutable`, since a key
+names its bytes. The bucket is separate from the private `zigba-saves`. Its
+CORS policy must let the player read patches (see
+[`docs/server.md`](../../../../docs/server.md#patch-hosting)).
 
-After authenticating Wrangler to the account owning the EU bucket, deploy
-the patch Worker before uploading; otherwise the readback/CORS check sees
-the bucket's direct endpoint rather than the Worker:
+After authenticating Wrangler to the account owning the EU bucket:
 
 ```sh
-npx wrangler deploy --config server/patches.wrangler.jsonc
 node web/server/scripts/catalog/romhacks.mjs upload
 node web/server/scripts/catalog/romhacks.mjs verify
 ```

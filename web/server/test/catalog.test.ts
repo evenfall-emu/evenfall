@@ -853,7 +853,41 @@ describe("catalog API", () => {
     expect(
       new Uint8Array(await (await patches.get(`${hash}.ips`))!.arrayBuffer()),
     ).toEqual(bytes);
+    // The bucket's custom domain serves this metadata: a key is the patch's
+    // SHA-1, so the object is cached as immutable.
+    expect((await patches.head(`${hash}.ips`))?.httpMetadata).toEqual({
+      contentType: "application/octet-stream",
+      cacheControl: "public, max-age=31536000, immutable",
+    });
+    // An object stored earlier without that metadata gains it on re-upload.
+    await patches.put(`${hash}.ips`, bytes);
     expect((await upload(bytes)).status).toBe(200);
+    expect(
+      (await patches.head(`${hash}.ips`))?.httpMetadata?.cacheControl,
+    ).toBe("public, max-age=31536000, immutable");
+    // Local development serves the bucket through the Worker; a deployment,
+    // without LOCAL_PATCHES, does not.
+    const local = await request(`/api/dev/patches/${hash}.ips`, undefined, {
+      ...bindings,
+      LOCAL_PATCHES: "true",
+    });
+    expect(local.status).toBe(200);
+    expect(local.headers.get("cache-control")).toBe(
+      "public, max-age=31536000, immutable",
+    );
+    expect(new Uint8Array(await local.arrayBuffer())).toEqual(bytes);
+    expect(
+      (await request(`/api/dev/patches/${hash}.ips`, undefined, bindings))
+        .status,
+    ).toBe(404);
+    expect(
+      (
+        await request("/api/dev/patches/secret.txt", undefined, {
+          ...bindings,
+          LOCAL_PATCHES: "true",
+        })
+      ).status,
+    ).toBe(404);
     expect((await request(`/api/versions/${id}`)).status).toBe(404);
     const visible = await request(`/api/admin/versions/${id}`, {
       method: "PATCH",

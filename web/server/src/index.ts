@@ -31,11 +31,20 @@ export interface Bindings extends AuthBindings, CloudSaveBindings {
   ADMIN_SECRET?: string;
   PATCHES?: R2Bucket;
   PATCHES_URL?: string;
+  /**
+   * Local development only: "true" serves the PATCHES bucket at
+   * /api/dev/patches/<key>, in place of the bucket's public domain.
+   */
+  LOCAL_PATCHES?: string;
   /** The player's static build (Workers Static Assets). */
   ASSETS?: Fetcher;
 }
 
 type AppEnv = { Bindings: Bindings };
+
+/** Patch keys are content SHA-1s, so a stored patch never changes. */
+const PATCH_CACHE_CONTROL = "public, max-age=31536000, immutable";
+const PATCH_KEY = /^[0-9a-f]{40}\.(?:bps|ups|ips)$/;
 
 const app = new Hono<AppEnv>();
 
@@ -223,6 +232,25 @@ app.use("/api/admin/*", async (c, next) => {
   await next();
   c.header("Cache-Control", "no-store");
   c.header("Referrer-Policy", "no-referrer");
+});
+
+// Local development only. The deployed patches are served by the bucket's R2
+// custom domain; without it, `wrangler dev` serves the local bucket here, and
+// the development PATCHES_URL points at this route through Vite's /api proxy.
+app.get("/api/dev/patches/:key", async (c) => {
+  const key = c.req.param("key");
+  const object =
+    c.env.LOCAL_PATCHES === "true" && c.env.PATCHES && PATCH_KEY.test(key)
+      ? await c.env.PATCHES.get(key)
+      : null;
+  if (!object) return c.body(null, 404);
+  return new Response(object.body, {
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "Content-Length": String(object.size),
+      "Cache-Control": object.httpMetadata?.cacheControl ?? "no-store",
+    },
+  });
 });
 
 app.get("/api/games", async (c) =>
@@ -468,7 +496,15 @@ app.put("/api/admin/versions/:id/patch", async (c) => {
       },
       409,
     );
-  if (!existing) await c.env.PATCHES.put(key, bytes);
+  // The bucket's R2 custom domain serves the stored HTTP metadata. A key is
+  // the patch's SHA-1, so its bytes never change: cache it for a year.
+  if (existing?.httpMetadata?.cacheControl !== PATCH_CACHE_CONTROL)
+    await c.env.PATCHES.put(key, bytes, {
+      httpMetadata: {
+        contentType: "application/octet-stream",
+        cacheControl: PATCH_CACHE_CONTROL,
+      },
+    });
   const patchUrl = `${c.env.PATCHES_URL.replace(/\/$/, "")}/${key}`;
   await database(c.env.DB!)
     .update(versions)

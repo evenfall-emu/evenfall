@@ -14,7 +14,10 @@
     "BETTER_AUTH_URL": "http://127.0.0.1:5173",
     "DISCORD_CLIENT_ID": "1551951883109666826",
     "EMAIL_FROM": "noreply@evenfall-emu.org",
-    "PATCHES_URL": "http://127.0.0.1:8788",
+    // Patches uploaded locally are served by the Worker itself, through the
+    // player's /api proxy (see LOCAL_PATCHES in src/index.ts).
+    "PATCHES_URL": "http://127.0.0.1:5173/api/dev/patches",
+    "LOCAL_PATCHES": "true",
   },
   "send_email": [
     {
