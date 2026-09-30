@@ -227,7 +227,7 @@ export interface RecordingStatus {
   checkpoints: { name: string; at: string }[];
 }
 export interface FailureBundle {
-  format: "zigba-failure";
+  format: "evenfall-failure";
   version: 2;
   identity: {
     romHash: string;

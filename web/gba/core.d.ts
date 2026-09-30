@@ -4,9 +4,9 @@ import type {
   RunResult,
   Snapshot,
   TimedInput,
-} from "./zigba.js";
+} from "./emulator.js";
 
-export { KEYS, CYCLES_PER_FRAME, SAVE_TYPES } from "./zigba.js";
+export { KEYS, CYCLES_PER_FRAME, SAVE_TYPES } from "./emulator.js";
 export type {
   LoadOptions,
   MemorySnapshot,
@@ -15,7 +15,7 @@ export type {
   Snapshot,
   StopReason,
   TimedInput,
-} from "./zigba.js";
+} from "./emulator.js";
 
 export type StepReason = "executed" | "halted" | "power_stopped" | "faulted";
 export type RewindCompression = "off" | "fast" | "delta";
@@ -37,13 +37,13 @@ export class WasmCore {
    * Instantiate the core. Accepts WASM bytes or a URL. Without an argument it
    * loads the package's `evenfall-gba.wasm`, or `evenfall-gba-scalar.wasm` on an
    * engine without WebAssembly SIMD: fetched in browsers, read from disk in
-   * Node. Rejects a binary whose `zb_version` ABI does not match this module.
+   * Node. Rejects a binary whose `ef_version` ABI does not match this module.
    */
   static create(
     source?: URL | string | Uint8Array | ArrayBuffer,
   ): Promise<WasmCore>;
   constructor(exports: WebAssembly.Exports);
-  /** Raw instance exports. The `zb_*` ABI is internal and versioned. */
+  /** Raw instance exports. The `ef_*` ABI is internal and versioned. */
   readonly wasm: WebAssembly.Exports;
   /** True between a successful `load` and `dispose`. */
   readonly loaded: boolean;

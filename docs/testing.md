@@ -101,7 +101,7 @@ npm test
 
 `npm test` runs the SDK's Node tests against the real WebAssembly build.
 Among them, [`core.test.mjs`](../web/gba/core.test.mjs) builds the native [`session_probe`](../systems/gba/src/bin/session_probe.rs) and checks that the SIMD and scalar WebAssembly builds match it exactly after 120 frames: cycle, program counter, CPSR, save state, EWRAM, frame, audio and battery save.
-Set `ZIGBA_TEST_ROMS` to a JSON list of paths to add your own ROMs to that comparison.
+Set `EVENFALL_TEST_ROMS` to a JSON list of paths to add your own ROMs to that comparison.
 Without the WebAssembly binary, the tests that need it are skipped.
 
 `npm run fmt` applies the formatter, Markdown included.

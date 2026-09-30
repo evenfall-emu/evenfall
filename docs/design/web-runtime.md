@@ -12,10 +12,10 @@ The page draws the frames, plays the sound and stores the files.
 ```text
 page                                             one Worker per Emulator
 ┌─────────────────────────────────┐             ┌──────────────────────────────────┐
-│ Emulator (zigba.js)             │  commands   │ worker.js: pacing, recording     │
+│ Emulator (emulator.js)          │  commands   │ worker.js: pacing, recording     │
 │ canvas, AudioWorklet, storage   ├────────────▶│ WasmCore (core.js)               │
 │                                 │◀────────────┤ evenfall-gba.wasm                │
-│ owned pixels, audio, snapshots  │  replies,   │ zb_* → Session → Machine         │
+│ owned pixels, audio, snapshots  │  replies,   │ ef_* → Session → Machine         │
 │                                 │  events     │                                  │
 └─────────────────────────────────┘             └──────────────────────────────────┘
 ```
@@ -49,14 +49,14 @@ WebAssembly memory can't shrink, so an instance keeps its high-water mark until 
 
 ## How JavaScript talks to the module
 
-The module exports 44 `zb_*` functions and its memory, at ABI version 1.
-This interface is private: applications use the JavaScript API, and [`WasmCore`](../../web/gba/core.js) refuses a module whose `zb_version()` isn't 1.
+The module exports 44 `ef_*` functions and its memory, at ABI version 1.
+This interface is private: applications use the JavaScript API, and [`WasmCore`](../../web/gba/core.js) refuses a module whose `ef_version()` isn't 1.
 
-- **Errors.** A negative result leaves an error name at `zb_error_ptr`, `zb_error_len`, which `WasmCore` turns into an exception.
+- **Errors.** A negative result leaves an error name at `ef_error_ptr`, `ef_error_len`, which `WasmCore` turns into an exception.
 - **Running.** A bounded run returns 0 at its deadline, 1 at the first instruction boundary past it, 2 on STOP and 3 on a guest fault.
-- **Input.** `zb_prepare(size)` reserves the one upload buffer, JavaScript writes into `zb_input_ptr()`, then calls the command that uses it.
+- **Input.** `ef_prepare(size)` reserves the one upload buffer, JavaScript writes into `ef_input_ptr()`, then calls the command that uses it.
   Timed button presses are 16-byte records: a `u64` cycle, a `u32` key mask and a zero `u32`.
-- **Output.** `zb_output_ptr`, `zb_output_len` show a result that is only valid until the next command.
+- **Output.** `ef_output_ptr`, `ef_output_len` show a result that is only valid until the next command.
   `WasmCore` copies it into JavaScript memory at once.
   Exports of the ROM or save bytes point at the stored bytes instead of copying them inside the module.
 
@@ -140,7 +140,7 @@ A shared presentation layer with scaling and shader presets for Evenfall's front
 The sound chip runs on the emulated clock, and `Session` resamples its output to the host's rate, 48 kHz by default.
 At 2x or below, the Worker runs four quarter-frame slices per frame and drains audio after each.
 
-Pages can use the bundled [`zigba-audio` AudioWorklet](../../web/gba/audio-worklet.js).
+Pages can use the bundled [`evenfall-audio` AudioWorklet](../../web/gba/audio-worklet.js).
 It keeps a bounded stereo buffer, fills it before starting, adjusts for the playback speed, and reports underruns and overruns.
 The audio clock never drives emulation.
 
@@ -185,7 +185,7 @@ A page that wants the real date passes it in and saves it itself.
 
 - [`core.test.mjs`](../../web/gba/core.test.mjs) runs the WebAssembly build and the native [`session_probe`](../../systems/gba/src/bin/session_probe.rs) on the same ROM with the same quarter-frame schedule.
   It compares cycle, frame count, program counter, CPSR, and SHA-256 hashes of the whole save state, EWRAM, the frame, the audio stream and the battery save.
-  Locally supplied ROMs can extend the schedule through `ZIGBA_TEST_ROMS`, and games and BIOS files are never committed.
+  Locally supplied ROMs can extend the schedule through `EVENFALL_TEST_ROMS`, and games and BIOS files are never committed.
   Both sides are the same Rust code on different targets, so this shows the runtime is portable, not that it is accurate.
   Accuracy is what the ROM validators check ([`testing.md`](../testing.md)).
 - [`allocator.test.mjs`](../../web/gba/allocator.test.mjs) checks memory growth, reuse and clean failure at the limit.

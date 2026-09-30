@@ -403,7 +403,7 @@ export class FailureRecorder {
       capturedDetails = { serializationError: errorInfo(error) };
     }
     const bundle = {
-      format: "zigba-failure",
+      format: "evenfall-failure",
       version: 2,
       identity: json(this.identity),
       reason: String(reason).slice(0, 1024),
@@ -451,7 +451,7 @@ export class FailureRecorder {
 
 /** Validate the fields consumed by the browser inspector before rendering them. */
 export function validateFailureBundle(bundle) {
-  if (bundle?.format !== "zigba-failure" || bundle.version !== 2)
+  if (bundle?.format !== "evenfall-failure" || bundle.version !== 2)
     throw new Error("Unsupported failure bundle");
   if (!bundle.identity || !/^[a-f0-9]{40}$/.test(bundle.identity.romHash))
     throw new Error("Invalid failure ROM identity");

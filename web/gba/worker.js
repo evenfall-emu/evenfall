@@ -130,8 +130,8 @@ function advanceFrame() {
   let length = 0;
   let result;
   const slice = audible ? quantum : CYCLES_PER_FRAME;
-  while (core.wasm.zb_cycle() < nextCycle) {
-    const at = core.wasm.zb_cycle();
+  while (core.wasm.ef_cycle() < nextCycle) {
+    const at = core.wasm.ef_cycle();
     result = execution().runUntil(
       at + slice < nextCycle ? at + slice : nextCycle,
     );
@@ -362,7 +362,7 @@ async function command(method, args) {
       if (!playing) {
         playing = true;
         updatePlaybackOutput();
-        nextCycle = core.wasm.zb_cycle();
+        nextCycle = core.wasm.ef_cycle();
         nextTime = performance.now();
         schedulePump(0);
       }
@@ -394,7 +394,7 @@ async function command(method, args) {
       if (playing) throw new Error("PauseBeforeManualExecution");
       core.requireLoaded();
       const [deadline, events = []] = args;
-      const start = core.wasm.zb_cycle();
+      const start = core.wasm.ef_cycle();
       if (
         typeof deadline !== "bigint" ||
         deadline < start ||
@@ -424,7 +424,7 @@ async function command(method, args) {
         let consumed = 0;
         let result = {
           cycle: start,
-          frames: core.wasm.zb_frames(),
+          frames: core.wasm.ef_frames(),
           reason: "deadline",
         };
         let slices = 0;
@@ -432,8 +432,8 @@ async function command(method, args) {
           result = execution().runUntil(deadline, events);
           consumed = result.inputsConsumed;
         }
-        while (core.wasm.zb_cycle() < deadline) {
-          const at = core.wasm.zb_cycle();
+        while (core.wasm.ef_cycle() < deadline) {
+          const at = core.wasm.ef_cycle();
           result = execution().runUntil(
             at + quantum < deadline ? at + quantum : deadline,
             events.slice(consumed),

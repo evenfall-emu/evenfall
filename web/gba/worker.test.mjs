@@ -1,7 +1,7 @@
 import { wasm, wasmTest as test } from "./scripts/wasm-test.mjs";
 import assert from "node:assert/strict";
 import { Worker } from "node:worker_threads";
-import { Emulator, CYCLES_PER_FRAME as F } from "./zigba.js";
+import { Emulator, CYCLES_PER_FRAME as F } from "./emulator.js";
 
 // Only the browser transport is adapted. Exercise the real SDK, worker,
 // recorder and WASM, including structured clones and transferred output.

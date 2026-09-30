@@ -100,12 +100,12 @@ For other terms, contact [contact@evenfall-emu.org](mailto:contact@evenfall-emu.
 | `@evenfall/gba/devtools/capture`         | `FailureRecorder`, `validateFailureBundle`, `replayFailureBundle`, `replayFailureBundleAsync`      |
 | `@evenfall/gba/bridge`                   | typed read-only views of game memory ([Game bridges](#game-bridges))                               |
 | `@evenfall/gba/bridge/react`             | `BridgeProvider`, `useViews`, `useBridge`, `useBridgeResources` (React 18+, optional)              |
-| `@evenfall/gba/audio-worklet`            | the `zigba-audio` AudioWorklet processor, loaded by URL                                            |
+| `@evenfall/gba/audio-worklet`            | the `evenfall-audio` AudioWorklet processor, loaded by URL                                         |
 | `@evenfall/gba/evenfall-gba.wasm`        | the core, built with SIMD                                                                          |
 | `@evenfall/gba/evenfall-gba-scalar.wasm` | the core, built without SIMD                                                                       |
 
 Every JavaScript entry point has type declarations.
-This page summarizes the interface, and [`zigba.d.ts`](../web/gba/zigba.d.ts), [`core.d.ts`](../web/gba/core.d.ts) and the [devtools declarations](../web/gba/devtools/) are the reference.
+This page summarizes the interface, and [`emulator.d.ts`](../web/gba/emulator.d.ts), [`core.d.ts`](../web/gba/core.d.ts) and the [devtools declarations](../web/gba/devtools/) are the reference.
 
 ### With a bundler
 
@@ -141,7 +141,7 @@ Serve `web/gba/` from a checkout after building the core, and import it by path 
 
 ```html
 <script type="importmap">
-  { "imports": { "@evenfall/gba": "/vendor/evenfall/zigba.js" } }
+  { "imports": { "@evenfall/gba": "/vendor/evenfall/emulator.js" } }
 </script>
 <script type="module">
   import { Emulator } from "@evenfall/gba";
@@ -149,7 +149,7 @@ Serve `web/gba/` from a checkout after building the core, and import it by path 
 </script>
 ```
 
-The default Worker and WebAssembly URLs are relative to `zigba.js`, so they resolve inside the served directory.
+The default Worker and WebAssembly URLs are relative to `emulator.js`, so they resolve inside the served directory.
 Serve `.wasm` files as `application/wasm` so browsers can compile them while downloading.
 
 ## Node and headless use
@@ -322,7 +322,7 @@ Drop any audio you had queued when going above 2x.
 
 ## Audio
 
-`@evenfall/gba/audio-worklet` registers an AudioWorklet processor named `zigba-audio`, a bounded stereo buffer that smooths speed changes.
+`@evenfall/gba/audio-worklet` registers an AudioWorklet processor named `evenfall-audio`, a bounded stereo buffer that smooths speed changes.
 Load it by URL, then send it each frame's samples:
 
 ```ts
@@ -331,7 +331,7 @@ import workletUrl from "@evenfall/gba/audio-worklet?url&no-inline";
 
 const context = new AudioContext();
 await context.audioWorklet.addModule(workletUrl);
-const node = new AudioWorkletNode(context, "zigba-audio", {
+const node = new AudioWorkletNode(context, "evenfall-audio", {
   numberOfInputs: 0,
   outputChannelCount: [2],
 });
@@ -470,9 +470,9 @@ Most real games are written as a family (`defineFamily`) with one JSON manifest 
 
 ## The WebAssembly interface
 
-`evenfall-gba.wasm` exports `zb_*` functions.
+`evenfall-gba.wasm` exports `ef_*` functions.
 They are an internal interface between the binary and this package's JavaScript, and can change in any release.
-`zb_version()` identifies it, and `WasmCore` refuses a binary it doesn't understand ("Unsupported WASM ABI").
+`ef_version()` identifies it, and `WasmCore` refuses a binary it doesn't understand ("Unsupported WASM ABI").
 Always use the `evenfall-gba.wasm` built with this package version, and build on the JavaScript API.
 The binary carries no debug information.
 [`design/web-runtime.md`](design/web-runtime.md) describes the interface, memory and Worker.
@@ -495,7 +495,7 @@ npm test
 
 The Rust build writes `web/gba/evenfall-gba.wasm`, kept out of Git.
 `npm run build -w @evenfall/gba` compiles the bridge's TypeScript (`web/gba/src/bridge`) into `web/gba/bridge/`.
-The package's `zigba-source` export condition gives code in this repository the bridge's sources.
+The package's `evenfall-source` export condition gives code in this repository the bridge's sources.
 Its `prepack` step checks that the WebAssembly file is present, stripped and compatible, although the package isn't published.
 
 [`testing.md`](testing.md) lists the SDK's tests, including the native-against-WebAssembly comparison that can run on your own ROMs.
