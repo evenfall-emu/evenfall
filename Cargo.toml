@@ -6,7 +6,7 @@ members = [
     "crates/*",
     "systems/gba",
     "tools/bench",
-    "tools/parity",
+    "tools/scenarios",
     "web/gba",
 ]
 

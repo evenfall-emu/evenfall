@@ -1,4 +1,4 @@
-//! Scenario media and system-specific controls for the Rust GBA backend.
+//! Scenario media and system-specific controls for the GBA machine.
 
 use evenfall_gba::{
     bus::{JoyBusCommand, KeyState, SioConnection, TimedInputChange},

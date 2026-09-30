@@ -40,8 +40,8 @@ entry:
     strlo r3, [r1], #4
     blo 1b
     /* Count VBlanks from the entry point, before any setup: skipped boots
-     * leave the PPU at different lines (mGBA 126, ZiGBA 0, NanoBoyAdvance
-     * 225), so a VBlank can fall inside a long .bss clear. */
+     * leave the PPU at different lines (mGBA 126, NanoBoyAdvance 225), so
+     * a VBlank can fall inside a long .bss clear. */
     ldr r0, =0x03007FFC
     ldr r1, =irq_handler
     str r1, [r0]

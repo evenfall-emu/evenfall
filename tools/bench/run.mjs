@@ -161,18 +161,18 @@ const warmups = positive(opts.warmups, "--warmups", true);
 
 if (!detectTaskset()) fail("taskset is required to pin runs to one CPU");
 
-// Same host-wide lane as tools/mgba-bench, so benchmarks never overlap.
-if (!process.env.ZIGBA_LANE_HELD) {
+// One host-wide lane, so benchmarks never overlap.
+if (!process.env.EVENFALL_LANE_HELD) {
   const lock =
-    process.env.ZIGBA_LANE_LOCK ??
-    `/tmp/zigba-benchmark-${process.getuid()}.lock`;
+    process.env.EVENFALL_LANE_LOCK ??
+    `/tmp/evenfall-benchmark-${process.getuid()}.lock`;
   mkdirSync(dirname(lock), { recursive: true });
   const child = spawnSync(
     "flock",
     [lock, process.execPath, ...process.argv.slice(1)],
     {
       stdio: "inherit",
-      env: { ...process.env, ZIGBA_LANE_HELD: "1" },
+      env: { ...process.env, EVENFALL_LANE_HELD: "1" },
     },
   );
   if (child.error || child.status === null)

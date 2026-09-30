@@ -5,7 +5,7 @@ import { parseObservation, roundOrder, summarize } from "./measure.mjs";
 const line = (fields = {}) =>
   `noise\nbenchmark: ${JSON.stringify({
     schema: 1,
-    emulator: "zigba",
+    emulator: "example",
     frames: 10,
     seconds: 0.5,
     cycle: "2808960",

@@ -144,7 +144,7 @@ The suite's `nop ; b pc` row reuses the `b pc` code and so has no value of its o
 The mGBA suite's ROM runs a menu of test suites and compares what the console does with tables of results recorded on hardware.
 [`tools/mgba-suite/build.sh`](../tools/mgba-suite/build.sh) builds it from the pinned commit in a pinned devkitARM container image, and the ROM stays a gitignored build product.
 One scenario per suite and boot mode boots the ROM, selects the suite, runs it and pages through its result list, saving a state on every page.
-`evenfall-parity mgba-suite report` reads each page from the text tilemap in those states, the list a player sees on screen.
+`evenfall-scenarios mgba-suite report` reads each page from the text tilemap in those states, the list a player sees on screen.
 Each suite runs under HLE boot and under the pinned Cult-of-GBA replacement BIOS, and gives the same results under three host slicing schedules.
 Commands are in [`tools/mgba-suite/README.md`](../tools/mgba-suite/README.md).
 
