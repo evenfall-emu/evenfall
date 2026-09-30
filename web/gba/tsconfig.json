@@ -1,7 +1,7 @@
 {
   // Compiles the TypeScript bridge (src/bridge) to bridge/*.js + .d.ts for
   // the published package. Workspace consumers read the sources directly
-  // through the "zigba-source" export condition; see docs/sdk.md.
+  // through the "evenfall-source" export condition; see docs/sdk.md.
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022", "DOM"],

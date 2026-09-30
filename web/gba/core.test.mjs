@@ -460,8 +460,8 @@ test("STOP and unsupported guest code remain explicit terminal results", async (
   }
 });
 
-const extra = process.env.ZIGBA_TEST_ROMS
-  ? JSON.parse(process.env.ZIGBA_TEST_ROMS)
+const extra = process.env.EVENFALL_TEST_ROMS
+  ? JSON.parse(process.env.EVENFALL_TEST_ROMS)
   : [];
 test("native/WASM canonical state, pixels, audio, memory, and save parity", async (t) => {
   const root = new URL("../..", import.meta.url);

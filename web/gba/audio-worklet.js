@@ -1,5 +1,5 @@
 // A bounded stereo ring. The audio callback never drives emulated time.
-class ZigbaAudio extends AudioWorkletProcessor {
+class EvenfallAudio extends AudioWorkletProcessor {
   constructor(options) {
     super();
     // Keep 100 ms of source audio at the maximum playback rate, including
@@ -103,4 +103,4 @@ class ZigbaAudio extends AudioWorkletProcessor {
     return true;
   }
 }
-registerProcessor("zigba-audio", ZigbaAudio);
+registerProcessor("evenfall-audio", EvenfallAudio);
