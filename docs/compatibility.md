@@ -159,6 +159,52 @@ Only a user-supplied Nintendo BIOS, together with an implementation of the
 external-boot latch, could establish the retail expectation. HLE seeds the
 post-boot value and passes the case.
 
+## Guest faults in user-supplied games
+
+A guest that executes an UNPREDICTABLE encoding stops with a typed fault
+([containment](gba/hardware/cpu.md#undefined-versus-unpredictable)). Such a
+fault in a game is a core bug only if the path to it departs from hardware.
+
+**Game B's battle information menu.** Game B, a ROM hack of the
+[rewind study](research/rewind-compression.md#codec-choice), faults after 82
+emulated minutes of the study's seeded button walker with
+`unpredictable_arm_encoding class=single_transfer offending_registers=8000`:
+in IRQ mode and ARM state, the CPU reaches `E7FAFBCDh`,
+`LDRB pc, [r10, sp, asr #23]!`, in IWRAM. The game causes the fault:
+
+1. The move page of the game's battle information menu, in its description
+   mode, prints all four move slots of the battler. For an empty slot, move 0,
+   it copies the string at `descriptions[move − 1]`, the word before the
+   pointer table: `0000FFADh`.
+2. The string copy stops at an `FFh` byte. It reads upward from `0000FFADh`,
+   unmapped memory that returns open bus, and writes from a text buffer
+   onward through the EWRAM mirrors, overwriting all of EWRAM more than
+   twice before a byte reads `FFh`.
+3. The overwritten data include the sprite system's OAM entry limit, which
+   becomes 209. A later OAM-buffer build fills the unused entries up to that
+   limit, past the 128-entry shadow OAM in IWRAM and into the ARM interrupt
+   dispatcher the game copies there, which the IRQ vector at `03007FFCh`
+   names.
+4. The next interrupt enters the dispatcher and executes the fill words,
+   then the Thumb code after them, as ARM until it reaches the byte load
+   into r15.
+
+ZiGBA at the pinned commit faults at the same cycle from the same converted
+state and input, with a byte-identical state at earlier frames, and stepping
+the interpreter without the execution engine faults at the same cycle too.
+
+Open bus decides only when the copy ends. Between DMA transfers, a Thumb read
+of unmapped memory from Game Pak code returns the halfword the CPU last
+prefetched, here the loop's `D1F9h`: repeated in both halves per GBATEK,
+mGBA and NanoBoyAdvance, zero-extended in ZiGBA. Neither holds `FFh`. The
+copy ends at a read that follows a Direct Sound FIFO DMA, whose word the core
+returns as open bus; mGBA and NanoBoyAdvance also return the last DMA value
+to a CPU read that follows a transfer. The copy's length on hardware thus
+depends on sample data and DMA timing, but step 1 corrupts memory under
+every model. mGBA and NanoBoyAdvance execute `LDRB` into r15 as a byte load
+and a branch; ARMv4 leaves it UNPREDICTABLE, and the guest is already
+running data as code.
+
 ## Limits and open questions
 
 - Public mGBA-suite hardware tables are checked as host fixtures; its ROMs

@@ -102,8 +102,9 @@ change; the copy delta opened one or two.
 ### Retention in the default 15 MiB buffer
 
 The real `RewindBuffer` at its defaults ran 120 minutes of Game A and 80 of
-Game B (Game B's walker reaches a guest fault, an unpredictable ARM
-load/store encoding in IWRAM, at 82 minutes under either codec). A retained
+Game B (Game B's walker reaches a guest fault at 82 minutes under either
+codec, a memory corruption caused by the game; see
+[compatibility](../compatibility.md#guest-faults-in-user-supplied-games)). A retained
 entry was decoded and compared by hash every 120 captures; every sampled
 restore matched. Three sessions ran concurrently, so times are indicative:
 

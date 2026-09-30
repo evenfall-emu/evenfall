@@ -320,7 +320,9 @@ that any change is visible.
 - **Open-bus composition.** ZiGBA returns the last value read, and a Thumb
   fetch stores only its halfword. How the prefetched opcodes compose the
   open-bus word in Thumb state, per region (GBATEK, Unpredictable Things), is
-  not modeled.
+  not modeled. Guest code that reads unmapped memory by mistake can depend
+  on it: Game B's runaway string copy ends only when open bus yields `FFh`
+  ([compatibility](../../compatibility.md#guest-faults-in-user-supplied-games)).
 - **Video-memory contention.** GBATEK's memory map adds one cycle when the
   CPU accesses video memory while the LCD does; ZiGBA charges palette, VRAM
   and OAM accesses fixed cycles.
