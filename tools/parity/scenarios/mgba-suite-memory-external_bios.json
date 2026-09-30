@@ -1,0 +1,82 @@
+{
+  "name": "mgba-suite-memory-external_bios",
+  "assets": {
+    "rom": "../../../tools/mgba-suite/build/suite.gba",
+    "bios": "../../../refs/cult-gba-bios/bios.bin"
+  },
+  "config": {
+    "boot": "external_bios",
+    "saveType": "auto"
+  },
+  "inputs": [
+    {
+      "at": "50561280",
+      "change": {
+        "keys": 1
+      }
+    },
+    {
+      "at": "51403968",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "136796352",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "137639040",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "138762624",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "139605312",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "140728896",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "141571584",
+      "change": {
+        "keys": 0
+      }
+    },
+    {
+      "at": "142695168",
+      "change": {
+        "keys": 16
+      }
+    },
+    {
+      "at": "143537856",
+      "change": {
+        "keys": 0
+      }
+    }
+  ],
+  "endCycle": "144380544",
+  "checkpoints": [
+    "136515456",
+    "138481728",
+    "140448000",
+    "142414272",
+    "144380544"
+  ],
+  "sliceCycles": ["70224", "280896", "1232"]
+}

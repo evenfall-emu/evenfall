@@ -127,12 +127,195 @@ in [`probe/README.md`](../probe/README.md).
 | `probe-midaffine`    | changing affine matrix mid-line                                                 | split                     |
 | `probe-midmosaic`    | changing mosaic size mid-line                                                   | split                     |
 
+## mGBA suite ROM
+
+The pinned [mGBA suite](https://github.com/mgba-emu/suite) is one
+menu-driven ROM whose test suites compare what the console does with tables
+of results recorded on hardware.
+[`tools/mgba-suite/build.sh`](../tools/mgba-suite/build.sh) builds it from
+the pinned commit with a pinned devkitARM container image; the ROM stays a
+gitignored build product. One parity scenario per suite and boot mode
+(`tools/parity/scenarios/mgba-suite-*.json`) boots the ROM, selects the
+suite, runs it and pages through its result list. `evenfall-parity
+mgba-suite report` reads every page from the text tilemap the ROM draws and
+recovers each test's pass or fail mark, the list a player sees on screen.
+Each suite runs under HLE boot and under the pinned Cult-of-GBA replacement
+BIOS. Commands are in
+[`tools/mgba-suite/README.md`](../tools/mgba-suite/README.md).
+
+ZiGBA and Evenfall produce byte-identical traces for every scenario: frames,
+audio, SRAM and complete save states at every checkpoint, under three host
+slicing schedules. Every result below therefore holds for both cores; a
+failing test is a failed hardware comparison, not a parity difference.
+
+The ROM draws only the first 29 characters of a test name. "Video tests",
+the last menu entry, is interactive and records no results. In "SIO timing
+tests" the multiplayer rows time out without a link partner, which the
+suite's table expects; they are not counted as results. Tests not named below
+pass.
+
+| Suite                  | Fails under HLE                                                                                                                                                                                                                                       | Fails under Cult-of-GBA BIOS                                                                    | Causes                                                                                                                                                                                                      |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Memory tests           | ROM, ROM out-of-bounds, IWRAM, EWRAM, palette, VRAM, VRAM OBJ and OAM loads and their mirrors; SRAM loads and stores and their mirrors; BIOS load                                                                                                     | SRAM loads and stores and their mirrors; BIOS load; BIOS out-of-bounds load; out-of-bounds load | [HLE `CpuSet` halfwords](#hle-cpuset-halfword-copies), [SRAM block transfers](#block-transfers-on-sram), [HLE `IntrWait` latch](#hle-intrwait-latch), [replacement BIOS](#hle-and-replacement-bios-effects) |
+| I/O read tests         | `BG0CNT`, `BG1CNT`; scroll, affine, window, `MOSAIC` and `BLDY` registers; `DMA0`–`DMA3` `SAD`/`DAD`; `DMA0CNT_HI`–`DMA2CNT_HI`; `FIFO_A_HI`, `FIFO_B_HI`; the unused upper halves at `4Eh`, `56h`, `5Ah`, `5Eh`, `8Eh`, `AAh`, `AEh` and `E2h`–`FEh` | same                                                                                            | [write-only and unused I/O](#write-only-and-unused-io-reads), [Thumb open bus](#thumb-open-bus)                                                                                                             |
+| Timing tests           | Calibration; BIOS Division, Division 2, Sqrt, Sqrt 2, Sqrt 3, ArcTan; CpuSet; Trivial and Short DMA (16 and 32/to ROM)                                                                                                                                | same, except BIOS ArcTan passes                                                                 | [timer and IRQ latency](#timer-and-irq-latency), [HLE and BIOS timing](#hle-and-replacement-bios-effects), [DMA residual](#known-residuals)                                                                 |
+| Timer count-up tests   | every test                                                                                                                                                                                                                                            | every test                                                                                      | [timer and IRQ latency](#timer-and-irq-latency)                                                                                                                                                             |
+| Timer IRQ tests        | every test                                                                                                                                                                                                                                            | every test                                                                                      | [timer and IRQ latency](#timer-and-irq-latency)                                                                                                                                                             |
+| Shifter tests          | pass                                                                                                                                                                                                                                                  | pass                                                                                            |                                                                                                                                                                                                             |
+| Carry tests            | pass                                                                                                                                                                                                                                                  | pass                                                                                            |                                                                                                                                                                                                             |
+| Multiply long tests    | −1 × −1, `$7F` × −1, −1 × `$7F`, `$80` × `$7F`, `$81` × `$7F`, and every product with `$80` or `$81` as second operand                                                                                                                                | same                                                                                            | [long-multiply carry](#long-multiply-carry)                                                                                                                                                                 |
+| BIOS math tests        | pass                                                                                                                                                                                                                                                  | `ArcTan2` with a zero first operand and a nonzero second; `Div` by zero                         | [replacement BIOS](#hle-and-replacement-bios-effects)                                                                                                                                                       |
+| DMA tests              | pass                                                                                                                                                                                                                                                  | pass                                                                                            |                                                                                                                                                                                                             |
+| SIO register R/W tests | pass                                                                                                                                                                                                                                                  | pass                                                                                            |                                                                                                                                                                                                             |
+| SIO timing tests       | Normal8/256k, Normal8/2M, Normal32/256k, Normal32/2M                                                                                                                                                                                                  | same                                                                                            | [timer and IRQ latency](#timer-and-irq-latency)                                                                                                                                                             |
+| Misc. edge case tests  | DMA Prefetch, H-blank bit start, DMA count latching                                                                                                                                                                                                   | same                                                                                            | [Thumb open bus](#thumb-open-bus), [HBlank flag](#hblank-flag), [DMA count latch](#dma-count-latch)                                                                                                         |
+
+### Deviations from the recorded hardware
+
+Each of these is a core behavior that the suite's hardware table
+contradicts, inherited unchanged from ZiGBA. Candidate fixes and what they
+must preserve are in [`roadmap.md`](roadmap.md#mgba-suite-rom-findings).
+
+#### Write-only and unused I/O reads
+
+The I/O read suite (`src/io-read.c`) reads each register with `LDRH` from
+Thumb ROM code whose next words are `DEADDEADh`, so open bus reads `DEADh`.
+On hardware, write-only registers read as open bus when the other half of
+their word is also unreadable: the BG scroll offsets, affine parameters and
+reference points, window bounds, `MOSAIC` and `BLDY` with the unused
+halfwords beside them, and the DMA addresses. The core returns zero for
+scroll offsets,
+reference points and DMA addresses, and the written value for affine
+parameters, window bounds, `MOSAIC` and `BLDY`
+([`memory.md`](gba/hardware/memory.md#open-bus-and-unused-io)). The table
+also records that bit 13 of `BG0CNT` and `BG1CNT` and bit 11 of
+`DMA0CNT_H`–`DMA2CNT_H` read as zero; the core reads them back.
+
+#### Thumb open bus
+
+In Thumb state the core's open-bus word carries the fetched halfword in its
+low half and zero above it. The hardware tables show the halfword in both
+halves when Thumb code runs from ROM. In words the core already treats as
+unused, the low halves read `DEADh` and pass, while the upper halves (`5Ah`,
+`5Eh`, `8Eh`, `AAh`, `AEh`, `E2h`–`FEh`, `FIFO_A_HI`, `FIFO_B_HI`) read zero
+instead of `DEADh`; the upper halves of write-only words need this fix as
+well as the previous one. "DMA Prefetch" reads upward from `10000000h` and
+expects every value to hold a Thumb opcode from `4000h`–`403Fh` in each half
+until an HBlank DMA's last word, `DEAD0000h`,
+appears on the bus at `10002A94h`; the core stops at the first read,
+`00004003h`. This is the [open-bus composition](gba/hardware/memory.md#open-questions)
+question, now answered for ROM code. The DMA part of that test, a CPU read
+returning the last DMA value, is not reached.
+
+#### HBlank flag
+
+"H-blank bit start" wakes on the HBlank IRQ, then times the `DISPSTAT`
+HBlank flag's edges with timer 0. On hardware the flag is clear for about
+1,004 cycles and set for about 228 in each 1,232-cycle line, so it rises
+about 46 cycles after the IRQ. The core raises flag, IRQ and HBlank DMA
+together at cycle 960, as the [video page](gba/hardware/video.md#open-questions)
+describes. The interval between two HBlank wakes also reads 3 cycles longer
+than the recorded 1,232; see [unexplained results](#unexplained-results).
+
+#### DMA count latch
+
+"DMA count latching" enables a repeating VBlank DMA3 with a count of 2, then
+rewrites `DMA3CNT_H` with the enable bit still set and `DMA3CNT_L` with 4.
+On hardware the first transfer copies 2 units and the repeat 4: the count is
+latched when the enable bit rises, like the addresses, and reloaded from
+`DMA3CNT_L` on repeat. The core reads `DMAxCNT_L` whenever a transfer
+starts, so the first transfer copies 4.
+
+#### Long-multiply carry
+
+The multiply-long results and N and Z flags all match. The failing checks
+differ only in the C flag after `SMULLS` and `UMULLS`: the hardware table
+sets C for these operand pairs, while the core leaves C unchanged. On the
+ARM7TDMI the carry comes out of the multiplier's Booth stages, so it depends
+on both operands.
+
+#### Block transfers on SRAM
+
+`CpuSet` and `CpuFastSet` word copies from and to SRAM at a misaligned
+address read the byte at that exact address on hardware, repeated in all
+four lanes, and store accordingly; the memory table records this for every
+misalignment. The core's own `LDR` and `STR` rows at the same addresses
+pass. The copies fail under both boot modes: HLE aligns the addresses before
+copying, and the replacement BIOS copies words with `LDMIA`/`STMIA`
+(`bios_calls/cpu_set.s`), whose addresses the core aligns before they reach
+the bus. The hardware result implies that the 8-bit SRAM bus sees a
+misaligned block-transfer address, assuming the retail routines also use
+block transfers.
+
+#### HLE `CpuSet` halfword copies
+
+A halfword `CpuSet` from an odd source address stores, on hardware, the low
+half of `LDRH`'s rotated result: `00BEh` and `00DEh` from `DEADBEEFh`. The
+HLE service aligns the source first and copies the aligned halfwords. The
+replacement BIOS, which uses `LDRH` on the odd address, passes these checks.
+
+#### HLE `IntrWait` latch
+
+"BIOS load" calls `VBlankIntrWait` with `IME` clear, which the BIOS sets
+itself, then reads the BIOS region. Hardware returns `E3A02004h`, the latch
+after an SWI returns. HLE leaves `E55EC002h`, the latch after an IRQ returns,
+because the wait's completing IRQ return is the last latch update.
+
+#### Timer and IRQ latency
+
+The timer IRQ suite enables timer 0 near overflow with its IRQ on, then
+reads the counter after zero to nine `NOP`s. On hardware the counter keeps
+stepping for several of those reads after it overflows before the IRQ handler
+stops it. In the core the IRQ is taken before the first read under both boot
+modes, and with reload `FFFDh` the first read is already one count ahead.
+The timing suite's Calibration row, the raw timer count across the
+suite's `START` and `END` macros with nothing between them, agrees: with
+prefetch on and in both RAMs the core reads one more than the table, in
+ARM and Thumb. The prefetch-off ROM columns read zero to two less; the
+other timing rows subtract this calibration, so they are unaffected.
+
+The timer count-up and SIO timing suites run through BIOS IRQ and `Halt`
+paths and inherit this latency along with the BIOS's own costs. Their
+Normal-mode SIO transfer lengths match the table exactly; every completion
+reads 54 cycles early under HLE and 9 under the replacement BIOS.
+
+### HLE and replacement-BIOS effects
+
+- **HLE service timing.** The timing suite's BIOS Division, Sqrt, ArcTan and
+  CpuSet rows time retail BIOS code. HLE charges its own fixed costs
+  ([`bios.md`](gba/hardware/bios.md#approximations)), so these rows fail; the
+  replacement BIOS's different code fails them too, except ArcTan.
+- **HLE IRQ dispatch** does not charge the retail trampoline's instructions,
+  so IRQ-timed suites read earlier under HLE than under the replacement BIOS.
+- **The replacement BIOS** returns different `ArcTan2` and division-by-zero
+  results, copies sources below `02000000h` that the retail `CpuSet` refuses
+  (its source marks that check as a TODO), and leaves its boot screen's
+  sprites in OAM, which DMA0 reads through its 27-bit source mask in "SRAM
+  mirror load". The BIOS-region loads fail as the
+  [external BIOS protection latch](#known-divergences) describes.
+
+### Known residuals
+
+The four "to ROM" DMA timing rows fail only with ROM code, prefetch on and
+`WAITCNT` `4000h` or `4004h`, one cycle below the table: the residual the
+[hardware-table fixture](#mgba-suite-hardware-tables) already pins.
+
+### Unexplained results
+
+- **Prefetch-off calibration.** With prefetch off, the Calibration row's ROM
+  columns read zero to two cycles below the table, while every other column
+  reads one above; no single timer-start delay fits both.
+- **HBlank IRQ interval.** Two consecutive `Halt` wakes on the HBlank IRQ
+  are 1,235 cycles apart instead of the recorded 1,232, under both boot
+  modes.
+
 ## mGBA suite hardware tables
 
 The pinned [mGBA suite](https://github.com/mgba-emu/suite) publishes recorded
 hardware values in source tables. Evenfall reproduces its measurement shape
-through public Rust seams; it does not build the suite ROMs or copy emulator
-code. Values are transcribed from the suite, not generated by the core.
+through public Rust seams, independently of the [ROM build](#mgba-suite-rom),
+and copies no emulator code. Values are transcribed from the suite, not
+generated by the core.
 
 | Fixture                                                             | Suite source                       | Checks                                                                                                  |
 | ------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------- |
@@ -145,8 +328,8 @@ IWRAM-to-ROM transfers executed from ROM with prefetch enabled and `WAITCNT`
 `0x4000` or `0x4004`; the recorded hardware table reads one cycle higher.
 This is an open timing residual, not a passing claim for those hardware
 columns. The suite's “nop ; b pc” row reuses the branch test's code, so that
-label has no distinct oracle. No result here claims that the suite's own ROM
-build passes.
+label has no distinct oracle. The suite ROM's own results, including these
+rows, are in [mGBA suite ROM](#mgba-suite-rom).
 
 ## Known divergences
 
@@ -212,8 +395,9 @@ running data as code.
 
 ## Limits and open questions
 
-- Public mGBA-suite hardware tables are checked as host fixtures; its ROMs
-  need devkitARM/libgba and are not built here.
+- The mGBA suite ROM runs under HLE and the replacement BIOS only; its
+  retail-BIOS results, and every result that depends on retail BIOS timing,
+  need a user-supplied Nintendo BIOS.
 - No Nintendo BIOS, commercial game, audio capture or console framebuffer
   capture is part of this gate. Agreement with a comparison emulator does
   not establish hardware correctness.

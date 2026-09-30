@@ -96,6 +96,76 @@ limit and makes only the burst resumable:
   state version is unchanged. Saving one needs per-channel transfer
   progress in a new state version.
 
+## mGBA suite ROM findings
+
+The mGBA suite ROM's hardware tables contradict several behaviors that
+Evenfall inherits from ZiGBA ([compatibility](compatibility.md#deviations-from-the-recorded-hardware)).
+Each fix below diverges from ZiGBA, so each needs a recorded decision, a
+note in [`parity.md`](parity.md) for the scenarios it changes, and
+replacement of the ported ZiGBA tests that pin the current behavior. After a
+change, `evenfall-parity mgba-suite report` must show the named tests
+passing and no other test changing, and the jsmolka, probe and hardware-table
+suites must still pass.
+
+- **Write-only and unused I/O reads.** Return open bus for a write-only or
+  unused halfword whose word has no readable half, zero for one beside a
+  readable half, and mask bit 13 of `BG0CNT`/`BG1CNT` and bit 11 of
+  `DMA0CNT_H`–`DMA2CNT_H` on reads. Evidence: the I/O read table
+  (`src/io-read.c`), which also agrees with GBATEK's "Unpredictable Things".
+  The ZiGBA test "unmapped and unused MMIO reads distinguish open-bus words
+  from paired zero halves" and the affine read-back in
+  [`memory.md`](gba/hardware/memory.md#open-questions) change with it.
+- **Thumb open-bus composition.** Compose the Thumb open-bus word from the
+  prefetched opcodes per region, as GBATEK describes; for ROM code the suite
+  shows the halfword in both halves. Evidence: the upper halves of unused I/O
+  words and "DMA Prefetch" (`src/misc-edge.c`). Only ROM code is measured
+  here; the BIOS, OAM and IWRAM compositions GBATEK lists need their own
+  evidence or a recorded choice. The change alters when Game B's runaway copy
+  ends ([compatibility](compatibility.md#guest-faults-in-user-supplied-games)).
+  Once it passes, "DMA Prefetch" also checks that a CPU read after a DMA
+  returns the DMA's last value.
+- **HBlank flag edge.** Raise `DISPSTAT`'s HBlank flag about 46 cycles after
+  the HBlank IRQ and DMA request (GBATEK's 1,006 cycles into the line).
+  Evidence: "H-blank bit start" flip intervals. The suite does not time the
+  VBlank flag's line-227 edge.
+- **DMA count latch.** Latch `DMAxCNT_L` when the enable bit rises and reload
+  it only on repeat. Evidence: "DMA count latching". Every DMA suite test
+  must keep passing.
+- **Long-multiply carry.** Set C after flag-setting long multiplies from the
+  ARM7TDMI multiplier's Booth stages. Evidence: every failing multiply-long
+  check differs only in C. A model must reproduce the whole multiply-long
+  table;
+  the suite does not test `MULS`/`MLAS`, whose C comes from the same
+  hardware, so any change there needs separate evidence.
+- **Block transfers on SRAM.** Present a misaligned `LDM`/`STM` address to the
+  8-bit SRAM bus instead of aligning it first, and do the same in HLE
+  `CpuSet`/`CpuFastSet`. Evidence: the `swi B 32` and `swi C 32` misaligned
+  SRAM rows fail under HLE and under the replacement BIOS, whose copies use
+  `LDMIA`/`STMIA`, while direct `LDR`/`STR` rows pass. Before changing the
+  CPU, confirm that the retail `CpuSet` word path uses block transfers; if it
+  uses `LDR`/`STR`, only the HLE services change.
+- **HLE `CpuSet` halfword source.** Read a halfword copy's odd source with
+  `LDRH`'s misaligned result instead of aligning it. Evidence: `swi B 16
+(unaligned)` in the memory load tests under HLE; the replacement BIOS
+  passes.
+- **HLE `IntrWait` latch.** Leave the post-SWI latch `E3A02004h` when an
+  `IntrWait` completes after its IRQ returns. Evidence: "BIOS load" under
+  HLE.
+- **Timer enable and IRQ latency.** The timer IRQ suite and the Calibration
+  row show a timer counting one cycle early after its enabling write and an
+  overflow IRQ taken several cycles early. Pinned NanoBoyAdvance applies a
+  timer control write one cycle late; a one-cycle enable delay alone fits the
+  prefetch-on ROM, EWRAM and IWRAM Calibration columns but leaves the
+  prefetch-off ROM columns one to three cycles low, so the model is still
+  incomplete. Isolate the enable delay and the IF-to-IRQ-entry delay with
+  probes before changing either; the timer count-up and SIO timing suites
+  then show how much of the rest is BIOS cost.
+- **HLE BIOS costs.** The timing suite records retail cycle counts for
+  `Div`, `Sqrt`, `ArcTan` and `CpuSet`, and the IRQ-timed suites read the
+  retail trampoline's cost. Charging them would make HLE timing-faithful for
+  those services; it is a change to the HLE's stated goal
+  ([`bios.md`](gba/hardware/bios.md#approximations)), not a bug fix.
+
 ## Player and Cloudflare server migration
 
 ZiGBA's player and server live in the pinned `refs/zigba` checkout, not in the
