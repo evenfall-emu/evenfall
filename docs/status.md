@@ -78,3 +78,6 @@ and background fetches past the BG side of VRAM reading as zero
 
 Broader compatibility evidence (the mGBA suite ROMs, representative games,
 hardware captures), fixes for the issues above, and then the next systems.
+Graphical frontends will also share an optional presentation layer with
+shader presets, outside the deterministic core
+([#1](https://github.com/evenfall-emu/evenfall/issues/1)).
