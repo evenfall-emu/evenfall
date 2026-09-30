@@ -325,10 +325,13 @@ fn summary(results: &Results) -> String {
     )
 }
 
-/// Prints each suite's results from the ZiGBA oracle trace and the first
-/// Rust schedule's trace written by `evenfall-parity run`. Returns an error
-/// when a trace is missing or unreadable or when the two cores' lists differ;
-/// failing suite tests are results, not errors.
+/// Prints each suite's results from the first Rust schedule's trace written
+/// by `evenfall-parity run`, and whether the ZiGBA oracle's trace shows the
+/// same results. The list is read from Evenfall's save states. ZiGBA's states
+/// use its own format, so its results are the same exactly when every
+/// checkpoint's frame, which draws the list, and SRAM log match Evenfall's.
+/// Returns an error when a trace is missing or unreadable or when the two
+/// cores' checkpoints differ; failing suite tests are results, not errors.
 pub fn report(root: &Path, traces: &Path, with_log: bool) -> Result<(), Box<dyn Error>> {
     let mut problems = 0;
     let mut out = String::new();
@@ -338,49 +341,43 @@ pub fn report(root: &Path, traces: &Path, with_log: bool) -> Result<(), Box<dyn 
         let mut machine =
             rust_backend::make_machine(&scenario_file, &scenario.assets, &scenario.config)?;
         let dir = traces.join(&scenario.name);
-        let mut read = |file: &str| -> Result<(Results, Vec<u8>), Box<dyn Error>> {
-            let trace = Trace::read(fs::File::open(dir.join(file))?)?;
-            extract(&mut machine, &trace, suite).map_err(|e| format!("{file}: {e}").into())
+        let read = |file: &str| -> Result<Trace, Box<dyn Error>> {
+            Trace::read(fs::File::open(dir.join(file))?).map_err(|e| format!("{file}: {e}").into())
         };
-        let (zigba, evenfall) = match (read("oracle.trace"), read("rust-slice-0.trace")) {
-            (Ok(zigba), Ok(evenfall)) => (zigba, evenfall),
-            (zigba, evenfall) => {
-                for error in [zigba.err(), evenfall.err()].into_iter().flatten() {
-                    eprintln!("{}: {error}", scenario.name);
-                }
+        let traces = read("oracle.trace").and_then(|zigba| {
+            let evenfall = read("rust-slice-0.trace")?;
+            let results = extract(&mut machine, &evenfall, suite)
+                .map_err(|e| format!("rust-slice-0.trace: {e}"))?;
+            Ok((zigba, evenfall, results))
+        });
+        let (zigba, evenfall, (results, log)) = match traces {
+            Ok(traces) => traces,
+            Err(error) => {
+                eprintln!("{}: {error}", scenario.name);
                 problems += 1;
                 continue;
             }
         };
-        let same = zigba.0 == evenfall.0;
+        let same = zigba.0.len() == evenfall.0.len()
+            && zigba.0.iter().zip(&evenfall.0).all(|(z, e)| z.frame == e.frame && z.save == e.save);
         problems += usize::from(!same);
         writeln!(
             out,
-            "{} ({}): ZiGBA {}; Evenfall {}{}",
+            "{} ({}): {}; ZiGBA {}",
             suite.title,
             if boot == Boot::Hle { "HLE" } else { "Cult-of-GBA BIOS" },
-            summary(&zigba.0),
-            summary(&evenfall.0),
-            if same { "" } else { " (DIFFERENT)" }
+            summary(&results),
+            if same { "same" } else { "DIFFERENT" }
         )?;
-        for (index, ((name, zigba_pass), (_, evenfall_pass))) in
-            zigba.0.tests.iter().zip(&evenfall.0.tests).enumerate()
-        {
-            if !zigba_pass || !evenfall_pass {
-                let status = match (zigba_pass, evenfall_pass) {
-                    (false, false) => "FAIL",
-                    (false, true) => "FAIL (ZiGBA only)",
-                    _ => "FAIL (Evenfall only)",
-                };
-                writeln!(out, "  {index:4} {status}: {name}")?;
+        for (index, (name, pass)) in results.tests.iter().enumerate() {
+            if !pass {
+                writeln!(out, "  {index:4} FAIL: {name}")?;
             }
         }
         if with_log {
-            for (core, log) in [("ZiGBA", &zigba.1), ("Evenfall", &evenfall.1)] {
-                writeln!(out, "  --- {core} SRAM log")?;
-                for line in log_text(log).lines() {
-                    writeln!(out, "  | {line}")?;
-                }
+            writeln!(out, "  --- SRAM log")?;
+            for line in log_text(&log).lines() {
+                writeln!(out, "  | {line}")?;
             }
         }
     }
