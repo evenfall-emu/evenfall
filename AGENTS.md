@@ -149,6 +149,8 @@ Evenfall works inside and why it is built that way.
   subsections.
 - State what is true instead of hedging. Put real limits in a "Known limits"
   section. Keep an open question only if someone could act on it.
+- Write one sentence per line in the Markdown source. Rendered pages are
+  unchanged, and a diff shows exactly which sentence changed.
 - Write `2x` and `a * b`, not `×`.
 - Describe the current system in the present tense. No dates, commit hashes,
   test counts or stories of how something was found. That history belongs in
