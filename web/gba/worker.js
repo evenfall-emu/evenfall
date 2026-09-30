@@ -466,6 +466,8 @@ async function command(method, args) {
       {
         const result = core.loadState(args[0]);
         beginRecording(initial.options);
+        // The new recording starts from the loaded state, not a cold boot.
+        recording.start();
         clearPresentation();
         sendFrame();
         return result;

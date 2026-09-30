@@ -17,10 +17,10 @@ export class GameplayRecording {
     this.gap = false;
     this.end = undefined;
     this.initialState = coldBoot ? undefined : this.core.saveState();
-    // A state carries its cheats; a cold boot after a reset keeps the
-    // device's, which the scenario sets at its first cycle.
+    // States hold no cheats, so the scenario sets the active ones at its
+    // first cycle, after a cold boot or its initial state.
     this.cheatEvents = [];
-    const active = coldBoot ? this.core.cheats() : [];
+    const active = this.core.cheats();
     if (active.length)
       this.cheatEvents.push({
         at: String(this.core.currentCycle()),

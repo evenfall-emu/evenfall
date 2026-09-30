@@ -399,8 +399,8 @@ pub struct Machine {
     pub cpu: Cpu,
     latched_fault: Option<Fault>,
     media_identity: MediaIdentity,
-    /// The cheat device, absent while no cheat is active. It is outside the
-    /// `EVENFALL` payload; states carry it in an envelope.
+    /// The cheat device, absent while no cheat is active. It is a host
+    /// setting outside the state: loads keep it.
     cheats: Option<Box<cheats::Device>>,
 }
 
@@ -960,9 +960,6 @@ impl Machine {
         self.write_state_payload(&mut counter)?;
         let mut header = Vec::with_capacity(Self::STATE_HEADER_SIZE);
         self.write_state_header(&mut header, counter.count)?;
-        if let Some(device) = &self.cheats {
-            writer.write_all(&cheats::state_prefix(device.cheats()))?;
-        }
         writer.write_all(&header)?;
         // The codec's Sink writes to Vec, so this is currently a bounded
         // payload buffer rather than an unbuffered stream to the writer.
@@ -992,9 +989,6 @@ impl Machine {
         let mut header = Vec::with_capacity(Self::STATE_HEADER_SIZE);
         self.write_state_header(&mut header, payload_len)?;
         output[..Self::STATE_HEADER_SIZE].copy_from_slice(&header);
-        if let Some(device) = &self.cheats {
-            output.splice(0..0, cheats::state_prefix(device.cheats()));
-        }
         Ok(output)
     }
 
@@ -1007,13 +1001,10 @@ impl Machine {
             .ok()
             .filter(|&len| len <= Self::MAX_STATE_PAYLOAD)
             .ok_or(evenfall_state::Error::InvalidSaveState)?;
-        let prefix = self.cheats.as_ref().map(|device| cheats::state_prefix(device.cheats()));
-        let start = prefix.as_ref().map_or(0, Vec::len);
-        let size = start + Self::STATE_HEADER_SIZE + payload_len + 32;
+        let size = Self::STATE_HEADER_SIZE + payload_len + 32;
         let mut output = Vec::new();
         output.try_reserve_exact(size).map_err(|_| evenfall_state::Error::OutOfMemory)?;
-        output.extend_from_slice(prefix.as_deref().unwrap_or_default());
-        output.resize(start + Self::STATE_HEADER_SIZE, 0);
+        output.resize(Self::STATE_HEADER_SIZE, 0);
         let mut hasher = blake3::Hasher::new();
         let mut sink = Sink::new(Some(&mut output), Some(&mut hasher));
         self.write_state_payload(&mut sink)?;
@@ -1023,7 +1014,7 @@ impl Machine {
         output.extend_from_slice(hasher.finalize().as_bytes());
         let mut header = Vec::with_capacity(Self::STATE_HEADER_SIZE);
         self.write_state_header(&mut header, count.count)?;
-        output[start..start + Self::STATE_HEADER_SIZE].copy_from_slice(&header);
+        output[..Self::STATE_HEADER_SIZE].copy_from_slice(&header);
         Ok(output)
     }
 
@@ -1097,8 +1088,19 @@ impl Machine {
         let mut scratch =
             Self::new_with_shared_media(self, Config { boot: self.boot_mode, ..Config::default() });
         scratch.load_state_in_place(bytes)?;
+        scratch.adopt_cheats(self);
         std::mem::swap(self, &mut scratch);
         Ok(())
+    }
+
+    /// Moves `source`'s cheat device onto this machine, re-armed for this
+    /// machine's video position: the cheat set is a host setting that a
+    /// state load or rewind keeps.
+    pub(crate) fn adopt_cheats(&mut self, source: &mut Self) {
+        self.cheats = source.cheats.take();
+        if let Some(device) = &mut self.cheats {
+            device.rearm(&self.bus);
+        }
     }
 
     /// Makes this machine an exact copy of `source`, reusing this machine's
@@ -1121,8 +1123,6 @@ impl Machine {
     /// The caller must not expose this machine if decoding fails. All durable
     /// fields are decoded and Bus::read_state resets transient output/caches.
     pub(crate) fn load_state_in_place(&mut self, bytes: &[u8]) -> Result<(), StateError> {
-        let (cheats, bytes) =
-            cheats::split_state(bytes).map_err(|()| evenfall_state::Error::InvalidSaveState)?;
         let mut input = Source::new(bytes);
         let mut magic = [0; 8];
         input.read_all(&mut magic)?;
@@ -1181,7 +1181,6 @@ impl Machine {
         {
             return Err(evenfall_state::Error::InvalidSaveState.into());
         }
-        self.cheats = cheats.map(|cheats| Box::new(cheats::Device::new(cheats, &self.bus)));
         Ok(())
     }
 }
@@ -1648,9 +1647,11 @@ mod tests {
         while stepped.now() < 2 * F {
             stepped.step();
         }
+        // The cheats are the host's: a machine that has them keeps them
+        // when it loads a state and continues exactly.
         let state = stepped.write_state_alloc().unwrap();
-        assert!(state.starts_with(cheats::STATE_MAGIC));
         let mut loaded = Machine::new(Config { rom: &rom, ..Config::default() });
+        loaded.set_cheats(cheats.clone()).unwrap();
         loaded.load_state(&state).unwrap();
         assert_eq!(loaded.cheats(), &cheats[..]);
         loaded.run_until(end).unwrap();
@@ -1690,29 +1691,50 @@ mod tests {
         assert!(sliced.write_state_alloc().unwrap() == expected);
     }
 
+    /// States never carry cheats: their bytes are the same with or without
+    /// them, and a load keeps the current set, re-armed for the loaded
+    /// position. A failed load changes nothing.
     #[test]
-    fn plain_states_stay_unwrapped_and_clear_cheats() {
+    fn states_carry_no_cheats_and_loads_keep_the_current_set() {
         let rom = [0xfe, 0xff, 0xff, 0xea];
         let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
         machine.run_until(1000).unwrap();
-        let plain = machine.write_state_alloc().unwrap();
-        assert_eq!(&plain[..8], Machine::STATE_MAGIC);
+        let early = machine.write_state_alloc().unwrap();
         machine.set_cheats(vec![cheat(COUNT_APPLICATIONS)]).unwrap();
-        let wrapped = machine.write_state_alloc().unwrap();
-        assert!(wrapped.ends_with(&plain));
+        assert_eq!(machine.write_state_alloc().unwrap(), early);
         let mut streamed = Vec::new();
         machine.write_state(&mut streamed).unwrap();
-        assert_eq!(streamed, wrapped);
-        assert_eq!(machine.write_state_alloc_fallible().unwrap(), wrapped);
+        assert_eq!(streamed, early);
+        assert_eq!(machine.write_state_alloc_fallible().unwrap(), early);
 
-        machine.load_state(&plain).unwrap();
-        assert!(machine.cheats().is_empty());
-        machine.load_state(&wrapped).unwrap();
+        // Three frames on, the next application is far past the state's
+        // first VBlank, which the loaded machine must still apply at.
+        machine.run_until(3 * Machine::CYCLES_PER_FRAME).unwrap();
+        assert_eq!(applications(&machine), 3);
+        machine.load_state(&early).unwrap();
         assert_eq!(machine.cheats().len(), 1);
-        let mut damaged = wrapped.clone();
+        assert_eq!(applications(&machine), 0);
+        machine.run_until(VBLANK_START + 100).unwrap();
+        assert_eq!(applications(&machine), 1);
+
+        // Forward too: a state from after this machine's next VBlank must
+        // not apply at the load, only at its own next VBlank start.
+        let mut ahead = Machine::new(Config { rom: &rom, ..Config::default() });
+        ahead.run_until(2 * Machine::CYCLES_PER_FRAME + 1000).unwrap();
+        machine.load_state(&ahead.write_state_alloc().unwrap()).unwrap();
+        machine.step();
+        assert_eq!(applications(&machine), 0);
+        machine.run_until(2 * Machine::CYCLES_PER_FRAME + VBLANK_START + 100).unwrap();
+        assert_eq!(applications(&machine), 1);
+        machine.load_state(&early).unwrap();
+
+        let mut damaged = early.clone();
         damaged[20] ^= 1;
         assert!(machine.load_state(&damaged).is_err());
-        assert_eq!(machine.cheats().len(), 1, "a failed load keeps the running cheats");
+        assert_eq!(machine.cheats().len(), 1, "a failed load keeps the cheats");
+        machine.set_cheats(Vec::new()).unwrap();
+        machine.load_state(&early).unwrap();
+        assert!(machine.cheats().is_empty(), "a load does not add cheats either");
     }
 
     #[test]

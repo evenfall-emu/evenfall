@@ -141,7 +141,7 @@ test("a load awaiting its BIOS digest excludes other commands, so the recording 
   }
 });
 
-test("SDK cheats are recorded into exported scenarios, kept by reset and restored by rewind", async () => {
+test("SDK cheats are recorded into exported scenarios and kept by rewind, state loads and reset", async () => {
   const previousWorker = globalThis.Worker;
   globalThis.Worker = BrowserWorker;
   let emulator;
@@ -171,9 +171,21 @@ test("SDK cheats are recorded into exported scenarios, kept by reset and restore
     assert.equal(await read(), 999999);
     const { manifest } = await emulator.exportScenario("cheats");
     assert.deepEqual(manifest.cheats, [{ at, cheats: money }]);
+    // States hold no cheats: a rewind and a state load keep the set, and a
+    // recording that starts from a loaded state begins with it.
     await emulator.rewind(3);
-    assert.deepEqual(await emulator.cheats(), []);
+    assert.deepEqual(await emulator.cheats(), money);
+    const state = await emulator.saveState();
+    await emulator.setCheats([]);
+    assert.deepEqual(await emulator.saveState(), state);
     await emulator.setCheats(money);
+    const loaded = await emulator.loadState(state);
+    assert.deepEqual(await emulator.cheats(), money);
+    const fromState = await emulator.exportScenario("from state");
+    assert.ok(fromState.assets.state);
+    assert.deepEqual(fromState.manifest.cheats, [
+      { at: String(loaded.cycle), cheats: money },
+    ]);
     await emulator.reset();
     assert.deepEqual(await emulator.cheats(), money);
     const fresh = await emulator.exportScenario("after reset");

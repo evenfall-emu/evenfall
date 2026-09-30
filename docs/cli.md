@@ -108,8 +108,7 @@ The same ROM, flags and movie always give the same output, which makes the runne
 
 `--cheat` and `--cheats` turn on cheat codes from boot.
 File cheats come first, then each `--cheat` in order.
-With `--state-in`, the flags replace the cheats the state carries.
-Without cheat flags, the state's cheats stay on.
+They are the only way to turn cheats on: save states never carry cheats, so `--state-in` and `--state-out` neither restore nor record them.
 Cheats run at the first instruction boundary at or after each VBlank start, so a run with cheats is as repeatable as one without.
 
 A `--cheat` value is `[FORMAT:]CODE`.
@@ -135,7 +134,6 @@ A86CDBA5 19BA49B3
 ```
 
 An invalid or unsupported code prints its cheat and line on stderr, and the runner exits nonzero before running.
-`--state-out` writes a state that carries the cheats.
 [`design/cheats.md`](design/cheats.md) describes the formats, detection and limits.
 
 ## Saves and states
