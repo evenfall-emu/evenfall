@@ -35,14 +35,14 @@ One dot takes four master cycles. GBATEK gives the frame geometry
 
 ZiGBA delivers LCD events at these positions:
 
-| Position                       | Effect                                                                                                                         |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| Cycle 960 of lines 0–159       | the line is rendered; enabled affine reference points advance; HBlank DMA is requested; HBlank IRQ if enabled                  |
-| Cycle 960 of lines 160–227     | HBlank IRQ if enabled                                                                                                          |
-| Cycle 1006 of every line       | HBlank flag set                                                                                                                |
-| Start of line 160              | VBlank flag set; VBlank IRQ if enabled; VBlank DMA is requested                                                                |
-| Start of the line equal to LYC | VCOUNT-match IRQ if enabled                                                                                                    |
-| Wrap from line 227 to line 0   | affine reference points reload; the frame is complete                                                                          |
+| Position                       | Effect                                                                                                        |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| Cycle 960 of lines 0–159       | the line is rendered; enabled affine reference points advance; HBlank DMA is requested; HBlank IRQ if enabled |
+| Cycle 960 of lines 160–227     | HBlank IRQ if enabled                                                                                         |
+| Cycle 1006 of every line       | HBlank flag set                                                                                               |
+| Start of line 160              | VBlank flag set; VBlank IRQ if enabled; VBlank DMA is requested                                               |
+| Start of the line equal to LYC | VCOUNT-match IRQ if enabled                                                                                   |
+| Wrap from line 227 to line 0   | affine reference points reload; the frame is complete                                                         |
 
 The HBlank IRQ fires on all 228 lines, as GBATEK states; the
 `probe-display-irq` probe counts 456 HBlank, 2 VBlank and 2 VCOUNT IRQs over
@@ -52,14 +52,14 @@ two frames. HBlank DMA fires only on visible lines
 `DISPSTAT` (`04000004h`) and `VCOUNT` (`04000006h`,
 [LCD I/O Interrupts and Status][gbatek-dispstat]):
 
-| Bits | Field                                       | ZiGBA                                       |
-| ---- | ------------------------------------------- | ------------------------------------------- |
-| 0    | VBlank flag, read-only                      | set on lines 160–227                        |
+| Bits | Field                                       | ZiGBA                                        |
+| ---- | ------------------------------------------- | -------------------------------------------- |
+| 0    | VBlank flag, read-only                      | set on lines 160–227                         |
 | 1    | HBlank flag, read-only                      | set from cycle 1006 to the end of every line |
-| 2    | VCOUNT match, read-only                     | set while `VCOUNT` equals LYC               |
-| 3–5  | VBlank, HBlank and VCOUNT-match IRQ enables | stored                                      |
-| 6–7  | unused                                      | not writable (write mask `FF38h`)           |
-| 8–15 | LYC, the VCOUNT compare value               | stored                                      |
+| 2    | VCOUNT match, read-only                     | set while `VCOUNT` equals LYC                |
+| 3–5  | VBlank, HBlank and VCOUNT-match IRQ enables | stored                                       |
+| 6–7  | unused                                      | not writable (write mask `FF38h`)            |
+| 8–15 | LYC, the VCOUNT compare value               | stored                                       |
 
 `VCOUNT` reads the current line, 0–227; writes are ignored.
 

@@ -144,15 +144,15 @@ The remaining patches apply the fixes that the mGBA suite ROM's hardware
 tables justify ([`roadmap.md`](roadmap.md#mgba-suite-rom-findings)), in
 this order:
 
-| Patch                                                         | Guest-visible change                                                       | Durable layout |
-| ------------------------------------------------------------- | -------------------------------------------------------------------------- | -------------- |
-| [`io-read.patch`](../tools/parity/patches/io-read.patch)       | write-only I/O registers read as open bus or zero; two read-only bit masks | unchanged      |
-| [`thumb-open-bus.patch`](../tools/parity/patches/thumb-open-bus.patch) | Thumb opcode fetches compose the open-bus word per region                  | unchanged      |
-| [`multiply-carry.patch`](../tools/parity/patches/multiply-carry.patch) | flag-setting multiplies set C from the multiplier model                    | unchanged      |
+| Patch                                                                      | Guest-visible change                                                       | Durable layout |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------------- |
+| [`io-read.patch`](../tools/parity/patches/io-read.patch)                   | write-only I/O registers read as open bus or zero; two read-only bit masks | unchanged      |
+| [`thumb-open-bus.patch`](../tools/parity/patches/thumb-open-bus.patch)     | Thumb opcode fetches compose the open-bus word per region                  | unchanged      |
+| [`multiply-carry.patch`](../tools/parity/patches/multiply-carry.patch)     | flag-setting multiplies set C from the multiplier model                    | unchanged      |
 | [`cpu-set-halfword.patch`](../tools/parity/patches/cpu-set-halfword.patch) | HLE halfword `CpuSet` loads and stores like `LDRH` and `STRH`              | unchanged      |
-| [`sram-block.patch`](../tools/parity/patches/sram-block.patch) | block transfers and HLE word copies give the SRAM bus exact addresses      | unchanged      |
-| [`intr-wait-latch.patch`](../tools/parity/patches/intr-wait-latch.patch) | an HLE `IntrWait` ended by an IRQ return leaves the SWI latch              | unchanged      |
-| [`hblank-flag.patch`](../tools/parity/patches/hblank-flag.patch) | the HBlank flag rises at cycle 1006, 46 cycles after the HBlank IRQ         | unchanged      |
+| [`sram-block.patch`](../tools/parity/patches/sram-block.patch)             | block transfers and HLE word copies give the SRAM bus exact addresses      | unchanged      |
+| [`intr-wait-latch.patch`](../tools/parity/patches/intr-wait-latch.patch)   | an HLE `IntrWait` ended by an IRQ return leaves the SWI latch              | unchanged      |
+| [`hblank-flag.patch`](../tools/parity/patches/hblank-flag.patch)           | the HBlank flag rises at cycle 1006, 46 cycles after the HBlank IRQ        | unchanged      |
 
 Each changes the Rust core and the oracle alike, so every scenario still
 compares byte for byte; none adds a durable field, so the schema check still

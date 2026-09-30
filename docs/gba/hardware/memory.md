@@ -111,11 +111,11 @@ A data read or an ARM fetch leaves the value read. A Thumb fetch leaves a
 word that depends on the region's bus
 ([GBATEK, Unpredictable Things: Reading from Unused Memory][gbatek-unpredictable]):
 
-| Thumb fetch from                        | Open-bus word after it                                      |
-| --------------------------------------- | ----------------------------------------------------------- |
-| EWRAM, palette RAM, VRAM, Game Pak ROM  | the halfword in both halves (16-bit bus)                    |
-| BIOS, OAM                               | the whole aligned word (32-bit bus)                         |
-| IWRAM                                   | the halfword in its own half; the other half is unchanged   |
+| Thumb fetch from                       | Open-bus word after it                                    |
+| -------------------------------------- | --------------------------------------------------------- |
+| EWRAM, palette RAM, VRAM, Game Pak ROM | the halfword in both halves (16-bit bus)                  |
+| BIOS, OAM                              | the whole aligned word (32-bit bus)                       |
+| IWRAM                                  | the halfword in its own half; the other half is unchanged |
 
 With the CPU two fetches ahead, a Thumb instruction at `$` that reads
 unused memory therefore sees `[$+4]` twice from ROM, and from IWRAM `[$+4]`
@@ -137,11 +137,11 @@ recorded on hardware, which treats a write-only halfword like an unused one
 ([GBATEK, Unpredictable Things][gbatek-unpredictable], describes the same
 split for `DMA0SAD` and unused words):
 
-| Read                                                                                | Result                        |
-| ----------------------------------------------------------------------------------- | ----------------------------- |
-| a word whose two halfwords are both unused or write-only                            | open bus                      |
-| an unused or write-only halfword whose partner in the same word is readable         | zero                          |
-| an unused or write-only halfword whose partner is also unused or write-only         | the matching half of open bus |
+| Read                                                                        | Result                        |
+| --------------------------------------------------------------------------- | ----------------------------- |
+| a word whose two halfwords are both unused or write-only                    | open bus                      |
+| an unused or write-only halfword whose partner in the same word is readable | zero                          |
+| an unused or write-only halfword whose partner is also unused or write-only | the matching half of open bus |
 
 The write-only registers are the BG scroll offsets, the affine parameters
 and reference points, the window bounds (`WIN0H`–`WIN1V`), `MOSAIC`, `BLDY`,
