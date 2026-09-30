@@ -144,7 +144,9 @@ export class Emulator extends EventTarget {
   setKeys(mask: number): Promise<void>;
   runUntil(deadline: bigint, inputs?: TimedInput[]): Promise<RunResult>;
   step(): Promise<
-    Snapshot & { reason: "executed" | "halted" | "power_stopped" | "faulted" }
+    Snapshot & {
+      reason: "executed" | "halted" | "power_stopped" | "faulted" | "dma_stall";
+    }
   >;
   frame(): Promise<Uint16Array>;
   saveState(): Promise<Uint8Array>;

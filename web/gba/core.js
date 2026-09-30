@@ -267,7 +267,7 @@ export class WasmCore {
   step() {
     this.requireLoaded();
     return {
-      reason: ["executed", "halted", "power_stopped", "faulted"][
+      reason: ["executed", "halted", "power_stopped", "faulted", "dma_stall"][
         this.check(this.wasm.zb_step())
       ],
       ...this.inspect(),
