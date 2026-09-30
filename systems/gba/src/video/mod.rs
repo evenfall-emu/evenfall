@@ -3,8 +3,6 @@
 mod backgrounds;
 mod compose;
 mod history;
-// SIMD intrinsics: the one measured use of `unsafe` in the core.
-#[allow(unsafe_code)]
 mod lanes;
 mod objects;
 mod render;

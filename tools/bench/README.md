@@ -63,6 +63,23 @@ perf record --call-graph dwarf -- target/profiling/evenfall-harness \
 perf report
 ```
 
+## Inline stability
+
+[`inline-stability.mjs`](inline-stability.mjs) builds the native
+`release-lto` harness and the `simd128` web module with LLVM's inline
+threshold at 200, 250 (the default) and 300, then compares the sizes of the
+out-of-line functions in the CPU engine, device step, DMA, APU mixer and
+compositor. A function whose size changes holds a call whose inlining sits
+near the threshold, which an unrelated edit can flip; pin that call's callee
+with `#[inline(always)]` or `#[inline(never)]`, keeping whichever measures
+faster. The tool exits 1 when anything changes. It bypasses output-cache
+wrappers, as `build-times.sh` does, and needs `nm` and `c++filt`.
+
+```sh
+node tools/bench/inline-stability.mjs
+node tools/bench/inline-stability.mjs --targets native --filter 'thumb::run_loop'
+```
+
 ## WebAssembly
 
 [`wasm.mjs`](wasm.mjs) times WebAssembly modules that export the

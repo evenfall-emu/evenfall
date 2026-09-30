@@ -16,6 +16,7 @@ struct ObjectShape {
 }
 
 impl Bus {
+    #[inline(never)]
     fn object_shape(attr0: u16, attr1: u16) -> Option<ObjectShape> {
         let affine = attr0 & (1 << 8) != 0;
         if !affine && attr0 & (1 << 9) != 0 || attr0 >> 10 & 3 == 3 {
@@ -376,6 +377,7 @@ impl Bus {
         }
     }
 
+    #[inline(always)]
     fn compose_object_pixel(&mut self, i: usize, color: u16, priority: u8, semi: bool) {
         if self.frame_layers[i] != 4 && priority > self.frame_priorities[i] {
             if self.line_needs_second_surface && priority <= self.frame_second_priorities[i] {

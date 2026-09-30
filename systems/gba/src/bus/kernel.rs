@@ -146,6 +146,7 @@ impl RunRegisters<'_> {
     /// A halfword store to an affine parameter or reference point, as
     /// `Bus::write_mmio_half` makes it where no dot is visible (its raster
     /// segments then record nothing).
+    #[inline(never)]
     fn store_affine(&mut self, address: u32, value: u16) {
         if let Some((background, parameter)) = Bus::affine_parameter_register(address) {
             self.affine_parameters[background][parameter] = value as i16;
@@ -163,6 +164,7 @@ impl RunRegisters<'_> {
         }
     }
 
+    #[inline(never)]
     fn store_latch(&mut self, offset: u32, value: u16) {
         let index = (offset / 12) as usize;
         let channel = &mut self.dma[index];
@@ -351,6 +353,7 @@ impl VideoMemory<'_> {
 
     /// A halfword or word VRAM write a byte at a time: the reference for
     /// the halfword path above.
+    #[inline(always)]
     fn write_vram_bytes(&mut self, address: u32, width: AccessWidth, value: u32) {
         for offset in 0..width.bytes() {
             if let Some(index) = vram_index(address.wrapping_add(offset as u32), self.dispcnt) {
@@ -415,7 +418,7 @@ impl RomData<'_> {
     /// A nonsequential CPU data load of the bus-aligned `address`: its value
     /// and cycles, or None where the ordinary bus path must decide (EEPROM,
     /// GPIO ports, reads beyond the image, save memory).
-    #[inline]
+    #[inline(always)]
     pub(crate) fn load(&self, address: u32, width: AccessWidth) -> Option<(u32, Cycle)> {
         if !(GAME_PAK_BASE..0x0e00_0000).contains(&address)
             || (width == AccessWidth::Half
@@ -500,6 +503,7 @@ impl RomData<'_> {
         u32::from(u16::from_le_bytes([self.bytes[first], self.bytes[first + 1]]))
     }
 
+    #[inline(always)]
     fn cycles(&self, address: u32, width: AccessWidth) -> Cycle {
         let window = ((address - GAME_PAK_BASE) / GAME_PAK_WINDOW_SIZE) as usize;
         let n = Cycle::from(self.n[window]);
@@ -511,6 +515,7 @@ impl RomData<'_> {
 
     /// Bytes past the image read as the low address halfword, as in
     /// [`Bus::read_game_pak_rom`].
+    #[inline(never)]
     #[cold]
     fn beyond_image(&self, address: u32, width: AccessWidth) -> u32 {
         (0..width.bytes()).fold(0, |value, offset| {

@@ -179,6 +179,7 @@ impl Bus {
         self.finish_scanline(line, &history);
     }
 
+    #[inline(never)]
     pub(super) fn needs_second_surface(&mut self, line: usize) -> bool {
         if self.blend_segment_line == line as u16 && self.blend_segment_count > 0 {
             return true;
@@ -211,6 +212,7 @@ impl Bus {
         present
     }
 
+    #[inline(never)]
     pub(super) fn color_effects_inert(&mut self, line: usize) -> bool {
         if self.blend_segment_line == line as u16 && self.blend_segment_count > 0 {
             return false;

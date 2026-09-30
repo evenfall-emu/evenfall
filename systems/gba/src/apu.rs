@@ -474,6 +474,7 @@ impl NoiseChannel {
             self.enabled = self.dac_enabled;
         }
     }
+    #[inline(never)]
     fn elapse_enabled(&mut self, cycles: u64) {
         let divisor_factor = if self.divisor == 0 { 1 } else { 2 * u64::from(self.divisor) };
         let period = (divisor_factor << self.clock_shift) * 32;
@@ -550,6 +551,7 @@ impl DirectSoundFifo {
         self.words[usize::from(self.write_index)] = value;
         self.write_index = (self.write_index + 1) & 7;
     }
+    #[inline(always)]
     fn push_partial_word(&mut self, value: u32, lane: u8, byte_count: u8) {
         if lane == 0 && byte_count == 4 {
             self.push_word(value);
@@ -1043,6 +1045,7 @@ impl Apu {
         Self::fifo_write_target(address)
             .is_some_and(|(_, lane)| u16::from(lane) + u16::from(byte_count) <= 4)
     }
+    #[inline(never)]
     pub fn write_fifo(&mut self, address: u32, value: u32, byte_count: u8) {
         let (fifo, lane) = Self::fifo_write_target(address).unwrap();
         match fifo {
@@ -1331,6 +1334,7 @@ impl Apu {
             }
         }
     }
+    #[inline(never)]
     fn flush_square_noise(&mut self) {
         self.advance_square_noise();
     }
@@ -1340,7 +1344,7 @@ impl Apu {
             || (self.square2.enabled && self.square2.current_volume != 0)
             || (self.noise.enabled && self.noise.current_volume != 0)
     }
-    #[inline]
+    #[inline(always)]
     fn advance_square_noise(&mut self) {
         let cycles = self.pending_square_noise_cycles;
         if cycles == 0 {

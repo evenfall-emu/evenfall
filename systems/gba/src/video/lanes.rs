@@ -1,12 +1,31 @@
 //! Lanes of 16-bit pixel data for the layer-major compositor. One kernel is
-//! written against [`Lanes`] and instantiated for eight-lane vectors
-//! ([`Sse2`] on x86-64, `Simd128` on WebAssembly built with `simd128`) or
-//! [`Scalar`], one lane, on every other target. LLVM's auto-vectorization of
-//! the same loops proved fragile: small source changes turned selects into
-//! per-lane branches or address selects. The scalar lane is the reference
-//! for the vector lanes.
+//! written against [`Lanes`] and instantiated for [`Native`]: eight lanes of
+//! [`wide::i16x8`] where the `wide` crate has a vector backend (SSE2 on
+//! x86-64, NEON on AArch64, `simd128` on WebAssembly built with it), and
+//! [`Scalar`], one lane, elsewhere. LLVM's auto-vectorization of the same
+//! loops proved fragile: small source changes turned selects into per-lane
+//! branches or address selects. The scalar lane is the reference for the
+//! vector lanes.
 //!
 //! Masks are all-ones (true) or all-zeros (false) per lane.
+
+use wide::{i16x8, u8x16, u16x8};
+
+cfg_select! {
+    any(
+        target_feature = "sse2",
+        target_feature = "simd128",
+        all(target_arch = "aarch64", target_feature = "neon"),
+    ) => {
+        /// The lanes the compositor runs on: `wide`'s vector backend.
+        pub(super) type Native = i16x8;
+    }
+    _ => {
+        /// The lanes the compositor runs on. Without a vector backend `wide`
+        /// uses eight-element arrays, which measured slower than one lane.
+        pub(super) type Native = Scalar;
+    }
+}
 
 pub(super) trait Lanes: Copy {
     /// Pixels per lane group.
@@ -26,6 +45,7 @@ pub(super) trait Lanes: Copy {
     fn mul(self, other: Self) -> Self;
     /// Minimum of lanes read as `i16`.
     fn min(self, other: Self) -> Self;
+    /// Logical shift right.
     fn shr<const BITS: i32>(self) -> Self;
     fn shl<const BITS: i32>(self) -> Self;
     fn eq(self, other: Self) -> Self;
@@ -42,27 +62,17 @@ pub(super) trait Lanes: Copy {
 }
 
 /// One lane: the portable form and the reference for vector lanes.
-#[cfg(any(
-    test,
-    not(any(target_arch = "x86_64", all(target_arch = "wasm32", target_feature = "simd128")))
-))]
+#[cfg_attr(not(test), allow(dead_code, reason = "unused where `wide` has a vector backend"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Scalar(pub u16);
 
-#[cfg(any(
-    test,
-    not(any(target_arch = "x86_64", all(target_arch = "wasm32", target_feature = "simd128")))
-))]
+#[cfg_attr(not(test), allow(dead_code, reason = "unused where `wide` has a vector backend"))]
 impl Scalar {
     fn mask(value: bool) -> Self {
         Self(if value { 0xFFFF } else { 0 })
     }
 }
 
-#[cfg(any(
-    test,
-    not(any(target_arch = "x86_64", all(target_arch = "wasm32", target_feature = "simd128")))
-))]
 impl Lanes for Scalar {
     const WIDTH: usize = 1;
     #[inline(always)]
@@ -135,186 +145,78 @@ impl Lanes for Scalar {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
-pub(super) use sse2::Sse2;
-
-#[cfg(target_arch = "x86_64")]
-mod sse2 {
-    use super::Lanes;
-    use core::arch::x86_64::*;
-
-    /// Eight 16-bit lanes in one SSE2 register.
-    #[derive(Clone, Copy)]
-    pub(in crate::video) struct Sse2(__m128i);
-
-    /// SSE2 intrinsics are `unsafe` only because they require the `sse2`
-    /// target feature, which every x86-64 target enables.
-    macro_rules! sse2 {
-        ($intrinsic:expr) => {
-            // SAFETY: SSE2 is part of the x86-64 baseline; memory operands
-            // are fixed-size array references checked by the callers.
-            unsafe { $intrinsic }
-        };
+/// Eight lanes. `i16x8` gives the signed comparisons and minimum the kernel
+/// needs; logical shifts go through the unsigned view of the same bits.
+impl Lanes for i16x8 {
+    const WIDTH: usize = 8;
+    #[inline(always)]
+    fn load(source: &[u16], at: usize) -> Self {
+        let lanes: &[u16; 8] = source[at..at + 8].try_into().unwrap();
+        u16x8::new(*lanes).cast_signed()
     }
-
-    impl Lanes for Sse2 {
-        const WIDTH: usize = 8;
-        #[inline(always)]
-        fn load(source: &[u16], at: usize) -> Self {
-            let lanes: &[u16; 8] = source[at..at + 8].try_into().unwrap();
-            Self(sse2!(_mm_loadu_si128(lanes.as_ptr().cast())))
-        }
-        #[inline(always)]
-        fn load_bytes(source: &[u8], at: usize) -> Self {
-            let bytes: &[u8; 8] = source[at..at + 8].try_into().unwrap();
-            let low = sse2!(_mm_loadl_epi64(bytes.as_ptr().cast()));
-            Self(sse2!(_mm_unpacklo_epi8(low, _mm_setzero_si128())))
-        }
-        #[inline(always)]
-        fn store(self, target: &mut [u16], at: usize) {
-            let lanes: &mut [u16; 8] = (&mut target[at..at + 8]).try_into().unwrap();
-            sse2!(_mm_storeu_si128(lanes.as_mut_ptr().cast(), self.0));
-        }
-        #[inline(always)]
-        fn splat(value: u16) -> Self {
-            Self(sse2!(_mm_set1_epi16(value as i16)))
-        }
-        #[inline(always)]
-        fn and(self, other: Self) -> Self {
-            Self(sse2!(_mm_and_si128(self.0, other.0)))
-        }
-        #[inline(always)]
-        fn or(self, other: Self) -> Self {
-            Self(sse2!(_mm_or_si128(self.0, other.0)))
-        }
-        #[inline(always)]
-        fn and_not(self, other: Self) -> Self {
-            Self(sse2!(_mm_andnot_si128(self.0, other.0)))
-        }
-        #[inline(always)]
-        fn add(self, other: Self) -> Self {
-            Self(sse2!(_mm_add_epi16(self.0, other.0)))
-        }
-        #[inline(always)]
-        fn sub(self, other: Self) -> Self {
-            Self(sse2!(_mm_sub_epi16(self.0, other.0)))
-        }
-        #[inline(always)]
-        fn mul(self, other: Self) -> Self {
-            Self(sse2!(_mm_mullo_epi16(self.0, other.0)))
-        }
-        #[inline(always)]
-        fn min(self, other: Self) -> Self {
-            Self(sse2!(_mm_min_epi16(self.0, other.0)))
-        }
-        #[inline(always)]
-        fn shr<const BITS: i32>(self) -> Self {
-            Self(sse2!(_mm_srli_epi16::<BITS>(self.0)))
-        }
-        #[inline(always)]
-        fn shl<const BITS: i32>(self) -> Self {
-            Self(sse2!(_mm_slli_epi16::<BITS>(self.0)))
-        }
-        #[inline(always)]
-        fn eq(self, other: Self) -> Self {
-            Self(sse2!(_mm_cmpeq_epi16(self.0, other.0)))
-        }
-        #[inline(always)]
-        fn gt(self, other: Self) -> Self {
-            Self(sse2!(_mm_cmpgt_epi16(self.0, other.0)))
-        }
+    #[inline(always)]
+    fn load_bytes(source: &[u8], at: usize) -> Self {
+        // A zero-padded 16-byte vector widened from its low half: one load
+        // and one unpack where `wide` has a vector backend.
+        let mut bytes = [0; 16];
+        bytes[..8].copy_from_slice(&source[at..at + 8]);
+        u16x8::from_u8x16_low(u8x16::new(bytes)).cast_signed()
     }
-}
-
-#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-pub(super) use simd128::Simd128;
-
-#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-mod simd128 {
-    use super::Lanes;
-    use core::arch::wasm32::*;
-
-    /// Eight 16-bit lanes in one WebAssembly `v128`.
-    #[derive(Clone, Copy)]
-    pub(in crate::video) struct Simd128(v128);
-
-    impl Lanes for Simd128 {
-        const WIDTH: usize = 8;
-        #[inline(always)]
-        fn load(source: &[u16], at: usize) -> Self {
-            let lanes: &[u16; 8] = source[at..at + 8].try_into().unwrap();
-            // SAFETY: `lanes` is a valid 16-byte array; v128 loads need no
-            // alignment.
-            Self(unsafe { v128_load(lanes.as_ptr().cast()) })
-        }
-        #[inline(always)]
-        fn load_bytes(source: &[u8], at: usize) -> Self {
-            let bytes: &[u8; 8] = source[at..at + 8].try_into().unwrap();
-            // SAFETY: `bytes` is a valid 8-byte array.
-            Self(unsafe { u16x8_load_extend_u8x8(bytes.as_ptr()) })
-        }
-        #[inline(always)]
-        fn store(self, target: &mut [u16], at: usize) {
-            let lanes: &mut [u16; 8] = (&mut target[at..at + 8]).try_into().unwrap();
-            // SAFETY: `lanes` is a valid, exclusively borrowed 16-byte array.
-            unsafe { v128_store(lanes.as_mut_ptr().cast(), self.0) }
-        }
-        #[inline(always)]
-        fn splat(value: u16) -> Self {
-            Self(u16x8_splat(value))
-        }
-        #[inline(always)]
-        fn and(self, other: Self) -> Self {
-            Self(v128_and(self.0, other.0))
-        }
-        #[inline(always)]
-        fn or(self, other: Self) -> Self {
-            Self(v128_or(self.0, other.0))
-        }
-        #[inline(always)]
-        fn and_not(self, other: Self) -> Self {
-            // WebAssembly's andnot clears the bits of its second operand.
-            Self(v128_andnot(other.0, self.0))
-        }
-        #[inline(always)]
-        fn add(self, other: Self) -> Self {
-            Self(i16x8_add(self.0, other.0))
-        }
-        #[inline(always)]
-        fn sub(self, other: Self) -> Self {
-            Self(i16x8_sub(self.0, other.0))
-        }
-        #[inline(always)]
-        fn mul(self, other: Self) -> Self {
-            Self(i16x8_mul(self.0, other.0))
-        }
-        #[inline(always)]
-        fn min(self, other: Self) -> Self {
-            Self(i16x8_min(self.0, other.0))
-        }
-        #[inline(always)]
-        fn shr<const BITS: i32>(self) -> Self {
-            Self(u16x8_shr(self.0, BITS as u32))
-        }
-        #[inline(always)]
-        fn shl<const BITS: i32>(self) -> Self {
-            Self(i16x8_shl(self.0, BITS as u32))
-        }
-        #[inline(always)]
-        fn eq(self, other: Self) -> Self {
-            Self(i16x8_eq(self.0, other.0))
-        }
-        #[inline(always)]
-        fn gt(self, other: Self) -> Self {
-            Self(i16x8_gt(self.0, other.0))
-        }
-        #[inline(always)]
-        fn select(mask: Self, on: Self, off: Self) -> Self {
-            Self(v128_bitselect(on.0, off.0, mask.0))
-        }
-        #[inline(always)]
-        fn any(self, bits: u16) -> Self {
-            Self(i16x8_ne(v128_and(self.0, u16x8_splat(bits)), u16x8_splat(0)))
-        }
+    #[inline(always)]
+    fn store(self, target: &mut [u16], at: usize) {
+        let lanes: &mut [u16; 8] = (&mut target[at..at + 8]).try_into().unwrap();
+        *lanes = self.cast_unsigned().to_array();
+    }
+    #[inline(always)]
+    fn splat(value: u16) -> Self {
+        i16x8::splat(value as i16)
+    }
+    #[inline(always)]
+    fn and(self, other: Self) -> Self {
+        self & other
+    }
+    #[inline(always)]
+    fn or(self, other: Self) -> Self {
+        self | other
+    }
+    #[inline(always)]
+    fn and_not(self, other: Self) -> Self {
+        !self & other
+    }
+    #[inline(always)]
+    fn add(self, other: Self) -> Self {
+        self + other
+    }
+    #[inline(always)]
+    fn sub(self, other: Self) -> Self {
+        self - other
+    }
+    #[inline(always)]
+    fn mul(self, other: Self) -> Self {
+        self * other
+    }
+    #[inline(always)]
+    fn min(self, other: Self) -> Self {
+        i16x8::min(self, other)
+    }
+    #[inline(always)]
+    fn shr<const BITS: i32>(self) -> Self {
+        (self.cast_unsigned() >> BITS as u32).cast_signed()
+    }
+    #[inline(always)]
+    fn shl<const BITS: i32>(self) -> Self {
+        self << BITS as u32
+    }
+    #[inline(always)]
+    fn eq(self, other: Self) -> Self {
+        self.simd_eq(other)
+    }
+    #[inline(always)]
+    fn gt(self, other: Self) -> Self {
+        self.simd_gt(other)
+    }
+    #[inline(always)]
+    fn select(mask: Self, on: Self, off: Self) -> Self {
+        mask.select(on, off)
     }
 }

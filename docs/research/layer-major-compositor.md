@@ -71,12 +71,18 @@ rewrote selects between two loads as a load from a selected address. Small
 source changes moved a pass between these forms.
 
 `compose_line` is therefore written once against the small `Lanes` trait and
-instantiated for SSE2 (eight 16-bit lanes, x86-64), WebAssembly `simd128`
-(eight lanes, only when the module is built with that target feature) and a
-scalar lane on every other target. Blending uses 16-bit multiplies, which
-SSE2 and `simd128` provide directly. The scalar lane is the reference: a
-randomized unit test requires the SSE2 kernel to produce the scalar kernel's
-colors and surfaces for every line kind.
+instantiated for eight 16-bit lanes of the [`wide`](https://crates.io/crates/wide)
+crate's `i16x8` where it has a vector backend (SSE2 on x86-64, NEON on
+AArch64, `simd128` on WebAssembly built with that target feature), and for a
+scalar lane on every other target. `wide` keeps the lanes free of `unsafe`
+code. Its eight-element array fallback is not used: it made the scalar
+WebAssembly module's tiles 1.19× slower than the scalar lane. Logical shifts
+go through the unsigned view, and the widening byte load uses
+`u16x8::from_u8x16_low`; widening each lane compiled to eight scalar extracts
+on SSE2. Blending uses 16-bit multiplies, which all three backends provide
+directly. The scalar lane is the reference: a randomized unit test requires
+the vector kernel to produce the scalar kernel's colors and surfaces for every
+line kind, on x86-64 and on AArch64 (run under qemu).
 
 ## Raster history
 
@@ -132,23 +138,6 @@ What did not pay:
 - The content-keyed 4bpp row cache inside the new rows: the tiles ROM uses
   every palette bank with flips, so its 1,024 entries missed constantly; the
   pair tables cut tiles from 10.76 G to 9.28 G instructions.
-- The portable `wide` crate (1.7) in place of the hand-written SSE2 and
-  `simd128` lanes. Its `i16x8` covers every `Lanes` operation (logical shifts
-  through the unsigned view; widening through `u16x8::from_u8x16_low`, since
-  widening each lane compiled to eight scalar extracts), removes the lanes'
-  `unsafe` code, and compiles the kernel to NEON on AArch64, where it passes
-  the scalar comparison and renders the benchmark ROMs' frames exactly under
-  qemu. Its kernel costs what the hand-written one does: on pinned CPU 2 with
-  release-LTO, tiles retires 5.18 G instructions per 1,200 frames against
-  5.25 G, and the `simd128` module's renderer workloads stay within 2% of
-  loop time. Its eight-element array fallback made the scalar WebAssembly
-  module's tiles 1.19× slower, so it could replace only the vector lanes.
-  The change also moved fat-LTO inlining in the CPU engine (the Thumb
-  `run_loop`, `Mem::store_video`, `Apu::elapse_mixed`), which made CPU-bound
-  workloads slower beyond noise: audio 1.013× natively and 1.034× in the
-  `simd128` module, thumb-logic 1.023×, with 1.4–3.1% more instructions. A
-  one-line change to the kernel's byte load was enough to flip that
-  inlining. It also adds three crates and about 4 s to cold builds.
 
 ## Tests
 
@@ -167,9 +156,8 @@ What did not pay:
 
 - The `simd128` lanes are checked only through whole-frame agreement with the
   scalar build; no unit test runs inside WebAssembly.
-- Native AArch64 builds run the scalar lane. `wide` gives them NEON without
-  new `unsafe` code, once the CPU engine's inlining stops shifting with
-  unrelated edits; hand-written NEON lanes are the alternative.
+- The NEON lanes are checked under qemu only; their speed on AArch64 hardware
+  is unmeasured.
 - Rotated affine rows still cost about 23 host instructions per pixel.
 - Lines with other raster histories could be split into segments at their
   recorded dots instead of using the reference passes, if a workload shows

@@ -1322,6 +1322,7 @@ impl Bus {
             .value
     }
 
+    #[inline(always)]
     pub fn fetch_instruction_in_region(
         &mut self,
         region: &mut InstructionFetchRegion,
@@ -1865,6 +1866,7 @@ impl Bus {
         self.external_inputs.get(self.external_input_index).map(|input| input.at)
     }
 
+    #[inline(never)]
     fn apply_due_external_inputs(&mut self) {
         while let Some(&input) = self.external_inputs.get(self.external_input_index) {
             if input.at > self.current_cycle {
@@ -2107,6 +2109,7 @@ impl Bus {
         read_ram(&self.ewram, (address.wrapping_sub(EWRAM_BASE) as usize) & (EWRAM_SIZE - 1), width)
     }
 
+    #[inline(always)]
     fn write_ewram(&mut self, address: u32, width: AccessWidth, value: u32) {
         let index = (address.wrapping_sub(EWRAM_BASE) as usize) & (EWRAM_SIZE - 1);
         self.code.write_ewram(index, width.bytes());
@@ -2117,6 +2120,7 @@ impl Bus {
         read_ram(&self.iwram, (address.wrapping_sub(IWRAM_BASE) as usize) & (IWRAM_SIZE - 1), width)
     }
 
+    #[inline(always)]
     fn write_iwram(&mut self, address: u32, width: AccessWidth, value: u32) {
         let index = (address.wrapping_sub(IWRAM_BASE) as usize) & (IWRAM_SIZE - 1);
         self.code.write_iwram(index, width.bytes());
@@ -2193,6 +2197,7 @@ impl Bus {
                 && CartridgeGpio::is_register(offset.wrapping_add(2)))
     }
 
+    #[inline(always)]
     fn write_cartridge_gpio_half(&mut self, address: u32, value: u16) {
         let offset = (address - GAME_PAK_BASE) & (GAME_PAK_WINDOW_SIZE - 1);
         if self
@@ -2799,6 +2804,7 @@ impl Bus {
         }
     }
 
+    #[inline(never)]
     fn complete_uart_transmit(&mut self) {
         let old = self.uart_status();
         self.uart_tx_active = None;
@@ -2882,6 +2888,7 @@ impl Bus {
         self.sync_timers_to(self.current_cycle);
     }
 
+    #[inline(never)]
     fn flush_device_batch(&mut self) {
         if !self.batch_active || self.current_cycle == self.batch_device_cycle {
             return;
@@ -2936,6 +2943,7 @@ impl Bus {
         self.compute_timer_deadline()
     }
 
+    #[inline(always)]
     fn compute_timer_deadline(&self) -> Cycle {
         self.timers
             .iter()
@@ -2960,12 +2968,14 @@ impl Bus {
             .unwrap_or(Cycle::MAX)
     }
 
+    #[inline(never)]
     fn refresh_timer_deadline(&mut self) {
         if self.devices_deferred {
             self.timer_deadline = self.compute_timer_deadline();
         }
     }
 
+    #[inline(never)]
     fn refresh_fifo_clock(&mut self) {
         self.fifo_clock = crate::apu::FifoClock::default();
         if !self.devices_deferred {
@@ -3062,6 +3072,7 @@ impl Bus {
         self.batch_deadline = self.next_device_boundary();
     }
 
+    #[inline(always)]
     fn advance_eager(&mut self, cycles: Cycle, first_boundary: Cycle) {
         let mut remaining = cycles;
         let mut known_boundary = first_boundary;
@@ -3084,6 +3095,7 @@ impl Bus {
         }
     }
 
+    #[inline(never)]
     fn advance_step(&mut self, cycles: Cycle) {
         self.advance_game_pak_prefetch(cycles);
         let mut events = crate::video::timing::Events::default();
@@ -3670,6 +3682,7 @@ impl Bus {
         }
     }
 
+    #[inline(always)]
     fn queue_dma_timing(&mut self, timing: u8) {
         for (index, channel) in self.dma_channels.iter().enumerate() {
             if channel.enabled()
@@ -3904,6 +3917,7 @@ impl Bus {
         self.game_pak_prefetch = GamePakPrefetch::default();
     }
 
+    #[inline(always)]
     fn advance_game_pak_prefetch(&mut self, mut cycles: Cycle) {
         if !self.game_pak_prefetch.active || self.game_pak_prefetch.countdown == 0 {
             return;

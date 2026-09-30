@@ -153,6 +153,7 @@ pub(super) fn decode(i: u16) -> Op {
 }
 
 /// The immediate-transfer kind offset of a store or a load.
+#[inline(never)]
 fn mode(i: u16, store: u8, load: u8) -> u8 {
     let mode = if i & (1 << 11) != 0 { load } else { store };
     [0, 4, 1, 5, 2, 6, 3, 7].iter().position(|&m| m == mode).expect("transfer mode") as u8
@@ -352,6 +353,7 @@ impl Ctx<'_> {
     }
 
     /// The halfword the interpreter would have fetched at `address`.
+    #[inline(never)]
     fn half(&self, address: u32) -> u32 {
         match self.place {
             Place::Iwram => {
@@ -365,6 +367,7 @@ impl Ctx<'_> {
     }
 
     /// The instruction at `address` if the engine may run it.
+    #[inline(always)]
     fn code(&self, address: u32) -> Option<u16> {
         match self.place {
             Place::Rom => self.mem.rom.thumb_code(address),
@@ -645,6 +648,7 @@ fn mmio_transfer(op: &Op, r: &[u32; 16]) -> Option<Mmio> {
 /// bus and writes the registers. Returns how the run goes on; the
 /// interpreter takes the transfer if the bus does not let the run make it
 /// or its cycles pass the limit.
+#[inline(always)]
 fn serve<T: Timing>(
     core: &mut Core,
     bus: &mut Bus,
@@ -1067,6 +1071,7 @@ fn clean_page(c: &Ctx<'_>) -> bool {
 /// Whether a run may start at `pc`: the engine may run from there and the
 /// pipeline holds what memory holds. (Returning the run's state instead
 /// would pass it through memory, and reading it back stalls.)
+#[inline(never)]
 fn enters(core: &Core, c: &Ctx<'_>, pc: u32) -> bool {
     if c.code(pc).is_none() {
         return false;
@@ -1087,6 +1092,7 @@ struct Exit {
 }
 
 /// Publishes the CPU state after a run; None if no instruction ran.
+#[inline(never)]
 fn leave(core: &mut Core, c: &Ctx<'_>, hot: Hot, start: u64, budget: i64) -> Option<Exit> {
     let spent = budget - hot.budget;
     if spent == 0 {
