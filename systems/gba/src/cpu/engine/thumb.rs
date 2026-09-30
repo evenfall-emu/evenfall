@@ -16,7 +16,7 @@ use crate::bus::{
     AccessKind, AccessWidth, Bus, EWRAM_SIZE, IWRAM_SIZE, PowerState, PrefetchClock, RomData,
     half_on_both_lanes, iwram_half_latch, read_ram,
 };
-use evenfall_cpu_arm::{Core, InstructionSet, Pipeline};
+use evenfall_cpu_arm::{Core, InstructionSet, MultiplyKind, Pipeline, multiply_carry};
 
 /// Op kinds; ALU, register-offset transfer and conditional branch kinds are
 /// a base plus the opcode or condition.
@@ -1588,11 +1588,14 @@ fn multiply<const N: usize, T: Timing>(
     r: &mut Registers,
     op: &Op,
 ) -> Flow {
+    // MULS Rd, Rs, Rd: Rd is the multiplier.
     let lhs = r[usize::from(op.rd)];
     internal(h, c, t, Core::multiply_iterations(lhs, true) as i64, |h| {
-        let result = lhs.wrapping_mul(r[usize::from(op.rn)]);
+        let rhs = r[usize::from(op.rn)];
+        let result = lhs.wrapping_mul(rhs);
         r[usize::from(op.rd)] = result;
         h.set_nz(result);
+        h.carry = u32::from(multiply_carry(MultiplyKind::Short, rhs, lhs, 0));
     })
 }
 

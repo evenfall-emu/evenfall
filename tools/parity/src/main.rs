@@ -38,6 +38,7 @@ const ORACLE_PATCHES: &[&str] = &[
     "dma-stall.patch",
     "io-read.patch",
     "thumb-open-bus.patch",
+    "multiply-carry.patch",
 ];
 
 fn build() -> Result<(), Box<dyn Error>> {

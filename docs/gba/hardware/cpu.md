@@ -135,6 +135,32 @@ timing uses the multiplier's value before the write. Thumb `MUL rd, rs`
 computes `rd * rs` and sizes m from `rd`, following NanoBoyAdvance's model and
 the mGBA suite rows, which vary with that operand.
 
+### The carry flag after a multiply
+
+Flag-setting multiplies (`MULS`, `MLAS`, the long forms with S, and Thumb
+`MUL`, which always sets flags) set N and Z from the result and C from the
+multiplier's datapath; V is unchanged. ARM calls C meaningless there, but
+on the ARM7TDMI it is deterministic: the multiplier recodes the multiplier
+operand in radix-4 Booth digits, sums four addends per cycle through
+carry-save stages into a sum vector and a carry vector, stops early when the
+remaining multiplier bits only extend its sign, and resolves the two
+vectors in the ALU with the carry vector taken through the barrel shifter,
+whose carry-out becomes C. `evenfall_cpu_arm::multiply_carry` models that
+datapath as far as the carry vector, following zayd's reconstruction from
+the multiplier patents and fuzzing on hardware
+([Solving the Mystery of ARM7TDMI Multiply Carry Flag][multiply-carry]).
+`MUL`, `MLA`, `SMULL` and `SMLAL` recode signed, `UMULL` and `UMLAL`
+unsigned; for Thumb `MUL rd, rs`, Rd is the multiplier. The mGBA suite's
+multiply-long table, recorded on hardware, pins every `SMULLS` and `UMULLS`
+result, N, Z and C
+(`flag_setting_long_multiplies_match_the_mgba_suite_hardware_table` in
+[`cpu-arm`](../../../crates/cpu-arm/src/lib.rs)); the other forms are pinned
+against outputs of the model's published reference implementation
+(`flag_setting_multiplies_take_c_from_the_reference_multiplier_model`), not
+against hardware directly. ZiGBA leaves C unchanged; this is a deliberate
+difference ([`roadmap.md`](../../roadmap.md#mgba-suite-rom-findings)).
+Non-flag-setting multiplies change no flags, as jsmolka's ARM test checks.
+
 The TRM's bus request and class signals are pipelined ahead of the accesses
 they describe, so a cycle-table row's `SEQ` signal belongs to the next
 access, not the address printed on the same row
@@ -380,6 +406,10 @@ faults before transfer side effects", all in
   hardware here.
 - **Aborts.** ZiGBA never raises a prefetch or data abort; no GBA source for
   one is known, but no hardware test here rules it out.
+- **Multiply carry outside the long forms.** The carry model reproduces
+  the recorded `SMULLS`/`UMULLS` table; its `MULS`, `MLAS`, `UMLALS` and
+  `SMLALS` results rest on its author's hardware fuzzing, which is published
+  as the model rather than as a table of measurements.
 - **CP14.** GBATEK mentions a dummy CP14 unit; ZiGBA sends CP14 transfers to
   the Undefined trap like every other coprocessor encoding, and what the
   dummy unit returns is not modeled.
@@ -390,5 +420,6 @@ faults before transfer side effects", all in
 [gbatek-ldm]: https://rust-console.github.io/gbatek-gbaonly/#armopcodesmemoryblockdatatransferldmstm
 [gbatek-thumb-ldm]: https://rust-console.github.io/gbatek-gbaonly/#thumbopcodesmemorymultipleloadstorepushpopandldmstm
 [nba-thumb]: https://github.com/nba-emu/NanoBoyAdvance/blob/master/src/nba/src/arm/handlers/handler16.inl
+[multiply-carry]: https://bmchtech.github.io/post/multiply/
 [gbatek-fiq]: https://rust-console.github.io/gbatek-gbaonly/#gbainterruptcontrol
 [gbatek-cp]: https://rust-console.github.io/gbatek-gbaonly/#armopcodescoprocessorinstructionsmrcmcrldcstccdpmcrrmrrc

@@ -89,6 +89,9 @@ match:
   ROM and the other 16-bit buses, and follows GBATEK's rules for BIOS, OAM
   and IWRAM code; ZiGBA zero-extends it
   ([`gba/hardware/memory.md`](gba/hardware/memory.md#open-bus-and-unused-io)).
+- **Flag-setting multiplies** set C as the ARM7TDMI's multiplier does,
+  where ZiGBA leaves it unchanged
+  ([`gba/hardware/cpu.md`](gba/hardware/cpu.md#the-carry-flag-after-a-multiply)).
 
 The others change no emulated result:
 

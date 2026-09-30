@@ -7,7 +7,9 @@
 use super::mem::{Mem, Running};
 use super::{CodeCache, Load, Mmio, Op, PAGE_SHIFT, Reg, fresh_ops, split_memory};
 use crate::bus::{AccessWidth, BIOS_SIZE, Bus, EWRAM_SIZE, IWRAM_SIZE, PowerState, read_ram};
-use evenfall_cpu_arm::{Core, InstructionSet, Pipeline, condition_passes};
+use evenfall_cpu_arm::{
+    Core, InstructionSet, MultiplyKind, Pipeline, condition_passes, multiply_carry,
+};
 
 /// Op kinds. Data processing kinds are a form's base plus the opcode;
 /// conditional kinds are a base plus the condition.
@@ -1655,13 +1657,17 @@ fn multiply<const EW: bool>(h: &mut Hot, regs: &mut Registers, word: u32) -> boo
     if !h.charge(Ctx::<EW>::FETCH + iterations + i64::from(accumulate)) {
         return false;
     }
-    let mut result = regs[(word & 15) as usize].wrapping_mul(multiplier);
-    if accumulate {
-        result = result.wrapping_add(regs[((word >> 12) & 15) as usize]);
-    }
+    let multiplicand = regs[(word & 15) as usize];
+    let accumulator = if accumulate { regs[((word >> 12) & 15) as usize] } else { 0 };
+    let result = multiplicand.wrapping_mul(multiplier).wrapping_add(accumulator);
     regs[((word >> 16) & 15) as usize] = result;
     if word & (1 << 20) != 0 {
-        h.cpsr = (h.cpsr & 0x3fff_ffff) | (result & 0x8000_0000) | (u32::from(result == 0) << 30);
+        let carry =
+            multiply_carry(MultiplyKind::Short, multiplicand, multiplier, u64::from(accumulator));
+        h.cpsr = (h.cpsr & 0x1fff_ffff)
+            | (result & 0x8000_0000)
+            | (u32::from(result == 0) << 30)
+            | (u32::from(carry) << 29);
     }
     h.next()
 }
@@ -1677,20 +1683,22 @@ fn multiply_long_op<const EW: bool>(mut h: Hot, regs: &mut Registers, word: u32)
     }
     let (hi, lo) = (((word >> 16) & 15) as usize, ((word >> 12) & 15) as usize);
     let multiplicand = regs[(word & 15) as usize];
-    let mut product = if signed {
+    let accumulator = if accumulate { u64::from(regs[hi]) << 32 | u64::from(regs[lo]) } else { 0 };
+    let product = if signed {
         (i64::from(multiplicand as i32) * i64::from(multiplier as i32)) as u64
     } else {
         u64::from(multiplicand) * u64::from(multiplier)
-    };
-    if accumulate {
-        product = product.wrapping_add(u64::from(regs[hi]) << 32 | u64::from(regs[lo]));
     }
+    .wrapping_add(accumulator);
     regs[lo] = product as u32;
     regs[hi] = (product >> 32) as u32;
     if word & (1 << 20) != 0 {
-        h.cpsr = (h.cpsr & 0x3fff_ffff)
+        let kind = if signed { MultiplyKind::LongSigned } else { MultiplyKind::LongUnsigned };
+        let carry = multiply_carry(kind, multiplicand, multiplier, accumulator);
+        h.cpsr = (h.cpsr & 0x1fff_ffff)
             | ((product >> 32) as u32 & 0x8000_0000)
-            | (u32::from(product == 0) << 30);
+            | (u32::from(product == 0) << 30)
+            | (u32::from(carry) << 29);
     }
     h.next();
     Some(h)

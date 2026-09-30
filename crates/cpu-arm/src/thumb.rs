@@ -196,8 +196,10 @@ impl Core {
             10 => self.set_sub_flags(lhs, rhs, 0, lhs.wrapping_sub(rhs)),
             11 => self.set_add_flags(lhs, rhs, 0, lhs.wrapping_add(rhs)),
             13 => {
+                // MULS Rd, Rs, Rd: Rd is the multiplier.
                 self.registers[rd] = lhs.wrapping_mul(rhs);
-                self.set_logical_flags(self.registers[rd], None);
+                let carry = crate::multiply_carry(crate::MultiplyKind::Short, rhs, lhs, 0);
+                self.set_logical_flags(self.registers[rd], Some(carry));
                 bus.elapse_cpu_internal(Self::multiply_iterations(lhs, true));
             }
             0 | 1 | 12 | 14 | 15 => {

@@ -148,6 +148,7 @@ this order:
 | ------------------------------------------------------------- | -------------------------------------------------------------------------- | -------------- |
 | [`io-read.patch`](../tools/parity/patches/io-read.patch)       | write-only I/O registers read as open bus or zero; two read-only bit masks | unchanged      |
 | [`thumb-open-bus.patch`](../tools/parity/patches/thumb-open-bus.patch) | Thumb opcode fetches compose the open-bus word per region                  | unchanged      |
+| [`multiply-carry.patch`](../tools/parity/patches/multiply-carry.patch) | flag-setting multiplies set C from the multiplier model                    | unchanged      |
 
 Each changes the Rust core and the oracle alike, so every scenario still
 compares byte for byte; none adds a durable field, so the schema check still

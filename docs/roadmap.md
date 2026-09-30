@@ -163,12 +163,29 @@ suites must still pass.
 - **DMA count latch.** Latch `DMAxCNT_L` when the enable bit rises and reload
   it only on repeat. Evidence: "DMA count latching". Every DMA suite test
   must keep passing.
-- **Long-multiply carry.** Set C after flag-setting long multiplies from the
-  ARM7TDMI multiplier's Booth stages. Evidence: every failing multiply-long
-  check differs only in C. A model must reproduce the whole multiply-long
-  table;
-  the suite does not test `MULS`/`MLAS`, whose C comes from the same
-  hardware, so any change there needs separate evidence.
+- **Decision: flag-setting multiplies set C from the multiplier's carry
+  vector** (a deliberate guest-visible difference from ZiGBA, which leaves
+  C unchanged). Every failing check of the mGBA suite's multiply-long table
+  (`src/multiply-long.c`, recorded on hardware) differed only in C after
+  `SMULLS` or `UMULLS`. The model is zayd's reconstruction of the ARM7TDMI
+  multiplier from its patents and fuzzing on hardware
+  (<https://bmchtech.github.io/post/multiply/>): Booth recoding, four
+  carry-save stages per cycle, early termination, and C as the barrel
+  shifter's carry-out when the ALU realigns the carry vector
+  ([cpu](gba/hardware/cpu.md#the-carry-flag-after-a-multiply)). Evenfall
+  implements it in `evenfall_cpu_arm::multiply_carry` for every
+  flag-setting multiply, `MULS` and `MLAS` included, since they share the
+  datapath; it reproduces the whole table (N, Z, C and both result words)
+  and agrees with the model's zlib-licensed reference implementation on two
+  million random operands of all six forms, run as a scratch differential.
+  The suite does not measure `MULS`, `MLAS`, `UMLALS` or `SMLALS`; for those
+  the model's hardware fuzzing is the evidence. Compatibility effect: C
+  after a flag-setting multiply; non-flag-setting multiplies are unchanged.
+  No state-layout change. The parity harness applies
+  [`multiply-carry.patch`](../tools/parity/patches/multiply-carry.patch).
+  The ported test "execution region multiply keeps original alias timing
+  and conditional effects" expects the model's C instead of the preserved
+  flag.
 - **Block transfers on SRAM.** Present a misaligned `LDM`/`STM` address to the
   8-bit SRAM bus instead of aligning it first, and do the same in HLE
   `CpuSet`/`CpuFastSet`. Evidence: the `swi B 32` and `swi C 32` misaligned

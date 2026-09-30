@@ -163,7 +163,7 @@ pass.
 | Timer IRQ tests        | every test                                                                                                                                                                                                                                            | every test                                                                                      | [timer and IRQ latency](#timer-and-irq-latency)                                                                                                                                                             |
 | Shifter tests          | pass                                                                                                                                                                                                                                                  | pass                                                                                            |                                                                                                                                                                                                             |
 | Carry tests            | pass                                                                                                                                                                                                                                                  | pass                                                                                            |                                                                                                                                                                                                             |
-| Multiply long tests    | −1 × −1, `$7F` × −1, −1 × `$7F`, `$80` × `$7F`, `$81` × `$7F`, and every product with `$80` or `$81` as second operand                                                                                                                                | same                                                                                            | [long-multiply carry](#long-multiply-carry)                                                                                                                                                                 |
+| Multiply long tests    | pass | pass | |
 | BIOS math tests        | pass                                                                                                                                                                                                                                                  | `ArcTan2` with a zero first operand and a nonzero second; `Div` by zero                         | [replacement BIOS](#hle-and-replacement-bios-effects)                                                                                                                                                       |
 | DMA tests              | pass                                                                                                                                                                                                                                                  | pass                                                                                            |                                                                                                                                                                                                             |
 | SIO register R/W tests | pass                                                                                                                                                                                                                                                  | pass                                                                                            |                                                                                                                                                                                                             |
@@ -205,14 +205,6 @@ On hardware the first transfer copies 2 units and the repeat 4: the count is
 latched when the enable bit rises, like the addresses, and reloaded from
 `DMA3CNT_L` on repeat. The core reads `DMAxCNT_L` whenever a transfer
 starts, so the first transfer copies 4.
-
-#### Long-multiply carry
-
-The multiply-long results and N and Z flags all match. The failing checks
-differ only in the C flag after `SMULLS` and `UMULLS`: the hardware table
-sets C for these operand pairs, while the core leaves C unchanged. On the
-ARM7TDMI the carry comes out of the multiplier's Booth stages, so it depends
-on both operands.
 
 #### Block transfers on SRAM
 
