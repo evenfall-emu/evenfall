@@ -42,7 +42,6 @@ fn rtc_write(bus: &mut Bus, command: u8, input: &[u8]) {
     rtc_end(bus);
 }
 
-/// ZiGBA: "RTC control, abort recovery, reset, and force IRQ use serial commands"
 #[test]
 fn rtc_control_abort_recovery_reset_and_force_irq_use_serial_commands() {
     let mut bus = Bus::init(&[0; 0xca]);
@@ -76,7 +75,6 @@ fn rtc_control_abort_recovery_reset_and_force_irq_use_serial_commands() {
     assert!(bus.halt_wake_pending());
 }
 
-/// ZiGBA: "RTC date-time writes rebase deterministic time and preserve the written weekday"
 #[test]
 fn rtc_date_time_writes_rebase_deterministic_time_and_preserve_the_written_weekday() {
     let mut bus = Bus::init(&[]);
@@ -92,7 +90,6 @@ fn rtc_date_time_writes_rebase_deterministic_time_and_preserve_the_written_weekd
     assert_eq!([0x04, 0x03, 0x01, 0x01, 0x00, 0x00, 0x01], date_time);
 }
 
-/// ZiGBA: "RTC time writes convert hour modes while invalid BCD remains atomic"
 #[test]
 fn rtc_time_writes_convert_hour_modes_while_invalid_bcd_remains_atomic() {
     let mut bus = Bus::init(&[]);
@@ -117,7 +114,6 @@ fn rtc_time_writes_convert_hour_modes_while_invalid_bcd_remains_atomic() {
     assert_eq!([0, 1, 1, 0, 0, 0, 0], date_time);
 }
 
-/// ZiGBA: "Boktai solar sensor counts clock pulses and shares GPIO with RTC"
 #[test]
 fn boktai_solar_sensor_counts_clock_pulses_and_shares_gpio_with_rtc() {
     let mut bus = Bus::init(&[0; 0xca]);
@@ -164,7 +160,6 @@ fn read_gyro_sample(bus: &mut Bus) -> u16 {
     value
 }
 
-/// ZiGBA: "Wario gyro shifts four dummy bits and a 12-bit sample while rumble stays active"
 #[test]
 fn wario_gyro_shifts_four_dummy_bits_and_a_12_bit_sample_while_rumble_stays_active() {
     let mut bus = Bus::init(&[0; 0xca]);
@@ -181,7 +176,6 @@ fn wario_gyro_shifts_four_dummy_bits_and_a_12_bit_sample_while_rumble_stays_acti
     assert_eq!(0, read_half(&mut bus, 0x0800_00c4) & 8);
 }
 
-/// ZiGBA: "tilt cartridge latches two-axis samples through byte-wide SRAM registers"
 #[test]
 fn tilt_cartridge_latches_two_axis_samples_through_byte_wide_sram_registers() {
     use evenfall_gba::cartridge::tilt::Sample;
@@ -269,7 +263,6 @@ fn read_eeprom(bus: &mut Bus, block: u16, address_bits: u32) -> [u8; 8] {
     data
 }
 
-/// ZiGBA: "EEPROM CPU polling reports busy until the write deadline"
 #[test]
 fn eeprom_cpu_polling_reports_busy_until_the_write_deadline() {
     let mut bus = Bus::init_with_save(&[], SaveType::Eeprom512);
@@ -280,7 +273,6 @@ fn eeprom_cpu_polling_reports_busy_until_the_write_deadline() {
     assert_eq!(1, read_half(&mut bus, 0x0d00_0000) & 1);
 }
 
-/// ZiGBA: "runtime EEPROM detection uses the complete DMA3 command length and 14-bit addresses"
 #[test]
 fn runtime_eeprom_detection_uses_the_complete_dma3_command_length_and_14_bit_addresses() {
     let small_payload = [1, 3, 5, 7, 9, 11, 13, 15];

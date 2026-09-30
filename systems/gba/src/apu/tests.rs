@@ -6,18 +6,10 @@ fn state_bytes(apu: &Apu) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// ZiGBA `Apu.writeStateSchema` and `Apu.writeState`, for default and active
-/// square/noise/wave/FIFO state, including 13 cycles of deferred oscillator debt.
+/// Exact APU payloads for default and active square, noise, wave and FIFO
+/// state, including 13 cycles of deferred oscillator debt.
 #[test]
-fn apu_state_schema_and_payload_match_zigba() {
-    let mut schema = Vec::new();
-    Apu::write_state_schema(&mut Sink::new(Some(&mut schema), None)).unwrap();
-    assert_eq!(schema.len(), 1726);
-    assert_eq!(
-        blake3::hash(&schema).to_hex().as_str(),
-        "bf1a9650daa72882643f2fa37846b0a34488c95490ad5af8f5f9e2987432d349"
-    );
-
+fn apu_state_payload_is_exact() {
     let mut apu = Apu::default();
     let default = state_bytes(&apu).unwrap();
     assert_eq!(default.len(), 247);
@@ -108,7 +100,6 @@ fn assert_logical_equal(eager: &Apu, deferred: &Apu) {
     assert_eq!(eager, &materialized);
 }
 
-/// "silent output preserves exact APU states and resumed PCM"
 #[test]
 fn silent_output_preserves_exact_apu_states_and_resumed_pcm() {
     let mut audible = Apu::default();
@@ -161,7 +152,6 @@ fn silent_output_preserves_exact_apu_states_and_resumed_pcm() {
     assert_eq!(samples[..count], resumed[..count]);
 }
 
-/// "refill prediction counts overflows through the first request in every queue phase"
 #[test]
 fn refill_prediction_counts_overflows_through_the_first_request_in_every_queue_phase() {
     for words in 0..9 {
@@ -190,7 +180,6 @@ fn refill_prediction_counts_overflows_through_the_first_request_in_every_queue_p
     assert_eq!(disabled.overflows_until_refill(0), None);
 }
 
-/// "clocked catch-up consumes each overflow after the samples and frame step at its cycle"
 #[test]
 fn clocked_catch_up_consumes_each_overflow_after_the_samples_and_frame_step_at_its_cycle() {
     let mut explicit = Apu::default();
@@ -233,7 +222,6 @@ fn clocked_catch_up_consumes_each_overflow_after_the_samples_and_frame_step_at_i
     }
 }
 
-/// "bulk sample pushes match single pushes through queue wraparound"
 #[test]
 fn bulk_sample_pushes_match_single_pushes_through_queue_wraparound() {
     let counts = [0, 1, 5, 2047, 2048, 2049, 6151];
@@ -257,7 +245,6 @@ fn bulk_sample_pushes_match_single_pushes_through_queue_wraparound() {
     }
 }
 
-/// "constant sample runs match the eager scheduler across silent and audible PSG"
 #[test]
 fn constant_sample_runs_match_the_eager_scheduler_across_silent_and_audible_psg() {
     let mut eager = Apu::default();
@@ -309,7 +296,6 @@ fn constant_sample_runs_match_the_eager_scheduler_across_silent_and_audible_psg(
     }
 }
 
-/// "high-speed audio preserves all APU state except square and noise oscillators"
 #[test]
 fn high_speed_audio_preserves_all_apu_state_except_square_and_noise_oscillators() {
     let mut exact = Apu::default();
@@ -387,7 +373,6 @@ fn high_speed_audio_preserves_all_apu_state_except_square_and_noise_oscillators(
     }
 }
 
-/// "high-speed audio transitions settle prior debt and resume without catch-up"
 #[test]
 fn high_speed_audio_transitions_settle_prior_debt_and_resume_without_catch_up() {
     let mut apu = Apu::default();
@@ -432,6 +417,10 @@ enum InvalidStateCase {
     SweepCounterAbovePeriod,
     FifoATooManyPlaybackBytes,
     FifoBTooManyPlaybackBytes,
+    Square1PhasePastLongestPeriod,
+    Square2PhasePastLongestPeriod,
+    WavePhasePastLongestPeriod,
+    NoisePhasePastLongestPeriod,
 }
 
 fn invalid_state(case: InvalidStateCase) -> Apu {
@@ -449,20 +438,48 @@ fn invalid_state(case: InvalidStateCase) -> Apu {
         }
         InvalidStateCase::FifoATooManyPlaybackBytes => apu.fifo_a.playback_bytes_remaining = 5,
         InvalidStateCase::FifoBTooManyPlaybackBytes => apu.fifo_b.playback_bytes_remaining = 5,
+        InvalidStateCase::Square1PhasePastLongestPeriod => apu.square1.phase_cycles = 16 * 2048,
+        InvalidStateCase::Square2PhasePastLongestPeriod => apu.square2.phase_cycles = 16 * 2048,
+        InvalidStateCase::WavePhasePastLongestPeriod => apu.wave.phase_cycles = 8 * 2048,
+        InvalidStateCase::NoisePhasePastLongestPeriod => {
+            // The digest-valid hang: 2^58 noise steps at the shortest period.
+            apu.noise.enabled = true;
+            apu.noise.phase_cycles = 1 << 63;
+        }
     }
     apu
 }
 
-const INVALID_CASES: [InvalidStateCase; 6] = [
+const INVALID_CASES: [InvalidStateCase; 10] = [
     InvalidStateCase::SampleDeadline,
     InvalidStateCase::FrameDeadline,
     InvalidStateCase::SweepCounterZero,
     InvalidStateCase::SweepCounterAbovePeriod,
     InvalidStateCase::FifoATooManyPlaybackBytes,
     InvalidStateCase::FifoBTooManyPlaybackBytes,
+    InvalidStateCase::Square1PhasePastLongestPeriod,
+    InvalidStateCase::Square2PhasePastLongestPeriod,
+    InvalidStateCase::WavePhasePastLongestPeriod,
+    InvalidStateCase::NoisePhasePastLongestPeriod,
 ];
 
-/// "APU state writer rejects unreachable counters and deferred debt past the frame phase"
+/// Evenfall-only: a phase left from a longer period after a frequency change
+/// is reachable, so the bound is the longest period, not the current one.
+#[test]
+fn apu_state_accepts_oscillator_phases_left_from_a_longer_period() {
+    let mut apu = Apu::default();
+    apu.square1.frequency = 2047;
+    apu.square1.phase_cycles = 16 * 2048 - 1;
+    apu.wave.frequency = 2047;
+    apu.wave.phase_cycles = 8 * 2048 - 1;
+    apu.noise.phase_cycles = (14 << 15) * 32 - 1;
+    let mut bytes = Vec::new();
+    apu.write_state(&mut Sink::new(Some(&mut bytes), None)).unwrap();
+    let mut restored = Apu::default();
+    restored.read_state(&mut Source::new(&bytes)).unwrap();
+    assert_eq!(restored.noise.phase_cycles, (14 << 15) * 32 - 1);
+}
+
 #[test]
 fn apu_state_writer_rejects_unreachable_counters_and_deferred_debt_past_the_frame_phase() {
     for case in INVALID_CASES {
@@ -473,12 +490,11 @@ fn apu_state_writer_rejects_unreachable_counters_and_deferred_debt_past_the_fram
     assert_eq!(indebted.write_state(&mut Sink::new(None, None)), Err(Error::InvalidSaveState));
 }
 
-/// "APU state reader rejects counters before timing or playback can advance"
 #[test]
 fn apu_state_reader_rejects_counters_before_timing_or_playback_can_advance() {
     for case in INVALID_CASES {
         let malformed = invalid_state(case);
-        // Bypass the module writer's semantic validation, as ZiGBA does.
+        // Encode directly to bypass the module writer's semantic validation.
         let mut bytes = Vec::new();
         malformed.encode(&mut Sink::new(Some(&mut bytes), None)).unwrap();
         let mut restored = Apu::default();
@@ -486,7 +502,6 @@ fn apu_state_reader_rejects_counters_before_timing_or_playback_can_advance() {
     }
 }
 
-/// "deferred square and noise oscillators match eager endpoint ordering"
 #[test]
 fn deferred_square_and_noise_oscillators_match_eager_endpoint_ordering() {
     let mut eager = Apu::default();
@@ -539,7 +554,6 @@ fn deferred_square_and_noise_oscillators_match_eager_endpoint_ordering() {
     assert_logical_equal(&eager, &deferred);
 }
 
-/// "APU state round trip canonicalizes nonzero deferred oscillator debt"
 #[test]
 fn apu_state_round_trip_canonicalizes_nonzero_deferred_oscillator_debt() {
     let mut original = Apu::default();
@@ -559,7 +573,6 @@ fn apu_state_round_trip_canonicalizes_nonzero_deferred_oscillator_debt() {
     assert_eq!(original, restored);
 }
 
-/// "PSG length enable and trigger apply the frame-phase extra clock"
 #[test]
 fn psg_length_enable_and_trigger_apply_the_frame_phase_extra_clock() {
     let mut apu = Apu::default();
@@ -585,7 +598,6 @@ fn psg_length_enable_and_trigger_apply_the_frame_phase_extra_clock() {
     assert!(apu.noise.enabled);
 }
 
-/// "PSG length unit keeps clocking after channel output stops"
 #[test]
 fn psg_length_unit_keeps_clocking_after_channel_output_stops() {
     let mut apu = Apu::default();
@@ -626,7 +638,7 @@ fn naive_noise_elapse(channel: &mut NoiseChannel, cycles: u64) {
     }
 }
 
-// Fixed deterministic PRNG for the same randomized domains as ZiGBA's test.
+// Fixed deterministic PRNG for the randomized domains.
 fn random(seed: &mut u64) -> u64 {
     *seed ^= *seed << 13;
     *seed ^= *seed >> 7;
@@ -634,7 +646,6 @@ fn random(seed: &mut u64) -> u64 {
     *seed
 }
 
-/// "noise jump table matches per-step LFSR advance"
 #[test]
 fn noise_jump_table_matches_per_step_lfsr_advance() {
     let mut seed = 0x5eed;
@@ -661,7 +672,6 @@ fn noise_jump_table_matches_per_step_lfsr_advance() {
     }
 }
 
-/// "idle PSG oscillator fast path preserves device clocks and samples"
 #[test]
 fn idle_psg_oscillator_fast_path_preserves_device_clocks_and_samples() {
     let mut apu = Apu::default();
@@ -699,7 +709,6 @@ fn idle_psg_oscillator_fast_path_preserves_device_clocks_and_samples() {
     assert!(samples.iter().all(|&s| s == StereoSample::default()));
 }
 
-/// "silent square and noise channels stay deferred across samples"
 #[test]
 fn silent_square_and_noise_channels_stay_deferred_across_samples() {
     let mut eager = Apu::default();
@@ -747,7 +756,6 @@ fn silent_square_and_noise_channels_stay_deferred_across_samples() {
     assert!(saw_deferred_samples && saw_audible_square);
 }
 
-/// "LFSR jump tables match per-step advances for every state"
 #[test]
 fn lfsr_jump_tables_match_per_step_advances_for_every_state() {
     for (feedback, tables) in [(0x6000, &NOISE_JUMP_WIDE), (0x0060, &NOISE_JUMP_NARROW)] {
@@ -811,7 +819,6 @@ fn current_sample_reference(apu: &Apu) -> StereoSample {
     sample
 }
 
-/// "decoded mixer matches the per-channel reference mixer"
 #[test]
 fn decoded_mixer_matches_the_per_channel_reference_mixer() {
     let mut seed = 0x3a11_ce5d;

@@ -1,20 +1,17 @@
 # Command-line runner
 
-`evenfall-gba` is Evenfall's headless GBA binary. It executes a user-supplied ROM for
-a fixed number of instructions and prints cycles, instructions, faults and an
-optional framebuffer hash. It uses the HLE BIOS unless given an external BIOS.
-The runner lives in [`systems/gba/src/bin/evenfall-gba.rs`](../systems/gba/src/bin/evenfall-gba.rs).
-Its flags and output are ZiGBA's `zigba` CLI's; only the program name
-differs.
+`evenfall-gba` runs a GBA ROM without a window, for a fixed number of instructions, and prints what happened.
+It is meant for testing and debugging, not for playing: scripts use it to check that a ROM reaches a known frame, to trace the instructions around a bug, or to produce a save state for a bug report.
 
 ```sh
-cargo run -p evenfall-gba --bin evenfall-gba -- run --steps 100 path/to/homebrew.gba
+cargo run --release -p evenfall-gba --bin evenfall-gba -- run --steps 100 path/to/homebrew.gba
 ```
 
-Everything after `--` belongs to the runner. No ROM, BIOS or save image is
-distributed with Evenfall.
+Everything after `--` goes to the runner.
+Evenfall ships no ROM, BIOS or save file, so bring your own.
+The runner lives in [`systems/gba/src/bin/evenfall-gba.rs`](../systems/gba/src/bin/evenfall-gba.rs).
 
-## Invocation
+## Running a ROM
 
 ```text
 evenfall-gba run --steps <count> [--bios <path>] [--save-type <type>]
@@ -26,125 +23,138 @@ evenfall-gba run --steps <count> [--bios <path>] [--save-type <type>]
           [--no-tilt | --tilt <x> <y>] <rom.gba|rom.zip>
 ```
 
-`run --steps <count>` comes first. Other flags and the ROM path may follow in
-any order. `--steps` counts executed instructions, not cycles. A split HLE BIOS
-service may report its SWI on several steps. If the CPU sleeps, the runner
-waits for a wake event up to a frame at a time, including scheduled input;
-without a wake event it ends early.
+`run --steps <count>` must come first.
+The other flags and the ROM path can follow in any order.
+
+`--steps` counts instructions, not cycles or frames.
+A long BIOS routine may show its `SWI` on several steps ([`bios.md`](gba/hardware/bios.md#routines-that-run-over-several-steps)).
+While the CPU sleeps, the runner advances time until something wakes it, up to a frame at a time, including a scheduled button press.
+If nothing can wake it, the run ends early.
 
 | Option                 | Effect                                                                    |
 | ---------------------- | ------------------------------------------------------------------------- |
-| `--bios <path>`        | Boot a user-supplied BIOS of exactly 16 KiB instead of HLE.               |
-| `--save-type <type>`   | Override cartridge save detection (see [Saves](#saves)).                  |
-| `--save-file <path>`   | Use this battery save path instead of the ROM path with `.sav` extension. |
-| `--state-in <path>`    | Restore a portable state after boot, before the instruction run.          |
-| `--state-out <path>`   | Write a portable state after the run unless the machine faulted.          |
-| `--trace <path>`       | Write binary instruction records (see [Trace](#trace)).                   |
-| `--trace-from <steps>` | Begin tracing at this executed-instruction count.                         |
-| `--input <movie>`      | Schedule button changes by frame (see [Input movies](#input-movies)).     |
-| `--quiet`              | Suppress per-instruction and wait lines.                                  |
-| `--frame-hash`         | Print the final completed framebuffer hash.                               |
+| `--bios <path>`        | boot a real 16 KiB BIOS image instead of Evenfall's replacement           |
+| `--save-type <type>`   | choose the save chip instead of detecting it ([Saves](#saves-and-states)) |
+| `--save-file <path>`   | use this battery save instead of the ROM's path with a `.sav` extension   |
+| `--state-in <path>`    | load a save state after boot, before running                              |
+| `--state-out <path>`   | write a save state after the run, unless the machine faulted              |
+| `--trace <path>`       | write a binary record of each instruction ([Trace](#trace))               |
+| `--trace-from <steps>` | start tracing after this many instructions                                |
+| `--input <movie>`      | press buttons on given frames ([Input movies](#input-movies))             |
+| `--quiet`              | don't print a line per instruction or per wait                            |
+| `--frame-hash`         | print a hash of the last completed frame                                  |
 
-A raw `.gba` image must be at most 32 MiB. Paths with a case-insensitive
-`.zip` extension are unpacked in memory; the ZIP must contain exactly one
-unencrypted `.gba` entry, stored or deflated, without Zip64 or split disks.
-Both the archive and extracted ROM are limited to 32 MiB; the entry's CRC-32
-is checked. Other entries and macOS sidecars are ignored. The ZIP is decoded
-on every invocation; an extracted ROM avoids that startup work.
+The ROM may be a `.gba` file of at most 32 MiB, or a `.zip` (any case) holding exactly one `.gba` file.
+The ZIP is unpacked in memory, and must be unencrypted, stored or deflated, without Zip64 or split disks.
+The archive and the ROM inside are each limited to 32 MiB, and the ROM's CRC-32 is checked.
+Other files in the archive, including macOS metadata, are ignored.
+The ZIP is unpacked on every run, so an extracted ROM starts slightly faster.
 
-### Output and exit behavior
+## Output
 
-Ordinary instruction lines contain start and end cycles, address and opcode:
+Each instruction prints its start and end cycle, its address and its opcode:
 
 ```text
 <start>..<end> pc=<address> arm=<word>
 <start>..<end> pc=<address> thumb=<halfword>
 ```
 
-A sleeping CPU prints `wait cycle=<cycle> power=<halted|stopped|dma_stall>`
-unless quiet (`dma_stall`: a DMA burst owns the bus);
-a terminal compatibility fault prints `emulation fault cycle=... pc=...
-reason=...` and stops. A completed execution path prints
-`stop cycle=<cycle> next=<address> cpsr=<CPSR> r0=<R0>`, even if it faulted.
-`--frame-hash` adds `frame count=<frames> wyhash=<16 hex digits>`: seed-zero
-Zig-compatible Wyhash over the last completed 240×160 BGR555 image in
-little-endian pixel order.
+Other lines:
 
-Invalid command-line arguments print usage on stdout and exit with status 0.
-ROM, BIOS, save setup and state-load failures also print a diagnostic on
-stdout and exit with status 0, without a final `stop` line. Invalid input
-movies, write/trace errors and other errors returned after setup print to
-stderr and exit nonzero. A guest fault is reported but does not by itself
-make the process exit nonzero. Scripts should check both exit status and the
-final `stop` line, and parse a fault line if faults matter.
+- `wait cycle=<cycle> power=<halted|stopped>` while the CPU sleeps, unless `--quiet`.
+- `emulation fault cycle=... pc=... reason=...` when the machine stops on a fault ([`cpu.md`](gba/hardware/cpu.md#undefined-versus-unpredictable)).
+  The run then ends.
+- `stop cycle=<cycle> next=<address> cpsr=<CPSR> r0=<R0>` at the end of every run that got going, including one that faulted.
+- `frame count=<frames> wyhash=<16 hex digits>` with `--frame-hash`.
+  The hash is a seed-zero Wyhash (the variant in Zig's standard library) over the last completed 240x160 frame, as 15-bit BGR pixels in little-endian order.
+
+### Exit status
+
+Scripts need to look at the output as well as the exit status:
+
+- Invalid arguments print the usage text and exit with status 0.
+- A ROM, BIOS, save or state that fails to load prints a message on stdout and exits with status 0, without a `stop` line.
+- An invalid input movie, a file that can't be written and other errors after setup print to stderr and exit non-zero.
+- A guest fault is reported, but doesn't make the exit status non-zero by itself.
+
+So check the exit status, check that a `stop` line was printed, and look for a fault line if faults matter to you.
 
 ### Trace
 
-`--trace` writes a 16-byte little-endian record for each traced instruction:
-address (`u32`), opcode (`u32`, Thumb in the low half), CPSR after execution
-(`u32`), instruction set (0 ARM, 1 Thumb), then three zero bytes.
+`--trace` writes a 16-byte little-endian record per traced instruction: the address (`u32`), the opcode (`u32`, Thumb opcodes in the low half), the CPSR after the instruction (`u32`), the instruction set (0 for ARM, 1 for Thumb), and three zero bytes.
 
 ## Input movies
 
-`--input` takes comma-separated `key:first-last` ranges of inclusive frames:
+`--input` presses buttons during given frames, as comma-separated `key:first-last` ranges (both ends included):
 
 ```sh
-cargo run -p evenfall-gba --bin evenfall-gba -- run --steps 5000000 --quiet \
+cargo run --release -p evenfall-gba --bin evenfall-gba -- run --steps 5000000 --quiet \
   --frame-hash --input start:250-255,a:400-405 game.gba
 ```
 
-Keys are `a`, `b`, `select`, `start`, `right`, `left`, `up`, `down`, `r` and
-`l`. Frame `n` starts at master cycle `n × 280,896`. Overlapping ranges
-hold a key until its last range ends. Up to 32 ranges produce at most 64
-events. After `--state-in`, already-started ranges set the initial keys;
-future changes are delivered at their exact cycles, including during sleep.
+The keys are `a`, `b`, `select`, `start`, `right`, `left`, `up`, `down`, `r` and `l`.
+Frame n starts at cycle `n * 280,896`, and each press and release lands on that exact cycle, even while the CPU sleeps.
+Overlapping ranges hold a key until the last one ends.
+A movie can have up to 32 ranges.
+After `--state-in`, ranges that have already started set the initial keys.
+
+The same ROM, flags and movie always give the same output, which makes the runner useful for regression tests.
 
 ## Saves and states
 
-Battery saves default to the ROM path with extension `.sav`. An existing save
-must match the resolved type; known types can ignore trailing emulator metadata
-but reject short files. The runner writes cartridge save bytes through a
-synced temporary file and atomic replacement, including after a guest fault;
-unresolved or `none` saves produce no file.
+The battery save defaults to the ROM's path with a `.sav` extension.
+The runner writes it when the run ends, even after a guest fault, through a temporary file that it syncs and then renames, so an interrupted run never leaves half a save.
+It writes nothing when the game never used its save, or with `--save-type none`.
 
-| `--save-type`              | Medium                                                         |      Size |
-| -------------------------- | -------------------------------------------------------------- | --------: |
-| `auto` (default)           | Detect from title, existing file, exact ROM markers or traffic |         — |
-| `none`                     | No battery save                                                |         — |
-| `sram`                     | SRAM                                                           |    32 KiB |
-| `flash64`, `flash64-atmel` | 64 KiB Flash                                                   |    64 KiB |
-| `flash128`                 | 128 KiB Flash                                                  |   128 KiB |
-| `eeprom512`                | EEPROM                                                         | 512 bytes |
-| `eeprom8k`                 | EEPROM                                                         |     8 KiB |
+| `--save-type`              | Save chip                                                       |      Size |
+| -------------------------- | --------------------------------------------------------------- | --------: |
+| `auto` (default)           | detected from the title, the save file, ROM markers or the game |         — |
+| `none`                     | no battery save                                                 |         — |
+| `sram`                     | SRAM                                                            |    32 KiB |
+| `flash64`, `flash64-atmel` | 64 KiB Flash                                                    |    64 KiB |
+| `flash128`                 | 128 KiB Flash                                                   |   128 KiB |
+| `eeprom512`                | EEPROM                                                          | 512 bytes |
+| `eeprom8k`                 | EEPROM                                                          |     8 KiB |
 
-An explicit type resolves conflicting ROM markers. A state includes cartridge
-save memory and loads only with the same ROM, BIOS, boot mode and format; a
-failed load does not change the machine. Faulted machines skip `--state-out`
-with `state save skipped: machine faulted`. See
-[`design/save-states.md`](design/save-states.md) for the format.
+An existing save must fit the detected type.
+A longer file is accepted and its extra bytes, such as another emulator's metadata, are ignored, but a shorter one is refused.
+An explicit type settles conflicting ROM markers.
+[`cartridge.md`](gba/hardware/cartridge.md#save-type-detection) explains how detection works.
 
-## Cartridge peripherals
+A save state holds the whole machine, the save chip included, and only loads with the same ROM, BIOS, boot mode and format version.
+A failed load leaves the machine as it was.
+A faulted machine skips `--state-out` and prints `state save skipped: machine faulted`.
+The format is described in [`design/save-states.md`](design/save-states.md).
 
-The clock, solar sensor, gyro, rumble and tilt are detected from cartridge
-metadata. The clock may also be detected by the `RTC_V` library string. Flags
-override this detection; the on/off variants of each device are mutually
-exclusive:
+## Cartridge hardware
 
-| Flags                                  | Effect                                               |
-| -------------------------------------- | ---------------------------------------------------- |
-| `--no-rtc`, `--rtc-epoch <seconds>`    | Disable the clock or set its UTC Unix starting time. |
-| `--no-solar`, `--solar-level <0..255>` | Disable or set the light sensor.                     |
-| `--no-gyro`, `--gyro-sample <0..4095>` | Disable or set the raw 12-bit gyro sample.           |
-| `--rumble`, `--no-rumble`              | Force the rumble motor on or off.                    |
-| `--no-tilt`, `--tilt <x> <y>`          | Disable or set two raw 12-bit tilt samples.          |
+The real-time clock, light sensor, gyro, rumble and tilt sensor are switched on from the game code, and the clock also when the ROM contains the `RTC_V` library string ([`cartridge.md`](gba/hardware/cartridge.md#detecting-extra-hardware)).
+These flags override the detection.
+The on and off forms of each device can't be combined.
 
-`--gyro-sample` and `--tilt` accept decimal or `0x`-prefixed hexadecimal.
-An automatically detected RTC starts from the host UTC time; thereafter it
-advances with emulated time. Set `--rtc-epoch` for reproducible runs. Battery
-saves do not include RTC state; portable states do.
+| Flags                                  | Effect                                                   |
+| -------------------------------------- | -------------------------------------------------------- |
+| `--no-rtc`, `--rtc-epoch <seconds>`    | remove the clock, or set its starting time (Unix, UTC)   |
+| `--no-solar`, `--solar-level <0..255>` | remove the light sensor, or set its level                |
+| `--no-gyro`, `--gyro-sample <0..4095>` | remove the gyro, or set its raw 12-bit value             |
+| `--rumble`, `--no-rumble`              | force the rumble motor on or off                         |
+| `--no-tilt`, `--tilt <x> <y>`          | remove the tilt sensor, or set its two raw 12-bit values |
+
+`--gyro-sample` and `--tilt` take decimal or `0x` hexadecimal.
+
+A detected clock starts from the host's current time and then advances with emulated time, so two runs a minute apart differ.
+Set `--rtc-epoch` for reproducible runs.
+The battery save doesn't include the clock, and a save state does.
 
 ```sh
-cargo run -p evenfall-gba --bin evenfall-gba -- run --steps 100 --no-rtc game.gba
-cargo run -p evenfall-gba --bin evenfall-gba -- run --steps 100 \
+cargo run --release -p evenfall-gba --bin evenfall-gba -- run --steps 100 --no-rtc game.gba
+cargo run --release -p evenfall-gba --bin evenfall-gba -- run --steps 100 \
   --save-type eeprom8k --save-file game.sav game.gba
 ```
+
+## Known limits
+
+- Invalid arguments and load failures exit with status 0.
+  Scripts have to check the output.
+- The runner has no window, sound or real-time pacing.
+  The [SDK](sdk.md) is the way to play.

@@ -277,7 +277,6 @@ impl Cpu {
 mod tests {
     use super::*;
 
-    /// ZiGBA machine_test: "HLE SoundDriverMain runs the internal MP2K scheduler and starts a note".
     #[test]
     fn hle_sound_driver_main_runs_the_internal_mp2k_scheduler_and_starts_a_note() {
         let mut bus = Bus::init(&[]);

@@ -308,7 +308,7 @@ impl Cpu {
 mod tests {
     use super::*;
 
-    /// ZiGBA `HleMultiBootContinuation.random_data` defaults to FF in all three
+    /// `HleMultiBootContinuation::random_data` defaults to FF in all three
     /// slots; clients absent from `client_bit` still contribute FF to the CRC.
     #[test]
     fn inactive_multiboot_clients_contribute_ff_to_crc() {

@@ -10,7 +10,7 @@ const HLE_BULK_STEP_CYCLES: u64 = 1 << 20;
 const HLE_SWI_RETURN_LATCH: u32 = 0xE3A0_2004;
 
 impl Cpu {
-    /// A typed fault replaces ZiGBA's separate fault_out and faulted bit.
+    /// A fault returns as a typed `FaultReason`.
     pub fn execute_hle_software_interrupt(
         &mut self,
         bus: &mut Bus,
@@ -227,7 +227,8 @@ impl Cpu {
 mod tests {
     use super::*;
 
-    /// ZiGBA machine_test: "HLE Div and DivArm return quotient remainder and absolute quotient including BIOS edges".
+    /// Div and DivArm return the quotient, remainder and absolute quotient,
+    /// including the BIOS edge cases, through a CPU step.
     #[test]
     fn hle_division_swi_executes_through_cpu_step() {
         for (service, numerator, denominator, quotient, remainder, absolute) in [
@@ -259,7 +260,7 @@ mod tests {
         }
     }
 
-    /// ZiGBA machine_test: "unsupported HLE SWI is a typed Machine fault" (CPU fault boundary).
+    /// An unsupported HLE SWI is a typed fault at the CPU boundary.
     #[test]
     fn unsupported_hle_swi_faults_before_return_latch() {
         let mut bus = Bus::init(&[0, 0, 0x2B, 0xEF]);

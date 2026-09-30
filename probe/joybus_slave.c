@@ -3,7 +3,7 @@
  * Selects JoyBus mode (RCNT 0xC000) with JOYCNT 0x0040, polls the JOYSTAT
  * receive flag, reads the 32-bit JOY_RECV payload little-endian, and reports
  * it (expected 0x44332211 from the validator-scheduled WRITE-to-GBA
- * command). Runs under test/probe_cases.zig, which schedules the
+ * command). Runs under validator/probe_cases.rs, which schedules the
  * typed master command at a caller-supplied completion cycle after setup.
  * HLE boot only.
  */

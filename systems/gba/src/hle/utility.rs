@@ -8,8 +8,8 @@ fn access(address: u32, width: AccessWidth) -> Access {
 }
 
 impl Cpu {
-    /// ZiGBA `executeHleInterruptWait`. The IRQ return path must call
-    /// `complete_hle_interrupt_wait` only at depth zero.
+    /// The IRQ return path must call `complete_hle_interrupt_wait` only at
+    /// depth zero.
     pub fn execute_hle_interrupt_wait(&mut self, bus: &mut Bus, vblank: bool) {
         if vblank {
             self.registers[0] = 1;
@@ -48,7 +48,7 @@ impl Cpu {
         true
     }
 
-    /// ZiGBA `executeHleSoundBias`: every unit write is visible to the APU.
+    /// Every unit write is visible to the APU.
     pub fn execute_hle_sound_bias(&mut self, bus: &mut Bus) {
         let target = if self.registers[0] == 0 { 0_u16 } else { 0x0200 };
         let current = bus.read(access(0x0400_0088, AccessWidth::Half)).value as u16;

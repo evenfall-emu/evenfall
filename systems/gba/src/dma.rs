@@ -80,7 +80,6 @@ impl Channel {
 mod tests {
     use super::*;
 
-    /// Zig bus_test: DMA register high halves apply channel-specific address widths
     #[test]
     fn dma_register_high_halves_apply_channel_specific_address_widths() {
         let mut channels =

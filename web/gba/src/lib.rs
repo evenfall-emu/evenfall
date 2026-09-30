@@ -138,37 +138,37 @@ fn copy_upload(bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_version() -> u32 {
+pub extern "C" fn ef_version() -> u32 {
     1
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_error_ptr() -> u32 {
+pub extern "C" fn ef_error_ptr() -> u32 {
     STATE.with_borrow(|state| state.error.as_ptr() as u32)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_error_len() -> u32 {
+pub extern "C" fn ef_error_len() -> u32 {
     STATE.with_borrow(|state| state.error_len as u32)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_output_ptr() -> u32 {
+pub extern "C" fn ef_output_ptr() -> u32 {
     STATE.with_borrow(|state| state.output_ptr as u32)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_output_len() -> u32 {
+pub extern "C" fn ef_output_len() -> u32 {
     STATE.with_borrow(|state| state.output_len as u32)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_input_ptr() -> u32 {
+pub extern "C" fn ef_input_ptr() -> u32 {
     STATE.with_borrow(|state| state.input.as_ptr() as u32)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_prepare(size: u32) -> i32 {
+pub extern "C" fn ef_prepare(size: u32) -> i32 {
     call(|state| {
         if size as usize > MAX_INPUT {
             return Err("InputTooLarge".into());
@@ -185,7 +185,7 @@ pub extern "C" fn zb_prepare(size: u32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_load(
+pub extern "C" fn ef_load(
     image_len: u32,
     bios_len: u32,
     save_len: u32,
@@ -245,7 +245,7 @@ pub extern "C" fn zb_load(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_dispose() {
+pub extern "C" fn ef_dispose() {
     STATE.with_borrow_mut(|state| {
         state.session = None;
         state.input = Vec::new();
@@ -254,39 +254,39 @@ pub extern "C" fn zb_dispose() {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_cycle() -> u64 {
+pub extern "C" fn ef_cycle() -> u64 {
     STATE.with_borrow(|state| state.session.as_ref().map_or(0, |s| s.machine.now()))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_frames() -> u64 {
+pub extern "C" fn ef_frames() -> u64 {
     STATE.with_borrow(|state| state.session.as_ref().map_or(0, |s| s.machine.completed_frames()))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_rom_hash_ptr() -> u32 {
+pub extern "C" fn ef_rom_hash_ptr() -> u32 {
     STATE.with_borrow(|state| {
         state.session.as_ref().map_or(state.error.as_ptr() as u32, |s| s.rom_sha1.as_ptr() as u32)
     })
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_rtc_enabled() -> u32 {
+pub extern "C" fn ef_rtc_enabled() -> u32 {
     STATE.with_borrow(|state| state.session.as_ref().is_some_and(|s| s.rtc_enabled) as u32)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_save_type() -> i32 {
+pub extern "C" fn ef_save_type() -> i32 {
     STATE.with_borrow(|state| state.session.as_ref().map_or(-1, |s| s.machine.save_type() as i32))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_inputs_consumed() -> u32 {
+pub extern "C" fn ef_inputs_consumed() -> u32 {
     STATE.with_borrow(|state| state.inputs_consumed)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_keys(mask: u32) -> i32 {
+pub extern "C" fn ef_keys(mask: u32) -> i32 {
     call(|state| {
         let session = active(state)?;
         if mask > 1023 {
@@ -298,7 +298,7 @@ pub extern "C" fn zb_keys(mask: u32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_run_until(deadline: u64, event_count: u32, input_deadline: u64) -> i32 {
+pub extern "C" fn ef_run_until(deadline: u64, event_count: u32, input_deadline: u64) -> i32 {
     call(|state| {
         let session = state.session.as_mut().ok_or("NoSession")?;
         if deadline > session.machine.now() && deadline - session.machine.now() > 280_896 {
@@ -334,7 +334,7 @@ pub extern "C" fn zb_run_until(deadline: u64, event_count: u32, input_deadline: 
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_step() -> i32 {
+pub extern "C" fn ef_step() -> i32 {
     call(|state| {
         Ok(match active(state)?.step().map_err(session_error)? {
             StepOutcome::Executed(_) => 0,
@@ -347,7 +347,7 @@ pub extern "C" fn zb_step() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_cpu_ptr() -> u32 {
+pub extern "C" fn ef_cpu_ptr() -> u32 {
     STATE.with_borrow_mut(|state| {
         state.cpu = [0; 18];
         if let Some(session) = &state.session {
@@ -361,7 +361,7 @@ pub extern "C" fn zb_cpu_ptr() -> u32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_frame_ptr() -> u32 {
+pub extern "C" fn ef_frame_ptr() -> u32 {
     STATE.with_borrow(|state| {
         state
             .session
@@ -371,7 +371,7 @@ pub extern "C" fn zb_frame_ptr() -> u32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_canonical_frame() -> i32 {
+pub extern "C" fn ef_canonical_frame() -> i32 {
     call(|state| {
         active(state)?.canonical_framebuffer().map_err(session_error)?;
         Ok(0)
@@ -379,14 +379,14 @@ pub extern "C" fn zb_canonical_frame() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_frame_canonical() -> u32 {
+pub extern "C" fn ef_frame_canonical() -> u32 {
     STATE.with_borrow(|state| {
         state.session.as_ref().is_some_and(|s| s.machine.bus.is_framebuffer_canonical()) as u32
     })
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_present_frame_ptr() -> u32 {
+pub extern "C" fn ef_present_frame_ptr() -> u32 {
     STATE.with_borrow(|state| {
         state.session.as_ref().map_or(state.cpu.as_ptr() as u32, |s| {
             s.machine.bus.published_framebuffer().as_ptr() as u32
@@ -395,17 +395,17 @@ pub extern "C" fn zb_present_frame_ptr() -> u32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_video_frame_id() -> u64 {
+pub extern "C" fn ef_video_frame_id() -> u64 {
     STATE.with_borrow(|state| state.session.as_ref().map_or(0, |s| s.machine.bus.video_frame_id))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_video_frame_cycle() -> u64 {
+pub extern "C" fn ef_video_frame_cycle() -> u64 {
     STATE.with_borrow(|state| state.session.as_ref().map_or(0, |s| s.machine.bus.video_frame_cycle))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_video_interval(interval: u32) -> i32 {
+pub extern "C" fn ef_video_interval(interval: u32) -> i32 {
     call(|state| {
         if !(1..=16).contains(&interval) {
             return Err("InvalidVideoInterval".into());
@@ -416,12 +416,12 @@ pub extern "C" fn zb_video_interval(interval: u32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_audio_ptr() -> u32 {
+pub extern "C" fn ef_audio_ptr() -> u32 {
     STATE.with_borrow(|state| state.audio.as_ptr() as u32)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_drain_audio() -> i32 {
+pub extern "C" fn ef_drain_audio() -> i32 {
     call(|state| {
         let State { session, audio, .. } = state;
         Ok(session.as_mut().ok_or("NoSession")?.drain_audio(audio).map_err(session_error)? as i32)
@@ -429,7 +429,7 @@ pub extern "C" fn zb_drain_audio() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_audio_output(enabled: u32) -> i32 {
+pub extern "C" fn ef_audio_output(enabled: u32) -> i32 {
     call(|state| {
         let session = active(state)?;
         if enabled > 1 {
@@ -441,7 +441,7 @@ pub extern "C" fn zb_audio_output(enabled: u32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_read_memory(address: u32, length: u32) -> i32 {
+pub extern "C" fn ef_read_memory(address: u32, length: u32) -> i32 {
     call(|state| {
         let session = active(state)?;
         if length > 1024 * 1024 {
@@ -457,7 +457,7 @@ pub extern "C" fn zb_read_memory(address: u32, length: u32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_export_rom() -> i32 {
+pub extern "C" fn ef_export_rom() -> i32 {
     call(|state| {
         let (ptr, len) = {
             let rom = active(state)?.rom();
@@ -469,7 +469,7 @@ pub extern "C" fn zb_export_rom() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_export_save() -> i32 {
+pub extern "C" fn ef_export_save() -> i32 {
     call(|state| {
         let (ptr, len) = {
             let save = active(state)?.machine.save_data();
@@ -481,7 +481,7 @@ pub extern "C" fn zb_export_save() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_write_state() -> i32 {
+pub extern "C" fn ef_write_state() -> i32 {
     call(|state| {
         state.clear_output();
         let bytes = active(state)?.write_state_fallible().map_err(session_error)?;
@@ -491,7 +491,7 @@ pub extern "C" fn zb_write_state() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_load_state() -> i32 {
+pub extern "C" fn ef_load_state() -> i32 {
     call(|state| {
         let State { session, input, .. } = state;
         session.as_mut().ok_or("NoSession")?.load_state(input).map_err(session_error)?;
@@ -502,7 +502,7 @@ pub extern "C" fn zb_load_state() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_write_rewind_bundle() -> i32 {
+pub extern "C" fn ef_write_rewind_bundle() -> i32 {
     call(|state| {
         state.clear_output();
         let bytes = active(state)?.write_rewind_bundle_fallible().map_err(session_error)?;
@@ -512,7 +512,7 @@ pub extern "C" fn zb_write_rewind_bundle() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_load_rewind_bundle() -> i32 {
+pub extern "C" fn ef_load_rewind_bundle() -> i32 {
     call(|state| {
         state.clear_output();
         let upload = std::mem::take(&mut state.input);
@@ -523,7 +523,7 @@ pub extern "C" fn zb_load_rewind_bundle() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_reset_save() -> i32 {
+pub extern "C" fn ef_reset_save() -> i32 {
     call(|state| {
         let State { session, input, .. } = state;
         session.as_mut().ok_or("NoSession")?.reset_with_save(input).map_err(session_error)?;
@@ -534,7 +534,7 @@ pub extern "C" fn zb_reset_save() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_fault() -> i32 {
+pub extern "C" fn ef_fault() -> i32 {
     call(|state| {
         let fault = active(state)?.machine.fault();
         if let Some(fault) = fault {
@@ -549,7 +549,7 @@ pub extern "C" fn zb_fault() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_rewind_config(
+pub extern "C" fn ef_rewind_config(
     budget_bytes: u32,
     interval_frames: u32,
     compression: u32,
@@ -576,7 +576,7 @@ pub extern "C" fn zb_rewind_config(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_rewind_speed(scale_q8: u32) -> i32 {
+pub extern "C" fn ef_rewind_speed(scale_q8: u32) -> i32 {
     call(|state| {
         let session = active(state)?;
         let scale = u16::try_from(scale_q8).map_err(|_| "InvalidRewindSpeed")?;
@@ -586,7 +586,7 @@ pub extern "C" fn zb_rewind_speed(scale_q8: u32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_rewind(steps: u32) -> i32 {
+pub extern "C" fn ef_rewind(steps: u32) -> i32 {
     call(|state| {
         let session = active(state)?;
         if steps == 0 || steps > 1024 {
@@ -598,14 +598,14 @@ pub extern "C" fn zb_rewind(steps: u32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_rewind_depth() -> u32 {
+pub extern "C" fn ef_rewind_depth() -> u32 {
     STATE.with_borrow(|state| {
         state.session.as_ref().map_or(0, |s| s.rewind_depth().min(u32::MAX as usize) as u32)
     })
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_rewind_info(index: u32) -> i32 {
+pub extern "C" fn ef_rewind_info(index: u32) -> i32 {
     call(|state| {
         let info = active(state)?.rewind_info(index as usize).ok_or("InvalidRewindSteps")?;
         let mut bytes = Vec::new();
@@ -619,7 +619,7 @@ pub extern "C" fn zb_rewind_info(index: u32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zb_rewind_frame(index: u32) -> i32 {
+pub extern "C" fn ef_rewind_frame(index: u32) -> i32 {
     call(|state| {
         state.clear_output();
         let mut frame = vec![0u16; FRAME_PIXELS];

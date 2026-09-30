@@ -1,4 +1,4 @@
-//! ZiGBA `test/machine_test.zig`, first-half machine integration oracles.
+//! First half of the machine integration oracles.
 
 use evenfall_cpu_arm::{
     ArmInstructionClass, FaultReason as IsaFaultReason, InvalidPsrStateKind, Pipeline,
@@ -48,7 +48,6 @@ fn condition_truth_oracle(condition: u8, n: bool, z: bool, c: bool, v: bool) -> 
     }
 }
 
-/// Zig: `condition truth table ARM covers every NZCV assignment through generic and normal execution`.
 #[test]
 fn condition_truth_table_arm_covers_every_nzcv_assignment_through_generic_and_normal_execution() {
     for flag_bits in 0..16_u32 {
@@ -106,7 +105,6 @@ fn condition_truth_table_arm_covers_every_nzcv_assignment_through_generic_and_no
     }
 }
 
-/// Zig: `condition truth table Thumb covers every branch condition and NZCV assignment at a deadline`.
 #[test]
 fn condition_truth_table_thumb_covers_every_branch_condition_and_nzcv_assignment_at_a_deadline() {
     for flag_bits in 0..16_u32 {
@@ -179,7 +177,6 @@ fn condition_truth_table_thumb_covers_every_branch_condition_and_nzcv_assignment
     }
 }
 
-/// Zig: `HLE boot exposes the post-BIOS System stack pointer and forced blank`.
 #[test]
 fn hle_boot_exposes_the_post_bios_system_stack_pointer_and_forced_blank() {
     let mut machine = Machine::new(Config { rom: &[0], boot: BootMode::Hle, ..Config::default() });
@@ -199,7 +196,6 @@ fn hle_boot_exposes_the_post_bios_system_stack_pointer_and_forced_blank() {
     );
 }
 
-/// Zig: `runUntil stops at an exact deadline or the first instruction boundary after it`.
 #[test]
 fn run_until_stops_at_an_exact_deadline_or_the_first_instruction_boundary_after_it() {
     let rom = [0x01, 0x00, 0xA0, 0xE3, 0x02, 0x10, 0xA0, 0xE3];
@@ -221,7 +217,6 @@ fn run_until_stops_at_an_exact_deadline_or_the_first_instruction_boundary_after_
     );
 }
 
-/// Zig: `host yield points do not change input timing inside atomic instructions`.
 #[test]
 fn host_yield_points_do_not_change_input_timing_inside_atomic_instructions() {
     let rom = [0xFE, 0xFF, 0xFF, 0xEA];
@@ -263,7 +258,6 @@ fn host_yield_points_do_not_change_input_timing_inside_atomic_instructions() {
     assert_eq!(before, sliced.inspect_cpu());
 }
 
-/// Zig: `timestamped input wakes Halt at its exact master cycle`.
 #[test]
 fn timestamped_input_wakes_halt_at_its_exact_master_cycle() {
     let mut machine = Machine::new(Config::default());
@@ -284,7 +278,6 @@ fn timestamped_input_wakes_halt_at_its_exact_master_cycle() {
     assert_eq!(machine.bus.keys, KeyState::default());
 }
 
-/// Zig: `timestamped input validates its absolute ordering`.
 #[test]
 fn timestamped_input_validates_its_absolute_ordering() {
     let mut machine = Machine::new(Config::default());
@@ -314,7 +307,6 @@ fn timestamped_input_validates_its_absolute_ordering() {
     );
 }
 
-/// Zig: `Machine inspection is coherent and has no MMIO or timing side effects`.
 #[test]
 fn machine_inspection_is_coherent_and_has_no_mmio_or_timing_side_effects() {
     let mut machine = Machine::new(Config::default());
@@ -348,7 +340,6 @@ fn machine_inspection_is_coherent_and_has_no_mmio_or_timing_side_effects() {
     );
 }
 
-/// Zig: `external BIOS boot begins at reset vector in masked supervisor mode`.
 #[test]
 fn external_bios_boot_begins_at_reset_vector_in_masked_supervisor_mode() {
     let mut bios = [0; 0x4000];
@@ -363,7 +354,6 @@ fn external_bios_boot_begins_at_reset_vector_in_masked_supervisor_mode() {
     assert_ne!(machine.read_cpsr() & (1 << 6), 0);
 }
 
-/// Zig: `HLE MultiBoot rejects malformed parameters and returns to the following instruction`.
 #[test]
 fn hle_multi_boot_rejects_malformed_parameters_and_returns_to_the_following_instruction() {
     let mut rom = [0; 8];
@@ -380,7 +370,6 @@ fn hle_multi_boot_rejects_malformed_parameters_and_returns_to_the_following_inst
     assert!(machine.cpu.hle_service.is_none());
 }
 
-/// Zig: `HLE RegisterRamReset clears selected memories but preserves the BIOS work area`.
 #[test]
 fn hle_register_ram_reset_clears_selected_memories_but_preserves_the_bios_work_area() {
     let rom = [0, 0, 1, 0xEF];
@@ -401,7 +390,6 @@ fn hle_register_ram_reset_clears_selected_memories_but_preserves_the_bios_work_a
     assert_eq!(machine.bus.dispcnt, 0x0080);
 }
 
-/// Zig: `runUntil bounds Halt with no enabled wake source at its deadline`.
 #[test]
 fn run_until_bounds_halt_with_no_enabled_wake_source_at_its_deadline() {
     let mut rom = [0; 8];
@@ -419,7 +407,6 @@ fn run_until_bounds_halt_with_no_enabled_wake_source_at_its_deadline() {
     assert_eq!(machine.bus.power_state(), PowerState::Halted);
 }
 
-/// Zig: `HLE IntrWait consumes a selected old BIOS IRQ flag without sleeping`.
 #[test]
 fn hle_intr_wait_consumes_a_selected_old_bios_irq_flag_without_sleeping() {
     let rom = [0, 0, 4, 0xEF];
@@ -433,7 +420,6 @@ fn hle_intr_wait_consumes_a_selected_old_bios_irq_flag_without_sleeping() {
     assert_eq!(&machine.bus.iwram[0x7FF8..0x7FFA], &[0, 0]);
 }
 
-/// Zig: `HLE VBlankIntrWait discards old VBlank state and enters Halt`.
 #[test]
 fn hle_vblank_intr_wait_discards_old_vblank_state_and_enters_halt() {
     let rom = [0, 0, 5, 0xEF];
@@ -448,7 +434,6 @@ fn hle_vblank_intr_wait_discards_old_vblank_state_and_enters_halt() {
     assert_eq!(&machine.bus.iwram[0x7FF8..0x7FFA], &[0, 0]);
 }
 
-/// Zig: `direct step while halted or stopped returns without advancing emulated state`.
 #[test]
 fn direct_step_while_halted_or_stopped_returns_without_advancing_emulated_state() {
     let rom = [7, 0, 0xA0, 0xE3];
@@ -479,7 +464,6 @@ fn direct_step_while_halted_or_stopped_returns_without_advancing_emulated_state(
     }
 }
 
-/// Zig: `direct step resumes a pending Halt wake independently of IME`.
 #[test]
 fn direct_step_resumes_a_pending_halt_wake_independently_of_ime() {
     let rom = [7, 0, 0xA0, 0xE3];
@@ -496,7 +480,6 @@ fn direct_step_resumes_a_pending_halt_wake_independently_of_ime() {
     assert_eq!(machine.bus.power_state(), PowerState::Running);
 }
 
-/// Zig: `stepWithInput applies a same-cycle keypad wake before stepping Stop`.
 #[test]
 fn step_with_input_applies_a_same_cycle_keypad_wake_before_stepping_stop() {
     let rom = [7, 0, 0xA0, 0xE3];
@@ -520,7 +503,6 @@ fn step_with_input_applies_a_same_cycle_keypad_wake_before_stepping_stop() {
     assert_eq!(machine.bus.power_state(), PowerState::Running);
 }
 
-/// Zig: `stepWithInput retains a future input while Halt is waiting`.
 #[test]
 fn step_with_input_retains_a_future_input_while_halt_is_waiting() {
     let mut machine = Machine::new(Config::default());
@@ -540,7 +522,6 @@ fn step_with_input_retains_a_future_input_while_halt_is_waiting() {
     assert!(!machine.bus.keys.a);
 }
 
-/// Zig: `waitUntilWithInput reaches a future keypad wake without executing the guest`.
 #[test]
 fn wait_until_with_input_reaches_a_future_keypad_wake_without_executing_the_guest() {
     let rom = [7, 0, 0xA0, 0xE3];
@@ -576,7 +557,6 @@ fn wait_until_with_input_reaches_a_future_keypad_wake_without_executing_the_gues
     assert_eq!(machine.bus.power_state(), PowerState::Running);
 }
 
-/// Zig: `waitUntil bounds Halt without a wake and executes no guest instruction`.
 #[test]
 fn wait_until_bounds_halt_without_a_wake_and_executes_no_guest_instruction() {
     let rom = [7, 0, 0xA0, 0xE3];
@@ -592,7 +572,6 @@ fn wait_until_bounds_halt_without_a_wake_and_executes_no_guest_instruction() {
     assert_eq!(machine.bus.power_state(), PowerState::Halted);
 }
 
-/// Zig: `Stop retains future master-cycle input for the caller`.
 #[test]
 fn stop_retains_future_master_cycle_input_for_the_caller() {
     let rom = [0, 0, 3, 0xEF];
@@ -610,7 +589,6 @@ fn stop_retains_future_master_cycle_input_for_the_caller() {
     assert!(!machine.bus.keys.a);
 }
 
-/// Zig: `HLE SoundBias ramps the DAC bias while preserving resolution bits`.
 #[test]
 fn hle_sound_bias_ramps_the_dac_bias_while_preserving_resolution_bits() {
     let rom = [0, 0, 0x19, 0xEF];
@@ -629,7 +607,6 @@ fn hle_sound_bias_ramps_the_dac_bias_while_preserving_resolution_bits() {
     assert_eq!(lower.bus.apu.sound_bias, 0x8000);
 }
 
-/// Zig: `HLE SoftReset clears CPU state and the BIOS work area before returning to ROM`.
 #[test]
 fn hle_soft_reset_clears_cpu_state_and_the_bios_work_area_before_returning_to_rom() {
     let mut rom = [0; 8];
@@ -665,7 +642,6 @@ fn hle_soft_reset_clears_cpu_state_and_the_bios_work_area_before_returning_to_ro
     assert!(machine.bus.iwram[0x7E00..].iter().all(|&byte| byte == 0));
 }
 
-/// Zig: `user-mode movs pc, lr branches with a flag update and no SPSR restore`.
 #[test]
 fn user_mode_movs_pc_lr_branches_with_a_flag_update_and_no_spsr_restore() {
     let mut rom = [0; 8];
@@ -679,7 +655,6 @@ fn user_mode_movs_pc_lr_branches_with_a_flag_update_and_no_spsr_restore() {
     assert_ne!(machine.read_cpsr() & (1 << 30), 0);
 }
 
-/// Zig: `HLE SoftReset re-enters EWRAM when the captured BIOS flag is nonzero`.
 #[test]
 fn hle_soft_reset_re_enters_ewram_when_the_captured_bios_flag_is_nonzero() {
     let rom = [0, 0xDF];
@@ -698,7 +673,6 @@ fn hle_soft_reset_re_enters_ewram_when_the_captured_bios_flag_is_nonzero() {
     assert!(machine.bus.iwram[0x7E00..].iter().all(|&byte| byte == 0));
 }
 
-/// Zig: `runUntil resumes Halt at an enabled device event before its deadline`.
 #[test]
 fn run_until_resumes_halt_at_an_enabled_device_event_before_its_deadline() {
     let mut rom = [0; 8];
@@ -718,7 +692,6 @@ fn run_until_resumes_halt_at_an_enabled_device_event_before_its_deadline() {
     assert_eq!(machine.bus.power_state(), PowerState::Running);
 }
 
-/// Zig: `Halt wake enters an enabled IRQ before executing the interrupted instruction`.
 #[test]
 fn halt_wake_enters_an_enabled_irq_before_executing_the_interrupted_instruction() {
     let mut rom = [0; 12];
@@ -741,7 +714,6 @@ fn halt_wake_enters_an_enabled_irq_before_executing_the_interrupted_instruction(
     assert_eq!(machine.bus.power_state(), PowerState::Running);
 }
 
-/// Zig: `HLE Stop freezes system clocks and runUntil reports the stopped state`.
 #[test]
 fn hle_stop_freezes_system_clocks_and_run_until_reports_the_stopped_state() {
     let rom = [0, 0, 3, 0xEF];
@@ -762,7 +734,6 @@ fn hle_stop_freezes_system_clocks_and_run_until_reports_the_stopped_state() {
     assert_eq!(machine.bus.power_state(), PowerState::Stopped);
 }
 
-/// Zig: `HLE RegisterRamReset resets sound and other devices without clearing RAM`.
 #[test]
 fn hle_register_ram_reset_resets_sound_and_other_devices_without_clearing_ram() {
     let rom = [0, 0, 1, 0xEF];
@@ -813,7 +784,6 @@ fn hle_register_ram_reset_resets_sound_and_other_devices_without_clearing_ram() 
     assert_eq!((machine.bus.win0h, machine.bus.bldcnt, machine.bus.dispcnt), (0, 0, 0x0080));
 }
 
-/// Zig: `HLE RegisterRamReset exposes the SIO reset group and unconditional data-low bug`.
 #[test]
 fn hle_register_ram_reset_exposes_the_sio_reset_group_and_unconditional_data_low_bug() {
     let rom = [0, 0, 1, 0xEF];
@@ -876,7 +846,6 @@ fn hle_register_ram_reset_exposes_the_sio_reset_group_and_unconditional_data_low
     assert_eq!(with.bus.joy_response, None);
 }
 
-/// Zig: `HLE HardReset resets console state and reboots without erasing cartridge save`.
 #[test]
 fn hle_hard_reset_resets_console_state_and_reboots_without_erasing_cartridge_save() {
     let rom = [0, 0, 0x26, 0xEF, 7, 0, 0xA0, 0xE3];
@@ -949,7 +918,6 @@ fn hle_hard_reset_resets_console_state_and_reboots_without_erasing_cartridge_sav
     assert_eq!(machine.save_data()[0x1234], 0x5A);
 }
 
-/// Zig: `HALTCNT byte writes select Halt or Stop and Halt resumes at the following instruction`.
 #[test]
 fn haltcnt_byte_writes_select_halt_or_stop_and_halt_resumes_at_the_following_instruction() {
     for haltcnt in [0, 0x80] {
@@ -976,7 +944,6 @@ fn haltcnt_byte_writes_select_halt_or_stop_and_halt_resumes_at_the_following_ins
     }
 }
 
-/// Zig: `mGBA timing suite single loads include the ARM7 internal result cycle`.
 #[test]
 fn mgba_timing_suite_single_loads_include_the_arm7_internal_result_cycle() {
     let code_address = 0x0300_0000;
@@ -1008,7 +975,6 @@ fn mgba_timing_suite_single_loads_include_the_arm7_internal_result_cycle() {
     assert_eq!(machine.read_register(2), 0xA5A5_5A5A);
 }
 
-/// Zig: `ARM7 defers a pending IRQ until after a taken branch refill`.
 #[test]
 fn arm7_defers_a_pending_irq_until_after_a_taken_branch_refill() {
     let words =
@@ -1038,7 +1004,6 @@ fn arm7_defers_a_pending_irq_until_after_a_taken_branch_refill() {
     assert_eq!(machine.next_instruction_address(), 0x0800_0010);
 }
 
-/// Zig: `timer IRQ enters ARM IRQ mode with the architectural return address`.
 #[test]
 fn timer_irq_enters_arm_irq_mode_with_the_architectural_return_address() {
     let rom = [
@@ -1068,7 +1033,6 @@ fn timer_irq_enters_arm_irq_mode_with_the_architectural_return_address() {
     assert_eq!(machine.read_register(5), 7);
 }
 
-/// Zig: `ARM sparse and dense STM lists store ascending endpoints without extra beats`.
 #[test]
 fn arm_sparse_and_dense_stm_lists_store_ascending_endpoints_without_extra_beats() {
     let sparse = [0xA500_0000, 0xA500_0007, 0xA500_000E, 0x0300_100C];
@@ -1134,7 +1098,6 @@ fn arm_sparse_and_dense_stm_lists_store_ascending_endpoints_without_extra_beats(
     }
 }
 
-/// Zig: `ARM sparse LDM reaches PC last and dense LDM reaches r14 without a branch`.
 #[test]
 fn arm_sparse_ldm_reaches_pc_last_and_dense_ldm_reaches_r14_without_a_branch() {
     let dense = [
@@ -1209,7 +1172,6 @@ fn arm_sparse_ldm_reaches_pc_last_and_dense_ldm_reaches_r14_without_a_branch() {
     }
 }
 
-/// Zig: `ARM empty STM uses one PC beat and sixteen-word addressing in every mode`.
 #[test]
 fn arm_empty_stm_uses_one_pc_beat_and_sixteen_word_addressing_in_every_mode() {
     for (instruction, offset, final_base) in [
@@ -1256,7 +1218,6 @@ fn arm_empty_stm_uses_one_pc_beat_and_sixteen_word_addressing_in_every_mode() {
     }
 }
 
-/// Zig: `Thumb PUSH empty extra-only sparse and dense lists preserve exact stack beats`.
 #[test]
 fn thumb_push_empty_extra_only_sparse_and_dense_lists_preserve_exact_stack_beats() {
     let empty = [0x0300_1006];
@@ -1321,7 +1282,6 @@ fn thumb_push_empty_extra_only_sparse_and_dense_lists_preserve_exact_stack_beats
     }
 }
 
-/// Zig: `Thumb POP empty extra-only sparse and dense lists stop before the refilled target`.
 #[test]
 fn thumb_pop_empty_extra_only_sparse_and_dense_lists_stop_before_the_refilled_target() {
     let empty = [0x0300_2002];
@@ -1393,7 +1353,6 @@ fn thumb_pop_empty_extra_only_sparse_and_dense_lists_stop_before_the_refilled_ta
     }
 }
 
-/// Zig: `HLE IntrWait completes only after the IRQ handler updates the BIOS mirror`.
 #[test]
 fn hle_intr_wait_completes_only_after_the_irq_handler_updates_the_bios_mirror() {
     let mut rom = [0; 12];
@@ -1470,7 +1429,6 @@ fn hle_intr_wait_completed_by_an_irq_return_leaves_the_swi_return_latch() {
     }
 }
 
-/// Zig: `nested HLE IRQ return does not complete the outer IntrWait`.
 #[test]
 fn nested_hle_irq_return_does_not_complete_the_outer_intr_wait() {
     let mut rom = [0; 36];
@@ -1642,7 +1600,6 @@ fn expect_intr_wait_log_slice_invariant(source: IntrWaitSource) -> [u16; 4] {
     })
 }
 
-/// Zig: `intrwait_latency: an HBlank IntrWait wake is independent of host slicing`.
 #[test]
 fn intrwait_latency_an_hblank_intr_wait_wake_is_independent_of_host_slicing() {
     assert_eq!(
@@ -1651,7 +1608,6 @@ fn intrwait_latency_an_hblank_intr_wait_wake_is_independent_of_host_slicing() {
     );
 }
 
-/// Zig: `intrwait_timer: a timer IntrWait wake is independent of host slicing`.
 #[test]
 fn intrwait_timer_a_timer_intr_wait_wake_is_independent_of_host_slicing() {
     assert_eq!(
@@ -1660,7 +1616,6 @@ fn intrwait_timer_a_timer_intr_wait_wake_is_independent_of_host_slicing() {
     );
 }
 
-/// Zig: `bounded execution matches eager steps across timer video DMA and input boundaries`.
 #[test]
 fn bounded_execution_matches_eager_steps_across_timer_video_dma_and_input_boundaries() {
     let words =
@@ -1723,7 +1678,6 @@ fn bounded_execution_matches_eager_steps_across_timer_video_dma_and_input_bounda
     }
 }
 
-/// Zig: `ISA change at a device deadline stops before the Thumb instruction`.
 #[test]
 fn isa_change_at_a_device_deadline_stops_before_the_thumb_instruction() {
     let mut machines = [
@@ -1759,7 +1713,6 @@ fn isa_change_at_a_device_deadline_stops_before_the_thumb_instruction() {
     assert_eq!(eager.next_instruction_address(), bounded.next_instruction_address());
 }
 
-/// Zig: `Thumb to ARM change at a device deadline stops before the ARM instruction`.
 #[test]
 fn thumb_to_arm_change_at_a_device_deadline_stops_before_the_arm_instruction() {
     let mut machines = [
@@ -1796,7 +1749,6 @@ fn thumb_to_arm_change_at_a_device_deadline_stops_before_the_arm_instruction() {
     assert_eq!(eager.next_instruction_address(), bounded.next_instruction_address());
 }
 
-/// Zig: `PC wrap at a device deadline stops before sub-BIOS handoff`.
 #[test]
 fn pc_wrap_at_a_device_deadline_stops_before_sub_bios_handoff() {
     let mut machines = [
@@ -1826,7 +1778,6 @@ fn pc_wrap_at_a_device_deadline_stops_before_sub_bios_handoff() {
     assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
 }
 
-/// Zig: `CPU multiple stores commit RAM after DMA at the store deadline`.
 #[test]
 fn cpu_multiple_stores_commit_ram_after_dma_at_the_store_deadline() {
     const OLD_WORD: u32 = 0x1122_3344;
@@ -1907,7 +1858,6 @@ fn cpu_multiple_stores_commit_ram_after_dma_at_the_store_deadline() {
     }
 }
 
-/// Zig: `CPU multiple stores price each beat across RAM mirrors and MMIO`.
 #[test]
 fn cpu_multiple_stores_price_each_beat_across_ram_mirrors_and_mmio() {
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1971,7 +1921,6 @@ fn cpu_multiple_stores_price_each_beat_across_ram_mirrors_and_mmio() {
     }
 }
 
-/// Zig: `ARM execution region preserves conditional arithmetic and PC at host horizons`.
 #[test]
 fn arm_execution_region_preserves_conditional_arithmetic_and_pc_at_host_horizons() {
     let words = [
@@ -2015,7 +1964,6 @@ fn arm_execution_region_preserves_conditional_arithmetic_and_pc_at_host_horizons
     }
 }
 
-/// Zig: `ARM execution region multiply matches eager steps around a timer boundary`.
 #[test]
 fn arm_execution_region_multiply_matches_eager_steps_around_a_timer_boundary() {
     let words = [0xE1A0_0000, 0xE022_3291, 0xE280_0003, 0xEAFF_FFFE];
@@ -2051,7 +1999,6 @@ fn arm_execution_region_multiply_matches_eager_steps_around_a_timer_boundary() {
     }
 }
 
-/// Zig: `ARM execution region signed load matches eager steps around timer delivery`.
 #[test]
 fn arm_execution_region_signed_load_matches_eager_steps_around_timer_delivery() {
     let words = [0xE1A0_0000, 0xE1D1_20F1, 0xE280_0003, 0xEAFF_FFFE];
@@ -2086,7 +2033,6 @@ fn arm_execution_region_signed_load_matches_eager_steps_around_timer_delivery() 
     }
 }
 
-/// Zig: `ARM execution region leaves timer equality and IRQ entry to ordinary completion`.
 #[test]
 fn arm_execution_region_leaves_timer_equality_and_irq_entry_to_ordinary_completion() {
     for offset in [3, 4, 5, 8, 12] {
@@ -2121,7 +2067,6 @@ fn arm_execution_region_leaves_timer_equality_and_irq_entry_to_ordinary_completi
     }
 }
 
-/// Zig: `ARM execution region signed load keeps latched data across exact read boundary DMA`.
 #[test]
 fn arm_execution_region_signed_load_keeps_latched_data_across_exact_read_boundary_dma() {
     let words = [0xE1D1_20F0, 0xE1D1_30F0, 0xEAFF_FFFE, 0xEAFF_FFFE];
@@ -2158,7 +2103,6 @@ fn arm_execution_region_signed_load_keeps_latched_data_across_exact_read_boundar
     assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
 }
 
-/// Zig: `unified kernel register stores preserve DMA before write at each horizon`.
 #[test]
 fn unified_kernel_register_stores_preserve_dma_before_write_at_each_horizon() {
     let words = [0xE1A0_0000, 0xE881_0005, 0xE591_3000, 0xEAFF_FFFE];
@@ -2206,7 +2150,6 @@ fn unified_kernel_register_stores_preserve_dma_before_write_at_each_horizon() {
     }
 }
 
-/// Zig: `ARM execution region publishes before DMA replaces a future opcode`.
 #[test]
 fn arm_execution_region_publishes_before_dma_replaces_a_future_opcode() {
     let mut machines = [Machine::new(Config::default()), Machine::new(Config::default())];
@@ -2243,7 +2186,6 @@ fn arm_execution_region_publishes_before_dma_replaces_a_future_opcode() {
     assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
 }
 
-/// Zig: `ARM IWRAM slice rejects admission before changing prefetch state`.
 #[test]
 fn arm_iwram_slice_rejects_admission_before_changing_prefetch_state() {
     for rejection in 0..4 {
@@ -2290,7 +2232,6 @@ fn arm_iwram_slice_rejects_admission_before_changing_prefetch_state() {
     }
 }
 
-/// Zig: `ARM IWRAM slice clears complete restored residuals on its first admitted fetch`.
 #[test]
 fn arm_iwram_slice_clears_complete_restored_residuals_on_its_first_admitted_fetch() {
     let mut eager = Machine::new(Config::default());
@@ -2322,7 +2263,6 @@ fn arm_iwram_slice_clears_complete_restored_residuals_on_its_first_admitted_fetc
     assert_eq!(eager.write_state_alloc().unwrap(), bounded.write_state_alloc().unwrap());
 }
 
-/// Zig: `ARM IWRAM slice preserves pipeline straddles and exact domain-exit deadlines`.
 #[test]
 fn arm_iwram_slice_preserves_pipeline_straddles_and_exact_domain_exit_deadlines() {
     for address in [0x02FF_FFF8_u32, 0x0300_7FF8, 0x03FF_FFF4] {
@@ -2358,7 +2298,6 @@ fn arm_iwram_slice_preserves_pipeline_straddles_and_exact_domain_exit_deadlines(
     }
 }
 
-/// Zig: `ARM IWRAM slice latches an opcode before deadline DMA replaces instruction memory`.
 #[test]
 fn arm_iwram_slice_latches_an_opcode_before_deadline_dma_replaces_instruction_memory() {
     for bounded in [false, true] {
@@ -2402,7 +2341,6 @@ fn arm_iwram_slice_latches_an_opcode_before_deadline_dma_replaces_instruction_me
     }
 }
 
-/// Zig: `ARM IWRAM slice preserves ROM data and WAITCNT effects within an uninterrupted run`.
 #[test]
 fn arm_iwram_slice_preserves_rom_data_and_waitcnt_effects_within_an_uninterrupted_run() {
     let mut rom = [0; 0x104];
@@ -2438,7 +2376,6 @@ fn arm_iwram_slice_preserves_rom_data_and_waitcnt_effects_within_an_uninterrupte
     assert_eq!(bounded.bus.game_pak_prefetch, GamePakPrefetch::default());
 }
 
-/// Zig: `ordinary Thumb deadline handoff executes an HLE SWI exactly once`.
 #[test]
 fn ordinary_thumb_deadline_handoff_executes_an_hle_swi_exactly_once() {
     let mut machines = [Machine::new(Config::default()), Machine::new(Config::default())];
@@ -2465,7 +2402,6 @@ fn ordinary_thumb_deadline_handoff_executes_an_hle_swi_exactly_once() {
     assert_eq!(bounded.read_cpsr() & 0x3F, 0x3F);
 }
 
-/// Zig: `ordinary Thumb preserves external SWI and Undefined vector deadline returns`.
 #[test]
 fn ordinary_thumb_preserves_external_swi_and_undefined_vector_deadline_returns() {
     for (instruction, vector, mode) in [(0xDF7F_u16, 8_usize, 0x13), (0xDE00, 4, 0x1B)] {
@@ -2519,7 +2455,6 @@ fn ordinary_thumb_preserves_external_swi_and_undefined_vector_deadline_returns()
     }
 }
 
-/// Zig: `ordinary Thumb IRQ faults retain the executed opcode across ROM and IWRAM fetches`.
 #[test]
 fn ordinary_thumb_irq_faults_retain_the_executed_opcode_across_rom_and_iwram_fetches() {
     for address in [0x0300_0000, 0x0800_0000] {
@@ -2574,7 +2509,6 @@ fn ordinary_thumb_irq_faults_retain_the_executed_opcode_across_rom_and_iwram_fet
     }
 }
 
-/// Zig: `bounded normal execution matches eager ARM Thumb and SWI transitions`.
 #[test]
 fn bounded_normal_execution_matches_eager_arm_thumb_and_swi_transitions() {
     let mut machines = [Machine::new(Config::default()), Machine::new(Config::default())];
@@ -2606,7 +2540,6 @@ fn bounded_normal_execution_matches_eager_arm_thumb_and_swi_transitions() {
     assert!(bounded.read_register(0) > 3);
 }
 
-/// Zig: `bounded ARM dispatch preserves mixed ALU transfer and conditional exception paths`.
 #[test]
 fn bounded_arm_dispatch_preserves_mixed_alu_transfer_and_conditional_exception_paths() {
     let words = [
@@ -2653,7 +2586,6 @@ fn bounded_arm_dispatch_preserves_mixed_alu_transfer_and_conditional_exception_p
     assert_eq!(&machine.bus.iwram[0x7000..0x7004], &[0x0B, 0, 4, 0]);
 }
 
-/// Zig: `bounded normal execution reports the same prefetched ARM fault as eager steps`.
 #[test]
 fn bounded_normal_execution_reports_the_same_prefetched_arm_fault_as_eager_steps() {
     let mut machines = [Machine::new(Config::default()), Machine::new(Config::default())];
@@ -2686,7 +2618,6 @@ fn bounded_normal_execution_reports_the_same_prefetched_arm_fault_as_eager_steps
     assert_eq!((repeated.stopped_at, repeated.inputs_consumed), (result.stopped_at, 0));
 }
 
-/// Zig: `bounded ROM execution matches eager steps across mirrors ISA and self modifying RAM`.
 #[test]
 fn bounded_rom_execution_matches_eager_steps_across_mirrors_isa_and_self_modifying_ram() {
     let mut rom = [0; 0x140];
@@ -2738,7 +2669,6 @@ fn bounded_rom_execution_matches_eager_steps_across_mirrors_isa_and_self_modifyi
     assert!(bounded.read_register(7) > 1);
 }
 
-/// Zig: `branch refill latches its first word before DMA and reads its second word afterwards`.
 #[test]
 fn branch_refill_latches_its_first_word_before_dma_and_reads_its_second_word_afterwards() {
     for bounded in [false, true] {
@@ -2783,7 +2713,6 @@ fn branch_refill_latches_its_first_word_before_dma_and_reads_its_second_word_aft
     }
 }
 
-/// Zig: `code branched to after an immediate DMA copy runs the copied opcodes`.
 #[test]
 fn code_branched_to_after_an_immediate_dma_copy_runs_the_copied_opcodes() {
     let mut rom = [0; 0x200];
@@ -2808,7 +2737,6 @@ fn code_branched_to_after_an_immediate_dma_copy_runs_the_copied_opcodes() {
     assert_eq!(machine.next_instruction_address(), 0x0300_7DC8);
 }
 
-/// Zig: `bounded Thumb block transfers match eager beats across RAM images and deadlines`.
 #[test]
 fn bounded_thumb_block_transfers_match_eager_beats_across_ram_images_and_deadlines() {
     let mut rom = [0; 0x40];
@@ -2871,7 +2799,6 @@ fn bounded_thumb_block_transfers_match_eager_beats_across_ram_images_and_deadlin
     }
 }
 
-/// Zig: `bounded Thumb ROM streams match eager fetches across duty boundaries and deadlines`.
 #[test]
 fn bounded_thumb_rom_streams_match_eager_fetches_across_duty_boundaries_and_deadlines() {
     let mut rom = vec![0; 0x20100];
@@ -2921,7 +2848,6 @@ fn bounded_thumb_rom_streams_match_eager_fetches_across_duty_boundaries_and_dead
     }
 }
 
-/// Zig: `nested HLE IRQs preserve the outer exception return state`.
 #[test]
 fn nested_hle_irqs_preserve_the_outer_exception_return_state() {
     let mut rom = [0; 28];
@@ -2996,7 +2922,6 @@ fn checked_arm_fault(
     fault
 }
 
-/// Zig: `invalid MSR CPSR mode and state transitions fault before CPU mutation`.
 #[test]
 fn invalid_msr_cpsr_mode_and_state_transitions_fault_before_cpu_mutation() {
     for (instruction, kind, value, diagnostic) in [
@@ -3112,19 +3037,16 @@ fn check_ldm_exception_return_fault(missing_spsr: bool) {
     }
 }
 
-/// Zig: `invalid LDM exception-return PSR faults before transfers or writeback`.
 #[test]
 fn invalid_ldm_exception_return_psr_faults_before_transfers_or_writeback() {
     check_ldm_exception_return_fault(false);
 }
 
-/// Zig: `LDM exception return without an SPSR faults before transfer side effects`.
 #[test]
 fn ldm_exception_return_without_an_spsr_faults_before_transfer_side_effects() {
     check_ldm_exception_return_fault(true);
 }
 
-/// Zig: `invalid data-processing exception-return PSR faults before CPU mutation`.
 #[test]
 fn invalid_data_processing_exception_return_psr_faults_before_cpu_mutation() {
     let instruction = 0xE25E_F004_u32;
@@ -3179,7 +3101,6 @@ fn invalid_data_processing_exception_return_psr_faults_before_cpu_mutation() {
     assert!(machine.cpu.pipeline.is_none());
 }
 
-/// Zig: `MRS and MSR SPSR without a bank are typed pre-mutation faults`.
 #[test]
 fn mrs_and_msr_spsr_without_a_bank_are_typed_pre_mutation_faults() {
     for (instruction, operation, mode_bits, mode, mode_name, operation_name) in [
@@ -3233,7 +3154,6 @@ fn mrs_and_msr_spsr_without_a_bank_are_typed_pre_mutation_faults() {
     }
 }
 
-/// Zig: `unpredictable ARM register encodings fault before architectural side effects`.
 #[test]
 fn unpredictable_arm_register_encodings_fault_before_architectural_side_effects() {
     let cases = [

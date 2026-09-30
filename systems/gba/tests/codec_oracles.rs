@@ -1,4 +1,4 @@
-//! Exact unit-test oracles from ZiGBA's `src/state_codec.zig` through the public codec API.
+//! Codec values, schemas and validation through the public API.
 
 use evenfall_state::{Codec, Error, Sink, Source};
 
@@ -53,7 +53,7 @@ struct Example {
     host_count: usize,
 }
 
-/// ZiGBA: `canonical values round trip without struct padding`.
+/// Values round-trip in their encoded lengths, not Rust's memory layout.
 #[test]
 fn canonical_values_round_trip_without_struct_padding() {
     let expected = Example {
@@ -102,7 +102,7 @@ struct ChangedInactivePayload {
     payload: ChangedPayload,
 }
 
-/// ZiGBA: `schema encoding covers inactive union and optional payload types`.
+/// An inactive variant's or absent option's type still changes the schema.
 #[test]
 fn schema_encoding_covers_inactive_union_and_optional_payload_types() {
     let first = schema::<First>();
@@ -124,7 +124,6 @@ enum Choice {
     Number(u16),
 }
 
-/// ZiGBA: `decoder rejects illegal tagged values and narrow high bits`.
 #[test]
 fn decoder_rejects_illegal_tagged_values_and_narrow_high_bits() {
     for invalid in [[2, 0], [1, 8]] {

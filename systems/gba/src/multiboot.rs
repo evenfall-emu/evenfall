@@ -133,7 +133,6 @@ fn pack_bytes(bytes: [u8; 4]) -> u32 {
 mod tests {
     use super::*;
 
-    /// Zig: parameter validation and length command follow the BIOS ABI
     #[test]
     fn parameter_validation_and_length_command_follow_the_bios_abi() {
         let mut p = Parameters {
@@ -154,7 +153,6 @@ mod tests {
         assert_eq!(p.validate(), Err(Error::InvalidLength));
     }
 
-    /// Zig: normal and multiplayer encoders match published algorithm vectors
     #[test]
     fn normal_and_multiplayer_encoders_match_published_algorithm_vectors() {
         for (mode, words, checksum) in [

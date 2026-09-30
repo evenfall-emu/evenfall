@@ -1,0 +1,34 @@
+name: Tooling or integration bug
+description: A problem with the build, the SDK, the player UI, or developer tools.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: For inaccurate emulation of a game or test ROM, use the **Emulation bug** form instead.
+  - type: input
+    id: revision
+    attributes:
+      label: Evenfall revision
+      description: Commit SHA or SDK version.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, `rustc --version`, `node --version`, browser and version as relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened
+      description: Include the exact command and its full output.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true

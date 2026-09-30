@@ -1,4 +1,4 @@
-//! ZiGBA bus integration oracles (`test/bus_test.zig`).
+//! Bus integration oracles.
 
 use evenfall_gba::bus::{
     Access, AccessKind, AccessSource, AccessWidth, Bus, JoyBusCommand, JoyBusError, KeyState,
@@ -58,7 +58,6 @@ fn read_byte(bus: &mut Bus, address: u32) -> u8 {
         .value as u8
 }
 
-/// ZiGBA: "BIOS hard reset preserves host audio suppression"
 #[test]
 fn bios_hard_reset_preserves_host_audio_suppression() {
     let mut bus = Bus::init(&[]);
@@ -72,7 +71,6 @@ fn bios_hard_reset_preserves_host_audio_suppression() {
     assert_eq!(2, bus.drain_audio_samples(&mut samples));
 }
 
-/// ZiGBA: "no-event materialization preserves every prescaler and cascade until the exact overflow"
 #[test]
 fn no_event_materialization_preserves_every_prescaler_and_cascade_until_the_exact_overflow() {
     for (select, divisor) in [1, 64, 256, 1024].into_iter().enumerate() {
@@ -115,7 +113,6 @@ fn no_event_materialization_preserves_every_prescaler_and_cascade_until_the_exac
     }
 }
 
-/// ZiGBA: "no-event materialization precedes register reset and hard reset clock changes"
 #[test]
 fn no_event_materialization_precedes_register_reset_and_hard_reset_clock_changes() {
     let mut bus = Bus::init(&[]);
@@ -139,7 +136,6 @@ fn no_event_materialization_precedes_register_reset_and_hard_reset_clock_changes
     bus.end_device_batch();
 }
 
-/// ZiGBA: "RAM accesses preserve byte order, unaligned mirror wrapping and bus timing"
 #[test]
 fn ram_accesses_preserve_byte_order_unaligned_mirror_wrapping_and_bus_timing() {
     let mut bus = Bus::init(&[]);
@@ -191,7 +187,6 @@ fn ram_accesses_preserve_byte_order_unaligned_mirror_wrapping_and_bus_timing() {
     }
 }
 
-/// ZiGBA: "default Game Pak, SRAM, and WRAM access costs match the GBATEK totals"
 #[test]
 fn default_game_pak_sram_and_wram_access_costs_match_the_gbatek_totals() {
     let mut bus = Bus::init(&[0; 8]);
@@ -208,7 +203,6 @@ fn default_game_pak_sram_and_wram_access_costs_match_the_gbatek_totals() {
     assert_eq!(2, read(&mut bus, 0x0600_0000, AccessWidth::Word, AccessKind::Nonsequential));
 }
 
-/// ZiGBA: "cached IRQ line follows IE IF IME writes and keypad edges"
 #[test]
 fn cached_irq_line_follows_ie_if_ime_writes_and_keypad_edges() {
     let mut bus = Bus::init(&[]);
@@ -236,10 +230,8 @@ fn cached_irq_line_follows_ie_if_ime_writes_and_keypad_edges() {
     assert!(!bus.irq.irq_line);
 }
 
-/// ZiGBA: "LCD timing follows the GBATEK 960/1232-cycle line and 228-line frame"
-///
-/// The HBlank flag it reads at cycle 960 in ZiGBA now rises at 1006
-/// (`hblank_flag_rises_at_cycle_1006_after_the_hblank_irq`).
+/// The HBlank flag rises after the HBlank IRQ, so the line's flag is read at
+/// cycle 1006 (`hblank_flag_rises_at_cycle_1006_after_the_hblank_irq`).
 #[test]
 fn lcd_timing_follows_the_gbatek_960_1232_cycle_line_and_228_line_frame() {
     let mut bus = Bus::init(&[]);
@@ -285,7 +277,6 @@ fn hblank_flag_rises_at_cycle_1006_after_the_hblank_irq() {
     }
 }
 
-/// ZiGBA: "aligned MMIO words compose adjacent halfword registers in one cycle"
 #[test]
 fn aligned_mmio_words_compose_adjacent_halfword_registers_in_one_cycle() {
     let mut bus = Bus::init(&[]);
@@ -302,7 +293,6 @@ fn aligned_mmio_words_compose_adjacent_halfword_registers_in_one_cycle() {
     assert_eq!(1, result.cycles);
 }
 
-/// ZiGBA: "unmapped and unused MMIO reads distinguish open-bus words from paired zero halves"
 #[test]
 fn unmapped_and_unused_mmio_reads_distinguish_open_bus_words_from_paired_zero_halves() {
     let mut bus = Bus::init(&[0x78, 0x56, 0x34, 0x12]);
@@ -334,8 +324,8 @@ fn unmapped_and_unused_mmio_reads_distinguish_open_bus_words_from_paired_zero_ha
         AccessSource::CpuData,
     ));
     assert_eq!(0x1234, half.value);
-    // Evenfall reads MOSAIC as write-only, so ZiGBA's 4Eh example reads open
-    // bus (see below); 66h is unused beside the readable SOUND1CNT_X.
+    // MOSAIC is write-only, so 4Eh reads open bus (see below); 66h is unused
+    // beside the readable SOUND1CNT_X.
     let paired = bus.read(access(
         0x0400_0066,
         AccessWidth::Half,
@@ -478,7 +468,6 @@ fn thumb_opcode_fetches_compose_the_open_bus_word_per_region() {
     assert_eq!(0x8765, bus.open_bus_value);
 }
 
-/// ZiGBA: "unused and read-only MMIO writes are ignored"
 #[test]
 fn unused_and_read_only_mmio_writes_are_ignored() {
     let mut bus = Bus::init(&[]);
@@ -501,7 +490,6 @@ fn unused_and_read_only_mmio_writes_are_ignored() {
     assert_eq!(0x03ff, read_half(&mut bus, 0x0400_0130));
 }
 
-/// ZiGBA: "unused Game Pak ROM reads expose the multiplexed halfword address"
 #[test]
 fn unused_game_pak_rom_reads_expose_the_multiplexed_halfword_address() {
     let mut bus = Bus::init(&[0xaa]);
@@ -511,7 +499,6 @@ fn unused_game_pak_rom_reads_expose_the_multiplexed_halfword_address() {
     assert_eq!(0x091b_091a, read_word(&mut bus, 0x0800_1234));
 }
 
-/// ZiGBA: "bitmap modes leave the lower half of mirrored VRAM unmapped"
 #[test]
 fn bitmap_modes_leave_the_lower_half_of_mirrored_vram_unmapped() {
     let mut bus = Bus::init(&[]);
@@ -524,7 +511,6 @@ fn bitmap_modes_leave_the_lower_half_of_mirrored_vram_unmapped() {
     assert_eq!(0xcafe, read_half(&mut bus, 0x0601_4000));
 }
 
-/// ZiGBA: "Game Pak timing follows every wait field and forces N at 128 KiB boundaries"
 #[test]
 fn game_pak_timing_follows_every_wait_field_and_forces_n_at_128_kib_boundaries() {
     let mut bus = Bus::init(&[]);
@@ -578,7 +564,6 @@ fn game_pak_timing_follows_every_wait_field_and_forces_n_at_128_kib_boundaries()
     }
 }
 
-/// ZiGBA: "Thumb Game Pak prefetch fills during internal cycles and serves buffered opcodes"
 #[test]
 fn thumb_game_pak_prefetch_fills_during_internal_cycles_and_serves_buffered_opcodes() {
     let mut bus = Bus::init(&[0; 16]);
@@ -607,7 +592,6 @@ fn thumb_game_pak_prefetch_fills_during_internal_cycles_and_serves_buffered_opco
     assert_eq!(1, third.cycles);
 }
 
-/// ZiGBA: "ARM Game Pak prefetch buffers complete words and completes an in-flight word"
 #[test]
 fn arm_game_pak_prefetch_buffers_complete_words_and_completes_an_in_flight_word() {
     let mut bus = Bus::init(&[0; 16]);
@@ -636,7 +620,6 @@ fn arm_game_pak_prefetch_buffers_complete_words_and_completes_an_in_flight_word(
     assert_eq!(5, in_flight.cycles);
 }
 
-/// ZiGBA: "Game Pak data reads and writes cancel prefetched opcodes"
 #[test]
 fn game_pak_data_reads_and_writes_cancel_prefetched_opcodes() {
     for write in [false, true] {
@@ -670,7 +653,6 @@ fn game_pak_data_reads_and_writes_cancel_prefetched_opcodes() {
     }
 }
 
-/// ZiGBA: "ordinary Game Pak writes consume wait states without changing ROM"
 #[test]
 fn ordinary_game_pak_writes_consume_wait_states_without_changing_rom() {
     let rom = [0x34, 0x12, 0x78, 0x56];
@@ -683,7 +665,6 @@ fn ordinary_game_pak_writes_consume_wait_states_without_changing_rom() {
     assert_eq!(8, write_word(&mut word, 0x0800_0000, 0xdead_beef));
 }
 
-/// ZiGBA: "SRAM traffic pays a one-cycle collision when Game Pak prefetch is about to complete"
 #[test]
 fn sram_traffic_pays_a_one_cycle_collision_when_game_pak_prefetch_is_about_to_complete() {
     let mut bus = Bus::init(&[0; 16]);
@@ -704,7 +685,6 @@ fn sram_traffic_pays_a_one_cycle_collision_when_game_pak_prefetch_is_about_to_co
     assert_eq!(5, sram.cycles);
 }
 
-/// ZiGBA: "disabling prefetch, or an internal cycle while disabled, forces the next opcode fetch N"
 #[test]
 fn disabling_prefetch_or_an_internal_cycle_while_disabled_forces_the_next_opcode_fetch_n() {
     fn fetch(bus: &mut Bus, address: u32, kind: AccessKind) -> u64 {
@@ -722,7 +702,6 @@ fn disabling_prefetch_or_an_internal_cycle_while_disabled_forces_the_next_opcode
     assert_eq!(3, fetch(&mut disabled, 0x0800_0004, AccessKind::Sequential));
 }
 
-/// ZiGBA: "implemented MMIO registers expose their individual byte lanes"
 #[test]
 fn implemented_mmio_registers_expose_their_individual_byte_lanes() {
     let mut bus = Bus::init(&[]);
@@ -734,7 +713,6 @@ fn implemented_mmio_registers_expose_their_individual_byte_lanes() {
     assert_eq!(0x03, read_byte(&mut bus, 0x0400_0131));
 }
 
-/// ZiGBA: "MMIO byte writes preserve the other lane for video timers and DMA"
 #[test]
 fn mmio_byte_writes_preserve_the_other_lane_for_video_timers_and_dma() {
     let mut bus = Bus::init(&[]);
@@ -760,7 +738,6 @@ fn mmio_byte_writes_preserve_the_other_lane_for_video_timers_and_dma() {
     assert_eq!(0x4321, bus.dma_channels[3].word_count);
 }
 
-/// ZiGBA: "MMIO byte writes keep interrupt flag clearing lane-local"
 #[test]
 fn mmio_byte_writes_keep_interrupt_flag_clearing_lane_local() {
     let mut bus = Bus::init(&[]);
@@ -772,7 +749,6 @@ fn mmio_byte_writes_keep_interrupt_flag_clearing_lane_local() {
     assert_eq!(0x05a0, bus.irq.interrupt_request_flags);
 }
 
-/// ZiGBA: "DMA3 immediate starts two cycles after its enabling write, copies halfwords, clears enable, and requests IRQ"
 #[test]
 fn dma3_immediate_starts_two_cycles_after_its_enabling_write_copies_halfwords_clears_enable_and_requests_irq()
  {
@@ -801,7 +777,6 @@ fn dma3_immediate_starts_two_cycles_after_its_enabling_write_copies_halfwords_cl
     assert_ne!(0, read_half(&mut bus, 0x0400_0202) & (1 << 11));
 }
 
-/// ZiGBA: "disabling immediate DMA before its startup deadline cancels the transfer"
 #[test]
 fn disabling_immediate_dma_before_its_startup_deadline_cancels_the_transfer() {
     let mut bus = Bus::init(&[]);
@@ -821,7 +796,6 @@ fn disabling_immediate_dma_before_its_startup_deadline_cancels_the_transfer() {
     assert_eq!(0, read_half(&mut bus, 0x0300_0200));
 }
 
-/// ZiGBA: "DMA register high halves apply channel-specific address widths"
 #[test]
 fn dma_register_high_halves_apply_channel_specific_address_widths() {
     let mut bus = Bus::init(&[]);
@@ -842,7 +816,6 @@ fn dma_register_high_halves_apply_channel_specific_address_widths() {
     assert_eq!(0x0fff_ffff, bus.dma_channels[3].destination);
 }
 
-/// ZiGBA: "DMA aligns latched source and destination to its transfer width"
 #[test]
 fn dma_aligns_latched_source_and_destination_to_its_transfer_width() {
     let mut half = Bus::init(&[]);
@@ -875,7 +848,6 @@ fn dma_aligns_latched_source_and_destination_to_its_transfer_width() {
     assert_eq!(0xa1b2_c3d4, read_word(&mut word, 0x0300_0204));
 }
 
-/// ZiGBA: "Game Pak DMA sources increment despite decrement or fixed control"
 #[test]
 fn game_pak_dma_sources_increment_despite_decrement_or_fixed_control() {
     for source_control in [1, 2] {
@@ -910,7 +882,6 @@ fn switch_flash_bank(bus: &mut Bus, bank: u8) {
     write_byte(bus, 0x0e00_0000, bank);
 }
 
-/// ZiGBA: "runtime SRAM detection replays a broken Flash unlock prefix"
 #[test]
 fn runtime_sram_detection_replays_a_broken_flash_unlock_prefix() {
     let mut bus = Bus::init_with_save(&[], SaveType::Auto);
@@ -935,7 +906,6 @@ fn runtime_sram_detection_replays_a_broken_flash_unlock_prefix() {
     assert_eq!(0x55, read_byte(&mut invalid_command, 0x0e00_2aaa));
 }
 
-/// ZiGBA: "runtime save detection recognizes Flash commands and later bank promotion"
 #[test]
 fn runtime_save_detection_recognizes_flash_commands_and_later_bank_promotion() {
     let mut bus = Bus::init_with_save(&[], SaveType::Auto);
@@ -959,7 +929,6 @@ fn runtime_save_detection_recognizes_flash_commands_and_later_bank_promotion() {
     assert_eq!(SaveType::Flash64k, fixed.save_type());
 }
 
-/// ZiGBA: "Flash sector erase resets only the addressed 4 KiB sector"
 #[test]
 fn flash_sector_erase_resets_only_the_addressed_4_kib_sector() {
     let mut bus = Bus::init_with_save(&[], SaveType::Flash64k);
@@ -983,7 +952,6 @@ fn flash_sector_erase_resets_only_the_addressed_4_kib_sector() {
     assert_eq!(0xa5, read_byte(&mut bus, 0x0e00_1123));
 }
 
-/// ZiGBA: "Flash identification mode exposes device bytes until the exit command"
 #[test]
 fn flash_identification_mode_exposes_device_bytes_until_the_exit_command() {
     let mut bus = Bus::init_with_save(&[], SaveType::Flash64k);
@@ -998,7 +966,6 @@ fn flash_identification_mode_exposes_device_bytes_until_the_exit_command() {
     assert_eq!(0xff, read_byte(&mut bus, 0x0e00_0000));
 }
 
-/// ZiGBA: "UART keeps transmit and receive data separate and clears errors on SIOCNT read"
 #[test]
 fn uart_keeps_transmit_and_receive_data_separate_and_clears_errors_on_siocnt_read() {
     let mut bus = Bus::init(&[]);
@@ -1012,7 +979,6 @@ fn uart_keeps_transmit_and_receive_data_separate_and_clears_errors_on_siocnt_rea
     assert_eq!(0x3030, read_half(&mut bus, 0x0400_0128));
 }
 
-/// ZiGBA: "UART nominal frame deadlines follow baud, data-length, and parity selection"
 #[test]
 fn uart_nominal_frame_deadlines_follow_baud_data_length_and_parity_selection() {
     for (control, cycles) in [
@@ -1031,7 +997,6 @@ fn uart_nominal_frame_deadlines_follow_baud_data_length_and_parity_selection() {
     }
 }
 
-/// ZiGBA: "normal-mode internal-clock SIO transfers complete at their bit-clock deadline"
 #[test]
 fn normal_mode_internal_clock_sio_transfers_complete_at_their_bit_clock_deadline() {
     for (control, cycles, normal32) in [
@@ -1063,7 +1028,6 @@ fn normal_mode_internal_clock_sio_transfers_complete_at_their_bit_clock_deadline
     }
 }
 
-/// ZiGBA: "external-clock, GPIO and JoyBus selections leave a started SIO transfer pending"
 #[test]
 fn external_clock_gpio_and_joy_bus_selections_leave_a_started_sio_transfer_pending() {
     for (rcnt, siocnt) in [(0, 0x4080), (0x8000, 0x4081), (0xc000, 0x4081)] {
@@ -1076,7 +1040,6 @@ fn external_clock_gpio_and_joy_bus_selections_leave_a_started_sio_transfer_pendi
     }
 }
 
-/// ZiGBA: "JoyBus status and reset commands return the GBA type and raise reset IRQ"
 #[test]
 fn joy_bus_status_and_reset_commands_return_the_gba_type_and_raise_reset_irq() {
     let mut bus = Bus::init(&[]);
@@ -1107,7 +1070,6 @@ fn joy_bus_status_and_reset_commands_return_the_gba_type_and_raise_reset_irq() {
     assert_eq!(0x0040, read_half(&mut bus, 0x0400_0140));
 }
 
-/// ZiGBA: "JoyBus write command fills receive data and MMIO reads clear receive status"
 #[test]
 fn joy_bus_write_command_fills_receive_data_and_mmio_reads_clear_receive_status() {
     let mut bus = Bus::init(&[]);
@@ -1125,7 +1087,6 @@ fn joy_bus_write_command_fills_receive_data_and_mmio_reads_clear_receive_status(
     assert_eq!(1 << 7, bus.irq.interrupt_request_flags & (1 << 7));
 }
 
-/// ZiGBA: "JoyBus rejects invalid scheduling and mode exit cancels a pending command"
 #[test]
 fn joy_bus_rejects_invalid_scheduling_and_mode_exit_cancels_a_pending_command() {
     let mut bus = Bus::init(&[]);
@@ -1145,7 +1106,6 @@ fn joy_bus_rejects_invalid_scheduling_and_mode_exit_cancels_a_pending_command() 
     assert_eq!(None, bus.take_joy_bus_response());
 }
 
-/// ZiGBA: "serial IRQ wakes HALT at the exact normal-transfer deadline"
 #[test]
 fn serial_irq_wakes_halt_at_the_exact_normal_transfer_deadline() {
     let mut bus = Bus::init(&[]);
@@ -1159,7 +1119,6 @@ fn serial_irq_wakes_halt_at_the_exact_normal_transfer_deadline() {
     assert_eq!(1 << 7, bus.irq.interrupt_request_flags & (1 << 7));
 }
 
-/// ZiGBA: "APU byte writes preserve write-only frequency lanes"
 #[test]
 fn apu_byte_writes_preserve_write_only_frequency_lanes() {
     let mut bus = Bus::init(&[]);
@@ -1176,7 +1135,6 @@ fn apu_byte_writes_preserve_write_only_frequency_lanes() {
     assert!(bus.apu.square2.enabled);
 }
 
-/// ZiGBA: "PSG registers ignore writes while master sound is disabled"
 #[test]
 fn psg_registers_ignore_writes_while_master_sound_is_disabled() {
     let mut bus = Bus::init(&[]);
@@ -1195,7 +1153,6 @@ fn psg_registers_ignore_writes_while_master_sound_is_disabled() {
     assert_eq!(0, read_half(&mut bus, 0x0400_0084));
 }
 
-/// ZiGBA: "Direct Sound control and bias expose only hardware-backed bits"
 #[test]
 fn direct_sound_control_and_bias_expose_only_hardware_backed_bits() {
     let mut bus = Bus::init(&[]);
@@ -1207,7 +1164,6 @@ fn direct_sound_control_and_bias_expose_only_hardware_backed_bits() {
     assert_eq!(0xc3fe, read_half(&mut bus, 0x0400_0088));
 }
 
-/// ZiGBA: "FIFO reset clears queued words but preserves the active playback word"
 #[test]
 fn fifo_reset_clears_queued_words_but_preserves_the_active_playback_word() {
     let mut bus = Bus::init(&[]);
@@ -1225,7 +1181,6 @@ fn fifo_reset_clears_queued_words_but_preserves_the_active_playback_word() {
     assert_eq!(12, bus.current_audio_sample().left);
 }
 
-/// ZiGBA: "Direct Sound FIFO does not advance while master sound is disabled"
 #[test]
 fn direct_sound_fifo_does_not_advance_while_master_sound_is_disabled() {
     let mut bus = Bus::init(&[]);
@@ -1240,7 +1195,6 @@ fn direct_sound_fifo_does_not_advance_while_master_sound_is_disabled() {
     assert_eq!(4, bus.current_audio_sample().left);
 }
 
-/// ZiGBA: "FIFO halfword write commits a whole word slot with untouched lanes"
 #[test]
 fn fifo_halfword_write_commits_a_whole_word_slot_with_untouched_lanes() {
     let mut bus = Bus::init(&[]);
@@ -1255,7 +1209,6 @@ fn fifo_halfword_write_commits_a_whole_word_slot_with_untouched_lanes() {
     }
 }
 
-/// ZiGBA: "mixed audio is biased and clipped to the ten-bit DAC range"
 #[test]
 fn mixed_audio_is_biased_and_clipped_to_the_ten_bit_dac_range() {
     let mut bus = Bus::init(&[]);
@@ -1271,7 +1224,6 @@ fn mixed_audio_is_biased_and_clipped_to_the_ten_bit_dac_range() {
     assert_eq!(0, bus.current_audio_sample().right);
 }
 
-/// ZiGBA: "SOUNDBIAS resolution truncates the clipped DAC code to PWM precision"
 #[test]
 fn soundbias_resolution_truncates_the_clipped_dac_code_to_pwm_precision() {
     let mut bus = Bus::init(&[]);
@@ -1287,7 +1239,6 @@ fn soundbias_resolution_truncates_the_clipped_dac_code_to_pwm_precision() {
     }
 }
 
-/// ZiGBA: "audio samples are produced deterministically at the default 32768 Hz cadence"
 #[test]
 fn audio_samples_are_produced_deterministically_at_the_default_32768_hz_cadence() {
     let mut bus = Bus::init(&[]);
@@ -1310,7 +1261,6 @@ fn audio_samples_are_produced_deterministically_at_the_default_32768_hz_cadence(
     assert_eq!(4, samples[0].right);
 }
 
-/// ZiGBA: "UART FIFOs preserve four bytes and flag overrun on the fifth arrival"
 #[test]
 fn uart_fifos_preserve_four_bytes_and_flag_overrun_on_the_fifth_arrival() {
     let mut sender = Bus::init(&[]);
@@ -1338,7 +1288,6 @@ fn uart_fifos_preserve_four_bytes_and_flag_overrun_on_the_fifth_arrival() {
     assert_eq!(0, read_half(&mut receiver, 0x0400_012a));
 }
 
-/// ZiGBA: "UART overrun requests the serial IRQ and FIFO disable discards received bytes"
 #[test]
 fn uart_overrun_requests_the_serial_irq_and_fifo_disable_discards_received_bytes() {
     let mut sender = Bus::init(&[]);
@@ -1365,7 +1314,6 @@ fn uart_overrun_requests_the_serial_irq_and_fifo_disable_discards_received_bytes
     assert_ne!(0, read_half(&mut receiver, 0x0400_0128) & 0x0020);
 }
 
-/// ZiGBA: "UART CTS waits until the peer receiver has capacity"
 #[test]
 fn uart_cts_waits_until_the_peer_receiver_has_capacity() {
     let mut sender = Bus::init(&[]);
@@ -1388,7 +1336,6 @@ fn uart_cts_waits_until_the_peer_receiver_has_capacity() {
     assert!(sender.uart_tx_completion_cycle.is_some());
 }
 
-/// ZiGBA: "normal32 SIO peers shift words through the multiplayer cable"
 #[test]
 fn normal32_sio_peers_shift_words_through_the_multiplayer_cable() {
     let mut master = Bus::init(&[]);
@@ -1411,7 +1358,6 @@ fn normal32_sio_peers_shift_words_through_the_multiplayer_cable() {
     assert_eq!(0x1234_5678, read_word(&mut slave, 0x0400_0120));
 }
 
-/// ZiGBA: "SIO synchronization waits for both normal peers and rejects one past the deadline"
 #[test]
 fn sio_synchronization_waits_for_both_normal_peers_and_rejects_one_past_the_deadline() {
     let mut master = Bus::init(&[]);
@@ -1428,7 +1374,6 @@ fn sio_synchronization_waits_for_both_normal_peers_and_rejects_one_past_the_dead
     );
 }
 
-/// ZiGBA: "four-player SIO exchanges every multiplayer word at the parent baud deadline"
 #[test]
 fn four_player_sio_exchanges_every_multiplayer_word_at_the_parent_baud_deadline() {
     let mut buses = [Bus::init(&[]), Bus::init(&[]), Bus::init(&[]), Bus::init(&[])];
@@ -1469,7 +1414,6 @@ fn four_player_sio_exchanges_every_multiplayer_word_at_the_parent_baud_deadline(
     }
 }
 
-/// ZiGBA: "multiplayer SIO leaves absent receive slots disconnected"
 #[test]
 fn multiplayer_sio_leaves_absent_receive_slots_disconnected() {
     let mut parent = Bus::init(&[]);
@@ -1493,7 +1437,6 @@ fn multiplayer_sio_leaves_absent_receive_slots_disconnected() {
     assert_eq!(expected, child.sio_data);
 }
 
-/// ZiGBA: "multiplayer SIO deadlines match the pinned mGBA 2-4 player timing table"
 #[test]
 fn multiplayer_sio_deadlines_match_the_pinned_mgba_2_4_player_timing_table() {
     let durations = [
@@ -1529,7 +1472,6 @@ fn multiplayer_sio_deadlines_match_the_pinned_mgba_2_4_player_timing_table() {
     }
 }
 
-/// ZiGBA: "SIO register masks and disconnected line states match the pinned mGBA suite"
 #[test]
 fn sio_register_masks_and_disconnected_line_states_match_the_pinned_mgba_suite() {
     let addresses = [
@@ -1583,7 +1525,6 @@ fn sio_register_masks_and_disconnected_line_states_match_the_pinned_mgba_suite()
     }
 }
 
-/// ZiGBA: "cartridge GPIO preserves ROM fallback and masks mirrored port registers"
 #[test]
 fn cartridge_gpio_preserves_rom_fallback_and_masks_mirrored_port_registers() {
     let mut rom = [0; 0xca];
@@ -1603,7 +1544,6 @@ fn cartridge_gpio_preserves_rom_fallback_and_masks_mirrored_port_registers() {
     assert_eq!(0x000f, read_half(&mut bus, 0x0800_00c4));
 }
 
-/// ZiGBA: "ROM word reads retain GPIO overlap, short media tails and window wrapping"
 #[test]
 fn rom_word_reads_retain_gpio_overlap_short_media_tails_and_window_wrapping() {
     let mut rom = [0; 0xcd];
@@ -1634,7 +1574,6 @@ fn rom_word_reads_retain_gpio_overlap_short_media_tails_and_window_wrapping() {
     }
 }
 
-/// ZiGBA: "PSG channel one sweep disables after its post-update overflow probe"
 #[test]
 fn psg_channel_one_sweep_disables_after_its_post_update_overflow_probe() {
     let mut bus = Bus::init(&[]);
@@ -1650,7 +1589,6 @@ fn psg_channel_one_sweep_disables_after_its_post_update_overflow_probe() {
     assert_eq!(0x0080, read_half(&mut bus, 0x0400_0084));
 }
 
-/// ZiGBA: "PSG frame sequencer clocks square channel two length at 256 Hz"
 #[test]
 fn psg_frame_sequencer_clocks_square_channel_two_length_at_256_hz() {
     let mut bus = Bus::init(&[]);
@@ -1665,7 +1603,6 @@ fn psg_frame_sequencer_clocks_square_channel_two_length_at_256_hz() {
     assert_eq!(0x0080, read_half(&mut bus, 0x0400_0084));
 }
 
-/// ZiGBA: "PSG noise channel clocks its LFSR and routes the envelope volume"
 #[test]
 fn psg_noise_channel_clocks_its_lfsr_and_routes_the_envelope_volume() {
     let mut bus = Bus::init(&[]);
@@ -1684,7 +1621,6 @@ fn psg_noise_channel_clocks_its_lfsr_and_routes_the_envelope_volume() {
     assert_eq!(240, bus.current_audio_sample().right);
 }
 
-/// ZiGBA: "timer zero unused count-up bit preserves the exact batched IRQ deadline"
 #[test]
 fn timer_zero_unused_count_up_bit_preserves_the_exact_batched_irq_deadline() {
     for direct_state in [false, true] {
@@ -1734,7 +1670,6 @@ fn expect_timer_overflows_at(bus: &mut Bus, index: u8, expected: u64, divisor: u
     }
 }
 
-/// ZiGBA: "prescaled timers tick on one free-running prescaler grid"
 #[test]
 fn prescaled_timers_tick_on_one_free_running_prescaler_grid() {
     for batch in [false, true] {
@@ -1766,7 +1701,6 @@ fn prescaled_timers_tick_on_one_free_running_prescaler_grid() {
     }
 }
 
-/// ZiGBA: "a /64 enable after a /1024 overflow follows the free-running prescaler"
 #[test]
 fn a_64_enable_after_a_1024_overflow_follows_the_free_running_prescaler() {
     for (delay, overflow) in [(0, 2176), (5, 2176), (15, 2240)] {
@@ -1792,7 +1726,6 @@ fn a_64_enable_after_a_1024_overflow_follows_the_free_running_prescaler() {
     }
 }
 
-/// ZiGBA: "a count-up stage returns to the master clock on the shared prescaler grid"
 #[test]
 fn a_count_up_stage_returns_to_the_master_clock_on_the_shared_prescaler_grid() {
     for (return_select, expected) in [(1, 108), (0, 2)] {
@@ -1839,7 +1772,6 @@ fn change_running_prescaler(
     (written_at / new_divisor + ticks_left) * new_divisor - written_at
 }
 
-/// ZiGBA: "a running timer's prescaler change ticks on the shared grid when batched and eager"
 #[test]
 fn a_running_timers_prescaler_change_ticks_on_the_shared_grid_when_batched_and_eager() {
     let mut eager = Bus::init(&[]);
@@ -1872,7 +1804,6 @@ fn a_running_timers_prescaler_change_ticks_on_the_shared_grid_when_batched_and_e
     }
 }
 
-/// ZiGBA: "timer zero's unused count-up bit does not exempt a prescaler change"
 #[test]
 fn timer_zeros_unused_count_up_bit_does_not_exempt_a_prescaler_change() {
     let mut eager = Bus::init(&[]);
@@ -1896,7 +1827,6 @@ fn timer_zeros_unused_count_up_bit_does_not_exempt_a_prescaler_change() {
     eager.write_state(&mut evenfall_state::Sink::new(None, None)).unwrap();
 }
 
-/// ZiGBA: "STOP freezes the prescaler counter with the timers"
 #[test]
 fn stop_freezes_the_prescaler_counter_with_the_timers() {
     for batch in [false, true] {
@@ -1926,7 +1856,6 @@ fn stop_freezes_the_prescaler_counter_with_the_timers() {
     }
 }
 
-/// ZiGBA: "DMA source zero reuses the shared transfer latch without advancing"
 #[test]
 fn dma_source_zero_reuses_the_shared_transfer_latch_without_advancing() {
     let mut bus = Bus::init(&[]);
@@ -1958,7 +1887,6 @@ fn dma_source_zero_reuses_the_shared_transfer_latch_without_advancing() {
     assert_eq!(0, bus.dma_channels[3].latched_source);
 }
 
-/// ZiGBA: "DMA normalizes every source below EWRAM to the transfer-latch source"
 #[test]
 fn dma_normalizes_every_source_below_ewram_to_the_transfer_latch_source() {
     let mut bus = Bus::init(&[]);
@@ -1989,7 +1917,6 @@ fn dma_normalizes_every_source_below_ewram_to_the_transfer_latch_source() {
     assert_eq!(0xa1b2_c3d4, read_word(&mut bus, 0x0300_0300));
 }
 
-/// ZiGBA: "HBlank DMA0 preempts an active lower-priority DMA3 between beats"
 #[test]
 fn hblank_dma0_preempts_an_active_lower_priority_dma3_between_beats() {
     let mut bus = Bus::init(&[]);
@@ -2025,7 +1952,6 @@ fn hblank_dma0_preempts_an_active_lower_priority_dma3_between_beats() {
     assert_eq!(0, read_half(&mut bus, 0x0400_00de) & (1 << 15));
 }
 
-/// ZiGBA: "VBlank DMA starts after the access that crosses into line 160"
 #[test]
 fn vblank_dma_starts_after_the_access_that_crosses_into_line_160() {
     let mut bus = Bus::init(&[]);
@@ -2057,7 +1983,6 @@ fn vblank_dma_starts_after_the_access_that_crosses_into_line_160() {
     assert_eq!(0, read_half(&mut bus, 0x0400_00ba) & (1 << 15));
 }
 
-/// ZiGBA: "prefetch fill timing refreshes WAITCNT across every window and 128 KiB boundary"
 #[test]
 fn prefetch_fill_timing_refreshes_waitcnt_across_every_window_and_128_kib_boundary() {
     for window in 0..3u32 {
@@ -2099,7 +2024,6 @@ fn prefetch_fill_timing_refreshes_waitcnt_across_every_window_and_128_kib_bounda
     }
 }
 
-/// ZiGBA: "Game Pak prefetch batching matches single-cycle advancement through capacity"
 #[test]
 fn game_pak_prefetch_batching_matches_single_cycle_advancement_through_capacity() {
     let mut batched = Bus::init(&[0; 64]);
@@ -2142,7 +2066,6 @@ fn game_pak_prefetch_batching_matches_single_cycle_advancement_through_capacity(
     assert_eq!(0, batched.game_pak_prefetch.countdown);
 }
 
-/// ZiGBA: "WAITCNT changes preserve the in flight fetch and reprice the next unit"
 #[test]
 fn waitcnt_changes_preserve_the_in_flight_fetch_and_reprice_the_next_unit() {
     let rom = [0xa5; 0x140];
@@ -2183,7 +2106,6 @@ fn waitcnt_changes_preserve_the_in_flight_fetch_and_reprice_the_next_unit() {
     }
 }
 
-/// ZiGBA: "repeating DMA reloads a misaligned MMIO destination to the first unit"
 #[test]
 fn repeating_dma_reloads_a_misaligned_mmio_destination_to_the_first_unit() {
     for (word, destination, latched, first, reloaded) in [
@@ -2203,7 +2125,6 @@ fn repeating_dma_reloads_a_misaligned_mmio_destination_to_the_first_unit() {
     }
 }
 
-/// ZiGBA: "repeating DMA reloads a misaligned RAM destination to the first unit"
 #[test]
 fn repeating_dma_reloads_a_misaligned_ram_destination_to_the_first_unit() {
     for (word, destination, first, reloaded) in [
@@ -2245,7 +2166,6 @@ fn finish_hblank_dma(bus: &mut Bus, line: u64) {
     bus.elapse(3);
 }
 
-/// ZiGBA: "timer zero unused count-up bit cannot bypass state phase validation"
 #[test]
 fn timer_zero_unused_count_up_bit_cannot_bypass_state_phase_validation() {
     let mut bus = Bus::init(&[]);
@@ -2266,7 +2186,6 @@ fn timer_zero_unused_count_up_bit_cannot_bypass_state_phase_validation() {
     bus.write_state(&mut evenfall_state::Sink::new(None, None)).unwrap();
 }
 
-/// ZiGBA: "no-event materialization keeps a simultaneous audio sample before FIFO consumption"
 #[test]
 fn no_event_materialization_keeps_a_simultaneous_audio_sample_before_fifo_consumption() {
     let mut bus = Bus::init(&[]);
@@ -2299,7 +2218,6 @@ fn no_event_materialization_keeps_a_simultaneous_audio_sample_before_fifo_consum
     bus.end_device_batch();
 }
 
-/// ZiGBA: "full prefetch queue restarts with boundary and sequential wait states"
 #[test]
 fn full_prefetch_queue_restarts_with_boundary_and_sequential_wait_states() {
     let rom = vec![0xa5; 0x20040];
@@ -2347,7 +2265,6 @@ fn full_prefetch_queue_restarts_with_boundary_and_sequential_wait_states() {
     }
 }
 
-/// ZiGBA: "batched instruction fetch latches before DMA at the exact access boundary"
 #[test]
 fn batched_instruction_fetch_latches_before_dma_at_the_exact_access_boundary() {
     let mut bus = Bus::init(&[]);
@@ -2375,7 +2292,6 @@ fn batched_instruction_fetch_latches_before_dma_at_the_exact_access_boundary() {
     assert_ne!(0, bus.irq.interrupt_request_flags & (1 << 11));
 }
 
-/// ZiGBA: "no-event materialization retains simultaneous input serial LCD timer and DMA delivery"
 #[test]
 fn no_event_materialization_retains_simultaneous_input_serial_lcd_timer_and_dma_delivery() {
     let mut bus = Bus::init(&[]);
@@ -2420,7 +2336,6 @@ fn no_event_materialization_retains_simultaneous_input_serial_lcd_timer_and_dma_
     bus.end_external_inputs();
 }
 
-/// ZiGBA: "audio DMA refill timing is invariant to elapsed-cycle chunking"
 #[test]
 fn audio_dma_refill_timing_is_invariant_to_elapsed_cycle_chunking() {
     let mut coarse = Bus::init(&[]);
@@ -2459,13 +2374,9 @@ fn audio_dma_refill_timing_is_invariant_to_elapsed_cycle_chunking() {
     assert_eq!(0x11 * 4, coarse_samples[1].left);
 }
 
-/// ZiGBA: "a DMA burst that never releases the bus latches a livelock and returns"
-///
-/// A deliberate divergence (`docs/roadmap.md`, "DMA that never releases the
-/// bus"): ZiGBA latches a terminal livelock at the limit and turns DMA off.
-/// Here the burst yields at the same limit but keeps the bus: the access it
-/// interrupted completes without DMA, as ZiGBA's does, and the burst then
-/// resumes where it stopped and runs to whatever deadline its host sets.
+/// At the limit the burst yields but keeps the bus: the access it
+/// interrupted completes without DMA, and the burst then resumes where it
+/// stopped and runs to whatever deadline its host sets.
 #[test]
 fn a_dma_burst_that_never_releases_the_bus_yields_at_the_limit_and_resumes() {
     let mut bus = Bus::init(&[]);
@@ -2498,7 +2409,6 @@ fn a_dma_burst_that_never_releases_the_bus_yields_at_the_limit_and_resumes() {
     assert!(bus.dma_epoch.wrapping_sub(transfers) > 70_224 / 64, "the burst runs on");
 }
 
-/// ZiGBA: "batched STOP serial time does not accrue system device clocks"
 #[test]
 fn batched_stop_serial_time_does_not_accrue_system_device_clocks() {
     let mut bus = Bus::init(&[]);
@@ -2528,7 +2438,6 @@ fn batched_stop_serial_time_does_not_accrue_system_device_clocks() {
     assert!(bus.take_joy_bus_response().is_some());
 }
 
-/// ZiGBA: "a halted batch wakes at the LCD or timer event after post-halt charges and cut slices"
 #[test]
 fn a_halted_batch_wakes_at_the_lcd_or_timer_event_after_post_halt_charges_and_cut_slices() {
     for timer in [true, false] {
@@ -2567,7 +2476,6 @@ fn a_halted_batch_wakes_at_the_lcd_or_timer_event_after_post_halt_charges_and_cu
     }
 }
 
-/// ZiGBA: "one-cycle endpoint preserves simultaneous timer HBlank and DMA ordering"
 #[test]
 fn one_cycle_endpoint_preserves_simultaneous_timer_hblank_and_dma_ordering() {
     let mut bus = Bus::init(&[]);

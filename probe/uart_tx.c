@@ -4,7 +4,7 @@
  * bit (SIOCNT bit 4) clear before each SIODATA8 write and setting SIOCNT to
  * 0x3483 per byte. The receiver (uart_rx.c) enforces pacing through CTS.
  * Runs against uart_rx.c on a 2-player cable via
- * test/probe_cases.zig. Reports 0.
+ * validator/probe_cases.rs. Reports 0.
  */
 
 #include "gba.h"

@@ -248,7 +248,8 @@ pub struct Trace(pub Vec<Observation>);
 /// audio rate (u32 LE); four blobs (frame, audio, save, state), each as
 /// u32 length, 32-byte BLAKE3 digest of raw bytes, and exactly length bytes.
 /// No ROM/BIOS is embedded. Files with truncated, trailing, or bad-hash data
-/// are rejected. State bytes include ZiGBA's own envelope and schema digest.
+/// are rejected. State bytes include the system's own envelope and schema
+/// digest.
 impl Trace {
     pub fn write(&self, mut out: impl Write) -> io::Result<()> {
         out.write_all(MAGIC)?;
@@ -353,8 +354,8 @@ fn read_u64(input: &mut impl Read) -> io::Result<u64> {
 
 /// Caller supplies a fresh, configured machine and architecture-specific CPU
 /// inspector. `input_deadline` remains the checkpoint across *all* slices,
-/// including an instruction crossing a yield point. Drain on every slice to
-/// avoid ZiGBA's bounded host audio queue truncating earlier samples.
+/// including an instruction crossing a yield point. Drain on every slice so
+/// a bounded host audio queue cannot truncate earlier samples.
 pub fn run<S, I>(
     system: &mut S,
     scenario: &Scenario<I>,

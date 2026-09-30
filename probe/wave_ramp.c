@@ -5,7 +5,7 @@
  * volume with no length check, and triggers at frequency 0x700 (2048-cycle
  * sample steps, i.e. four DAC samples per nibble). Then spins and idles.
  * The validator drains the stream and checks the analytic result (see
- * test/probe_cases.zig): nibble v surfaces as v*8 through the
+ * validator/probe_cases.rs): nibble v surfaces as v*8 through the
  * unbiased mixer in exact 4-sample runs following the ramp order, after a
  * skippable trigger-alignment head run.
  */

@@ -222,6 +222,10 @@ pub struct Rtc {
     pub irq_pending: bool,
 }
 impl Rtc {
+    /// 9999-12-31T23:59:59Z, the latest epoch a host may configure. Guest
+    /// writes set dates up to 2099, so no reachable state exceeds it.
+    pub const MAX_EPOCH_SECONDS: u64 = 253_402_300_799;
+
     fn init(epoch_seconds: u64) -> Self {
         Self {
             epoch_seconds,
@@ -245,6 +249,9 @@ impl Rtc {
         if self.bit_index >= 8
             || self.payload_length as usize > self.payload.len()
             || self.epoch_cycle > current_cycle
+            // Date reads convert year by year, so a larger epoch would run
+            // for years of host time.
+            || self.epoch_seconds > Self::MAX_EPOCH_SECONDS
         {
             return Err(InvalidSaveState);
         }
@@ -582,7 +589,6 @@ fn epoch_seconds_for(parts: DateParts) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    /// Zig: RTC state rejects indices and payload shapes that can escape its buffers
     #[test]
     fn rtc_state_rejects_indices_and_payload_shapes_that_can_escape_its_buffers() {
         let mut gpio = Gpio::init_rtc(0);
@@ -612,9 +618,15 @@ mod tests {
         assert_eq!(rtc.validate_state(0), Ok(()));
         rtc.epoch_cycle = 1;
         assert_eq!(rtc.validate_state(0), Err(InvalidSaveState));
+        rtc.epoch_cycle = 0;
+        // Evenfall-only: an epoch past the host limit would make a date read
+        // loop year by year for years of host time.
+        rtc.epoch_seconds = Rtc::MAX_EPOCH_SECONDS;
+        assert_eq!(rtc.validate_state(0), Ok(()));
+        rtc.epoch_seconds = u64::MAX;
+        assert_eq!(rtc.validate_state(0), Err(InvalidSaveState));
     }
 
-    /// Zig bus_test: RTC date-time writes rebase deterministic time and preserve the written weekday
     #[test]
     fn rtc_date_time_writes_rebase_deterministic_time_and_preserve_the_written_weekday() {
         let mut rtc = Rtc::init(0);
@@ -626,7 +638,6 @@ mod tests {
         assert_eq!(rtc.payload, [0x04, 0x03, 0x01, 0x01, 0x00, 0x00, 0x01]);
     }
 
-    /// Zig bus_test: RTC time writes convert hour modes while invalid BCD remains atomic
     #[test]
     fn rtc_time_writes_convert_hour_modes_while_invalid_bcd_remains_atomic() {
         let mut rtc = Rtc::init(0);
@@ -646,7 +657,6 @@ mod tests {
         assert_eq!(rtc.payload, [0x24, 0x06, 0x15, 0x06, 0x13, 0x02, 0x03]);
     }
 
-    /// Zig bus_test: Boktai solar sensor counts clock pulses and shares GPIO with RTC
     #[test]
     fn boktai_solar_sensor_counts_clock_pulses_and_shares_gpio_with_rtc() {
         let mut gpio = Gpio::init_rtc(981_205_445);

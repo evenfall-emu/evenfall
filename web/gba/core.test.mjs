@@ -36,6 +36,11 @@ function zip(image) {
   return Buffer.concat([local, name, image, central, name, end]);
 }
 
+test("a module without the ef_ ABI is rejected by name", () => {
+  for (const exports of [{}, { zb_version: () => 1 }, { ef_version: () => 2 }])
+    assert.throws(() => new WasmCore(exports), /Unsupported WASM ABI/);
+});
+
 test("WASM ABI: bounded execution, zero-cycle inspection, input, and isolation", async () => {
   const a = await WasmCore.create(wasm),
     b = await WasmCore.create(wasm);
@@ -462,8 +467,7 @@ test("STOP and unsupported guest code remain explicit terminal results", async (
 
 test("a DMA burst that holds the bus reports dma_stall while video runs on", async () => {
   // Direct Sound DMA1/DMA2 refill FIFO A/B from IWRAM while timers 0 and 1
-  // overflow every cycle, then the CPU counts in r2 (docs/roadmap.md, "DMA
-  // that never releases the bus").
+  // overflow every cycle, then the CPU counts in r2.
   const rom = Buffer.from(
     "0103a0e38010a0e3b418c0e1fb1ca0e3b218c0e13c109fe5bc1080e538109fe5" +
       "c01080e534109fe5b61cc0e124109fe5c81080e528109fe5cc1080e51c109fe5" +
@@ -499,8 +503,8 @@ test("a DMA burst that holds the bus reports dma_stall while video runs on", asy
   }
 });
 
-const extra = process.env.ZIGBA_TEST_ROMS
-  ? JSON.parse(process.env.ZIGBA_TEST_ROMS)
+const extra = process.env.EVENFALL_TEST_ROMS
+  ? JSON.parse(process.env.EVENFALL_TEST_ROMS)
   : [];
 test("native/WASM canonical state, pixels, audio, memory, and save parity", async (t) => {
   const root = new URL("../..", import.meta.url);
