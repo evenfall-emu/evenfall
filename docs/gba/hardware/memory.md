@@ -73,7 +73,8 @@ The hole mirrors the last 32 KiB, except in bitmap modes:
 | `18000h`–`1BFFFh`        | VRAM `10000h`–`13FFFh` | nothing: reads return 0, writes are lost |
 | `1C000h`–`1FFFFh`        | VRAM `14000h`–`17FFFh` | same                                     |
 
-In bitmap modes, sprite graphics start at `14000h` instead of `10000h`, and the part of the mirror that would land below that boundary reads as nothing. mGBA 0.10.5 ([`memory.c`][mgba-memory]) and NanoBoyAdvance ([`ppu.hh`][nba-ppu]) agree.
+In bitmap modes, sprite graphics start at `14000h` instead of `10000h`, and the part of the mirror that would land below that boundary reads as nothing.
+mGBA 0.10.5 ([`memory.c`][mgba-memory]) and NanoBoyAdvance ([`ppu.hh`][nba-ppu]) agree.
 
 **Byte writes to video memory.** Palette RAM and the background part of VRAM can only be written 16 bits at a time.
 A byte write there stores the same byte into both halves of the halfword.

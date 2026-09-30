@@ -2,7 +2,7 @@
 
 Evenfall's GBA core is cycle-accurate.
 Every fetch is timed, devices see events in the order the hardware produces them, every frame is fully drawn and audio is emulated sample by sample.
-On our benchmark ROMs it still runs in about half of mGBA's time.
+On our benchmark ROMs it still runs in about half of mGBA's time, and in about a third of the time of the VBA-M core that the Delta iOS emulator ships.
 
 This page gives the current numbers, explains where the speed comes from and how the fast paths stay exact, and shows how to measure.
 The [research notes](research/README.md) go deeper into individual mechanisms.
@@ -11,22 +11,38 @@ The [research notes](research/README.md) go deeper into individual mechanisms.
 
 ### Native
 
-Evenfall's loop time as a fraction of mGBA 0.10.5's on x86-64 (lower is faster).
-Both emulators draw every frame and emulate audio, run one frame at a time with no input and no save media, and reach the same final picture on every workload. mGBA is its headless release build with idle-loop detection at its default.
+Loop time relative to mGBA 0.10.5 on x86-64, with HLE boot (lower is faster).
+The last column compares Evenfall with VBA-M directly.
 
-| Workload                                              | Frames |  HLE boot | Skip-BIOS boot |
-| ----------------------------------------------------- | -----: | --------: | -------------: |
-| Idle: HALT and an empty mode-0 frame                  |  3,600 |     0.36x |          0.41x |
-| ARM mixer: ARM code from IWRAM                        |    600 |     0.41x |          0.41x |
-| Thumb logic: Thumb code from Game Pak ROM             |    600 |     0.56x |          0.53x |
-| Tiles: text backgrounds, sprites, effects and windows |    600 |     0.36x |          0.34x |
-| Affine: affine backgrounds, sprites and HBlank DMA    |    600 |     0.78x |          0.86x |
-| Bitmap DMA: page flips and small transfers            |    600 |     0.65x |          0.64x |
-| Audio: Direct Sound FIFO DMA and PSG                  |    600 |     0.41x |          0.44x |
-| **Geometric mean**                                    |        | **0.48x** |      **0.50x** |
+| Workload                                              | Frames | Evenfall / mGBA | VBA-M / mGBA | Evenfall / VBA-M |
+| ----------------------------------------------------- | -----: | --------------: | -----------: | ---------------: |
+| Idle: HALT and an empty mode-0 frame                  |  3,600 |           0.35x |        4.95x |            0.07x |
+| ARM mixer: ARM code from IWRAM                        |    600 |           0.40x |        1.57x |            0.26x |
+| Thumb logic: Thumb code from Game Pak ROM             |    600 |           0.52x |        1.28x |            0.41x |
+| Tiles: text backgrounds, sprites, effects and windows |    600 |           0.33x |        1.52x |            0.22x |
+| Affine: affine backgrounds, sprites and HBlank DMA    |    600 |           0.78x |        1.24x |            0.63x |
+| Bitmap DMA: page flips and small transfers            |    600 |           0.65x |        0.52x |            1.23x |
+| Audio: Direct Sound FIFO DMA and PSG                  |    600 |           0.40x |        0.99x |            0.41x |
+| **Geometric mean**                                    |        |       **0.47x** |    **1.39x** |        **0.34x** |
 
-HLE boot handles interrupts without any BIOS code.
+Evenfall is faster than mGBA on every workload.
+It is faster than VBA-M on every workload but bitmap DMA, where VBA-M is the fastest of the three.
+
+With skip-BIOS boot the means are 0.48x, 1.39x and 0.35x, and no Evenfall ratio moves by more than 0.04.
 Skip-BIOS boot maps the open Cult-of-GBA replacement BIOS and runs its interrupt dispatcher, which the execution engine runs like any other ARM code.
+HLE boot handles interrupts without any BIOS code.
+
+How the three emulators were built and run:
+
+- All three draw every frame, emulate audio, run one frame at a time with no input and no save media, and reach the same final picture on every workload.
+- The host is an Intel Core Ultra X7 358H, pinned to one performance core, with five measured rounds after one warmup.
+  Per-round ratios stay within 3%, and a repeat run gives the same means.
+- mGBA is its headless release build, with idle-loop detection at its default.
+- VBA-M is built from Delta's own core configuration, with Clang at `-Os` as Xcode's release build does.
+  At `-O3` it is about 3% faster.
+  These figures are for that configuration on x86-64.
+  They don't measure Delta itself on an iPhone, with its interface, audio output and Metal rendering.
+- Evenfall is its `release-lto` build.
 
 Each ROM exercises one part of the machine and all of them weigh the same in the mean, so the table doesn't predict how fast a particular game runs.
 
@@ -57,7 +73,8 @@ Drawing one frame in four, a session uses 3.1 to 3.7 MiB of heap.
 ### Build times
 
 Wall times for a cold build, and for a rebuild after a one-line change to the body of the inlined `Bus::now`.
-Native builds compile the core, and WebAssembly builds link the shipped web module. [`build-times.sh`](../tools/bench/build-times.sh) reproduces them from a snapshot of committed source, so it never touches your worktree.
+Native builds compile the core, and WebAssembly builds link the shipped web module.
+[`build-times.sh`](../tools/bench/build-times.sh) reproduces them from a snapshot of committed source, so it never touches your worktree.
 
 These are captured from my Ultra X7 Panther Lake CPU, on a loaded host.
 
@@ -190,7 +207,8 @@ How LLVM compiles the fast paths moves them by several percent, so hot-path code
 
 **Pin inlining.** Fat LTO inlines a call when its cost is below LLVM's threshold.
 A call within a few dozen units of the threshold flips when an unrelated edit changes its caller's size, which moves workloads by up to 6%.
-Every such call in the CPU engine, device step, DMA, APU mixer and compositor carries `#[inline(always)]` or `#[inline(never)]`, and `thumb::run` and `Cpu::run_normal_until` stay out of line so that edits elsewhere don't move the run loops. [`inline-stability.mjs`](../tools/bench/inline-stability.mjs) builds with the threshold at 200, 250 (the default) and 300 and fails if any of those functions changes size.
+Every such call in the CPU engine, device step, DMA, APU mixer and compositor carries `#[inline(always)]` or `#[inline(never)]`, and `thumb::run` and `Cpu::run_normal_until` stay out of line so that edits elsewhere don't move the run loops.
+[`inline-stability.mjs`](../tools/bench/inline-stability.mjs) builds with the threshold at 200, 250 (the default) and 300 and fails if any of those functions changes size.
 Run it after touching them.
 Measure which way to pin a call: inlining `thumb::Ctx::half` into the Thumb loops, for example, makes thumb-logic 17% slower.
 
@@ -206,8 +224,9 @@ With the array 8 bytes past a boundary, a quarter of those stores split across t
 ## Measuring
 
 ```sh
-node tools/bench/run.mjs --list
-node tools/bench/run.mjs --boot hle
+tools/setup-refs.sh mgba delta gbadeltacore vbam
+node tools/bench/run.mjs --boot hle --cpu 3 --rounds 5 --warmups 1
+node tools/bench/run.mjs --cpu 3 --rounds 5 --warmups 1   # skip-BIOS boot
 cargo bench -p evenfall-gba --bench hot_paths
 cargo build --profile profiling -p evenfall-bench --bin evenfall-harness
 perf record --call-graph dwarf -- \
@@ -215,7 +234,9 @@ perf record --call-graph dwarf -- \
 perf report
 ```
 
-[`tools/bench/run.mjs`](../tools/bench/run.mjs) builds the ROMs and harnesses before timing anything, then runs each emulator in a fresh process pinned to one CPU core. `--cpu auto` picks an idle fast core.
+[`tools/bench/run.mjs`](../tools/bench/run.mjs) builds the ROMs and harnesses before timing anything, then runs each emulator in a fresh process pinned to one CPU core.
+It runs mGBA, VBA-M and Evenfall by default and divides by the first one listed.
+`--baseline vbam` divides by VBA-M instead, and `--cpu auto` picks an idle fast core.
 On a CPU with performance and efficiency cores, pin to a performance core, and never compare runs made on different cores.
 
 Each round runs every emulator on every workload, in an order that rotates between rounds.

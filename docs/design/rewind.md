@@ -23,7 +23,9 @@ Rewind never changes how the guest runs, and none of its settings or history end
 └──────────────────────┘        └──────────────────────────────────┘
 ```
 
-The work is split between two types. `Session` ([`systems/gba/src/session.rs`](../../systems/gba/src/session.rs)) decides when to capture and, after a restore, puts the host side back in order. [`RewindBuffer`](../../crates/state/src/rewind.rs) owns the history.
+The work is split between two types.
+`Session` ([`systems/gba/src/session.rs`](../../systems/gba/src/session.rs)) decides when to capture and, after a restore, puts the host side back in order.
+[`RewindBuffer`](../../crates/state/src/rewind.rs) owns the history.
 It compresses states, decides which ones to keep, decodes them, and reads and writes rewind bundles.
 The buffer is shared code in `crates/state` and doesn't depend on the GBA core.
 It sees state bytes with a frame and cycle attached.
@@ -125,7 +127,8 @@ Both kinds of delta start with the target length and the raw delta length as two
 Complete compressed states start with the raw length as a `u64`, followed by raw DEFLATE.
 
 Stored bytes can come from an imported file, so decoding treats them as untrusted.
-It limits a state to 2 MiB and a raw delta to 4 MiB, and checks every run, copy source and literal range. [`rewind_inflate`](../../crates/state/src/rewind_inflate.rs) decodes stored, fixed and dynamic raw-DEFLATE blocks and checks that input and output are consumed exactly.
+It limits a state to 2 MiB and a raw delta to 4 MiB, and checks every run, copy source and literal range.
+[`rewind_inflate`](../../crates/state/src/rewind_inflate.rs) decodes stored, fixed and dynamic raw-DEFLATE blocks and checks that input and output are consumed exactly.
 
 ### Compressor
 
@@ -161,7 +164,8 @@ A bundle saves a whole rewind session to one file.
 It holds the exact live state, the retention settings and every retained checkpoint, so loading it brings back the history along with the game.
 Loading a plain save state clears the history instead.
 
-`Session::write_rewind_bundle` doesn't advance time or take a checkpoint. `Session::load_rewind_bundle` validates the whole upload before replacing anything, and a failed load keeps the previous live state and history.
+`Session::write_rewind_bundle` doesn't advance time or take a checkpoint.
+`Session::load_rewind_bundle` validates the whole upload before replacing anything, and a failed load keeps the previous live state and history.
 The owned-buffer variant keeps the uploaded bytes and uses them as storage.
 Stored payloads stay views into the upload, and later captures reuse the space freed in it.
 

@@ -22,6 +22,7 @@ It passes the public and in-house test ROMs, but evidence across real games is s
 ## Performance
 
 On our benchmark ROMs, the core takes about half of mGBA 0.10.5's time natively and is faster on every workload, while drawing every frame and emulating audio exactly.
+It takes about a third of the time of the VBA-M core that the Delta iOS emulator ships.
 A pre-decoded execution engine runs ARM and Thumb code, and the compositor draws lines with SIMD lanes (SSE2 on x86-64, NEON on AArch64, `simd128` in WebAssembly).
 Results and method are in [`performance.md`](performance.md).
 
