@@ -1,9 +1,7 @@
 # Research notes
 
-Deeper notes on the mechanisms that make the GBA core fast: what each one
-does, why it stays exact, and what remains open.
-[`performance.md`](../performance.md) gives the overview and the current
-numbers.
+Deeper notes on the mechanisms that make the GBA core fast: what each one does, why it stays exact, and what remains open.
+[`performance.md`](../performance.md) gives the overview and the current numbers.
 
 | Note                                                     | Subject                                                                                                  |
 | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
