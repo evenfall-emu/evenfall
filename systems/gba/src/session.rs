@@ -170,7 +170,7 @@ impl Session {
             if !(8_000..=192_000).contains(&config.output_rate) {
                 return Err(Error::InvalidSampleRate);
             }
-            if config.rtc_epoch > 253_402_300_799 {
+            if config.rtc_epoch > crate::cartridge::gpio::Rtc::MAX_EPOCH_SECONDS {
                 return Err(Error::InvalidRtcEpoch);
             }
             let extracted =
@@ -600,6 +600,51 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Evenfall-only: digest-valid states whose counters would make the next
+    /// oscillator advance or RTC date read run for years of host time are
+    /// rejected, by explicit loads and inside rewind bundles, and neither the
+    /// live machine nor the history changes.
+    #[test]
+    fn digest_valid_states_with_unbounded_counters_are_rejected_atomically() {
+        let mut session = Session::create(Config {
+            image: LOOP_ROM,
+            rtc_enabled: Some(true),
+            rewind: RewindConfig { interval_frames: 1, ..RewindConfig::default() },
+            ..Config::default()
+        })
+        .unwrap();
+        for _ in 0..3 {
+            session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        }
+        let state = session.write_state().unwrap();
+        let bundle = session.write_rewind_bundle().unwrap();
+        let live = 16..16 + state.len();
+        assert_eq!(bundle[live.clone()], state);
+        let fields = session.machine.state_field_ranges().unwrap();
+        for (name, value) in [
+            ("bus.apu.noise.phase_cycles", 1u64 << 63),
+            ("bus.cartridge_gpio.rtc.epoch_seconds", u64::MAX),
+        ] {
+            let range = &fields.iter().find(|field| field.0 == name).unwrap().1;
+            let at = Machine::STATE_HEADER_SIZE + range.start as usize;
+            let mut bad = state.clone();
+            bad[at..at + 8].copy_from_slice(&value.to_le_bytes());
+            let end = bad.len() - 32;
+            let digest = blake3::hash(&bad[Machine::STATE_HEADER_SIZE..end]);
+            bad[end..].copy_from_slice(digest.as_bytes());
+            assert!(session.load_state(&bad).is_err(), "{name}");
+            assert_eq!(session.write_state().unwrap(), state, "{name}");
+
+            let mut bad_bundle = bundle.clone();
+            bad_bundle[live.clone()].copy_from_slice(&bad);
+            let end = bad_bundle.len() - 32;
+            let digest = blake3::hash(&bad_bundle[..end]);
+            bad_bundle[end..].copy_from_slice(digest.as_bytes());
+            assert!(session.load_rewind_bundle(&bad_bundle).is_err(), "{name}");
+            assert_eq!(session.write_rewind_bundle().unwrap(), bundle, "{name}");
+        }
+    }
 
     const LOOP_ROM: &[u8] = &[0xfe, 0xff, 0xff, 0xea];
 

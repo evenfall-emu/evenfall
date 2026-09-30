@@ -202,9 +202,9 @@ async function command(method, args) {
     return null;
   }
   // A focus-loss key release can land between manual execution slices.
-  // Scenario and replay tasks have no gameplay recorder and continue to
-  // reject player mutations.
-  if (busy && !(method === "setKeys" && recording))
+  // Every other exclusive task (scenario, replay, rewind, load) rejects
+  // player mutations.
+  if (busy && !(method === "setKeys" && busy === "manual" && recording))
     throw new Error("SessionBusy");
   switch (method) {
     case "scenario": {
@@ -324,17 +324,21 @@ async function command(method, args) {
       return core.exportRom();
     case "load": {
       stop();
-      const result = core.load(...args);
-      initial = {
-        options: {
-          ...args[1],
-          biosSha1: args[1]?.bios ? await sha1(args[1].bios) : undefined,
-        },
-      };
-      beginRecording(initial.options);
-      clearPresentation();
-      sendFrame();
-      return result;
+      // Hash before replacing the machine, and hold the session across the
+      // await: a command arriving meanwhile would otherwise see the new
+      // machine with the old recording, or publish its own and be overwritten.
+      busy = true;
+      try {
+        const biosSha1 = args[1]?.bios ? await sha1(args[1].bios) : undefined;
+        const result = core.load(...args);
+        initial = { options: { ...args[1], biosSha1 } };
+        beginRecording(initial.options);
+        clearPresentation();
+        sendFrame();
+        return result;
+      } finally {
+        busy = false;
+      }
     }
     case "setSpeed": {
       const value = args[0];
@@ -415,7 +419,7 @@ async function command(method, args) {
           throw new RangeError("Invalid input event");
         previous = event.at;
       }
-      busy = true;
+      busy = "manual";
       try {
         let consumed = 0;
         let result = {

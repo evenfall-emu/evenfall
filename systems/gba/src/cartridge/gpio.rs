@@ -222,6 +222,10 @@ pub struct Rtc {
     pub irq_pending: bool,
 }
 impl Rtc {
+    /// 9999-12-31T23:59:59Z, the latest epoch a host may configure. Guest
+    /// writes set dates up to 2099, so no reachable state exceeds it.
+    pub const MAX_EPOCH_SECONDS: u64 = 253_402_300_799;
+
     fn init(epoch_seconds: u64) -> Self {
         Self {
             epoch_seconds,
@@ -245,6 +249,9 @@ impl Rtc {
         if self.bit_index >= 8
             || self.payload_length as usize > self.payload.len()
             || self.epoch_cycle > current_cycle
+            // Stricter than ZiGBA: date reads convert year by year, so a
+            // larger epoch would run for years of host time.
+            || self.epoch_seconds > Self::MAX_EPOCH_SECONDS
         {
             return Err(InvalidSaveState);
         }
@@ -611,6 +618,13 @@ mod tests {
         rtc.byte_index = 2;
         assert_eq!(rtc.validate_state(0), Ok(()));
         rtc.epoch_cycle = 1;
+        assert_eq!(rtc.validate_state(0), Err(InvalidSaveState));
+        rtc.epoch_cycle = 0;
+        // Evenfall-only: an epoch past the host limit would make a date read
+        // loop year by year for years of host time.
+        rtc.epoch_seconds = Rtc::MAX_EPOCH_SECONDS;
+        assert_eq!(rtc.validate_state(0), Ok(()));
+        rtc.epoch_seconds = u64::MAX;
         assert_eq!(rtc.validate_state(0), Err(InvalidSaveState));
     }
 

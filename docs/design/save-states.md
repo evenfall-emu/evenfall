@@ -124,7 +124,14 @@ a heap-allocated scratch machine with the resident media, validates their
 invariants and publishes it only after all checks pass. Semantic checks cover
 CPU mode and continuations, PPU position, timer prescaler alignment, future
 DMA and serial deadlines, bounded raster histories, prefetch, cartridge and
-APU state. A failed load leaves the running machine unchanged. `Session`
+APU state. Two checks keep a crafted state from stalling the host. An APU
+oscillator phase must
+stay below its channel's longest period (a frequency change keeps a phase
+from a longer period, so the current period is not the bound), and an RTC
+epoch must not pass 9999-12-31T23:59:59Z, the limit a session or the CLI
+accepts. Neither is reachable by a running machine, and either would make
+the next oscillator advance or date read run for years of host time. A
+failed load leaves the running machine unchanged. `Session`
 rejects oversized input, reapplies host audio/video policy, resets the audio
 resampler and clears rewind history after a successful explicit load.
 

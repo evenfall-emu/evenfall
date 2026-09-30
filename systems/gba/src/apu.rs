@@ -56,6 +56,11 @@ pub struct SquareChannel {
 }
 
 impl SquareChannel {
+    /// The longest period, at frequency 0. An oscillator's phase stays below
+    /// the period it accumulated in, and a frequency change keeps it, so no
+    /// reachable phase reaches this.
+    const MAX_PERIOD: u64 = 16 * 2048;
+
     fn write_duty_envelope(&mut self, value: u16) {
         self.write_duty_length(value as u8);
         self.write_envelope((value >> 8) as u8);
@@ -257,6 +262,9 @@ pub struct WaveChannel {
 }
 
 impl WaveChannel {
+    /// The longest period, at frequency 0; see `SquareChannel::MAX_PERIOD`.
+    const MAX_PERIOD: u64 = 8 * 2048;
+
     fn write_bank_control(&mut self, value: u16) {
         self.two_bank = value & 0x20 != 0;
         self.selected_bank = u8::from(value & 0x40 != 0);
@@ -428,6 +436,10 @@ pub struct NoiseChannel {
 }
 
 impl NoiseChannel {
+    /// The longest period, divisor 7 and shift 15; see
+    /// `SquareChannel::MAX_PERIOD`.
+    const MAX_PERIOD: u64 = (14 << 15) * 32;
+
     fn write_length_envelope(&mut self, value: u16) {
         self.write_length(value as u8);
         self.write_envelope((value >> 8) as u8);
@@ -748,6 +760,12 @@ impl Apu {
             || (self.sweep1.enabled && !(1..=8).contains(&self.sweep1.counter))
             || self.fifo_a.playback_bytes_remaining > 4
             || self.fifo_b.playback_bytes_remaining > 4
+            // Stricter than ZiGBA: an unreachable oscillator phase would make
+            // the next advance run for years of host time.
+            || self.square1.phase_cycles >= SquareChannel::MAX_PERIOD
+            || self.square2.phase_cycles >= SquareChannel::MAX_PERIOD
+            || self.wave.phase_cycles >= WaveChannel::MAX_PERIOD
+            || self.noise.phase_cycles >= NoiseChannel::MAX_PERIOD
         {
             return Err(Error::InvalidSaveState);
         }

@@ -276,15 +276,15 @@ small pool and detaches them; it is optional.
 
 Failed calls reject with an `Error` whose message names the cause:
 
-| Message                                                                          | Cause                                                     |
-| -------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `NoSession`                                                                      | the call needs a loaded game                              |
-| `SessionBusy`                                                                    | a manual run, scenario or replay is already in progress   |
-| `PauseBeforeManualExecution`                                                     | `runUntil` or `step` while playing                        |
-| `PauseBeforeRewind`, `PauseBeforeLoadingState`, `PauseBeforeLoadingRewindBundle` | `rewind`, `loadState` or `loadRewindBundle` while playing |
-| `MachineFaulted`                                                                 | `play()` or a snapshot write after a compatibility fault  |
-| `CommandQueueFull`                                                               | 128 requests are already pending                          |
-| `SessionDisposed`                                                                | the session was disposed or terminated                    |
+| Message                                                                          | Cause                                                                 |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `NoSession`                                                                      | the call needs a loaded game                                          |
+| `SessionBusy`                                                                    | a load, manual run, rewind, scenario or replay is already in progress |
+| `PauseBeforeManualExecution`                                                     | `runUntil` or `step` while playing                                    |
+| `PauseBeforeRewind`, `PauseBeforeLoadingState`, `PauseBeforeLoadingRewindBundle` | `rewind`, `loadState` or `loadRewindBundle` while playing             |
+| `MachineFaulted`                                                                 | `play()` or a snapshot write after a compatibility fault              |
+| `CommandQueueFull`                                                               | 128 requests are already pending                                      |
+| `SessionDisposed`                                                                | the session was disposed or terminated                                |
 
 Load and state errors carry the core's error name, for example `NoGbaInZip`,
 `SaveTypeConflict` or `SaveStateRomMismatch`.
