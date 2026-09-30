@@ -2,6 +2,7 @@
 
 use crate::bus::{self, Bus, KeyState, Media, TimedInput};
 use crate::cartridge::{save::Type as SaveType, tilt::Sample as TiltSample};
+use crate::cheats::{self, Cheat};
 use crate::cpu::{self, Cpu};
 use evenfall_host::Cycle;
 use evenfall_state::{Codec, Sink, Source};
@@ -284,8 +285,10 @@ pub fn run_linked_until(
             .min_by_key(|(_, machine)| machine.now())
             .map(|(index, _)| index);
         if let Some(index) = halted {
-            machines[index].bus.idle_halt_until(deadline);
-            let _ = machines[index].latch_bus_fault();
+            let machine = &mut machines[index];
+            machine.bus.idle_halt_until(deadline.min(machine.cheat_deadline()));
+            machine.poll_cheats();
+            let _ = machine.latch_bus_fault();
             continue;
         }
         let mut stopped_progress = false;
@@ -396,6 +399,9 @@ pub struct Machine {
     pub cpu: Cpu,
     latched_fault: Option<Fault>,
     media_identity: MediaIdentity,
+    /// The cheat device, absent while no cheat is active. It is outside the
+    /// `EVENFALL` payload; states carry it in an envelope.
+    cheats: Option<Box<cheats::Device>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -463,6 +469,7 @@ impl Machine {
             cpu: Cpu::init(entry_address, initial_cpsr, config.boot == BootMode::Hle),
             latched_fault: None,
             media_identity: identity,
+            cheats: None,
         });
         if let Some(epoch) = config.rtc_epoch_seconds {
             machine.bus.enable_rtc(epoch);
@@ -518,6 +525,9 @@ impl Machine {
         let outcome = self.cpu.step(&mut self.bus);
         if let Some(fault) = self.latch_bus_fault() {
             return StepOutcome::Faulted(fault);
+        }
+        if !matches!(outcome, cpu::StepOutcome::Faulted(_)) {
+            self.poll_cheats();
         }
         match outcome {
             cpu::StepOutcome::Waiting(reason) => StepOutcome::Waiting(reason),
@@ -603,7 +613,15 @@ impl Machine {
         let started_at = self.now();
         let (reason, woke) = match self.bus.power_state() {
             bus::PowerState::Halted => {
-                (cpu::WaitReason::Halted, self.bus.idle_halt_until(deadline))
+                // Idling stops at each cheat application on the way.
+                let woke = loop {
+                    let woke = self.bus.idle_halt_until(deadline.min(self.cheat_deadline()));
+                    self.poll_cheats();
+                    if woke || self.now() >= deadline || self.bus.dma_livelock().is_some() {
+                        break woke;
+                    }
+                };
+                (cpu::WaitReason::Halted, woke)
             }
             bus::PowerState::Stopped => {
                 (cpu::WaitReason::Stopped, self.bus.idle_stop_until(deadline))
@@ -769,6 +787,36 @@ impl Machine {
         self.bus.save_type()
     }
 
+    /// Replaces the active cheats; an empty list removes the cheat device.
+    /// They first run at the first VBlank start after the current video
+    /// position, then at every later one.
+    pub fn set_cheats(&mut self, cheats: Vec<Cheat>) -> Result<(), cheats::Error> {
+        cheats::check_set(&cheats)?;
+        self.cheats =
+            (!cheats.is_empty()).then(|| Box::new(cheats::Device::new(cheats, &self.bus)));
+        Ok(())
+    }
+
+    pub fn cheats(&self) -> &[Cheat] {
+        self.cheats.as_deref().map_or(&[], cheats::Device::cheats)
+    }
+
+    /// Master cycle of the next cheat application while the video runs.
+    #[inline]
+    fn cheat_deadline(&self) -> Cycle {
+        match &self.cheats {
+            None => Cycle::MAX,
+            Some(device) => self.now().saturating_add(device.cycles_until_due(&self.bus)),
+        }
+    }
+
+    #[inline]
+    fn poll_cheats(&mut self) {
+        if let Some(device) = &mut self.cheats {
+            device.poll(&mut self.bus);
+        }
+    }
+
     pub fn run_until(&mut self, deadline: Cycle) -> Result<RunResult, RunError> {
         self.run_until_with_input(deadline, &[])
     }
@@ -822,11 +870,20 @@ impl Machine {
         let started_at = self.now();
         let mut execution_fault = None;
         let mut chunk_fault = None;
-        while self.now() < yield_at {
+        loop {
+            self.poll_cheats();
+            if self.now() >= yield_at {
+                break;
+            }
             if let Some(fault) = self.latch_bus_fault() {
                 return self.run_result(started_at, StopReason::Faulted(fault));
             }
-            let chunk_end = yield_at.min(self.now().saturating_add(Bus::MAX_DMA_BURST_CYCLES));
+            // A chunk ends at the next cheat application, so cheats run at
+            // the first instruction boundary at or after it however the
+            // host slices time.
+            let chunk_end = yield_at
+                .min(self.now().saturating_add(Bus::MAX_DMA_BURST_CYCLES))
+                .min(self.cheat_deadline());
             if self.bus.power_state() == bus::PowerState::Stopped
                 && !self.bus.stop_wake_pending()
                 && !self.cpu.inside_hle_bulk_service()
@@ -903,6 +960,9 @@ impl Machine {
         self.write_state_payload(&mut counter)?;
         let mut header = Vec::with_capacity(Self::STATE_HEADER_SIZE);
         self.write_state_header(&mut header, counter.count)?;
+        if let Some(device) = &self.cheats {
+            writer.write_all(&cheats::state_prefix(device.cheats()))?;
+        }
         writer.write_all(&header)?;
         // The codec's Sink writes to Vec, so this is currently a bounded
         // payload buffer rather than an unbuffered stream to the writer.
@@ -932,6 +992,9 @@ impl Machine {
         let mut header = Vec::with_capacity(Self::STATE_HEADER_SIZE);
         self.write_state_header(&mut header, payload_len)?;
         output[..Self::STATE_HEADER_SIZE].copy_from_slice(&header);
+        if let Some(device) = &self.cheats {
+            output.splice(0..0, cheats::state_prefix(device.cheats()));
+        }
         Ok(output)
     }
 
@@ -944,10 +1007,13 @@ impl Machine {
             .ok()
             .filter(|&len| len <= Self::MAX_STATE_PAYLOAD)
             .ok_or(evenfall_state::Error::InvalidSaveState)?;
-        let size = Self::STATE_HEADER_SIZE + payload_len + 32;
+        let prefix = self.cheats.as_ref().map(|device| cheats::state_prefix(device.cheats()));
+        let start = prefix.as_ref().map_or(0, Vec::len);
+        let size = start + Self::STATE_HEADER_SIZE + payload_len + 32;
         let mut output = Vec::new();
         output.try_reserve_exact(size).map_err(|_| evenfall_state::Error::OutOfMemory)?;
-        output.resize(Self::STATE_HEADER_SIZE, 0);
+        output.extend_from_slice(prefix.as_deref().unwrap_or_default());
+        output.resize(start + Self::STATE_HEADER_SIZE, 0);
         let mut hasher = blake3::Hasher::new();
         let mut sink = Sink::new(Some(&mut output), Some(&mut hasher));
         self.write_state_payload(&mut sink)?;
@@ -957,7 +1023,7 @@ impl Machine {
         output.extend_from_slice(hasher.finalize().as_bytes());
         let mut header = Vec::with_capacity(Self::STATE_HEADER_SIZE);
         self.write_state_header(&mut header, count.count)?;
-        output[..Self::STATE_HEADER_SIZE].copy_from_slice(&header);
+        output[start..start + Self::STATE_HEADER_SIZE].copy_from_slice(&header);
         Ok(output)
     }
 
@@ -1044,16 +1110,19 @@ impl Machine {
             self.boot_mode == source.boot_mode && self.media_identity == source.media_identity,
             "a machine copies only a machine running the same media"
         );
-        let Self { boot_mode: _, bus, cpu, latched_fault, media_identity: _ } = source;
+        let Self { boot_mode: _, bus, cpu, latched_fault, media_identity: _, cheats } = source;
         self.bus.copy_from(bus);
         self.cpu.clone_from(cpu);
         self.latched_fault = *latched_fault;
+        self.cheats.clone_from(cheats);
     }
 
     /// Validates into a private scratch machine without creating another one.
     /// The caller must not expose this machine if decoding fails. All durable
     /// fields are decoded and Bus::read_state resets transient output/caches.
     pub(crate) fn load_state_in_place(&mut self, bytes: &[u8]) -> Result<(), StateError> {
+        let (cheats, bytes) =
+            cheats::split_state(bytes).map_err(|()| evenfall_state::Error::InvalidSaveState)?;
         let mut input = Source::new(bytes);
         let mut magic = [0; 8];
         input.read_all(&mut magic)?;
@@ -1112,6 +1181,7 @@ impl Machine {
         {
             return Err(evenfall_state::Error::InvalidSaveState.into());
         }
+        self.cheats = cheats.map(|cheats| Box::new(cheats::Device::new(cheats, &self.bus)));
         Ok(())
     }
 }
@@ -1225,6 +1295,7 @@ impl evenfall_host::System for Machine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cheats::Format;
 
     /// The stable diagnostic line includes width, instruction set, cycle and
     /// the reason payload in snake_case, not Debug's CamelCase names.
@@ -1488,6 +1559,160 @@ mod tests {
             assert!(copy.framebuffer() == source.framebuffer(), "frame after slice {index}");
             start = end;
         }
+    }
+
+    fn cheat(text: &str) -> Cheat {
+        let format = if text.contains(':') { Format::Raw } else { Format::ActionReplayDecrypted };
+        Cheat::parse(text, Some(format)).unwrap()
+    }
+
+    /// AR v3 raw `84201000 00000001`: add one to the word at 02001000.
+    const COUNT_APPLICATIONS: &str = "84201000 00000001";
+    const VBLANK_START: Cycle = 160 * 1232;
+
+    fn applications(machine: &Machine) -> u32 {
+        let mut word = [0; 4];
+        machine.inspect_memory(0x0200_1000, &mut word).unwrap();
+        u32::from_le_bytes(word)
+    }
+
+    /// VBlank starts at or before `cycle` on an undisturbed LCD.
+    fn vblanks_by(cycle: Cycle) -> u32 {
+        cycle.checked_sub(VBLANK_START).map_or(0, |since| since / Machine::CYCLES_PER_FRAME + 1)
+            as u32
+    }
+
+    /// Cheats run once per VBlank start, at the first instruction boundary
+    /// at or after it: never before, and on the instruction that crosses it.
+    #[test]
+    fn cheats_run_at_the_first_boundary_at_or_after_each_vblank_start() {
+        let mut machine =
+            Machine::new(Config { rom: &[0xfe, 0xff, 0xff, 0xea], ..Config::default() });
+        machine.set_cheats(vec![cheat(COUNT_APPLICATIONS)]).unwrap();
+        while machine.now() < VBLANK_START {
+            assert_eq!(applications(&machine), 0, "before VBlank at {}", machine.now());
+            machine.step();
+        }
+        assert_eq!(applications(&machine), 1, "on the crossing instruction");
+        for target in [
+            VBLANK_START + Machine::CYCLES_PER_FRAME - 20,
+            VBLANK_START + 3 * Machine::CYCLES_PER_FRAME - 1,
+            VBLANK_START + 3 * Machine::CYCLES_PER_FRAME + 20,
+            6 * Machine::CYCLES_PER_FRAME,
+        ] {
+            machine.run_until(target).unwrap();
+            assert_eq!(applications(&machine), vblanks_by(machine.now()), "at {}", machine.now());
+        }
+        let before = applications(&machine);
+        machine.set_cheats(Vec::new()).unwrap();
+        machine.run_until(10 * Machine::CYCLES_PER_FRAME).unwrap();
+        assert_eq!(applications(&machine), before);
+        assert!(machine.cheats().is_empty());
+    }
+
+    /// Cheats writing RAM, palette, VRAM and I/O under the busy workload give
+    /// the same states and frames however execution is sliced, and a state
+    /// saved with cheats resumes them.
+    #[test]
+    fn cheat_results_do_not_depend_on_host_slicing() {
+        const F: Cycle = Machine::CYCLES_PER_FRAME;
+        let mut rom = [0; 8];
+        rom[..4].copy_from_slice(&0xe51f_f004u32.to_le_bytes()); // ldr pc, [pc, #-4]
+        rom[4..].copy_from_slice(&0x0300_0000u32.to_le_bytes());
+        let cheats = vec![
+            cheat(COUNT_APPLICATIONS),
+            cheat("05000010:7C1F, 06000100:12345678"),
+            cheat("04000010:0003"),     // BG0HOFS
+            cheat("C7000014 00050007"), // BG1HOFS and BG1VOFS, AR v3 raw I/O word
+            cheat("02000100:0063 03000040:BEEF"),
+        ];
+        let make = || {
+            let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
+            busy_machine(&mut machine, 0x1234_5678, 0xe1c1_20b0);
+            machine.set_cheats(cheats.clone()).unwrap();
+            machine
+        };
+        let end = 4 * F + 999;
+        let mut whole = make();
+        whole.run_until(end).unwrap();
+        assert_eq!(applications(&whole), vblanks_by(whole.now()));
+
+        let mut sliced = make();
+        let mut size = 1;
+        while sliced.now() < end {
+            let target = (sliced.now() + size).min(end);
+            sliced.run_until(target).unwrap();
+            size = size * 7 % 40_009 + 1;
+        }
+        let mut stepped = make();
+        while stepped.now() < 2 * F {
+            stepped.step();
+        }
+        let state = stepped.write_state_alloc().unwrap();
+        assert!(state.starts_with(cheats::STATE_MAGIC));
+        let mut loaded = Machine::new(Config { rom: &rom, ..Config::default() });
+        loaded.load_state(&state).unwrap();
+        assert_eq!(loaded.cheats(), &cheats[..]);
+        loaded.run_until(end).unwrap();
+        stepped.run_until(end).unwrap();
+
+        let expected = whole.write_state_alloc().unwrap();
+        for (name, machine) in [("sliced", &sliced), ("stepped", &stepped), ("loaded", &loaded)] {
+            assert_eq!(machine.now(), whole.now(), "{name}");
+            assert!(machine.write_state_alloc().unwrap() == expected, "{name} state");
+            assert!(machine.framebuffer() == whole.framebuffer(), "{name} frame");
+        }
+    }
+
+    /// A HALTed CPU with no wake source still gets its cheats at each VBlank
+    /// start, through both bounded runs and waits.
+    #[test]
+    fn cheats_run_while_halted_at_the_same_cycles_for_runs_and_waits() {
+        let rom = 0xef02_0000u32.to_le_bytes(); // swi 0x02: Halt
+        let make = || {
+            let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
+            machine.set_cheats(vec![cheat(COUNT_APPLICATIONS)]).unwrap();
+            assert!(matches!(machine.step(), StepOutcome::Executed(_)));
+            machine
+        };
+        let end = 3 * Machine::CYCLES_PER_FRAME + 12_345;
+        let mut run = make();
+        run.run_until(end).unwrap();
+        let mut waited = make();
+        waited.wait_until(end).unwrap();
+        let mut sliced = make();
+        while sliced.now() < end {
+            sliced.wait_until((sliced.now() + 50_021).min(end)).unwrap();
+        }
+        assert_eq!(applications(&run), vblanks_by(run.now()));
+        let expected = run.write_state_alloc().unwrap();
+        assert!(waited.write_state_alloc().unwrap() == expected);
+        assert!(sliced.write_state_alloc().unwrap() == expected);
+    }
+
+    #[test]
+    fn plain_states_stay_unwrapped_and_clear_cheats() {
+        let rom = [0xfe, 0xff, 0xff, 0xea];
+        let mut machine = Machine::new(Config { rom: &rom, ..Config::default() });
+        machine.run_until(1000).unwrap();
+        let plain = machine.write_state_alloc().unwrap();
+        assert_eq!(&plain[..8], Machine::STATE_MAGIC);
+        machine.set_cheats(vec![cheat(COUNT_APPLICATIONS)]).unwrap();
+        let wrapped = machine.write_state_alloc().unwrap();
+        assert!(wrapped.ends_with(&plain));
+        let mut streamed = Vec::new();
+        machine.write_state(&mut streamed).unwrap();
+        assert_eq!(streamed, wrapped);
+        assert_eq!(machine.write_state_alloc_fallible().unwrap(), wrapped);
+
+        machine.load_state(&plain).unwrap();
+        assert!(machine.cheats().is_empty());
+        machine.load_state(&wrapped).unwrap();
+        assert_eq!(machine.cheats().len(), 1);
+        let mut damaged = wrapped.clone();
+        damaged[20] ^= 1;
+        assert!(machine.load_state(&damaged).is_err());
+        assert_eq!(machine.cheats().len(), 1, "a failed load keeps the running cheats");
     }
 
     #[test]

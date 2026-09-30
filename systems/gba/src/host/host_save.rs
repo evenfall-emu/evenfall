@@ -1,5 +1,6 @@
 //! Host-only save-file selection, loading, and atomic persistence.
 
+use crate::cheats::{self, Cheat, Format};
 use crate::{
     cartridge::{self, gpio::Rtc, save::Type, tilt},
     rom_image,
@@ -62,6 +63,9 @@ pub struct Options<'a> {
     pub gyro: GyroOption,
     pub rumble_override: Option<bool>,
     pub tilt: TiltOption,
+    /// `--cheat` specs in order.
+    pub cheats: Vec<&'a str>,
+    pub cheat_file: Option<&'a str>,
 }
 
 pub struct Prepared {
@@ -108,6 +112,48 @@ impl InputMovie {
 }
 
 /// Compiles overlapping key ranges into full held-key states at frame edges.
+/// A `--cheat` spec: `[FORMAT:]CODE`, where FORMAT is `auto` or a
+/// [`Format`](crate::cheats::Format) name; without one the format is detected.
+pub fn parse_cheat_spec(spec: &str) -> Result<Cheat, cheats::Error> {
+    let (format, code) = match spec.split_once(':') {
+        Some(("auto", code)) => (None, code),
+        Some((name, code)) if Format::from_name(name).is_some() => (Format::from_name(name), code),
+        _ => (None, spec),
+    };
+    Cheat::parse(code, format)
+}
+
+/// A `--cheats` file: cheats separated by blank lines. A cheat's first line
+/// may be `!FORMAT`; `#` starts a comment. Errors carry the cheat's number.
+pub fn parse_cheat_file(text: &str) -> Result<Vec<Cheat>, (usize, cheats::Error)> {
+    let mut cheats = Vec::new();
+    let mut paragraph = Vec::new();
+    for line in text.lines().chain([""]) {
+        let content = line.split('#').next().unwrap_or_default().trim();
+        if !content.is_empty() {
+            paragraph.push(content);
+            continue;
+        }
+        if line.trim().is_empty() && !paragraph.is_empty() {
+            let number = cheats.len() + 1;
+            let (format, lines) = match paragraph[0].strip_prefix('!') {
+                Some("auto") => (None, &paragraph[1..]),
+                Some(name) => (
+                    Some(Format::from_name(name.trim()).ok_or((
+                        number,
+                        cheats::Error { line: None, kind: cheats::ErrorKind::Syntax },
+                    ))?),
+                    &paragraph[1..],
+                ),
+                None => (None, &paragraph[..]),
+            };
+            cheats.push(Cheat::parse(&lines.join("\n"), format).map_err(|error| (number, error))?);
+            paragraph.clear();
+        }
+    }
+    Ok(cheats)
+}
+
 pub fn parse_input_movie(text: &str) -> Result<InputMovie, Error> {
     const KEYS: [&str; 10] = ["a", "b", "select", "start", "right", "left", "up", "down", "r", "l"];
     let mut edges = Vec::<(u64, usize, i8)>::new();
@@ -214,6 +260,10 @@ pub fn parse_options<'a>(args: &[&'a str]) -> Result<Options<'a>, Error> {
                 options.trace_from =
                     value.ok_or(Error::InvalidArguments)?.parse().map_err(integer_error)?
             }
+            "--cheat" => options.cheats.push(value.ok_or(Error::InvalidArguments)?),
+            "--cheats" if options.cheat_file.is_none() => {
+                options.cheat_file = Some(value.ok_or(Error::InvalidArguments)?)
+            }
             "--input" if options.input_movie.is_none() => {
                 options.input_movie = Some(value.ok_or(Error::InvalidArguments)?)
             }
@@ -286,6 +336,8 @@ pub fn parse_options<'a>(args: &[&'a str]) -> Result<Options<'a>, Error> {
                 | "--trace"
                 | "--trace-from"
                 | "--input"
+                | "--cheat"
+                | "--cheats"
                 | "--rtc-epoch"
                 | "--solar-level"
                 | "--gyro-sample"
@@ -437,6 +489,24 @@ pub fn write_atomic(path: impl AsRef<Path>, data: &[u8]) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cheat_specs_and_files_name_or_detect_their_formats() {
+        let spec = parse_cheat_spec("action-replay:D8BAE4D9 4864DCE5+A86CDBA5 19BA49B3").unwrap();
+        assert_eq!(spec.format(), Format::ActionReplay);
+        assert_eq!(parse_cheat_spec("02025E90:0F423F00").unwrap().format(), Format::Raw);
+        assert_eq!(parse_cheat_spec("raw:02025E90:0F").unwrap().format(), Format::Raw);
+        assert_eq!(parse_cheat_spec("auto:82025BC4 E0FF").unwrap().format(), Format::CodeBreaker);
+        assert!(parse_cheat_spec("codebreaker:D8BAE4D9 4864DCE5").is_err());
+
+        let file = "# Emerald\n!action-replay\nD8BAE4D9 4864DCE5\nA86CDBA5 19BA49B3\n\n\
+                    82025BC4 E0FF # money\n\n   \n02000000:01\n";
+        let cheats = parse_cheat_file(file).unwrap();
+        let formats: Vec<_> = cheats.iter().map(Cheat::format).collect();
+        assert_eq!(formats, [Format::ActionReplay, Format::CodeBreaker, Format::Raw]);
+        assert_eq!(parse_cheat_file("02000000:01\n\n!nope\n02000000:01").unwrap_err().0, 2);
+        assert_eq!(parse_cheat_file("02000000:01\n\n0202XYZ0 0001").unwrap_err().0, 2);
+    }
 
     fn test_dir() -> PathBuf {
         static NEXT: AtomicU64 = AtomicU64::new(0);

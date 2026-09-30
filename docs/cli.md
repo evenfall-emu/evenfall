@@ -17,7 +17,8 @@ The runner lives in [`systems/gba/src/bin/evenfall-gba.rs`](../systems/gba/src/b
 ```text
 evenfall-gba run --steps <count> [--bios <path>] [--save-type <type>]
           [--save-file <path>] [--state-in <path>] [--state-out <path>]
-          [--trace <path>] [--trace-from <steps>] [--input <movie>] [--quiet]
+          [--trace <path>] [--trace-from <steps>] [--input <movie>]
+          [--cheat <[format:]code>]... [--cheats <file>] [--quiet]
           [--frame-hash] [--no-rtc | --rtc-epoch <seconds>]
           [--no-solar | --solar-level <0..255>]
           [--no-gyro | --gyro-sample <0..4095>] [--rumble | --no-rumble]
@@ -42,6 +43,8 @@ If nothing can wake it, the run ends early.
 | `--trace <path>`       | write a binary record of each instruction ([Trace](#trace))               |
 | `--trace-from <steps>` | start tracing after this many instructions                                |
 | `--input <movie>`      | press buttons on given frames ([Input movies](#input-movies))             |
+| `--cheat <code>`       | turn on a cheat code, repeatable ([Cheats](#cheats))                      |
+| `--cheats <file>`      | turn on the cheats listed in a file ([Cheats](#cheats))                   |
 | `--quiet`              | don't print a line per instruction or per wait                            |
 | `--frame-hash`         | print a hash of the last completed frame                                  |
 
@@ -100,6 +103,40 @@ A movie can have up to 32 ranges.
 After `--state-in`, ranges that have already started set the initial keys.
 
 The same ROM, flags and movie always give the same output, which makes the runner useful for regression tests.
+
+## Cheats
+
+`--cheat` and `--cheats` turn on cheat codes from boot.
+File cheats come first, then each `--cheat` in order.
+With `--state-in`, the flags replace the cheats the state carries.
+Without cheat flags, the state's cheats stay on.
+Cheats run at the first instruction boundary at or after each VBlank start, so a run with cheats is as repeatable as one without.
+
+A `--cheat` value is `[FORMAT:]CODE`.
+FORMAT is `auto` (the default), `raw`, `gameshark`, `gameshark-decrypted`, `action-replay`, `action-replay-decrypted` or `codebreaker`.
+Code lines are separated by `+`, `,`, `;` or spaces:
+
+```sh
+cargo run --release -p evenfall-gba --bin evenfall-gba -- run --steps 5000000 --quiet \
+  --cheat 'action-replay:D8BAE4D9 4864DCE5+A86CDBA5 19BA49B3' \
+  --cheat 'C051CCF6 975E8DA1' --cheat raw:02025E90:0F423F00 game.gba
+```
+
+A `--cheats` file holds one cheat per paragraph, with blank lines between them.
+A paragraph may start with a `!FORMAT` line, and `#` starts a comment:
+
+```text
+# Pokémon Emerald
+!action-replay
+D8BAE4D9 4864DCE5
+A86CDBA5 19BA49B3
+
+82025BC4 E0FF   # CodeBreaker, detected
+```
+
+An invalid or unsupported code prints its cheat and line on stderr, and the runner exits nonzero before running.
+`--state-out` writes a state that carries the cheats.
+[`design/cheats.md`](design/cheats.md) describes the formats, detection and limits.
 
 ## Saves and states
 

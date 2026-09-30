@@ -1,6 +1,7 @@
 //! Session-local reconstruction of video omitted by selective rendering.
 
 use crate::bus::{KeyState, TimedInput};
+use crate::cheats::{self, Cheat};
 use crate::machine::{Config, Machine, RunError, RunResult, Slice, StepOutcome};
 
 const MAX_OPERATIONS: usize = 4096;
@@ -10,6 +11,7 @@ const MAX_INPUTS: usize = 4096;
 enum Call {
     Run { slice: Slice, input_start: usize, input_count: usize },
     Keys(KeyState),
+    Cheats(Vec<Cheat>),
     Step,
 }
 
@@ -25,6 +27,7 @@ pub enum Error {
     MachineFaulted,
     VideoRecoveryDiverged,
     Run(RunError),
+    Cheats(cheats::Error),
 }
 
 impl From<RunError> for Error {
@@ -138,6 +141,18 @@ impl VideoRecovery {
         Ok(())
     }
 
+    pub fn set_cheats(&mut self, machine: &mut Machine, cheats: Vec<Cheat>) -> Result<(), Error> {
+        cheats::check_set(&cheats).map_err(Error::Cheats)?;
+        if machine.fault().is_some() {
+            machine.set_cheats(cheats).map_err(Error::Cheats)?;
+            return Ok(());
+        }
+        self.reserve(machine, 0)?;
+        machine.set_cheats(cheats.clone()).map_err(Error::Cheats)?;
+        self.finish(machine, Call::Cheats(cheats));
+        Ok(())
+    }
+
     pub fn step(&mut self, machine: &mut Machine) -> Result<StepOutcome, Error> {
         if machine.fault().is_some() {
             return Ok(machine.step());
@@ -168,6 +183,9 @@ impl VideoRecovery {
                         .run_slice(slice, &self.inputs[input_start..input_start + input_count])?;
                 }
                 Call::Keys(keys) => self.replay.set_keys(keys),
+                Call::Cheats(ref cheats) => {
+                    self.replay.set_cheats(cheats.clone()).map_err(Error::Cheats)?
+                }
                 Call::Step => {
                     self.replay.step();
                 }

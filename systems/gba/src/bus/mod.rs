@@ -1965,6 +1965,70 @@ impl Bus {
         self.completed_frame_count
     }
 
+    /// Dots the video has advanced since power-on: completed frames, lines
+    /// and the dot within the line, including cycles a device batch has not
+    /// yet delivered. It moves with the master clock except in STOP, where
+    /// the video is frozen.
+    pub(crate) fn video_progress(&self) -> Cycle {
+        let pending =
+            if self.batch_active { self.current_cycle - self.batch_device_cycle } else { 0 };
+        self.completed_frame_count * 228 * 1232
+            + Cycle::from(self.ppu_timing.line) * 1232
+            + Cycle::from(self.ppu_timing.cycle_in_line)
+            + pending
+    }
+
+    /// A cheat device's store: a CPU store's effects on RAM, I/O and video
+    /// memory, without its cycles. Writes elsewhere (BIOS, Game Pak, save
+    /// media) are ignored. An I/O write that starts a DMA runs it as a CPU
+    /// store would.
+    pub(crate) fn cheat_write(&mut self, address: u32, width: AccessWidth, value: u32) {
+        let address = address & !(width.bytes() as u32 - 1);
+        // Video memory takes a word as two halfword beats, as a CPU store does.
+        let (beats, beat_width) =
+            if width == AccessWidth::Word { (2, AccessWidth::Half) } else { (1, width) };
+        match address >> 24 {
+            2 => self.write_ewram(address, width, value),
+            3 => self.write_iwram(address, width, value),
+            4 => {
+                let batch = self.batch_active;
+                if batch {
+                    self.flush_device_batch();
+                    self.batch_active = false;
+                    self.batch_deadline = 0;
+                }
+                self.write_mmio(address, width, value);
+                if batch {
+                    self.batch_active = true;
+                    self.batch_device_cycle = self.current_cycle;
+                    self.batch_deadline = self.next_device_boundary();
+                }
+                self.service_pending_dma();
+            }
+            5 => {
+                self.flush_device_batch();
+                for beat in 0..beats {
+                    let at = address + beat * 2;
+                    self.begin_palette_segments(at, beat_width);
+                    self.write_palette(at, beat_width, value >> (beat * 16));
+                    self.end_palette_segments(at, beat_width);
+                }
+            }
+            6 => {
+                self.flush_device_batch();
+                for beat in 0..beats {
+                    self.write_vram_at_current_dot(
+                        address + beat * 2,
+                        beat_width,
+                        value >> (beat * 16),
+                    );
+                }
+            }
+            7 => self.write_oam(address, width, value),
+            _ => {}
+        }
+    }
+
     pub fn framebuffer(&self) -> &[u16] {
         &self.frame_pixels[..]
     }
