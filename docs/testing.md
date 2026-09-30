@@ -1,11 +1,17 @@
 # Testing
 
-Evenfall is tested in layers. Unit and integration tests check each part of
-the core, test ROMs check the whole machine against independent results, and
-recorded hardware tables check timing. [`compatibility.md`](compatibility.md)
-lists what the ROM validators cover and what still fails.
+An emulator can pass its own unit tests and still get a game wrong, so Evenfall is checked in layers, each catching what the others can't:
 
-## Rust core
+- **Unit and integration tests** check each part of the core against the rules on the [hardware pages](gba/hardware/README.md).
+- **Fast paths against references.** Every optimized path has a test that runs it next to its simple reference and compares everything the game could see ([`performance.md`](performance.md#where-the-speed-comes-from)).
+- **Test ROMs** run real GBA code on the whole machine: the public jsmolka suite, and the project's own probe ROMs.
+- **Recorded hardware results** from the mGBA test suite check timing against numbers measured on a real console.
+- **Native against WebAssembly.** The browser build must produce exactly the same state, pixels, audio, memory and save as the native build.
+- **Scenarios** replay recorded input and compare hashes, for regressions and bug reports ([`devtools.md`](devtools.md)).
+
+[`compatibility.md`](compatibility.md) lists what the test ROMs and hardware tables cover, and what still fails.
+
+## Rust
 
 Run the workspace checks from the repository root:
 
@@ -16,24 +22,19 @@ cargo test --workspace
 cargo test --workspace --release
 ```
 
-The GBA library's unit tests cover the CPU, bus, devices, HLE services,
-renderer, host policy, state codec, rewind and session. Integration targets
-under [`systems/gba/tests/`](../systems/gba/tests/) exercise ROMs and hardware
-tables. For a focused check, run `cargo test -p evenfall-gba --lib`, or use a
-test target such as `cargo test -p evenfall-gba --test mgba_suite_timing`.
-Run affected tests in both debug and release: optimized execution can expose
-different errors. The workspace test command also runs the ROM validators;
-install their inputs first, or select non-ROM targets while working locally.
+Run the tests in both debug and release: some bugs only show up in optimized code.
+Unit tests sit next to their modules and cover the CPU, bus, devices, HLE BIOS, renderer, session, state codec and rewind.
+Integration tests in [`systems/gba/tests/`](../systems/gba/tests/) drive the machine and the bus from outside, and run the test ROMs and hardware tables.
 
-## ROM validators
+For a quicker check, run `cargo test -p evenfall-gba --lib`, or one test target, such as `cargo test -p evenfall-gba --test mgba_suite_timing`.
+`cargo test --workspace` also runs the ROM validator, so set up its inputs first ([below](#test-roms)), or pick other targets while working locally.
 
-The [`validator`](../systems/gba/tests/validator/main.rs) runs the pinned
-jsmolka/gba-tests ROMs and the project's bare-metal probes against the
-oracles in [`jsmolka_cases.rs`](../systems/gba/tests/validator/jsmolka_cases.rs) and
-[`probe_cases.rs`](../systems/gba/tests/validator/probe_cases.rs). The jsmolka checkout
-contains prebuilt ROMs; probes require an `arm-none-eabi-gcc` toolchain with
-`objcopy` and `nm`, Make and Python 3. Inputs and build products are ignored,
-not checked into Git.
+## Test ROMs
+
+The [validator](../systems/gba/tests/validator/main.rs) runs the jsmolka/gba-tests ROMs and the project's probe ROMs, and checks each against its expected result in [`jsmolka_cases.rs`](../systems/gba/tests/validator/jsmolka_cases.rs) and [`probe_cases.rs`](../systems/gba/tests/validator/probe_cases.rs).
+The jsmolka checkout contains built ROMs.
+The probes need an `arm-none-eabi-gcc` toolchain with `objcopy` and `nm`, Make and Python 3.
+Neither the inputs nor the build output are committed.
 
 ```sh
 tools/setup-refs.sh gba-tests
@@ -42,12 +43,11 @@ cargo test -p evenfall-gba --test validator -- --require-roms
 cargo test -p evenfall-gba --test validator --release -- --require-roms
 ```
 
-`--require-roms` is the CI gate: every selected ROM must exist, and a guest
-fault, ROM hash mismatch, failed register/save/device/audio/frame oracle or
-missing ROM fails the target. Without it, absent ROMs are skipped with their
-paths and setup reasons; a run with no available cases still fails. The
-validator prints a line for each case. Arguments select exact names or
-hyphen-boundary prefixes, and `--list` prints paths without loading ROMs:
+`--require-roms` is what CI uses: every selected ROM must exist, and a missing ROM fails just like a guest fault, a wrong ROM hash or a wrong result.
+Without it, missing ROMs are skipped with their path and how to get them, though a run with nothing to test still fails.
+
+The validator prints one line per case.
+Arguments select cases by exact name or by prefix at a hyphen, and `--list` prints paths without loading anything:
 
 ```sh
 cargo test -p evenfall-gba --test validator -- probe-timer jsmolka-ppu
@@ -55,58 +55,57 @@ cargo test -p evenfall-gba --test validator -- --list
 cargo test -p evenfall-gba --test validator -- --gba-tests refs/gba-tests --probes probe/build probe
 ```
 
-Paths supplied to these flags are relative to the repository root unless
-absolute. `--bios FILE` boots only jsmolka cases through a 16 KiB external
-BIOS; probes always use HLE. With no BIOS flag, all cases use HLE. The
-`EVENFALL_VALIDATE_BIOS` environment variable is an alternative to `--bios`.
-For the open Cult-of-GBA replacement BIOS:
+Paths are relative to the repository root unless absolute.
+
+### With a real BIOS
+
+`--bios FILE` (or the `EVENFALL_VALIDATE_BIOS` environment variable) boots the jsmolka cases through a 16 KiB BIOS image.
+Probes always use Evenfall's own BIOS.
+Nobody supplies or downloads a Nintendo BIOS, so the open Cult-of-GBA replacement is the usual choice:
 
 ```sh
 tools/setup-refs.sh cult-gba-bios
 cargo test -p evenfall-gba --test validator -- --bios refs/cult-gba-bios/bios.bin jsmolka
 ```
 
-The full replacement-BIOS selection exits nonzero because `jsmolka-bios`
-expects Nintendo boot's protected-read latch and fails at test 1. Every other
-jsmolka case passes with that BIOS; see
-[`compatibility.md`](compatibility.md#known-divergences). Do not use
-`--require-roms` as a way to ignore this expected failure: it controls missing
-media, not oracles. No Nintendo BIOS is supplied or fetched.
+This run exits non-zero, as expected: `jsmolka-bios` checks a value only Nintendo's boot code leaves behind, and fails at test 1 ([compatibility](compatibility.md#known-differences)).
+Every other jsmolka case passes.
+`--require-roms` only controls missing files, so it isn't a way to hide that failure.
 
-## Hardware table fixtures
+## Recorded hardware results
 
-The pinned mGBA suite's recorded hardware values run as ordinary integration
-tests; they do not require devkitARM or a suite ROM build:
+The mGBA test suite's recorded hardware numbers run as ordinary tests, without devkitARM or building the suite's ROM:
 
 ```sh
 cargo test -p evenfall-gba --test mgba_suite_timing
 cargo test -p evenfall-gba --test mgba_suite_source
 ```
 
-[`mgba_suite_timing.rs`](../systems/gba/tests/mgba_suite_timing.rs) measures
-instruction and DMA timing through `Machine` with suite-style calibration;
-[`mgba_suite_source.rs`](../systems/gba/tests/mgba_suite_source.rs) checks DMA
-source and latch behavior through `Bus`. The recorded numbers come from the
-suite, not Rust output. Known residuals and limits are in
-[`compatibility.md`](compatibility.md#mgba-suite-hardware-tables).
+[`mgba_suite_timing.rs`](../systems/gba/tests/mgba_suite_timing.rs) measures instruction and DMA timing through `Machine`, the way the suite does.
+[`mgba_suite_source.rs`](../systems/gba/tests/mgba_suite_source.rs) checks DMA source and latch behavior through `Bus`.
+The expected numbers are copied from the suite, never generated by Evenfall.
+[`compatibility.md`](compatibility.md#mgba-suite-hardware-tables) lists the one remaining difference.
 
-## JavaScript SDK and documentation
+## JavaScript and documentation
 
-Node.js 24.11+ is required for the npm workspace. The root scripts check
-formatting, lint, TypeScript and the SDK's Node tests:
+The npm workspace needs Node.js 24.11 or later.
+The root scripts check formatting, lint, TypeScript and the SDK's tests:
 
 ```sh
 npm ci
+npm run build:wasm -w @evenfall/gba
 npm run fmt:check
 npm run check
-npm run test
+npm test
 ```
 
-`npm run fmt` applies the repository formatter, including Markdown. The
-[`web/gba/scripts/`](../web/gba/scripts/) directory contains the package and
-WASM test helpers; the root npm test command does not run a native/WASM
-comparison. Documentation-only edits need formatting, link and whitespace
-checks, not an emulator rebuild:
+`npm test` runs the SDK's Node tests against the real WebAssembly build.
+Among them, [`core.test.mjs`](../web/gba/core.test.mjs) builds the native [`session_probe`](../systems/gba/src/bin/session_probe.rs) and checks that the SIMD and scalar WebAssembly builds match it exactly after 120 frames: cycle, program counter, CPSR, save state, EWRAM, frame, audio and battery save.
+Set `ZIGBA_TEST_ROMS` to a JSON list of paths to add your own ROMs to that comparison.
+Without the WebAssembly binary, the tests that need it are skipped.
+
+`npm run fmt` applies the formatter, Markdown included.
+A documentation-only change needs only the formatting and whitespace checks, not a rebuild:
 
 ```sh
 npm run fmt:check

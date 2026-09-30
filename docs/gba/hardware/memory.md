@@ -152,7 +152,7 @@ Every read of `00000000h`–`00003FFFh` returns `Bus.bios_latch`, which the HLE 
 The jsmolka BIOS test ROM checks these values around startup, `Sqrt` and the interrupt handler, and passes under HLE boot.
 
 With a real BIOS image, the protection isn't modeled yet.
-Every read returns the image's bytes, including reads from code outside the BIOS, so the same test ROM fails its first check ([compatibility](../../compatibility.md#known-divergences)).
+Every read returns the image's bytes, including reads from code outside the BIOS, so the same test ROM fails its first check ([compatibility](../../compatibility.md#known-differences)).
 
 ## WAITCNT and Game Pak wait states
 

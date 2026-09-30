@@ -456,7 +456,7 @@ Rules on copying and copy protection vary by country.
 - [`tests/machine_b.rs`](../../../systems/gba/tests/machine_b.rs) covers each decompression format (including the halfword-aligned Huffman bitstream and odd run-length VRAM destinations), routines that run over several steps (a Huffman tree with no leaf, interrupts raised inside a routine, the same result however time is sliced), the nesting-limit fault, pointer checks before side effects, the MP2K sequencer starting a note, the callback read once across HBlank DMA, and the 36-entry jump list.
 - [`hle/mod.rs`](../../../systems/gba/src/hle/mod.rs) checks `ArcTan` against the mGBA suite's BIOS math table, and the all-at-once `BgAffineSet` pointer check against a record-by-record loop.
 - The probes `probe-mb2slave` (Multiplayer, two clients) and `probe-mb2mhz` (Normal 32-bit at 2 MHz) run the HLE MultiBoot sender against client ROMs that behave like the client BIOS, and check every word with their own decryption ([`probe/README.md`](../../../probe/README.md)).
-- The [validator](../../../systems/gba/tests/validator/main.rs)'s `--bios` option reruns the jsmolka test ROMs with a real BIOS image ([`testing.md`](../../testing.md#rom-validators)).
+- The [validator](../../../systems/gba/tests/validator/main.rs)'s `--bios` option reruns the jsmolka test ROMs with a real BIOS image ([`testing.md`](../../testing.md#with-a-real-bios)).
 
 ## Open questions
 
