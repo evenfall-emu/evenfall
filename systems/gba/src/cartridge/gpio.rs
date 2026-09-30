@@ -249,8 +249,8 @@ impl Rtc {
         if self.bit_index >= 8
             || self.payload_length as usize > self.payload.len()
             || self.epoch_cycle > current_cycle
-            // Stricter than ZiGBA: date reads convert year by year, so a
-            // larger epoch would run for years of host time.
+            // Date reads convert year by year, so a larger epoch would run
+            // for years of host time.
             || self.epoch_seconds > Self::MAX_EPOCH_SECONDS
         {
             return Err(InvalidSaveState);

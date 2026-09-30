@@ -1,4 +1,4 @@
-//! A deterministic, cycle-aware Game Boy Advance core, ported from ZiGBA.
+//! A deterministic, cycle-aware Game Boy Advance core.
 //!
 //! `Machine` is the host-facing hardware seam and `Bus` owns time.
 

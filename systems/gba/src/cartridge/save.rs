@@ -132,8 +132,8 @@ impl Clone for State {
     }
 }
 
-// The schema is independent of allocation: ZiGBA's union payloads are the
-// in-place structs. The runtime state boxes the large variants to avoid
+// The schema is independent of allocation: union payloads are the in-place
+// structs. The runtime state boxes the large variants to avoid
 // stack temporaries during construction and reads.
 #[allow(dead_code)]
 #[derive(Codec)]
@@ -242,7 +242,7 @@ impl Device {
 
 /// The save medium is a `Bus` field with a module-owned encoding: the bus
 /// writes it, describes it and reads it (validation included) through these
-/// functions, as ZiGBA's `Bus.writeState` and `Bus.readState` do.
+/// functions.
 impl Codec for Device {
     fn encode(&self, sink: &mut Sink<'_>) -> evenfall_state::Result<()> {
         self.write_state(sink)

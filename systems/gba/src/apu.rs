@@ -1,4 +1,4 @@
-//! Deterministic GBA sound hardware state, translated from ZiGBA `apu.zig`.
+//! Deterministic GBA sound hardware state.
 
 pub use evenfall_audio::StereoSample;
 use evenfall_state::{Codec, Error, Result, Sink, Source};
@@ -627,7 +627,7 @@ impl Default for FifoClock {
     }
 }
 impl FifoClock {
-    #[allow(non_upper_case_globals)] // ZiGBA's public FifoClock.inactive name.
+    #[allow(non_upper_case_globals)] // Keeps the public `FifoClock::inactive` name.
     pub const inactive: u64 = u64::MAX;
     pub fn delegated(&self) -> bool {
         self.next[0].min(self.next[1]) != Self::inactive
@@ -760,8 +760,8 @@ impl Apu {
             || (self.sweep1.enabled && !(1..=8).contains(&self.sweep1.counter))
             || self.fifo_a.playback_bytes_remaining > 4
             || self.fifo_b.playback_bytes_remaining > 4
-            // Stricter than ZiGBA: an unreachable oscillator phase would make
-            // the next advance run for years of host time.
+            // An unreachable oscillator phase would make the next advance
+            // run for years of host time.
             || self.square1.phase_cycles >= SquareChannel::MAX_PERIOD
             || self.square2.phase_cycles >= SquareChannel::MAX_PERIOD
             || self.wave.phase_cycles >= WaveChannel::MAX_PERIOD
