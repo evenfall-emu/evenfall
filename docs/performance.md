@@ -182,6 +182,18 @@ on `Bus`'s field layout. At 8 bytes past a boundary, a quarter of those
 stores split across two lines (`mem_inst_retired.split_stores`), and idle
 took 17% more cycles on CPU 3.
 
+Flag-setting multiplies take C from the multiplier model
+(`evenfall_cpu_arm::multiply_carry`): four carry-save stages per multiplier
+cycle, each adding one Booth addend. Each stage selects its addend without
+branches, from a packed table of Booth digits. Written as a `match`, every
+stage compiled to a jump table whose target changes with the operands. On
+CPU 3 the function then took 21 ns for a one-cycle multiplier and 62 ns
+across one to four random cycles; it now takes 10 and 23 ns. Over 3,000
+frames it fell from 7.0% to 2.6% of audio's cycles, from 5.2% to 3.2% of
+affine's and from 3.6% to 1.9% of tiles'. Thumb-logic, whose multipliers
+repeat so that the jump tables predicted well, spends about 2% either way.
+Thumb `MUL` always sets flags, so every Thumb multiply runs the model.
+
 The hot paths pin their inlining. Fat LTO decides most inlining by comparing a
 call's cost with LLVM's threshold, and a call within a few dozen units of it
 flips when an unrelated edit changes a caller's size. Without pins, moving

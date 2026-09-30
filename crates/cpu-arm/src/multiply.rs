@@ -109,20 +109,55 @@ fn compress(
     (settled_sum | sum << 8, settled_carry | carry << 8)
 }
 
+/// Each three-bit Booth window's digit as a nibble: bit 0 set for a nonzero
+/// digit, bit 1 for a doubled one, bit 2 for a negative one. Windows 1 and 2
+/// are +1, 3 is +2, 4 is −2, 5 and 6 are −1, 0 and 7 are 0.
+const BOOTH_DIGITS: u32 = 0x0557_3110;
+
 /// The 34-bit addend for a three-bit Booth window of the multiplier, and
-/// whether it is a negation, whose +1 enters as a carry.
+/// whether it is a negation, whose +1 enters as a carry. It selects without
+/// branches: the window varies from stage to stage and call to call.
 fn booth_addend(multiplicand: u64, window: u64) -> (u64, bool) {
-    let (addend, negated) = match window {
-        1 | 2 => (multiplicand, false),
-        3 => (multiplicand << 1, false),
-        4 => (!(multiplicand << 1), true),
-        5 | 6 => (!multiplicand, true),
-        _ => (0, false),
-    };
-    (addend & LOW_34, negated)
+    let digit = BOOTH_DIGITS >> (4 * window) & 0xf;
+    let nonzero = 0_u64.wrapping_sub(u64::from(digit & 1));
+    let negated = digit >> 2;
+    let addend = (multiplicand << (digit >> 1 & 1)) & nonzero;
+    ((addend ^ 0_u64.wrapping_sub(u64::from(negated))) & LOW_34, negated != 0)
 }
 
 /// `value` as a 33-bit signed number, shifted right arithmetically.
 fn arithmetic_shift_33(value: u64, shift: u32) -> u64 {
     ((((value << 31) as i64) >> 31) >> shift) as u64 & LOW_33
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The Booth addend by cases: the reference form of [`booth_addend`],
+    /// whose branch-free selection must agree with it.
+    fn booth_addend_by_cases(multiplicand: u64, window: u64) -> (u64, bool) {
+        let (addend, negated) = match window {
+            1 | 2 => (multiplicand, false),
+            3 => (multiplicand << 1, false),
+            4 => (!(multiplicand << 1), true),
+            5 | 6 => (!multiplicand, true),
+            _ => (0, false),
+        };
+        (addend & LOW_34, negated)
+    }
+
+    #[test]
+    fn branch_free_booth_addends_match_the_digit_cases() {
+        let multiplicands = [0, 1, 0x1_5555_5555, 0x2_aaaa_aaaa, LOW_33, LOW_34, 0x3_8000_0001];
+        for multiplicand in multiplicands {
+            for window in 0..8 {
+                assert_eq!(
+                    booth_addend(multiplicand, window),
+                    booth_addend_by_cases(multiplicand, window),
+                    "window {window} of {multiplicand:09x}"
+                );
+            }
+        }
+    }
 }
