@@ -9,6 +9,7 @@ It passes the public and in-house test ROMs, but evidence across real games is s
 - **GBA core** (`systems/gba`): timed ARM and Thumb execution through a pre-decoded execution engine, with the interpreter as its reference; bus timing with wait states, open bus and Game Pak prefetch; video modes 0 to 5 with raster effects; PSG and Direct Sound audio; timers, DMA, interrupts, HALT and STOP; every save chip family, with autodetection; RTC, solar, gyro, tilt and rumble cartridges; serial link modes including MultiBoot; HLE, skip-BIOS and external BIOS boot; save states and rewind.
 - **Shared crates**: the `System` interface every system implements (`crates/host`), the state codec and envelope (`crates/state`), the ARM7TDMI interpreter (`crates/cpu-arm`), the resampler (`crates/audio`), and scenarios and traces (`crates/replay`).
 - **Hosts**: the headless runner, which also serves GDB clients ([`cli.md`](cli.md)), and a WebAssembly module with the `@evenfall/gba` JavaScript and TypeScript SDK ([`sdk.md`](sdk.md)).
+- **Web player**: a game library and player in the browser, with playthroughs, autosave, quick slots, rewind, offline use and optional cloud backups ([`player.md`](player.md)), and the Cloudflare Worker behind the hosted instance ([`server.md`](server.md)).
 
 ## How it is checked
 

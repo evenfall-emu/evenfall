@@ -1,18 +1,18 @@
-# @evenfall/gba-pokemon
+# @evenfall/gba-game-plugins
 
-Unofficial Pokémon panels for the [ZiGBA player](../../frontend/README.md):
-the current party, PC storage, battle state, trainer previews and
-species details, read live from a running game. It is also a complete example
-of a game package built on the SDK's
-[game bridges](../../docs/game-bridges.md).
+Game plugins for the [Evenfall player](../../docs/player.md). They read a
+running game's memory and show what it holds beside the screen. Today the
+package holds unofficial Pokémon panels: the current party, PC storage, battle
+state, trainer previews and species details. It is also a complete example of
+a game package built on the SDK's [game bridges](../../docs/game-bridges.md).
 
 ## Disclaimer
 
-> **ZiGBA and this package are not affiliated with, endorsed by, or
+> **Evenfall and this package are not affiliated with, endorsed by, or
 > sponsored by Nintendo, Creatures Inc., GAME FREAK inc. or The Pokémon
 > Company.** Pokémon and Pokémon character names are trademarks of Nintendo,
 > Creatures Inc. and GAME FREAK inc. The ROM hacks named below are
-> third-party works by their own authors and are not part of ZiGBA. This
+> third-party works by their own authors and are not part of Evenfall. This
 > package contains no game code, data or artwork: you must supply your own
 > legally obtained ROMs.
 
@@ -66,28 +66,28 @@ address and layout, and what remains unavailable.
 
 ## In the player
 
-The player's [game-plugin registry](../../frontend/README.md#game-plugins)
+The player's [game-plugin registry](../../docs/player.md#game-plugins)
 installs this package through one import in
-[`frontend/src/games.ts`](../../frontend/src/games.ts):
+[`web/player/src/games.ts`](../player/src/games.ts):
 
 ```ts
-import { pokemonPlugin } from "@evenfall/gba-pokemon/ui";
+import { pokemonPlugin } from "@evenfall/gba-game-plugins/ui";
 const installed: readonly GamePlugin[] = [pokemonPlugin];
 ```
 
 `pokemonPlugin` lists the headless game definitions and lazily loads their
 dashboards with their styles ([`ui/dashboards.ts`](ui/dashboards.ts),
 [`ui/dashboard.css`](ui/dashboard.css)). Removing the import, the array entry
-and the `@evenfall/gba-pokemon` dependency in `frontend/package.json` builds a
+and the `@evenfall/gba-game-plugins` dependency in `web/player/package.json` builds a
 player without any Pokémon code.
 
 Opening a supported ROM selects the three-column dashboard automatically:
 team and PC roster on the left, the player in the center, and the selected
 Pokémon's inspector on the right. On landscape pages narrower than 17:10 the
-player's [dock](../../frontend/README.md#narrower-screens) holds the Team and
+player's [dock](../../docs/player.md#narrower-screens) holds the Team and
 Info (Battle) panels as tabs beside the screen, with the arena line above
 it; a battle opens the Battle tab and its end the Team tab. On phones the
-player's [phone layout](../../frontend/README.md#phones) shows the party's
+player's [phone layout](../../docs/player.md#phones) shows the party's
 icons and HP under the screen, with the active opponents in a battle or the
 arena's known fields outside one, and opens the Team and Info (Battle)
 panels in a sheet. Team cards support click and Arrow/Home/End;
@@ -122,7 +122,7 @@ refreshes it.
   for the selected Pokémon. Its trainer search matches names, classes and
   encounter labels without case, accents or punctuation.
 
-Move-category icons are original inline SVG drawn for ZiGBA. Values the
+Move-category icons are original inline SVG drawn for this package. Values the
 bridges cannot verify stay visibly unavailable with a reason: randomized
 party types and abilities, turn count, live battle weather, most map names
 and some rare shiny palettes. Spinda and Deoxys portraits and Japanese text
@@ -131,14 +131,14 @@ inspector shows a dash.
 
 ## As a library
 
-`@evenfall/gba-pokemon` exports the headless game definitions and decoders
-([`src/`](src/)); `@evenfall/gba-pokemon/ui` exports the plugin and its React
+`@evenfall/gba-game-plugins` exports the headless game definitions and decoders
+([`src/`](src/)); `@evenfall/gba-game-plugins/ui` exports the plugin and its React
 panels ([`ui/`](ui/)). Both are TypeScript sources consumed through npm
 workspaces; the package is private and not published to npm.
 
 ```ts
 import { BridgeHost } from "@evenfall/gba/bridge";
-import { heartNSoul } from "@evenfall/gba-pokemon";
+import { heartNSoul } from "@evenfall/gba-game-plugins";
 
 const store = new BridgeHost(emulator).observe(heartNSoul);
 store.subscribe(() => {
@@ -169,7 +169,7 @@ whose types differ supplies its own:
 import {
   extendTypeSystem,
   standardTypeDefinition,
-} from "@evenfall/gba-pokemon";
+} from "@evenfall/gba-game-plugins";
 
 const typeSystem = extendTypeSystem(standardTypeDefinition, {
   types: {
@@ -188,13 +188,12 @@ defender they count as neutral. See the
 ## Tests
 
 ```sh
-npm run check -w games/pokemon      # TypeScript, including bridge.typecheck.tsx
-npm test -w games/pokemon           # decoders, catalogs, artwork, panels
-zig build web                       # then, against the built player:
-npm run test:browser -w games/pokemon
+vp check                                  # TypeScript, including bridge.typecheck.tsx
+vp test --project gba-game-plugins             # decoders, catalogs, artwork, panels
+npm run build -w @evenfall/player         # then, against the built player:
+npm run test:browser -w @evenfall/gba-game-plugins
 ```
 
-`zig build test-frontend` and `zig build test-browser` include these suites.
 Unit tests use synthetic records. Tests that need real games skip unless you
 point these variables at files you supply; they verify the documented hashes
 before use:
@@ -211,9 +210,13 @@ before use:
 | `EVENFALL_REDUX_BETA3_STATE`                         | a Beta3 overworld state, with `EVENFALL_REDUX_BETA3_ROM` ([hash](docs/profiles.md#test-fixtures)) |
 
 No ROM, save or state is committed, and none is needed for the default suites.
+The state fixtures above were captured with the player's previous core and
+start with `ZIGBAST1`, which the current core cannot load: the tests that load
+them need the same situations captured again as Evenfall states, with their
+new hashes recorded in the profiles.
 
 ## License
 
-AGPL-3.0-or-later, like the rest of ZiGBA. See the
+AGPL-3.0-or-later, like the rest of Evenfall. See the
 [disclaimer](#disclaimer) above and the repository's
 [third-party notices](../../THIRD_PARTY_NOTICES.md).

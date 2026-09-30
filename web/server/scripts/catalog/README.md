@@ -36,7 +36,7 @@ that fail verification are never cached. The verified file is cached at
 itself is never committed.
 
 `names` writes the pinned DAT's SHA-1 to dump-name table to the player's
-[`no-intro-gba.json`](../../frontend/src/pages/library/no-intro-gba.json)
+[`no-intro-gba.json`](../../../player/src/pages/library/no-intro-gba.json)
 (or to `--out FILE`), which is committed. The Library titles ROMs the catalog
 does not list with it. The file records the DAT's source URL, version and
 license, and lists one dump per line in SHA-1 order.
@@ -58,7 +58,7 @@ The tests use a handwritten fixture and need no network.
 [`romhacks.mjs`](romhacks.mjs) normalizes the local Pokémon, Golden Sun and
 Fire Emblem collections under `.amp/in/` to one release shape. It validates
 the recorded base identity and each patch's SHA-1, then writes the
-metadata-only [`romhacks.json`](../../server/src/romhacks.json) seed and an
+metadata-only [`romhacks.json`](../../src/romhacks.json) seed and an
 ignored `normalized.json` beside each collection. No base, patched ROM, save,
 or patch bytes enter the repository. A release needs a verified patch and a
 playable output hash to enter the seed; patchless collected ROMs remain local

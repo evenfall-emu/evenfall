@@ -1,10 +1,10 @@
 # Privacy notice for play.evenfall-emu.org
 
-This notice describes what the official hosted ZiGBA instance at
+This notice describes what the official hosted Evenfall instance at
 <https://play.evenfall-emu.org> does with your data. It is written from the
-code in this repository: the player in `frontend/` and the Worker in `server/`.
+code in this repository: the player in `web/player/` and the Worker in `web/server/`.
 
-Anyone can deploy their own copy of ZiGBA. A self-hosted instance is run by its
+Anyone can deploy their own copy of Evenfall. A self-hosted instance is run by its
 operator, who is responsible for its configuration, analytics, providers and
 privacy notice. This notice does not describe those instances.
 
@@ -13,7 +13,7 @@ privacy notice. This notice does not describe those instances.
 - You can play without an account. Games, saves and progress stay in your
   browser unless you sign in and keep cloud backups enabled, or share a
   state.
-- ZiGBA never uploads BIOS images, and never uploads ROM files except when
+- Evenfall never uploads BIOS images, and never uploads ROM files except when
   an admin account, designated by the operator, includes one with its own
   [share link](#shared-states).
 - Analytics (page views and share counts) are cookieless and contain no
@@ -44,7 +44,7 @@ you want to keep first. Deleting your account does not touch it.
 ## Analytics
 
 Production pages served from play.evenfall-emu.org send page views and share
-events to PostHog's EU cloud (`eu.i.posthog.com`). ZiGBA configures PostHog as
+events to PostHog's EU cloud (`eu.i.posthog.com`). Evenfall configures PostHog as
 follows:
 
 - A page-view event is sent when you open Home, Player or Library, with
@@ -77,7 +77,7 @@ is stored in a Cloudflare D1 database.
 - **Email sign-in:** your email address. Sign-in links are single-use, expire
   after five minutes and are stored only as a hash. Emails are sent through
   Cloudflare Email Sending.
-- **Discord sign-in:** ZiGBA requests only the `identify` and `email` scopes and
+- **Discord sign-in:** Evenfall requests only the `identify` and `email` scopes and
   requires a verified email address. It stores your Discord user ID, display
   name, avatar URL and email address, and the Discord OAuth tokens encrypted
   with a server secret.
@@ -191,7 +191,7 @@ views as described above. Each provider also handles data under its own
 privacy policy.
 
 The Worker configuration in this repository does not enable Cloudflare Workers
-Logs, and ZiGBA's server code logs only generic failure messages, never email
+Logs, and Evenfall's server code logs only generic failure messages, never email
 addresses, sign-in tokens or save contents.
 
 ## Contact

@@ -17,6 +17,7 @@ Public documentation lives in `docs/`, internal notes in `internal-docs/`.
 | Changing emulated behavior       | [Changing emulated behavior](#changing-emulated-behavior), then the hardware page that owns it          |
 | Performance work or benchmarking | [`docs/performance.md`](docs/performance.md) and [`tools/bench/README.md`](tools/bench/README.md)       |
 | Save states, rewind, cheats, web | [`docs/design/`](docs/design/)                                                                          |
+| Web player or its server         | [`docs/player.md`](docs/player.md) and [`docs/server.md`](docs/server.md)                               |
 | Plans and known follow-ups       | [`internal-docs/roadmap.md`](internal-docs/roadmap.md)                                                  |
 
 `internal-docs/` is a private Git submodule holding the methodology, the roadmap, measurement logs and investigations.
@@ -29,6 +30,10 @@ A change there is a commit inside the submodule, then a commit in Evenfall that 
   `host` defines the `System` trait every system implements, `state` and `state-derive` the save-state codec and envelope, `audio` the sample types and resampler, `cpu-arm` the ARM7TDMI interpreter, and `replay` timestamped input logs and scenarios.
 - `systems/gba/`: the Game Boy Advance core, `evenfall-gba`, with its command-line runner and GDB stub (`evenfall-gba gdb`).
 - `web/gba/`: the GBA WebAssembly crate and the `@evenfall/gba` JavaScript SDK.
+- `web/player/`: the web player, `@evenfall/player` (React and Vite on the SDK).
+- `web/gba-game-plugins/`: `@evenfall/gba-game-plugins`, the player's game plugins (Pokémon panels so far).
+- `web/server/`: `@evenfall/server`, the Cloudflare Worker behind the hosted player (catalog, accounts, cloud saves, shares, patch uploads), with its D1 migrations.
+- `web/cloudflare/`: the Worker's deployment configuration, the static headers, the privacy notice and `build.sh`, which builds the deployed site.
 - `tools/`: the scenario runner (slice independence, the mGBA suite ROM), the mGBA suite ROM build, benchmarks and profiling helpers, and `setup-refs.sh`.
 - `probe/`: bare-metal probe ROM sources.
 - `docs/`: public documentation.
@@ -51,6 +56,10 @@ Shared crates are extracted from concrete uses, with no placeholder for a future
 - Every optimized path keeps a reference path in the tree and a test that compares them.
 - Stable Rust only, pinned in `rust-toolchain.toml`: no `#![feature]`, no `-Z` flags, no `portable_simd`.
   The browser build is single-threaded.
+- Keep deployed identifiers: the Worker name `zigba`, D1 `zigba-catalog`, R2 `zigba-saves` and its key layout.
+  The legacy `X-Zigba-*` headers stay accepted and sent by the Worker, and the `LEGACY` browser names in `web/player/src/storage-names.ts` stay as migration sources, until the roadmap retires them.
+  Renaming one strands deployed data, so it needs a migration, not an edit.
+- Never run Wrangler against remote resources (`deploy`, `--remote`) while working; local `wrangler dev` and Miniflare are fine.
 - License: AGPL-3.0-or-later.
 
 ## Changing emulated behavior
@@ -142,7 +151,18 @@ npm ci
 vp fmt --check                          # vp fmt fixes formatting
 vp check                                # format, Oxlint and TypeScript
 npm run build:wasm -w @evenfall/gba
-vp test                                 # Vitest: web/gba and tools/bench
+vp test                                 # Vitest: web/gba, the player, plugin and server, tools/bench
+```
+
+The player and its plugin also run in Chromium with Playwright, and the Cloudflare build repeats the site's checks.
+Run these after changing `web/`, including `web/gba`:
+
+```sh
+npm run build -w @evenfall/player
+npm run test:browser -w @evenfall/player
+npm run test:browser -w @evenfall/gba-game-plugins
+bash web/cloudflare/build.sh            # then dry-run the Worker:
+npx wrangler deploy --dry-run --config web/cloudflare/wrangler.jsonc
 ```
 
 Use `npx vp` when Vite+ isn't installed globally.

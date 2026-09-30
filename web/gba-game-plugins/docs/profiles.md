@@ -1,6 +1,6 @@
 # Pokémon bridge profiles and evidence
 
-This is the evidence behind [`@evenfall/gba-pokemon`](../README.md): the exact
+This is the evidence behind [`@evenfall/gba-game-plugins`](../README.md): the exact
 builds it recognizes, where each address and layout comes from, and what
 remains unverified. The generic bridge contract these profiles implement is
 in [`docs/game-bridges.md`](../../../docs/game-bridges.md).
@@ -43,7 +43,7 @@ at four. Current move PP can be `null` when a storage format does not retain
 it, and the UI shows a dash rather than zero or an invented value.
 
 Game-authored header data uses the SDK's generic
-[`GameArenaStatus`](../../../web/src/bridge/context.ts), produced by each
+[`GameArenaStatus`](../../gba/src/bridge/context.ts), produced by each
 game's `context` view. The shared `ArenaStatus` component does not enumerate
 weather, terrain, trainer or buff keys, so a game may supply its own fields.
 Battle turn stays `null` in the battle contract and is omitted from the UI
@@ -613,7 +613,9 @@ therefore cannot be enabled from their title or header alone.
 
 Tests that need real games skip unless these variables point at
 user-supplied files, and they check each file's hash before use: SHA-1 for
-ROMs, SHA-256 for states. None of these files is committed.
+ROMs, SHA-256 for states. None of these files is committed. The states were
+captured with the player's previous core and start with `ZIGBAST1`, which the
+current core cannot load, so the tests that use them need new captures.
 
 | Variable                     | File                                       | Hash                                                               | Decodes to                                                                                                                                                                                                                                                        |
 | ---------------------------- | ------------------------------------------ | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

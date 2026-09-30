@@ -15,7 +15,7 @@ the script draws the art at 1:1 and then scales it by whole pixels, so it
 keeps its pixel grid and stays crisp.
 
 ```sh
-npm run icons -w frontend
+npm run icons -w @evenfall/player
 ```
 
 `evenfall-logo.svg` is the mark with the wordmark beside it, used by the

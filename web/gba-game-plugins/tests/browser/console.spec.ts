@@ -1,5 +1,5 @@
 // The player with this package's dashboards, driven by user-supplied ROMs and
-// states. Each test skips unless its ZIGBA_* fixture variables are set.
+// states. Each test skips unless its EVENFALL_* fixture variables are set.
 import { test, expect, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
