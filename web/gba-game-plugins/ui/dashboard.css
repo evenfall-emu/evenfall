@@ -693,21 +693,11 @@ table {
   grid-column: 1 / -1;
 }
 .ability-name {
-  overflow-wrap: anywhere;
-}
-.ability-list small {
-  color: var(--muted);
-  font-size: 0.68rem;
-  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ability-list small.suppressed {
-  color: #ff786a;
-}
-.ability-list small.unknown {
-  color: #f0c45b;
-}
-.ability-list .info-trigger:has(small) {
+.ability-list .info-trigger:has(.locked, .suppressed, .unknown) {
   color: #b9c3c8;
 }
 .ability-reason {

@@ -25,7 +25,12 @@ test.beforeAll(async () => {
     const stats = { hp: 12, attack: 23, defense: 34, speed: 45, specialAttack: 56, specialDefense: 67 };
     const member = (name, slot, id = name) => ({
       id, species: 1, speciesName: name, nickname: name, language: 2, level: 12 + slot,
-      isEgg: false, gender: null, shiny: null, nature: null, types: null, abilities: [], heldItem: null,
+      isEgg: false, gender: null, shiny: null, nature: null, types: null, heldItem: null,
+      abilities: ["North Wind", "Antarctic Bird", "Majestic Bird", "Overwhelmingly Long Ability"].map((name, slot) => ({
+        id: slot + 1, name, slot, kind: slot === 0 ? "ability" : "innate",
+        state: ["available", "suppressed", "unknown", "locked"][slot],
+        reason: slot === 3 ? "Unlocks later" : undefined, description: "Ability details.",
+      })),
       stats: { actual: stats, base: null, ivs: stats, evs: stats }, moves: [], artwork: null,
       warnings: [], slot, hp: 12, maxHp: 24, status: 0, ailments: [],
     });
@@ -75,6 +80,67 @@ test.afterAll(() =>
     rm(fixturePath, { force: true }),
   ]),
 );
+
+test("long ability names stay on one line with ellipsis and full tooltip names", async ({
+  page,
+}) => {
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto("/selection-test/index.html");
+    await page.evaluate(() => document.fonts.ready);
+    const abilities = page.locator(".player-roster .ability-list");
+    const names = abilities.locator(".ability-name");
+    await expect(names).toHaveCount(4);
+    for (const name of await names.all()) {
+      expect(
+        await name.evaluate((element) => {
+          const range = document.createRange();
+          range.selectNodeContents(element);
+          return new Set(Array.from(range.getClientRects(), (rect) => rect.top))
+            .size;
+        }),
+      ).toBe(1);
+    }
+    const longName = names.last();
+    await expect(longName).toHaveCSS("text-overflow", "ellipsis");
+    expect(
+      await longName.evaluate((el) => el.scrollWidth > el.clientWidth),
+    ).toBe(true);
+    expect(
+      await names.first().evaluate((el) => el.scrollWidth <= el.clientWidth),
+    ).toBe(true);
+    const cells = abilities.getByRole("button");
+    await expect(cells).toHaveText([
+      "North Wind",
+      "Antarctic Bird",
+      "Majestic Bird",
+      "Overwhelmingly Long Ability",
+    ]);
+    await expect(cells.first()).toHaveCSS("color", "rgb(255, 240, 200)");
+    for (const cell of (await cells.all()).slice(1)) {
+      await expect(cell).toHaveCSS("color", "rgb(185, 195, 200)");
+    }
+    expect(
+      await cells.evaluateAll(
+        (elements) =>
+          new Set(elements.map((el) => el.getBoundingClientRect().height)).size,
+      ),
+    ).toBe(1);
+    await page.locator(".player-roster .inspector").screenshot({
+      path: resolve(`../../.amp/in/artifacts/ability-names-${width}.png`),
+    });
+    await abilities
+      .getByRole("button", {
+        name: "Innate: Overwhelmingly Long Ability (Locked)",
+      })
+      .click();
+    await expect(page.getByRole("tooltip")).toContainText(
+      "Overwhelmingly Long Ability",
+    );
+    await expect(page.getByRole("tooltip")).toContainText("Innate · Locked");
+    await expect(page.getByRole("tooltip")).toContainText("Unlocks later");
+  }
+});
 
 test("roster keeps spatial wrapping, identity, filtering and responsive panels", async ({
   page,

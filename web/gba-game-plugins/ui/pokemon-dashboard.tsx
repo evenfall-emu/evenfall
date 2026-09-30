@@ -165,8 +165,7 @@ function AbilityTip({ ability }: { ability: PokemonAbility }) {
         </>
       }
     >
-      <span className="ability-name">{ability.name}</span>
-      {state && <small className={ability.state}>{state}</small>}
+      <span className={`ability-name ${ability.state}`}>{ability.name}</span>
     </InfoTip>
   );
 }
