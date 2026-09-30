@@ -88,7 +88,8 @@ Code that overwrites the next two instructions only changes later fetches.
 The jsmolka NES edge-case ROM checks this with self-modifying code copied to VRAM ([compatibility](../../compatibility.md)).
 
 **Branches.** A taken branch, `BX`, any write to r15, or an exception throws the pipeline away and refills it: one non-sequential fetch at the target, then one sequential fetch after it (`Cpu::refill_pipeline`).
-An interrupt that becomes pending during a branch waits until the first instruction at the target has run, because the ARM7TDMI ignores exceptions during the refill.
+The CPU checks for an interrupt at the end of every instruction, a taken branch included, so a pending interrupt is taken once the branch has refilled the pipeline, before the target runs.
+The mGBA suite's timer count-up table, recorded on hardware, requires it: no instruction at an interrupt's return address runs before the next interrupt of a timer that overflowed while the handler ran.
 
 **Switching instruction sets.** On this CPU, only `BX` switches between ARM and Thumb.
 `LDR pc`, `LDM {…, pc}`, Thumb `POP {…, pc}`, `MOV pc, …` and Thumb `ADD` or `MOV` to r15 all stay in the current state.
@@ -106,25 +107,26 @@ Arm sorts every cycle into three classes ([DDI 0029G, chapters 3 and 6][trm-0029
 
 The same instruction costs different amounts in IWRAM, EWRAM and cartridge ROM, so no instruction has a fixed cycle count in Evenfall.
 Each instruction reports its accesses (address, width, N or S, code or data) and its internal cycles (`Bus::elapse_cpu_internal`), and the bus prices them by region, wait states and prefetch state.
-The bus also applies the rule that a data access to memory makes the next instruction fetch non-sequential ([`memory.md`](memory.md#sequential-and-non-sequential-accesses)).
+The bus also applies the rule that a data access, I/O included, makes the next instruction fetch non-sequential ([`memory.md`](memory.md#sequential-and-non-sequential-accesses)).
 
 Besides the step's own instruction fetch, each instruction reports:
 
-| Instruction                                                        | Accesses                              |
-| ------------------------------------------------------------------ | ------------------------------------- |
-| Data processing, immediate or immediate-shift operand              | none                                  |
-| Data processing, register-specified shift                          | 1 I                                   |
-| `B`, `BL`, `BX`, or a data-processing or load write to r15         | N fetch + S fetch at the target       |
-| Single load (`LDR`, `LDRB`, `LDRH`, `LDRSB`, `LDRSH`, Thumb loads) | 1 N data read, 1 I                    |
-| Single store                                                       | 1 N data write                        |
-| `LDM` or `POP` of n words                                          | N, then S for each further word, 1 I  |
-| `STM` or `PUSH` of n words                                         | N, then S for each further word       |
-| `SWP`, `SWPB`                                                      | N read, N write, 1 I                  |
-| `MUL` / `MLA`                                                      | m I / m + 1 I                         |
-| `UMULL`, `SMULL` / `UMLAL`, `SMLAL`                                | m + 1 I / m + 2 I                     |
-| Thumb `MUL`                                                        | m I, sized from Rd                    |
-| Exception entry                                                    | N fetch + S fetch at the vector       |
-| `LDRD`/`STRD` encodings, ARM `011` space with bit 4 set            | 1 I, then the Undefined-vector refill |
+| Instruction                                                        | Accesses                                                                 |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| Data processing, immediate or immediate-shift operand              | none                                                                     |
+| Data processing, register-specified shift                          | 1 I                                                                      |
+| `B`, `BL`, `BX`, or a data-processing or load write to r15         | N fetch + S fetch at the target                                          |
+| Single load (`LDR`, `LDRB`, `LDRH`, `LDRSB`, `LDRSH`, Thumb loads) | 1 N data read, 1 I                                                       |
+| Single store                                                       | 1 N data write                                                           |
+| `LDM` or `POP` of n words                                          | N, then S for each further word, 1 I                                     |
+| `STM` or `PUSH` of n words                                         | N, then S for each further word                                          |
+| `SWP`, `SWPB`                                                      | N read, N write, 1 I                                                     |
+| `MUL` / `MLA`                                                      | m I / m + 1 I                                                            |
+| `UMULL`, `SMULL` / `UMLAL`, `SMLAL`                                | m + 1 I / m + 2 I                                                        |
+| Thumb `MUL`                                                        | m I, sized from Rd                                                       |
+| Exception entry                                                    | N fetch + S fetch at the vector                                          |
+| Interrupt entry                                                    | discarded fetch of the next opcode, then N fetch + S fetch at the vector |
+| `LDRD`/`STRD` encodings, ARM `011` space with bit 4 set            | 1 I, then the Undefined-vector refill                                    |
 
 The multiplier finishes early on small numbers.
 Its cycle count m is the number of significant bytes of the multiplier operand, 1 to 4.
@@ -132,6 +134,22 @@ Its cycle count m is the number of significant bytes of the multiplier operand, 
 `UMULL` and `UMLAL` treat it as unsigned.
 When the destination is also the multiplier (`mul r3, r3, r2`), timing uses the multiplier's value from before the write.
 Thumb `MUL rd, rs` computes `rd * rs` and sizes m from `rd`, as NanoBoyAdvance does and as the mGBA suite's measurements show.
+
+### The carry flag after a multiply
+
+Flag-setting multiplies (`MULS`, `MLAS`, the long forms with S, and Thumb `MUL`, which always sets flags) set N and Z from the result and C from the multiplier's datapath.
+V is unchanged.
+Arm calls C meaningless there, but on the ARM7TDMI it is deterministic.
+The multiplier recodes its operand in radix-4 Booth digits and sums four addends per cycle through carry-save stages into a sum vector and a carry vector.
+It stops early when the remaining multiplier bits only extend its sign.
+The ALU then adds the two vectors, taking the carry vector through the barrel shifter, whose carry-out becomes C.
+`evenfall_cpu_arm::multiply_carry` models that datapath as far as the carry vector, following zayd's reconstruction from the multiplier patents and fuzzing on hardware ([Solving the Mystery of ARM7TDMI Multiply Carry Flag][multiply-carry]).
+`MUL`, `MLA`, `SMULL` and `SMLAL` recode the operand as signed, `UMULL` and `UMLAL` as unsigned.
+For Thumb `MUL rd, rs`, Rd is the multiplier.
+
+The mGBA suite's multiply-long table, recorded on hardware, pins N, Z and C after every `SMULLS` and `UMULLS` it runs (`flag_setting_long_multiplies_match_the_mgba_suite_hardware_table` in [`cpu-arm`](../../../crates/cpu-arm/src/lib.rs)).
+The other forms are pinned against the model's published reference implementation (`flag_setting_multiplies_take_c_from_the_reference_multiplier_model`), not against hardware directly.
+Non-flag-setting multiplies change no flags, as jsmolka's ARM test checks.
 
 Arm's timing tables are easy to misread.
 The bus signals that describe an access are sent one cycle ahead of it, so the `SEQ` column on a row belongs to the next access, not to the address on the same row ([DDI 0210C, §3.3, §6.5, Table 6-4, §6.20][trm-0210c]).
@@ -246,12 +264,13 @@ Nobody has reproduced that on a GBA, so the architectural rule wins.
 
 "Next instruction" is the address after the trapping one: +4 in ARM, +2 in Thumb.
 On entry (`Core::enter_exception`), the CPU saves the CPSR in the new mode's SPSR, writes the new mode's `lr`, switches mode, clears T, sets I, leaves F alone, and refills the pipeline at the vector in ARM state.
+Interrupt entry takes 2S + 1N, as GBATEK's cycle table gives for a trap: its first cycle fetches the interrupted code's next opcode, which is discarded, and the refill at the vector is the rest (`Cpu::enter_irq`).
 An exception return may restore T from the SPSR.
 That is legal, unlike changing T directly with `MSR`.
 `LDM sp!, {…, pc}^` is the block-transfer form of the return.
 
-An interrupt is taken between instructions, after one that didn't jump, when an enabled interrupt is pending and CPSR.I is clear.
-The interrupt line is `IE & IF`, gated by `IME`.
+An interrupt is taken between instructions, after any instruction, when an enabled interrupt has reached the CPU and CPSR.I is clear.
+The request is `IE & IF`, gated by `IME`, and it reaches the CPU four cycles after it rises ([`timers-dma-interrupts.md`](timers-dma-interrupts.md#interrupts)).
 Its sources, and how interrupts wake the CPU from HALT, are described in [`timers-dma-interrupts.md`](timers-dma-interrupts.md).
 With the HLE BIOS, `SWI` and interrupt entry run Evenfall's own BIOS code instead of the vectors ([`bios.md`](bios.md)).
 
@@ -298,7 +317,7 @@ It says nothing about what a real GBA does with these encodings.
 
 ## How it is checked
 
-- [`tests/machine_a.rs`](../../../systems/gba/tests/machine_a.rs) holds the focused CPU tests: the interrupt that waits for a branch refill, empty register lists, `MOVS pc, lr` in User mode, `LDRD` and `STRD`, exceptions taken and returned from every mode, and one test per fault reason, each checking that nothing changed before the fault.
+- [`tests/machine_a.rs`](../../../systems/gba/tests/machine_a.rs) holds the focused CPU tests: the interrupt taken after a branch refill, empty register lists, `MOVS pc, lr` in User mode, `LDRD` and `STRD`, exceptions taken and returned from every mode, and one test per fault reason, each checking that nothing changed before the fault.
 - The execution engine is compared with the interpreter on random code ([`performance.md`](../../performance.md#execution-engine)).
 - The [jsmolka ARM and Thumb test ROMs](../../compatibility.md) run every instruction class and pass.
 - The mGBA suite tables in [`memory.md`](memory.md#mgba-suite-timing-tables) check instruction timing against hardware.
@@ -314,6 +333,8 @@ It says nothing about what a real GBA does with these encodings.
   NanoBoyAdvance's ARM7TDMI-S observation hasn't been checked on a GBA.
 - **Empty-list timing.** The single-word transfer and the `40h` base step come from GBATEK and NanoBoyAdvance.
   Their cycle cost hasn't been measured.
+- **Multiply carry outside the long forms.** The carry model reproduces the recorded `SMULLS` and `UMULLS` table.
+  Its `MULS`, `MLAS`, `UMLALS` and `SMLALS` results rest on its author's hardware fuzzing, which is published as the model rather than as measurements.
 - **Aborts.** Evenfall never raises one.
   No GBA source of an abort is known, but no hardware test rules one out.
 - **CP14.** GBATEK mentions a dummy CP14 unit.
@@ -327,3 +348,4 @@ It says nothing about what a real GBA does with these encodings.
 [nba-thumb]: https://github.com/nba-emu/NanoBoyAdvance/blob/master/src/nba/src/arm/handlers/handler16.inl
 [gbatek-fiq]: https://rust-console.github.io/gbatek-gbaonly/#gbainterruptcontrol
 [gbatek-cp]: https://rust-console.github.io/gbatek-gbaonly/#armopcodescoprocessorinstructionsmrcmcrldcstccdpmcrrmrrc
+[multiply-carry]: https://bmchtech.github.io/post/multiply/

@@ -288,8 +288,9 @@ It is optional.
   An input that falls inside an instruction crossing a slice boundary still takes effect in that instruction.
 - An instruction can't be split, so `runUntil` can return `instruction_boundary_after_deadline` at a cycle past the one asked for.
   The limit is emulated time, not a guarantee on wall-clock time for an unusually long instruction or BIOS call.
-- `step()` returns `executed`, `halted`, `power_stopped` or `faulted`.
+- `step()` returns `executed`, `halted`, `power_stopped`, `faulted` or `dma_stall`.
   While halted, running advances the devices, and STOP freezes time.
+  `dma_stall` means a DMA burst holds the bus: the CPU runs nothing and `step()` doesn't advance, running advances the burst and every other device until it ends, and saving a state fails meanwhile ([DMA stalls](gba/hardware/timers-dma-interrupts.md#bursts-that-never-release-the-bus)).
 - An invalid ROM, BIOS, setting or state leaves the previous game untouched.
   A guest fault sticks: `play()` fails on a faulted game, and so does saving a state from it.
 - `terminate()` stops even a session that has stopped responding, at once.
