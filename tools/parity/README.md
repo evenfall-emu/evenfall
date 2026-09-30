@@ -15,9 +15,10 @@ cargo run -p evenfall-parity -- compare target/parity/traces/probe-timer_irq/ora
 ```
 
 `oracle build` copies ZiGBA `src/` into `target/parity/zigba`, adds the
-schema-export hook there and applies `patches/bios-protection.patch`, the
-deliberate BIOS read-protection difference ([parity](../../docs/parity.md#oracle-source-and-fixture)),
-then builds a Zig 0.16 ReleaseFast native executable in
+schema-export hook and the deliberate-divergence patches in `patches/` there
+(`bios-protection.patch`, `dma-stall.patch`; see
+[GBA differential parity](../../docs/parity.md#oracle-source-and-fixture)),
+builds a Zig 0.16 ReleaseFast native executable in
 `target/parity/bin`, and checks the exported schema against
 `fixtures/schema-v6.bin` (its BLAKE3 digest is `fixtures/schema-v6.blake3`).
 `refs/zigba` is never modified. `oracle run` writes
@@ -46,7 +47,9 @@ relative to the scenario file. Each input has `{ "at": "...", "change":
 DAC audio is drained after _every_ slice. Configuration selects `hle`,
 `skip_bios`, or `external_bios`, save type (`auto`, `none`, `sram`,
 `flash64k`, `flash128k`, `eeprom512`, `eeprom8k`, or
-`flash64k_atmel`), optional save asset, `rtcEpoch`, sensor levels and rumble.
+`flash64k_atmel`), optional save asset, `rtcEpoch`, sensor levels, rumble
+and `audioOutput` (default true; false suppresses host samples, for a
+scenario whose single host call outlasts the sample queue).
 Optional `terminalPc` and `terminalR12` enforce known self-loop endpoints.
 For the JoyBus probes, `hostActions` contains a cycle and a `command` with
 `joybus_write` (u32) or `joybus_read: true`; the master command is scheduled

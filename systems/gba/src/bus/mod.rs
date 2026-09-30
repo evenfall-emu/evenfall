@@ -167,10 +167,20 @@ pub enum PowerState {
     Stopped,
 }
 
+/// A DMA transfer that yielded the bus to the host part-way: the state
+/// `Bus::run_dma` keeps in locals, from the beat that just completed on.
+/// See `Bus::run_dma_burst`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DmaLivelock {
-    pub started_at: Cycle,
-    pub channel: u8,
+pub struct DmaProgress {
+    pub source: u32,
+    pub destination: u32,
+    pub control: u16,
+    pub transfer_words: u32,
+    /// The index of the beat that completed last.
+    pub beat: u32,
+    pub did_access_rom: bool,
+    pub is_audio_fifo: bool,
+    pub bulk: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -597,8 +607,21 @@ pub struct Bus {
     pub servicing_dma: bool,
     #[codec(skip)]
     pub dma_burst_start: Cycle,
+    /// A burst that still owns the bus yielded it to the host: at
+    /// `MAX_DMA_BURST_CYCLES` inside a CPU access, or at a host deadline in
+    /// `continue_dma_stall`. `servicing_dma` stays set until it ends.
     #[codec(skip)]
-    pub dma_livelock: Option<DmaLivelock>,
+    pub dma_stalled: bool,
+    /// Where the running burst yields: its first transfer start or beat
+    /// boundary at or after this cycle.
+    #[codec(skip)]
+    pub dma_yield_at: Cycle,
+    /// The transfers a stalled burst interrupted, one per channel, and
+    /// their channels as a mask.
+    #[codec(skip)]
+    pub dma_progress: [Option<DmaProgress>; 4],
+    #[codec(skip)]
+    pub dma_progress_mask: u8,
     #[codec(skip)]
     pub active_dma_channel: Option<u8>,
     pub dma_transfer_latch: u32,
@@ -793,7 +816,10 @@ impl Bus {
             pending_dma: 0,
             servicing_dma: false,
             dma_burst_start: 0,
-            dma_livelock: None,
+            dma_stalled: false,
+            dma_yield_at: 0,
+            dma_progress: [None; 4],
+            dma_progress_mask: 0,
             active_dma_channel: None,
             dma_transfer_latch: 0,
             open_bus_value: 0,
@@ -849,7 +875,7 @@ impl Bus {
         use evenfall_state::Error;
         if self.servicing_dma
             || self.active_dma_channel.is_some()
-            || self.dma_livelock.is_some()
+            || self.dma_stalled
             || !self.external_inputs.is_empty()
             || self.external_input_index != 0
         {
@@ -880,7 +906,7 @@ impl Bus {
         self.external_inputs.clear();
         self.external_input_index = 0;
         self.servicing_dma = false;
-        self.dma_livelock = None;
+        self.clear_dma_stall();
         self.active_dma_channel = None;
         self.apu_cycle = self.current_cycle;
         self.timer_cycle = self.current_cycle;
@@ -944,7 +970,8 @@ impl Bus {
                 uart_rx_arrival_cycle, uart_rx_arrival_value, uart_error, uart_cts_ready, rcnt,
                 joy_control, joy_receive, joy_transmit, joy_status, joy_pending_command,
                 joy_completion_cycle, joy_response, dma_start_cycles, pending_dma,
-                servicing_dma, dma_burst_start, dma_livelock, active_dma_channel,
+                servicing_dma, dma_burst_start, dma_stalled, dma_yield_at, dma_progress,
+                dma_progress_mask, active_dma_channel,
                 dma_transfer_latch, open_bus_value, bios_latch, bios_code_active, current_cycle,
                 batch_active, batch_device_cycle, batch_deadline, devices_deferred, apu_cycle,
                 timer_cycle, timer_deadline, fifo_clock, dma_epoch,
@@ -1505,10 +1532,7 @@ impl Bus {
         debug_assert_eq!(self.irq.power_state, PowerState::Halted);
         debug_assert!(deadline >= self.current_cycle);
         self.apply_due_external_inputs();
-        while !self.halt_wake_pending()
-            && self.current_cycle < deadline
-            && self.dma_livelock.is_none()
-        {
+        while !self.halt_wake_pending() && self.current_cycle < deadline && !self.dma_stalled {
             let limit = deadline - self.current_cycle;
             let step = if self.batch_active && self.batch_deadline > self.current_cycle {
                 limit.min(self.batch_deadline - self.current_cycle)
@@ -1742,6 +1766,7 @@ impl Bus {
         self.dma_start_cycles = [None; 4];
         self.pending_dma = 0;
         self.servicing_dma = false;
+        self.clear_dma_stall();
         self.active_dma_channel = None;
         self.dma_transfer_latch = 0;
         self.irq.interrupt_enable_mask = 0;
@@ -3268,12 +3293,32 @@ impl Bus {
         if self.pending_dma == 0 || self.servicing_dma {
             return;
         }
-        if self.dma_livelock.is_some() {
-            self.pending_dma = 0;
-            return;
-        }
-        self.servicing_dma = true;
         self.dma_burst_start = self.current_cycle;
+        self.dma_yield_at = self.current_cycle.saturating_add(Self::MAX_DMA_BURST_CYCLES);
+        self.run_dma_burst();
+    }
+
+    /// Longest a DMA burst runs inside the CPU access it follows: ZiGBA's
+    /// `max_dma_burst_cycles`, about one second of guest time and many
+    /// times the longest single transfer. Only requests that return faster
+    /// than transfers complete keep the bus that long, and then the CPU
+    /// never reaches it again. Servicing such a burst inside one access
+    /// would never return to the host, so at this limit the burst yields
+    /// (see [`Self::run_dma_burst`]) and the machine continues it from the
+    /// next instruction boundary with [`Self::continue_dma_stall`].
+    pub const MAX_DMA_BURST_CYCLES: Cycle = 1 << 24;
+
+    /// Runs pending DMA until no request remains, resuming any transfers a
+    /// stall interrupted first. At the first transfer start or beat
+    /// boundary at or after `dma_yield_at` the burst yields instead: it
+    /// records the transfers in progress, keeps its requests, sets
+    /// `dma_stalled` and leaves `servicing_dma` set, so no other burst
+    /// starts until [`Self::continue_dma_stall`] resumes this one exactly
+    /// where it stopped.
+    #[inline(never)]
+    fn run_dma_burst(&mut self) {
+        self.servicing_dma = true;
+        self.dma_stalled = false;
         let sub_batch = !self.batch_active;
         if sub_batch {
             // advance_slow temporarily clears batch_active while preserving
@@ -3282,11 +3327,15 @@ impl Bus {
             self.batch_active = true;
             self.batch_deadline = self.next_device_boundary();
         }
-        while self.pending_dma != 0 {
+        if self.dma_progress_mask != 0 {
+            // The outermost interrupted transfer resumes the others.
+            self.run_dma(7 - self.dma_progress_mask.leading_zeros() as usize);
+        }
+        while !self.dma_stalled && self.pending_dma != 0 {
             let index = self.pending_dma.trailing_zeros() as usize;
             self.pending_dma &= !(1 << index);
             if self.dma_channels[index].enabled() {
-                if self.dma_burst_exhausted(index) {
+                if self.dma_yield_due(index) {
                     break;
                 }
                 self.run_dma(index);
@@ -3298,55 +3347,118 @@ impl Bus {
             self.batch_device_cycle = 0;
             self.batch_deadline = 0;
         }
-        self.servicing_dma = false;
+        self.servicing_dma = self.dma_stalled;
     }
 
-    pub const MAX_DMA_BURST_CYCLES: Cycle = 1 << 24;
-
-    fn dma_burst_exhausted(&mut self, index: usize) -> bool {
-        if self.current_cycle - self.dma_burst_start < Self::MAX_DMA_BURST_CYCLES {
+    /// Whether the burst yields before channel `index`'s transfer starts;
+    /// if so, its request stays pending.
+    #[inline(always)]
+    fn dma_yield_due(&mut self, index: usize) -> bool {
+        if self.current_cycle < self.dma_yield_at {
             return false;
         }
-        self.dma_livelock =
-            Some(DmaLivelock { started_at: self.dma_burst_start, channel: index as u8 });
-        self.pending_dma = 0;
+        self.pending_dma |= 1 << index;
+        self.dma_stalled = true;
         true
     }
 
-    pub fn dma_livelock(&self) -> Option<DmaLivelock> {
-        self.dma_livelock
+    /// Whether a DMA burst owns the bus across host calls: the CPU is
+    /// stalled at an instruction boundary until the burst ends.
+    pub fn dma_stalled(&self) -> bool {
+        self.dma_stalled
+    }
+
+    /// Continues a stalled burst until it releases the bus or reaches its
+    /// first transfer start or beat boundary at or after `until`.
+    pub fn continue_dma_stall(&mut self, until: Cycle) {
+        debug_assert!(self.dma_stalled && self.servicing_dma);
+        if until <= self.current_cycle {
+            return;
+        }
+        self.dma_yield_at = until;
+        self.run_dma_burst();
+    }
+
+    fn clear_dma_stall(&mut self) {
+        self.dma_stalled = false;
+        self.dma_progress = [None; 4];
+        self.dma_progress_mask = 0;
+    }
+
+    /// Records channel `index`'s transfer, which yields after `beat`.
+    #[cold]
+    #[inline(never)]
+    fn yield_dma_transfer(&mut self, index: usize, progress: DmaProgress) {
+        self.dma_stalled = true;
+        self.dma_progress[index] = Some(progress);
+        self.dma_progress_mask |= 1 << index;
     }
 
     fn run_dma(&mut self, index: usize) {
         let previous_active = self.active_dma_channel;
         self.active_dma_channel = Some(index as u8);
-        self.dma_epoch = self.dma_epoch.wrapping_add(1);
-        let mut source = self.dma_channels[index].latched_source;
-        let mut destination = self.dma_channels[index].latched_destination;
-        let control = self.dma_channels[index].control;
-        let is_audio_fifo = (1..=2).contains(&index)
-            && (control >> 12) & 3 == 3
-            && Apu::fifo_for_address(destination).is_some();
+        let resumed = self.dma_progress[index].take();
+        let (mut source, mut destination, control, is_audio_fifo, transfer_words) = match resumed {
+            Some(progress) => (
+                progress.source,
+                progress.destination,
+                progress.control,
+                progress.is_audio_fifo,
+                progress.transfer_words,
+            ),
+            None => {
+                self.dma_epoch = self.dma_epoch.wrapping_add(1);
+                let destination = self.dma_channels[index].latched_destination;
+                let control = self.dma_channels[index].control;
+                let is_audio_fifo = (1..=2).contains(&index)
+                    && (control >> 12) & 3 == 3
+                    && Apu::fifo_for_address(destination).is_some();
+                let transfer_words =
+                    if is_audio_fifo { 4 } else { self.dma_channels[index].transfer_words(index) };
+                (
+                    self.dma_channels[index].latched_source,
+                    destination,
+                    control,
+                    is_audio_fifo,
+                    transfer_words,
+                )
+            }
+        };
         let width = if is_audio_fifo || control & (1 << 10) != 0 {
             AccessWidth::Word
         } else {
             AccessWidth::Half
         };
         let unit_bytes = width.bytes() as u32;
-        let transfer_words =
-            if is_audio_fifo { 4 } else { self.dma_channels[index].transfer_words(index) };
-        if index == 3
-            && width == AccessWidth::Half
-            && self.is_eeprom_address(destination)
-            && self.save.is_auto()
-        {
-            self.save.resolve_eeprom_transfer(transfer_words);
-        }
         let mut did_access_rom = false;
-        let bulk = !is_audio_fifo
-            && (source == 0 || matches!(source >> 24, 2 | 3))
-            && matches!(destination >> 24, 2 | 3 | 6 | 7);
+        let bulk;
         let mut transferred = 0;
+        if let Some(progress) = resumed {
+            self.dma_progress_mask &= !(1 << index);
+            did_access_rom = progress.did_access_rom;
+            bulk = progress.bulk;
+            transferred = progress.beat;
+            // It yielded after this beat, where it lets higher-priority
+            // requests in.
+            self.service_higher_priority_dma(index);
+            if self.dma_stalled || self.current_cycle >= self.dma_yield_at {
+                self.yield_dma_transfer(index, progress);
+                self.active_dma_channel = previous_active;
+                return;
+            }
+            transferred += 1;
+        } else {
+            if index == 3
+                && width == AccessWidth::Half
+                && self.is_eeprom_address(destination)
+                && self.save.is_auto()
+            {
+                self.save.resolve_eeprom_transfer(transfer_words);
+            }
+            bulk = !is_audio_fifo
+                && (source == 0 || matches!(source >> 24, 2 | 3))
+                && matches!(destination >> 24, 2 | 3 | 6 | 7);
+        }
         while transferred < transfer_words {
             if bulk {
                 let remaining = transfer_words - transferred;
@@ -3391,8 +3503,21 @@ impl Bus {
                     adjusted_dma_address(destination, unit_bytes, ((control >> 5) & 3) as u8);
             }
             if transferred + 1 < transfer_words {
-                self.service_higher_priority_dma(index);
-                if self.dma_livelock.is_some() {
+                if self.current_cycle < self.dma_yield_at {
+                    self.service_higher_priority_dma(index);
+                }
+                if self.dma_stalled || self.current_cycle >= self.dma_yield_at {
+                    let progress = DmaProgress {
+                        source,
+                        destination,
+                        control,
+                        transfer_words,
+                        beat: transferred,
+                        did_access_rom,
+                        is_audio_fifo,
+                        bulk,
+                    };
+                    self.yield_dma_transfer(index, progress);
                     self.active_dma_channel = previous_active;
                     return;
                 }
@@ -3439,7 +3564,7 @@ impl Bus {
         destination: &mut u32,
         remaining: u32,
     ) -> u32 {
-        if !self.batch_active || self.pending_dma != 0 || self.dma_livelock.is_some() {
+        if !self.batch_active || self.pending_dma != 0 || self.dma_yield_at <= self.current_cycle {
             return 0;
         }
         #[cfg(test)]
@@ -3462,7 +3587,7 @@ impl Bus {
         let unit = width.bytes() as u32;
         let (source_control, destination_control) =
             (((control >> 7) & 3) as u8, ((control >> 5) & 3) as u8);
-        let room = self.batch_deadline - self.current_cycle;
+        let room = self.batch_deadline.min(self.dma_yield_at) - self.current_cycle;
         let mut beats = u64::from(remaining).min((room - 1) / (read_cost + write_cost)) as u32;
         if *source != 0 {
             beats = beats.min(dma_beats_in_region(*source, unit, source_control));
@@ -3707,19 +3832,31 @@ impl Bus {
         self.service_pending_dma();
     }
 
+    #[inline(always)]
     fn service_higher_priority_dma(&mut self, current_index: usize) {
         if current_index == 0 {
             return;
         }
         let higher_mask = (1u8 << current_index) - 1;
+        if self.dma_progress_mask & higher_mask != 0 {
+            // A stall interrupted a higher-priority transfer in here.
+            let index = 7 - (self.dma_progress_mask & higher_mask).leading_zeros() as usize;
+            self.run_dma(index);
+            if self.dma_stalled {
+                return;
+            }
+        }
         while self.pending_dma & higher_mask != 0 {
             let index = (self.pending_dma & higher_mask).trailing_zeros() as usize;
             self.pending_dma &= !(1 << index);
             if self.dma_channels[index].enabled() {
-                if self.dma_burst_exhausted(index) {
+                if self.dma_yield_due(index) {
                     return;
                 }
                 self.run_dma(index);
+                if self.dma_stalled {
+                    return;
+                }
             }
         }
     }

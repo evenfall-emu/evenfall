@@ -27,7 +27,10 @@ directory. See the [parity harness](../tools/parity/README.md) for trace and
 scenario details. Linked probes still use the original multi-machine validator.
 
 Every `*.c` file except `report.c` is one ROM, linked with `header.s`,
-`report.c` and `rom.ld`. Three probes are variants: a two-line source that
+`report.c` and `rom.ld`. `dma_stall.c` is Evenfall's own probe, with no
+ZiGBA validator case: its expectation is the terminal PC and `r12` of the
+[`probe-dma_stall`](../tools/parity/scenarios/probe-dma_stall.json) parity
+manifest. Three probes are variants: a two-line source that
 defines one switch and includes the probe it varies (`affine_wrap.c`,
 `brighten_dark.c`, `sweep_down.c`).
 

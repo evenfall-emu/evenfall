@@ -97,9 +97,6 @@ impl Fault {
             FaultReason::SoundDriverMainInternalCallback { target } => {
                 writeln!(writer, "sound_driver_main_internal_callback target={target:08x}")
             }
-            FaultReason::DmaLivelock { channel, started_at } => {
-                writeln!(writer, "dma_livelock channel={channel} started_at={started_at}")
-            }
         }
     }
 }
@@ -246,6 +243,7 @@ pub fn run_linked_until(
             .enumerate()
             .filter(|(_, machine)| {
                 machine.now() < deadline
+                    && !machine.bus.dma_stalled()
                     && (machine.cpu.inside_hle_bulk_service()
                         || match machine.bus.power_state() {
                             bus::PowerState::Running => true,
@@ -264,6 +262,21 @@ pub fn run_linked_until(
             }
             continue;
         }
+        let stalled = machines
+            .iter()
+            .enumerate()
+            .filter(|(_, machine)| machine.now() < deadline && machine.bus.dma_stalled())
+            .min_by_key(|(_, machine)| machine.now())
+            .map(|(index, _)| index);
+        if let Some(index) = stalled {
+            if let Some(fault) = machines[index].continue_dma_stall(deadline) {
+                return Ok(linked_run_result(
+                    machines,
+                    LinkedStopReason::Faulted(LinkedFault { machine_index: index, fault }),
+                ));
+            }
+            continue;
+        }
         let halted = machines
             .iter()
             .enumerate()
@@ -274,7 +287,6 @@ pub fn run_linked_until(
             .map(|(index, _)| index);
         if let Some(index) = halted {
             machines[index].bus.idle_halt_until(deadline);
-            let _ = machines[index].latch_bus_fault();
             continue;
         }
         let mut stopped_progress = false;
@@ -476,36 +488,34 @@ impl Machine {
         self.latched_fault
     }
 
-    fn latch_bus_fault(&mut self) -> Option<Fault> {
-        if self.latched_fault.is_none() {
-            let livelock = self.bus.dma_livelock()?;
-            let cpu_fault = self.cpu.boundary_fault(
-                &self.bus,
-                FaultReason::DmaLivelock {
-                    channel: livelock.channel,
-                    started_at: livelock.started_at,
-                },
-            );
-            self.latched_fault = Some(Fault {
-                cycle: self.now(),
-                instruction_address: cpu_fault.instruction_address,
-                instruction: cpu_fault.instruction,
-                instruction_set: cpu_fault.instruction_set,
-                reason: cpu_fault.reason,
-            });
+    /// Continues a DMA stall until it ends or reaches `until`; where it
+    /// ends, the CPU takes the interrupt it would take at that boundary.
+    fn continue_dma_stall(&mut self, until: Cycle) -> Option<Fault> {
+        self.bus.continue_dma_stall(until);
+        if self.bus.dma_stalled() {
+            return None;
         }
-        self.latched_fault
+        let step = self.cpu.take_irq_at_boundary(&mut self.bus).err()?;
+        let fault = Fault {
+            cycle: self.now(),
+            instruction_address: step.instruction_address,
+            instruction: step.instruction,
+            instruction_set: step.instruction_set,
+            reason: step.reason,
+        };
+        self.latched_fault = Some(fault);
+        Some(fault)
     }
 
     pub fn step(&mut self) -> StepOutcome {
         if let Some(fault) = self.latched_fault {
             return StepOutcome::Faulted(fault);
         }
+        if self.bus.dma_stalled() {
+            return StepOutcome::Waiting(cpu::WaitReason::DmaStall);
+        }
         let started_at = self.now();
         let outcome = self.cpu.step(&mut self.bus);
-        if let Some(fault) = self.latch_bus_fault() {
-            return StepOutcome::Faulted(fault);
-        }
         match outcome {
             cpu::StepOutcome::Waiting(reason) => StepOutcome::Waiting(reason),
             cpu::StepOutcome::Executed(step) => StepOutcome::Executed(StepResult {
@@ -582,22 +592,28 @@ impl Machine {
             return Err(RunError::TargetBeforeCurrentCycle);
         }
         self.validate_inputs(inputs)?;
-        if self.cpu.inside_hle_bulk_service() || self.bus.power_state() == bus::PowerState::Running
+        if !self.bus.dma_stalled()
+            && (self.cpu.inside_hle_bulk_service()
+                || self.bus.power_state() == bus::PowerState::Running)
         {
             return Err(RunError::CpuNotWaiting);
         }
         self.begin_inputs_until(inputs, deadline);
         let started_at = self.now();
-        let (reason, woke) = match self.bus.power_state() {
-            bus::PowerState::Halted => {
-                (cpu::WaitReason::Halted, self.bus.idle_halt_until(deadline))
+        let (reason, woke) = if self.bus.dma_stalled() {
+            let _ = self.continue_dma_stall(deadline);
+            (cpu::WaitReason::DmaStall, !self.bus.dma_stalled())
+        } else {
+            match self.bus.power_state() {
+                bus::PowerState::Halted => {
+                    (cpu::WaitReason::Halted, self.bus.idle_halt_until(deadline))
+                }
+                bus::PowerState::Stopped => {
+                    (cpu::WaitReason::Stopped, self.bus.idle_stop_until(deadline))
+                }
+                bus::PowerState::Running => unreachable!(),
             }
-            bus::PowerState::Stopped => {
-                (cpu::WaitReason::Stopped, self.bus.idle_stop_until(deadline))
-            }
-            bus::PowerState::Running => unreachable!(),
         };
-        let _ = self.latch_bus_fault();
         let result = WaitResult {
             started_at,
             stopped_at: self.now(),
@@ -731,8 +747,11 @@ impl Machine {
         let mut execution_fault = None;
         let mut chunk_fault = None;
         while self.now() < yield_at {
-            if let Some(fault) = self.latch_bus_fault() {
-                return self.run_result(started_at, StopReason::Faulted(fault));
+            if self.bus.dma_stalled() {
+                if let Some(fault) = self.continue_dma_stall(yield_at) {
+                    return self.run_result(started_at, StopReason::Faulted(fault));
+                }
+                continue;
             }
             let chunk_end = yield_at.min(self.now().saturating_add(Bus::MAX_DMA_BURST_CYCLES));
             if self.bus.power_state() == bus::PowerState::Stopped
@@ -751,7 +770,7 @@ impl Machine {
                 && !self.cpu.inside_hle_bulk_service()
             {
                 self.bus.idle_halt_until(chunk_end);
-                if self.now() >= chunk_end || self.bus.dma_livelock().is_some() {
+                if self.now() >= chunk_end || self.bus.dma_stalled() {
                     continue;
                 }
             }
@@ -780,9 +799,6 @@ impl Machine {
                 self.latched_fault = Some(fault);
                 return self.run_result(started_at, StopReason::Faulted(fault));
             }
-        }
-        if let Some(fault) = self.latch_bus_fault() {
-            return self.run_result(started_at, StopReason::Faulted(fault));
         }
         self.run_result(
             started_at,

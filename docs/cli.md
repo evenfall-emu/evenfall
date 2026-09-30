@@ -61,7 +61,8 @@ Ordinary instruction lines contain start and end cycles, address and opcode:
 <start>..<end> pc=<address> thumb=<halfword>
 ```
 
-A sleeping CPU prints `wait cycle=<cycle> power=<halted|stopped>` unless quiet;
+A sleeping CPU prints `wait cycle=<cycle> power=<halted|stopped|dma_stall>`
+unless quiet (`dma_stall`: a DMA burst owns the bus);
 a terminal compatibility fault prints `emulation fault cycle=... pc=...
 reason=...` and stops. A completed execution path prints
 `stop cycle=<cycle> next=<address> cpsr=<CPSR> r0=<R0>`, even if it faulted.

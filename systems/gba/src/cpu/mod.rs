@@ -117,6 +117,9 @@ pub struct StepResult {
 pub enum WaitReason {
     Halted,
     Stopped,
+    /// A DMA burst owns the bus ([`Bus::dma_stalled`]); the CPU waits at an
+    /// instruction boundary until it ends.
+    DmaStall,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -166,10 +169,6 @@ pub enum FaultReason {
     },
     SoundDriverMainInternalCallback {
         target: u32,
-    },
-    DmaLivelock {
-        channel: u8,
-        started_at: u64,
     },
 }
 
@@ -790,6 +789,25 @@ impl Cpu {
         } else {
             debug_assert_eq!(self.core.next_instruction_address, 0x18);
         }
+        Ok(())
+    }
+
+    /// Takes an interrupt the CPU would take at this instruction boundary,
+    /// as the interpreter does after an instruction: for the boundary where
+    /// a DMA stall ended, since the instruction before it completed when the
+    /// burst yielded.
+    pub fn take_irq_at_boundary(&mut self, bus: &mut Bus) -> Result<(), FaultStep> {
+        if self.hle_service.is_some()
+            || bus.power_state() != PowerState::Running
+            || !bus.irq.irq_line
+            || self.cpsr & (1 << 7) != 0
+        {
+            return Ok(());
+        }
+        if let Err(reason) = self.enter_irq(bus) {
+            return Err(self.boundary_fault(bus, reason));
+        }
+        self.refill_pipeline(bus);
         Ok(())
     }
 

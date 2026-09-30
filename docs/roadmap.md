@@ -6,6 +6,90 @@
 - **Decision: BIOS read protection with an external image** (a deliberate guest-visible difference from ZiGBA, which returns the image's bytes to every read). Evidence: GBATEK, Unpredictable Things: Reading from BIOS Memory (reads while the PC is outside the BIOS return the most recently fetched BIOS opcode, with its examples at `[DCh+8]`, `[134h+8]`, `[13Ch+8]`, `[188h+8]`), and the jsmolka BIOS ROM's four expectations, which are those opcodes of Nintendo's BIOS. Model: opcode fetches latch the aligned BIOS word; CPU data reads see the image only while the latest opcode fetch was from the BIOS; DMA never reads the BIOS ([memory](gba/hardware/memory.md#bios-read-protection)). Pinned NanoBoyAdvance (gate on `r15`) and mGBA 0.10.5 (gate on the active fetch region, latch on leaving) agree on the gate and differ on latching BIOS data reads, which stays an open question. Compatibility effect: external and skip-BIOS runs whose code reads the BIOS region see the latch instead of image bytes; no state-layout change (`bios_latch` is already durable; the gate is derived). The parity harness applies [`bios-protection.patch`](../tools/parity/patches/bios-protection.patch) to its ZiGBA copy so both sides agree. Follow-up: check the latch sources against a user-supplied Nintendo BIOS and a hardware probe.
 - `Machine::write_state` buffers its bounded payload before writing to the caller's `Write`, unlike ZiGBA's direct streaming writer. The bytes are identical, but this adds a payload allocation and copy; consider a writer-backed codec sink if streaming cost matters.
 
+## DMA that never releases the bus
+
+**Divergence.** ZiGBA ends a DMA burst that holds the bus for
+`max_dma_burst_cycles` (2^24 cycles) with a terminal `dma_livelock` fault and
+turns DMA off. Evenfall keeps the machine running: the CPU stays stalled
+while video, audio, timers and interrupt flags advance, and it resumes if the
+guest's DMA ever releases the bus. This changes behavior only where ZiGBA
+stops; every run ZiGBA completes is unchanged, and the parity oracle applies
+[`dma-stall.patch`](../tools/parity/patches/dma-stall.patch) so ZiGBA behaves
+the same ([hardware page](gba/hardware/timers-dma-interrupts.md#bursts-that-never-release-the-bus)).
+
+**Evidence.** GBATEK's DMA section: "The CPU is paused when DMA transfers
+are active", channels rank DMA0 to DMA3 and "lower priority are paused until
+channels with higher priority have completed", and a Sound DMA request comes
+whenever the FIFO holds only 16 bytes. Requests that return faster than
+transfers complete therefore keep the CPU paused indefinitely while every
+other device runs. For comparison only: pinned mGBA 0.10.5 services DMA as
+scheduler events between instructions and, while `cpuBlocked` is set, ticks
+events without running the CPU and returns to the frontend at its own
+deadline; the blocked flag and each channel's remaining count, source and
+destination are in its save states. Pinned NanoBoyAdvance runs pending DMA
+at the start of the CPU's next bus access and loops until no channel is
+active, so such a burst never returns to its host.
+
+**Design.** ZiGBA and the port service a burst inside the CPU access it
+follows, possibly mid-instruction. Suspending that access across host calls
+would need a resumable instruction and bus access (a coroutine, which stable
+Rust and single-threaded WebAssembly do not offer, or a transactional replay
+of the partial instruction through every bus path); moving all DMA to
+instruction boundaries, as mGBA does, would change every DMA's timing and
+break parity. The core therefore keeps ZiGBA's in-access burst up to the same
+limit and makes only the burst resumable:
+
+- At the limit the burst yields at its next transfer start or beat boundary
+  (`Bus::run_dma_burst`). It records each transfer it interrupted (source,
+  destination, control, count and beat, `DmaProgress`), keeps its pending
+  requests and keeps `servicing_dma` set, so no DMA runs while the
+  interrupted instruction completes, as it does in ZiGBA before its fault.
+- From that instruction boundary `Machine` continues the burst with
+  `Bus::continue_dma_stall` up to each host deadline. The burst resumes the
+  outermost interrupted transfer, which resumes the ones nested in it, in the
+  order the uninterrupted recursion would run them, so results do not depend
+  on slicing. When no request remains the bus is released, the CPU takes any
+  interrupt it would take at that boundary (`Cpu::take_irq_at_boundary`) and
+  runs on.
+- `Machine::step` during a stall returns `Waiting(WaitReason::DmaStall)`
+  without advancing; `wait_until` accepts the stall and continues it; linked
+  runs continue a stalled machine as they idle a halted one. The web ABI
+  reports the stall as the SDK's `halted` step reason.
+
+**Consequences.**
+
+- The host call in which a burst reaches the limit still returns about 2^24
+  cycles (one second of guest time) late, at the first instruction boundary
+  after the limit, because the burst runs inside a CPU access until then.
+  Later calls return at their deadline or the first DMA beat boundary after
+  it. That one call's audio exceeds the 2048-sample host queue, so its
+  oldest samples are lost to the host, as in any call that long.
+- The instruction the limit interrupted completes before the stall instead
+  of after it: at most one instruction's remaining accesses happen early.
+  Bursts shorter than the limit, and everything after the stall begins,
+  follow the in-access model exactly.
+- Save states are refused while a stall is in progress: its interrupted
+  transfers' remaining counts have no durable `ZIGBAST1` v6 field, and
+  ZiGBA would read requests pending at an instruction boundary as a burst
+  that starts after the next CPU access. `write_state` returns `InvalidSaveState`, rewind
+  skips its captures (history keeps the states before the stall, so rewinding
+  leaves it), and the web runtime's explicit saves fail until the stall ends.
+  Making stalls durable needs a new state version with per-channel transfer
+  progress, a separate decision.
+- The parity scenario
+  [`probe-dma_stall`](../tools/parity/scenarios/probe-dma_stall.json) runs
+  [`probe/dma_stall.c`](../probe/dma_stall.c), a stall that a repeating VBlank
+  DMA0 ends by stopping the timers after 64 frames, with a checkpoint after
+  the stall ends. It sets `audioOutput: false` because the call reaching the
+  limit overflows the sample queue differently under each slicing; emulated
+  sound is unaffected.
+
+**Open questions.** Whether a shorter in-access limit (a smaller one-time
+overrun, at the cost of diverging from ZiGBA on the rare burst between the
+new and old limit that then ends) is worth it; whether the SDK should report
+a distinct `dma_stall` step reason; and whether stalls should become durable
+in a future state version.
+
 ## Player and Cloudflare server migration
 
 ZiGBA's player and server live in the pinned `refs/zigba` checkout, not in the

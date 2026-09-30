@@ -40,9 +40,10 @@ fn build() -> Result<(), Box<dyn Error>> {
         &root,
     )?;
     fs::copy(root.join("tools/parity/oracle/schema.zig"), scratch.join("src/parity_schema.zig"))?;
-    // The schema export, and Evenfall's deliberate differences from ZiGBA's
-    // guest behavior (docs/parity.md).
-    for name in ["schema-root.patch", "bios-protection.patch"] {
+    // The schema export, then Evenfall's deliberate differences from ZiGBA's
+    // guest behavior, so the oracle behaves as the Rust core does
+    // (docs/parity.md).
+    for name in ["schema-root.patch", "bios-protection.patch", "dma-stall.patch"] {
         let patch = fs::File::open(root.join("tools/parity/patches").join(name))?;
         let status =
             Command::new("patch").args(["-p1", "-d"]).arg(&scratch).stdin(patch).status()?;

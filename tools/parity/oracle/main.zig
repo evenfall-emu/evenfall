@@ -25,6 +25,7 @@ const Config = struct {
     gyroSample: ?u16 = null,
     tilt: ?[2]u16 = null,
     rumble: bool = false,
+    audioOutput: bool = true,
 };
 const Peer = struct {
     assets: Assets,
@@ -183,6 +184,7 @@ fn createMachine(init: std.process.Init, a: std.mem.Allocator, parent: []const u
         .tilt_sample = if (config.tilt) |v| .{ .x = @intCast(v[0]), .y = @intCast(v[1]) } else null,
         .rumble = config.rumble,
     });
+    machine.setAudioOutput(config.audioOutput);
     return machine;
 }
 
