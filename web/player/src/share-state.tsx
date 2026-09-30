@@ -1,0 +1,307 @@
+import { useRef, useState } from "react";
+import type { SharedState } from "./cloud";
+import type {
+  CatalogBase,
+  CatalogPatch,
+  CatalogVersion,
+} from "./pages/library/catalog";
+
+/** A catalog release that its hosted patch builds from a base ROM. */
+export type PatchedRelease = CatalogVersion & {
+  patch: CatalogPatch;
+  requiredBase: CatalogBase;
+};
+
+/** The catalog release whose ROM has SHA-1 `hash`, when a patch builds it. */
+export function patchedRelease(
+  versions: readonly CatalogVersion[],
+  hash: string,
+) {
+  return versions.find(
+    (version): version is PatchedRelease =>
+      version.outputSha1 === hash &&
+      Boolean(version.patch && version.requiredBase),
+  );
+}
+
+export type ShareProgress =
+  | { status: "signed-out" }
+  | { status: "creating" }
+  | {
+      status: "ready";
+      id: string;
+      url: string;
+      /** SHA-1 of the shared state's ROM. */
+      hash: string;
+      /** The account is an admin, so it may include the ROM. */
+      canIncludeRom: boolean;
+    }
+  | { status: "failed"; message: string };
+
+const comparable = (name: string) => name.trim().toLocaleLowerCase();
+/** Names match ignoring surrounding space and case, as a reader would. */
+export function nameTaken(names: string[], name: string) {
+  return names.some((taken) => comparable(taken) === comparable(name));
+}
+
+/**
+ * The sharer's side: creating a link to the current state, then copying it.
+ * With `includeRom`, offered to admins, the link can also carry the ROM.
+ */
+export function ShareLink({
+  progress,
+  title,
+  playthroughName,
+  retry,
+  signIn,
+  includeRom,
+}: {
+  progress: ShareProgress;
+  title: string;
+  playthroughName: string;
+  retry: () => void;
+  signIn: () => void;
+  includeRom?: () => Promise<void>;
+}) {
+  const [copied, setCopied] = useState<"" | "copied" | "failed">("");
+  const link = useRef<HTMLInputElement>(null);
+  if (progress.status === "signed-out")
+    return (
+      <>
+        <p>
+          Sign in to create share links. The people you send a link to don’t
+          need an account.
+        </p>
+        <div className="resume-recovery-actions">
+          <button onClick={signIn}>Sign in</button>
+        </div>
+      </>
+    );
+  return (
+    <>
+      <p>
+        <strong>
+          {title} · {playthroughName}
+        </strong>
+      </p>
+      {progress.status === "creating" && (
+        <p role="status">Creating a link to this moment…</p>
+      )}
+      {progress.status === "failed" && (
+        <>
+          <p role="alert">{progress.message}</p>
+          <div className="resume-recovery-actions">
+            <button onClick={retry}>Try again</button>
+          </div>
+        </>
+      )}
+      {progress.status === "ready" && (
+        <>
+          <p>
+            Anyone with this link can start this exact moment as a new
+            playthrough with their own copy of the game. It works for at least
+            24 hours.
+          </p>
+          <div className="share-link">
+            <input
+              ref={link}
+              readOnly
+              value={progress.url}
+              aria-label="Share link"
+              onFocus={(event) => event.currentTarget.select()}
+            />
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(progress.url).then(
+                  () => setCopied("copied"),
+                  () => {
+                    setCopied("failed");
+                    link.current?.select();
+                  },
+                );
+              }}
+            >
+              {copied === "copied" ? "Copied" : "Copy link"}
+            </button>
+          </div>
+          {copied === "failed" && (
+            <p role="alert">Copying failed. Select the link and copy it.</p>
+          )}
+          {includeRom && (
+            <IncludeGame key={progress.url} include={includeRom} />
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+/** Uploads the game's ROM with one share link, once the sharer asks. */
+function IncludeGame({ include }: { include: () => Promise<void> }) {
+  const [state, setState] = useState<
+    | { status: "idle" | "uploading" | "included" }
+    | { status: "failed"; message: string }
+  >({ status: "idle" });
+  if (state.status === "included")
+    return (
+      <p role="status">The game is included: this link starts without a ROM.</p>
+    );
+  const uploading = state.status === "uploading";
+  return (
+    <>
+      <p>
+        Include the game to let people without it play too. Anyone with this
+        link can then download the ROM.
+      </p>
+      {state.status === "failed" && <p role="alert">{state.message}</p>}
+      <div className="resume-recovery-actions">
+        <button
+          disabled={uploading}
+          onClick={() => {
+            setState({ status: "uploading" });
+            include().then(
+              () => setState({ status: "included" }),
+              (error: unknown) =>
+                setState({
+                  status: "failed",
+                  message:
+                    error instanceof Error ? error.message : String(error),
+                }),
+            );
+          }}
+        >
+          {uploading ? "Including the game…" : "Include the game"}
+        </button>
+      </div>
+    </>
+  );
+}
+
+/**
+ * The recipient's side, shown only when starting needs input: a new name
+ * when the shared one is already used for this game, or the game's ROM.
+ * With `base`, the ROM may also be that base, which a patch turns into it.
+ */
+export function SharedStateChoices({
+  shared,
+  needsRom,
+  base,
+  takenNames,
+  busy,
+  error,
+  start,
+}: {
+  shared: SharedState;
+  needsRom: boolean;
+  base?: CatalogBase;
+  takenNames: string[];
+  busy: boolean;
+  error: string;
+  start: (name: string, file?: File) => void;
+}) {
+  const [renaming] = useState(() =>
+    nameTaken(takenNames, shared.playthroughName),
+  );
+  const [name, setName] = useState(shared.playthroughName);
+  const [nameError, setNameError] = useState("");
+  const romInput = useRef<HTMLInputElement>(null);
+  const nameInput = useRef<HTMLInputElement>(null);
+  const length = [...name.trim()].length;
+  const problem = !length
+    ? "Give your playthrough a name."
+    : length > 160
+      ? "Use 160 characters or fewer."
+      : nameTaken(takenNames, name)
+        ? "A playthrough with this name already exists for this game."
+        : "";
+  const validName = () => {
+    setNameError(problem);
+    if (problem) nameInput.current?.focus();
+    return !problem;
+  };
+  return (
+    <form
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (busy || !validName()) return;
+        if (needsRom) romInput.current?.click();
+        else start(name.trim());
+      }}
+    >
+      <p>
+        <strong>
+          {shared.title} · {shared.playthroughName}
+        </strong>
+      </p>
+      {renaming && (
+        <>
+          <p>
+            You already have a playthrough called “{shared.playthroughName}” for
+            this game. Name this one differently; your playthroughs stay
+            untouched.
+          </p>
+          <label className="share-name">
+            Playthrough name
+            <input
+              ref={nameInput}
+              value={name}
+              disabled={busy}
+              autoComplete="off"
+              aria-invalid={Boolean(nameError)}
+              onChange={(event) => {
+                setName(event.target.value);
+                setNameError("");
+              }}
+              onFocus={(event) => event.currentTarget.select()}
+            />
+          </label>
+          {nameError && <p role="alert">{nameError}</p>}
+        </>
+      )}
+      {needsRom &&
+        (base ? (
+          <p>
+            This state needs the exact game version it was shared from. Choose{" "}
+            {base.displayName}, which is patched here, or the patched ROM
+            itself. Your file stays on this device and is never uploaded.
+          </p>
+        ) : (
+          <p>
+            This state needs the exact game version it was shared from. Choose
+            that ROM; it stays on this device and is never uploaded.
+          </p>
+        ))}
+      <details className="cloud-rom-identity">
+        <summary>ROM details</summary>
+        {base ? "Patched ROM SHA-1" : "SHA-1"}: <code>{shared.hash}</code>
+        {base && (
+          <>
+            <br />
+            Base ROM SHA-1: <code>{base.sha1}</code>
+          </>
+        )}
+      </details>
+      {error && <p role="alert">{error}</p>}
+      {busy && <p role="status">Validating and starting…</p>}
+      <div className="resume-recovery-actions">
+        <button type="submit" disabled={busy}>
+          {needsRom ? "Choose ROM and start" : "Start playthrough"}
+        </button>
+        <input
+          ref={romInput}
+          hidden
+          type="file"
+          accept=".gba,.zip"
+          aria-label="Choose ROM for shared state"
+          disabled={busy}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (file && validName()) start(name.trim(), file);
+          }}
+        />
+      </div>
+    </form>
+  );
+}

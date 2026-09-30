@@ -1,0 +1,1 @@
+ALTER TABLE `account_limits` ADD `admin` integer DEFAULT false NOT NULL;

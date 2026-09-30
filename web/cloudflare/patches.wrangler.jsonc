@@ -1,0 +1,18 @@
+// Public patch CDN Worker; the existing patches.evenfall-emu.org R2 custom
+// domain provides the proxied DNS record, and this Worker route runs first.
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "zigba-patches",
+  "main": "./src/patches.ts",
+  "compatibility_date": "2026-09-20",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": ["patches.evenfall-emu.org/*"],
+  "r2_buckets": [
+    {
+      "binding": "PATCHES",
+      "bucket_name": "evenfall-patches",
+      "jurisdiction": "eu",
+    },
+  ],
+}

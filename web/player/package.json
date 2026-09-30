@@ -1,0 +1,42 @@
+{
+  "name": "zigba-player",
+  "private": true,
+  "version": "0.1.0",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev --host 127.0.0.1",
+    "build": "tsc --noEmit && vp build",
+    "deploy": "wrangler deploy --config ../wrangler.jsonc",
+    "preview:deploy": "wrangler dev --config ../wrangler.jsonc",
+    "check": "tsc --noEmit",
+    "icons": "node scripts/render-brand-icons.mjs",
+    "test": "vp test run",
+    "test:browser": "playwright test"
+  },
+  "dependencies": {
+    "@base-ui/react": "1.8.0",
+    "@evenfall/gba": "^0.1.1",
+    "@evenfall/gba-pokemon": "^0.1.0",
+    "@tanstack/react-router": "1.131.35",
+    "effect": "3.22.1",
+    "idb": "8.0.3",
+    "posthog-js": "1.434.9",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "24.3.0",
+    "@types/react": "19.1.12",
+    "@types/react-dom": "19.1.9",
+    "@vitejs/plugin-react": "6.1.1",
+    "fake-indexeddb": "6.2.2",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2",
+    "vite": "npm:@voidzero-dev/vite-plus-core@1.0.0",
+    "vite-plus": "1.0.0",
+    "wrangler": "4.135.0"
+  }
+}

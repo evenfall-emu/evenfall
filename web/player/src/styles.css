@@ -1,0 +1,132 @@
+/* Pre-Tailwind page styles live in the `legacy` layer, above Tailwind's base
+   styles and below its components and utilities, so their global element rules
+   never override a utility. Remove each import when its page is rebuilt. */
+@layer properties, theme, base, legacy, components, utilities;
+
+@import "tailwindcss";
+@import "./console.css" layer(legacy);
+@import "./account.css" layer(legacy);
+@import "./rewind-timeline.css" layer(legacy);
+
+@font-face {
+  font-family: "Press Start 2P";
+  src: url("./assets/fonts/PressStart2P-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+
+@theme {
+  /* Press Start 2P draws every glyph on an 8-pixel em, one weight only. Sizes
+     are named by how many screen pixels one font pixel covers: whole
+     multiples keep every font pixel the same size, and 1x5 is the one half
+     step, for secondary text. */
+  --font-sans: "Press Start 2P", ui-monospace, monospace;
+  --text-1x5: 12px;
+  --text-1x5--line-height: 20px;
+  --text-2x: 16px;
+  --text-2x--line-height: 24px;
+  --text-3x: 24px;
+  --text-3x--line-height: 32px;
+  --text-4x: 32px;
+  --text-4x--line-height: 40px;
+  --text-5x: 40px;
+  --text-5x--line-height: 48px;
+
+  /* Surfaces */
+  --color-canvas: #101c2a;
+  --color-surface: #192b3a;
+  --color-raised: #223747;
+  --color-hover: #294151;
+  --color-selected: #233c42;
+
+  /* Boundaries */
+  --color-line: #3a4e60;
+  --color-control: #70879a;
+
+  /* Typography */
+  --color-heading: #fff0c8;
+  --color-content: #e3eaf0;
+  --color-muted: #a9b8c7;
+  --color-on-accent: #101c2a;
+
+  /* Brand and actions */
+  --color-mint: #8cdbbe;
+  --color-mint-hover: #a4e5cd;
+  --color-mint-pressed: #75c7aa;
+
+  --color-peach: #f5aa82;
+  --color-peach-hover: #f8bd9e;
+  --color-peach-pressed: #df9671;
+
+  /* Feedback */
+  --color-success: #8cdbbe;
+  --color-success-surface: #193930;
+  --color-warning: #ebc477;
+  --color-warning-surface: #3b3020;
+  --color-danger: #ff9696;
+  --color-danger-surface: #3d252c;
+  --color-info: #a9c7f0;
+  --color-info-surface: #203247;
+
+  /* Geometry and elevation */
+  --radius-control: 2px;
+  --radius-panel: 4px;
+  --shadow-popover: 0 8px 24px rgb(0 0 0 / 28%);
+  --shadow-dialog: 0 16px 48px rgb(0 0 0 / 40%);
+
+  /* Tailwind's rem-based scales, restated in pixels. The legacy pages set a
+     fluid root font size, which would otherwise resize every rem. */
+  --spacing: 4px;
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-base: 16px;
+  --text-lg: 18px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 30px;
+  --text-4xl: 36px;
+  --text-5xl: 48px;
+  --text-6xl: 60px;
+  --text-7xl: 72px;
+  --text-8xl: 96px;
+  --text-9xl: 128px;
+  --container-3xs: 256px;
+  --container-2xs: 288px;
+  --container-xs: 320px;
+  --container-sm: 384px;
+  --container-md: 448px;
+  --container-lg: 512px;
+  --container-xl: 576px;
+  --container-2xl: 672px;
+  --container-3xl: 768px;
+  --container-4xl: 896px;
+  --container-5xl: 1024px;
+  --container-6xl: 1152px;
+  --container-7xl: 1280px;
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-3xl: 24px;
+  --radius-4xl: 32px;
+}
+
+@layer base {
+  body {
+    @apply bg-canvas text-content;
+  }
+  /* The legacy layer gives pages the browser's line height and their own
+     text color; Tailwind-built roots, including portaled popups, start from
+     Tailwind's again. Nested roots inherit from the outer one. */
+  [data-ui]:not([data-ui] *) {
+    @apply text-content;
+    line-height: 1.5;
+  }
+  /* The face has one weight: never fake bold or italics, which smear pixels. */
+  [data-ui] {
+    font-synthesis: none;
+    font-variant-ligatures: none;
+  }
+}
