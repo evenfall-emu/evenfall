@@ -38,7 +38,8 @@ fn headless_cli_output_matches_fixtures() {
                 0x2a, 0x00, 0xa0, 0xe3,
             ],
             &["run", "--steps", "8", "--quiet"],
-            "stop cycle=197126 next=08000020 cpsr=0000001f r0=0000002a\n",
+            // The wake ends the HLE Halt with the retail tail, 26 cycles.
+            "stop cycle=197152 next=08000020 cpsr=0000001f r0=0000002a\n",
         ),
         (
             "stop",

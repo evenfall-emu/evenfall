@@ -205,29 +205,68 @@ fn default_game_pak_sram_and_wram_access_costs_match_the_gbatek_totals() {
 
 #[test]
 fn cached_irq_line_follows_ie_if_ime_writes_and_keypad_edges() {
+    use evenfall_gba::bus::IRQ_LATENCY;
     let mut bus = Bus::init(&[]);
+    // A request that rises reaches the CPU IRQ_LATENCY cycles later.
+    let arrives = |bus: &mut Bus| {
+        assert!(bus.irq_pending());
+        assert!(!bus.irq.irq_line);
+        bus.elapse(IRQ_LATENCY - 1);
+        assert!(!bus.irq.irq_line);
+        bus.elapse(1);
+        assert!(bus.irq.irq_line);
+    };
     write_half(&mut bus, 0x0400_0132, 0x4001);
     write_half(&mut bus, 0x0400_0200, 1 << 12);
     write_half(&mut bus, 0x0400_0208, 1);
     assert!(!bus.irq.irq_line);
     bus.set_keys(KeyState { a: true, ..Default::default() });
-    assert!(bus.irq.irq_line);
-    assert!(bus.irq_pending());
+    arrives(&mut bus);
+    // A request that falls reaches the CPU at once.
     write_byte(&mut bus, 0x0400_0203, 1 << 4);
     assert!(!bus.irq.irq_line);
     bus.set_keys(Default::default());
     bus.set_keys(KeyState { a: true, ..Default::default() });
-    assert!(bus.irq.irq_line);
+    arrives(&mut bus);
     write_half(&mut bus, 0x0400_0200, 0);
     assert!(!bus.irq.irq_line);
     write_half(&mut bus, 0x0400_0200, 1 << 12);
-    assert!(bus.irq.irq_line);
+    arrives(&mut bus);
     write_half(&mut bus, 0x0400_0208, 0);
     assert!(!bus.irq.irq_line);
     write_half(&mut bus, 0x0400_0208, 1);
-    assert!(bus.irq.irq_line);
+    arrives(&mut bus);
     write_half(&mut bus, 0x0400_0202, 1 << 12);
     assert!(!bus.irq.irq_line);
+}
+
+/// A request raised outside a register write, as HLE `IntrWait` raises one
+/// by setting IME, reaches the CPU on time inside a device batch too: the
+/// batch's next boundary is not an LCD event hundreds of cycles away.
+#[test]
+fn an_irq_request_raised_outside_a_write_arrives_on_time_when_batched_and_eager() {
+    use evenfall_gba::bus::IRQ_LATENCY;
+    for batch in [false, true] {
+        let mut bus = Bus::init(&[]);
+        write_half(&mut bus, 0x0400_0200, 1 << 3);
+        write_half(&mut bus, 0x0400_0100, 0xffff);
+        write_half(&mut bus, 0x0400_0102, 0x00c0);
+        bus.elapse(4);
+        write_half(&mut bus, 0x0400_0102, 0);
+        assert_eq!(bus.irq.interrupt_request_flags, 1 << 3);
+        if batch {
+            bus.begin_device_batch();
+        }
+        bus.irq.interrupt_master_enabled = true;
+        bus.update_irq_line();
+        bus.elapse(IRQ_LATENCY - 1);
+        assert!(!bus.irq.irq_line, "batch {batch}");
+        bus.elapse(8);
+        assert!(bus.irq.irq_line, "batch {batch}");
+        if batch {
+            bus.end_device_batch();
+        }
+    }
 }
 
 /// The HBlank flag rises after the HBlank IRQ, so the line's flag is read at
@@ -1173,6 +1212,8 @@ fn fifo_reset_clears_queued_words_but_preserves_the_active_playback_word() {
     write_word(&mut bus, 0x0400_00a0, 0x0403_0201);
     write_half(&mut bus, 0x0400_0100, 0xffff);
     write_half(&mut bus, 0x0400_0102, 1 << 7);
+    // The timer holds its reload through the cycle after the enabling write.
+    bus.elapse(1);
     bus.elapse(1);
     assert_eq!(4, bus.current_audio_sample().left);
     write_half(&mut bus, 0x0400_0082, routing | (1 << 11));
@@ -1203,6 +1244,8 @@ fn fifo_halfword_write_commits_a_whole_word_slot_with_untouched_lanes() {
     write_half(&mut bus, 0x0400_00a0, 0x0201);
     write_half(&mut bus, 0x0400_0100, 0xffff);
     write_half(&mut bus, 0x0400_0102, 1 << 7);
+    // The timer holds its reload through the cycle after the enabling write.
+    bus.elapse(1);
     for sample in [4, 8, 0, 0] {
         bus.elapse(1);
         assert_eq!(sample, bus.current_audio_sample().left);
@@ -1219,6 +1262,8 @@ fn mixed_audio_is_biased_and_clipped_to_the_ten_bit_dac_range() {
     }
     write_half(&mut bus, 0x0400_0100, 0xffff);
     write_half(&mut bus, 0x0400_0102, 1 << 7);
+    // The timer holds its reload through the cycle after the enabling write.
+    bus.elapse(1);
     bus.elapse(1);
     assert_eq!(510, bus.current_audio_sample().left);
     assert_eq!(0, bus.current_audio_sample().right);
@@ -1636,13 +1681,16 @@ fn timer_zero_unused_count_up_bit_preserves_the_exact_batched_irq_deadline() {
         }
         let started_at = bus.now();
         bus.begin_device_batch();
-        bus.elapse(1);
+        // Enabled by a write, the timer holds its reload for one cycle; set
+        // directly, it counts at once.
+        bus.elapse(1 + u64::from(!direct_state));
         assert_eq!(0, bus.irq.interrupt_request_flags);
         assert!(!bus.irq.irq_line);
         bus.elapse(1);
-        assert_eq!(started_at + 2, bus.now());
+        assert_eq!(started_at + 2 + u64::from(!direct_state), bus.now());
         assert_eq!(1 << 3, bus.irq.interrupt_request_flags);
-        assert!(bus.irq.irq_line);
+        // The request reaches the CPU IRQ_LATENCY cycles after the overflow.
+        assert_eq!(Some(bus.now() + evenfall_gba::bus::IRQ_LATENCY), bus.irq.irq_line_rises_at);
         bus.end_device_batch();
     }
 }
@@ -1768,7 +1816,9 @@ fn change_running_prescaler(
     bus.elapse(delay - 1);
     write_half(bus, 0x0400_0102, 0x00c0 | new_select as u16);
     let written_at = bus.now();
-    let ticks_left = 2 - (written_at / old_divisor - enabled_at / old_divisor);
+    // A prescaler edge in the cycle after the enabling write does not count.
+    let skipped = u64::from((enabled_at + 1).is_multiple_of(old_divisor));
+    let ticks_left = 2 - (written_at / old_divisor - enabled_at / old_divisor - skipped);
     (written_at / new_divisor + ticks_left) * new_divisor - written_at
 }
 
@@ -2463,7 +2513,9 @@ fn a_halted_batch_wakes_at_the_lcd_or_timer_event_after_post_halt_charges_and_cu
                         assert!(!bus.idle_halt_until(bus.now() + split));
                     }
                     assert!(bus.idle_halt_until(bus.now() + 5000));
-                    assert_eq!(if timer { 702 } else { 960 }, bus.now());
+                    // The timer, enabled at cycle 2, holds its reload for one
+                    // cycle and overflows 700 counts later.
+                    assert_eq!(if timer { 703 } else { 960 }, bus.now());
                     assert_eq!(
                         if timer { 1 << 3 } else { 1 << 1 },
                         bus.irq.interrupt_request_flags

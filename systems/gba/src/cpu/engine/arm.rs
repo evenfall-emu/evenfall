@@ -756,7 +756,9 @@ fn complete_local<const EW: bool>(c: &mut Ctx<'_, EW>, h: Hot, access: &Mmio) ->
         c.load_mark = next.budget;
     }
     let irq = &c.mem.registers.irq;
-    let taken = irq.irq_line && h.cpsr & (1 << 7) == 0;
+    // A request the store raised reaches the CPU at a cycle the run's limit
+    // does not know: the run ends.
+    let taken = (irq.irq_line && h.cpsr & (1 << 7) == 0) || irq.irq_line_rises_at.is_some();
     Some(if irq.power_state == PowerState::Running && !taken {
         Resume::On(next)
     } else {
@@ -775,9 +777,9 @@ fn finish<const EW: bool>(c: Ctx<'_, EW>, hot: Hot, budget: i64) -> Option<(u64,
     let pc = c.pc(hot.idx);
     let pipeline = [c.code_word(pc), c.code_word(pc.wrapping_add(4))];
     let loaded = c.load_mark == hot.budget;
-    // An MMIO access leaves the next fetch sequential.
+    // An MMIO access breaks the burst like any data access.
     let mmio = c.mmio_mark == hot.budget;
-    let data_last = (loaded && !mmio) || c.store_mark == hot.budget;
+    let data_last = loaded || mmio || c.store_mark == hot.budget;
     let open_bus = if loaded { c.data } else { pipeline[1] };
     let core = c.core;
     core.registers[15] = pc.wrapping_add(8);

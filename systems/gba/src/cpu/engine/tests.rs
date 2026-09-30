@@ -36,8 +36,12 @@ struct Pair {
     engine_bus: Bus,
     reference: Cpu,
     reference_bus: Bus,
-    /// IRQs an MMIO store in an engine run raised.
+    /// IRQs taken right after an engine run, which a masked IRQ that a run
+    /// unmasked can reach.
     irq_entries: u64,
+    /// Interrupt requests an MMIO store in an engine run raised: they reach
+    /// the CPU `IRQ_LATENCY` cycles later, after the run.
+    irq_raises: u64,
 }
 
 impl Pair {
@@ -56,7 +60,7 @@ impl Pair {
         }
         let [engine_bus, reference_bus] = buses;
         let [engine, reference] = cpus;
-        Self { engine, engine_bus, reference, reference_bus, irq_entries: 0 }
+        Self { engine, engine_bus, reference, reference_bus, irq_entries: 0, irq_raises: 0 }
     }
 
     /// Runs the engine once and steps the reference through the same
@@ -64,7 +68,11 @@ impl Pair {
     fn compare(&mut self, yield_at: u64, context: &str) -> bool {
         let before = self.engine.clone();
         let started = self.engine_bus.now();
+        let arrival = self.engine_bus.irq.irq_line_rises_at;
         let ran = self.engine.run_engine(&mut self.engine_bus, yield_at);
+        if ran && arrival.is_none() && self.engine_bus.irq.irq_line_rises_at.is_some() {
+            self.irq_raises += 1;
+        }
         if !ran {
             assert_eq!(self.engine, before, "{context}: a refused run changed the CPU");
             assert_eq!(self.engine_bus.now(), started, "{context}: a refused run took time");
@@ -111,6 +119,7 @@ impl Pair {
         assert_eq!(a.power_state(), b.power_state(), "{context}: power");
         assert_eq!(a.pending_dma, b.pending_dma, "{context}: pending DMA");
         assert_eq!(a.batch_deadline, b.batch_deadline, "{context}: device horizon");
+        assert_eq!(a.irq, b.irq, "{context}: interrupt registers");
         assert_eq!(a.open_bus_value, b.open_bus_value, "{context}: open bus");
         assert_eq!(a.bios_latch, b.bios_latch, "{context}: BIOS latch");
         assert_eq!(a.bios_code_active, b.bios_code_active, "{context}: BIOS gate");
@@ -872,7 +881,7 @@ fn mmio_transfers_in_runs_match_stepping() {
     for (i, half) in thumb.iter().enumerate() {
         rom[0x100 + 2 * i..0x102 + 2 * i].copy_from_slice(&half.to_le_bytes());
     }
-    let (mut runs, mut irq_entries, mut halts) = (0, 0, 0);
+    let (mut runs, mut irq_raises, mut halts) = (0, 0, 0);
     let mmio_before = super::MMIO_ACCESSES.get();
     let irq_before = super::LOCAL_ACCESSES.get();
     for trial in 0..600 {
@@ -921,10 +930,10 @@ fn mmio_transfers_in_runs_match_stepping() {
         let context = format!("trial {trial} place {place} lead {lead} masked {masked}");
         for attempt in 0..8 {
             let yield_at = pair.engine_bus.now() + 1 + u64::from(random.below(600));
-            let entries = pair.irq_entries;
+            let raises = pair.irq_raises;
             if pair.compare(yield_at, &format!("{context} attempt {attempt}")) {
                 runs += 1;
-                irq_entries += pair.irq_entries - entries;
+                irq_raises += pair.irq_raises - raises;
             } else {
                 let outcome = pair.engine.step(&mut pair.engine_bus);
                 let reference = pair.reference.step(&mut pair.reference_bus);
@@ -942,8 +951,8 @@ fn mmio_transfers_in_runs_match_stepping() {
     let irq = super::LOCAL_ACCESSES.get() - irq_before;
     assert!(irq > 50_000, "only {irq} interrupt register accesses in engine runs");
     assert!(runs > 1500, "only {runs} runs");
-    assert!(mmio > 10_000, "only {mmio} MMIO accesses in engine runs");
-    assert!(irq_entries > 80, "only {irq_entries} IRQs raised in engine runs");
+    assert!(mmio > 9_000, "only {mmio} MMIO accesses in engine runs");
+    assert!(irq_raises > 80, "only {irq_raises} IRQs raised in engine runs");
     assert!(halts > 40, "only {halts} halts");
 }
 

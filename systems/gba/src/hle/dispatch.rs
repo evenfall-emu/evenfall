@@ -1,13 +1,21 @@
 //! HLE SWI dispatch and guest-cycle-bounded bulk service continuation.
 
-use crate::bus::Bus;
+use crate::bus::{Access, AccessKind, AccessSource, AccessWidth, Bus};
 use crate::cpu::{
     Cpu, ExecuteResult, FaultReason, FaultStep, HleBulkService, HleBulkWork, HleService,
-    InstructionSet, StepOutcome, StepResult,
+    InstructionSet, StepOutcome, StepResult, hle_bios_fetch,
 };
 
 const HLE_BULK_STEP_CYCLES: u64 = 1 << 20;
 const HLE_SWI_RETURN_LATCH: u32 = 0xE3A0_2004;
+
+/// The retail SWI dispatcher's cycles besides its read of the service
+/// number, which no document lists. The mGBA suite's timing table, recorded
+/// on hardware, fixes them: its BIOS Division, Division 2, Sqrt (of 0) and
+/// ArcTan rows call from IWRAM, EWRAM and Game Pak ROM under eight wait
+/// settings, in ARM and Thumb, and every column matches with this value and
+/// the retail call's refills and service-number read.
+const HLE_SWI_DISPATCH_CYCLES: u64 = 39;
 
 impl Cpu {
     /// A fault returns as a typed `FaultReason`.
@@ -24,6 +32,10 @@ impl Cpu {
         let mut bulk: Option<HleBulkWork> = None;
         let mut branched = false;
         let mut fault = None;
+        let retail_call = matches!(service, 0x06..=0x18);
+        if retail_call {
+            self.enter_hle_swi(bus);
+        }
         match service {
             0x00 => {
                 self.execute_hle_soft_reset(bus);
@@ -36,6 +48,7 @@ impl Cpu {
             0x02 => {
                 bus.elapse(45);
                 bus.enter_halt();
+                self.hle_halt = true;
             }
             0x03 => {
                 bus.elapse(45);
@@ -110,6 +123,7 @@ impl Cpu {
                 bus.elapse(45);
                 if self.registers[2] & 0x80 == 0 {
                     bus.enter_halt();
+                    self.hle_halt = true;
                 } else {
                     bus.enter_stop();
                 }
@@ -142,7 +156,42 @@ impl Cpu {
             return Err(reason);
         }
         bus.set_bios_latch(HLE_SWI_RETURN_LATCH);
+        if retail_call {
+            self.return_from_hle_swi(bus);
+            branched = true;
+        }
         Ok(ExecuteResult { branched, ..Default::default() })
+    }
+
+    /// The retail SWI's way into the service: the exception's refill at the
+    /// SWI vector, from the BIOS (which leaves the Game Pak and discards its
+    /// prefetch buffer), then the BIOS SWI dispatcher, which reads the
+    /// service number from the caller's code, "the BYTE at [R14-2]" (GBATEK,
+    /// ARM CPU Exceptions), and spends [`HLE_SWI_DISPATCH_CYCLES`] more.
+    fn enter_hle_swi(&mut self, bus: &mut Bus) {
+        hle_bios_fetch(bus, 0x08, AccessKind::Nonsequential);
+        hle_bios_fetch(bus, 0x0C, AccessKind::Sequential);
+        let comment = if self.is_thumb() {
+            self.next_instruction_address
+        } else {
+            self.next_instruction_address.wrapping_add(2)
+        };
+        bus.read(Access {
+            address: comment,
+            width: AccessWidth::Byte,
+            kind: AccessKind::Nonsequential,
+            source: AccessSource::CpuData,
+        });
+        bus.elapse(HLE_SWI_DISPATCH_CYCLES);
+    }
+
+    /// The retail SWI's return, `movs pc, r14`: its opcode fetch in the
+    /// BIOS, then the refill at the instruction after the SWI, which the
+    /// caller makes as for any branch.
+    fn return_from_hle_swi(&mut self, bus: &mut Bus) {
+        hle_bios_fetch(bus, 0x00, AccessKind::Sequential);
+        let width = if self.is_thumb() { 2 } else { 4 };
+        self.next_instruction_address = self.next_instruction_address.wrapping_add(width);
     }
 
     pub fn continue_hle_bulk_service(
@@ -182,11 +231,13 @@ impl Cpu {
         }
         self.hle_service = None;
         bus.set_bios_latch(HLE_SWI_RETURN_LATCH);
-        let pipeline_offset = if self.is_thumb() { 4 } else { 8 };
+        // The retail return, as for a service that ends in its first step;
+        // the instruction after the SWI is already next.
+        hle_bios_fetch(bus, 0x00, AccessKind::Sequential);
+        self.refill_pipeline(bus);
         if bus.irq.irq_line && self.cpsr & (1 << 7) == 0 {
             bus.resume_power();
             if let Err(reason) = self.enter_irq(bus) {
-                self.registers[15] = self.next_instruction_address.wrapping_add(pipeline_offset);
                 return Some(StepOutcome::Faulted(FaultStep {
                     instruction_address: call.instruction_address,
                     instruction: call.instruction,
@@ -195,8 +246,6 @@ impl Cpu {
                 }));
             }
             self.refill_pipeline(bus);
-        } else {
-            self.registers[15] = self.next_instruction_address.wrapping_add(pipeline_offset);
         }
         report_instruction.then_some(StepOutcome::Executed(call))
     }

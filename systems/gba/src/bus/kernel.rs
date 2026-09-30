@@ -30,7 +30,11 @@ pub(crate) struct EngineMemory<'a> {
 /// neither the device batch nor the bus's clock. The bus's own MMIO paths
 /// are the reference for [`Self::load`] and [`Self::store`].
 pub(crate) struct RunRegisters<'a> {
+    /// The bus cycle when the run took this view.
+    pub(crate) start: Cycle,
     pub(crate) irq: &'a mut IrqRegisters,
+    /// [`Bus::irq_arrival_moved`].
+    pub(crate) irq_arrival_moved: &'a mut bool,
     pub(crate) dma: &'a mut [DmaChannel; 4],
     /// The PPU's position when the run took this view.
     pub(crate) ppu: PpuTiming,
@@ -105,11 +109,18 @@ impl RunRegisters<'_> {
     }
 
     /// A store [`Self::holds`] admits, as [`Bus::write_mmio`] makes it
-    /// where the PPU shows no visible dot, except that the scanline memo's
-    /// registers are left to the caller to mark: returns whether they
-    /// changed.
+    /// `elapsed` cycles after the run took this view (its data cycle lands
+    /// one cycle later) where the PPU shows no visible dot, except that the
+    /// scanline memo's registers are left to the caller to mark: returns
+    /// whether they changed.
     #[must_use]
-    pub(crate) fn store(&mut self, address: u32, width: AccessWidth, value: u32) -> bool {
+    pub(crate) fn store(
+        &mut self,
+        address: u32,
+        width: AccessWidth,
+        value: u32,
+        elapsed: Cycle,
+    ) -> bool {
         if Self::affine(address) {
             if width == AccessWidth::Word {
                 self.store_affine(address, value as u16);
@@ -121,7 +132,11 @@ impl RunRegisters<'_> {
         }
         let offset = address.wrapping_sub(MMIO_BASE + 0xb0);
         if offset >= 0x30 {
-            self.irq.store(address, width, value);
+            let arrival = self.irq.irq_line_rises_at;
+            self.irq.store(address, width, value, self.start + elapsed + 1);
+            if self.irq.irq_line_rises_at != arrival {
+                *self.irq_arrival_moved = true;
+            }
             return false;
         }
         match width {
@@ -222,15 +237,16 @@ impl IrqRegisters {
         }
     }
 
-    /// A store [`Self::holds`] admits, as [`Bus::write_mmio`] makes it.
-    pub(crate) fn store(&mut self, address: u32, width: AccessWidth, value: u32) {
+    /// A store [`Self::holds`] admits, as [`Bus::write_mmio`] makes it,
+    /// landing at `cycle`.
+    pub(crate) fn store(&mut self, address: u32, width: AccessWidth, value: u32, cycle: Cycle) {
         let offset = address.wrapping_sub(MMIO_BASE);
         match width {
             AccessWidth::Word => {
-                self.store_half(offset, value as u16);
-                self.store_half(offset + 2, (value >> 16) as u16);
+                self.store_half(offset, value as u16, cycle);
+                self.store_half(offset + 2, (value >> 16) as u16, cycle);
             }
-            AccessWidth::Half => self.store_half(offset, value as u16),
+            AccessWidth::Half => self.store_half(offset, value as u16, cycle),
             AccessWidth::Byte => match offset {
                 0x300 => self.post_boot = value as u8 & 1,
                 0x301 => {
@@ -239,7 +255,7 @@ impl IrqRegisters {
                 }
                 0x202 | 0x203 => {
                     self.interrupt_request_flags &= !((value as u16 & 0xff) << ((offset & 1) * 8));
-                    self.update_line();
+                    self.update_line(cycle);
                 }
                 _ => {
                     let Some(old) = self.half(offset & !1) else {
@@ -247,13 +263,13 @@ impl IrqRegisters {
                     };
                     let shift = (offset & 1) * 8;
                     let merged = (old & !(0xff << shift)) | ((value as u16 & 0xff) << shift);
-                    self.store_half(offset & !1, merged);
+                    self.store_half(offset & !1, merged, cycle);
                 }
             },
         }
     }
 
-    fn store_half(&mut self, offset: u32, value: u16) {
+    fn store_half(&mut self, offset: u32, value: u16, cycle: Cycle) {
         match offset {
             0x200 => self.interrupt_enable_mask = value & 0x3fff,
             0x202 => self.interrupt_request_flags &= !value,
@@ -265,12 +281,7 @@ impl IrqRegisters {
             }
             _ => return,
         }
-        self.update_line();
-    }
-
-    fn update_line(&mut self) {
-        self.irq_line = self.interrupt_master_enabled
-            && self.interrupt_enable_mask & self.interrupt_request_flags != 0;
+        self.update_line(cycle);
     }
 }
 
@@ -595,7 +606,9 @@ impl Bus {
                 dispcnt: self.dispcnt,
             },
             registers: RunRegisters {
+                start: self.current_cycle,
                 irq: &mut self.irq,
+                irq_arrival_moved: &mut self.irq_arrival_moved,
                 dma: &mut self.dma_channels,
                 ppu,
                 affine_parameters: &mut self.bg_affine_parameters,
@@ -626,6 +639,19 @@ impl Bus {
         self.open_bus_value = open_bus;
         self.fetch_kind =
             if data_last { AccessKind::Nonsequential } else { AccessKind::Sequential };
+        self.find_moved_irq_arrival();
+    }
+
+    /// An interrupt request reaches the CPU at a device boundary: after a
+    /// run's store moved that cycle, the horizon is found again, as after a
+    /// store through the bus.
+    #[inline(always)]
+    fn find_moved_irq_arrival(&mut self) {
+        if self.irq_arrival_moved {
+            self.irq_arrival_moved = false;
+            self.flush_device_batch();
+            self.batch_deadline = self.next_device_boundary();
+        }
     }
 
     /// Whether an engine run may make a CPU load of `width` at MMIO
@@ -664,7 +690,7 @@ impl Bus {
         debug_assert!(cycle + 1 < self.batch_deadline);
         self.current_cycle = cycle;
         self.flush_device_batch();
-        self.fetch_kind = AccessKind::Sequential;
+        self.fetch_kind = AccessKind::Nonsequential;
         let value = self.read_mmio(address, width);
         self.open_bus_value = value;
         self.current_cycle = cycle + 1;
@@ -688,22 +714,25 @@ impl Bus {
         // The clock moves inside the batch, which then brings the PPU to it:
         // the store's cycle meets no device event.
         self.current_cycle = cycle;
-        self.fetch_kind = AccessKind::Sequential;
+        self.fetch_kind = AccessKind::Nonsequential;
         self.flush_device_batch();
         let deadline = self.batch_deadline;
+        let arrival = self.irq.irq_line_rises_at;
         self.batch_active = false;
         self.batch_deadline = 0;
         self.write_mmio(address, width, value);
         self.batch_active = true;
         self.batch_device_cycle = self.current_cycle;
         // A register that schedules no device event leaves the next one
-        // where it was: no need to find it again.
-        self.batch_deadline = if schedules_nothing(address, width) {
-            debug_assert_eq!(deadline, self.next_device_boundary(), "{address:08x}");
-            deadline
-        } else {
-            self.next_device_boundary()
-        };
+        // where it was: no need to find it again. An interrupt register may
+        // move the arrival of a request at the CPU, which is one.
+        self.batch_deadline =
+            if schedules_nothing(address, width) && self.irq.irq_line_rises_at == arrival {
+                debug_assert_eq!(deadline, self.next_device_boundary(), "{address:08x}");
+                deadline
+            } else {
+                self.next_device_boundary()
+            };
     }
 
     /// Whether a run may go on to `limit` after an MMIO access: no DMA is
@@ -732,9 +761,9 @@ fn video_quiet_cycles(timing: &PpuTiming) -> Cycle {
     }
 }
 
-/// Whether a store to these MMIO bytes can change no device's next event:
-/// background, window, mosaic and blend registers, IE and IF, IME, POSTFLG
-/// and HALTCNT, whose writes schedule nothing.
+/// Whether a store to these MMIO bytes can change no device's next event
+/// but the arrival of an interrupt request: background, window, mosaic and
+/// blend registers, IE and IF, IME, POSTFLG and HALTCNT.
 fn schedules_nothing(address: u32, width: AccessWidth) -> bool {
     let offset = address.wrapping_sub(MMIO_BASE);
     let last = offset + width.bytes() as u32 - 1;
@@ -836,6 +865,7 @@ impl Bus {
         debug_assert!(now >= self.current_cycle);
         debug_assert!(now < self.batch_deadline || now == self.current_cycle);
         self.current_cycle = now;
+        self.find_moved_irq_arrival();
         self.fetch_kind =
             if data_last { AccessKind::Nonsequential } else { AccessKind::Sequential };
         if !load_last {
@@ -985,7 +1015,7 @@ mod tests {
             let context = format!("{address:08x} {width:?} store {store} value {value:08x}");
             let mut memory = engine.engine_memory(false);
             if store {
-                if memory.registers.store(address, width, value) {
+                if memory.registers.store(address, width, value, 0) {
                     memory.video.mark_registers();
                 }
                 bus.write(access, value);

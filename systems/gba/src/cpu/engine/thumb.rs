@@ -685,9 +685,8 @@ fn serve<T: Timing>(
     }
     let value = access.perform(bus, &mut core.registers, limit - (before - fetch) as u64);
     next.idx += 1;
-    // A store leaves the next fetch sequential; a load's internal cycle
-    // breaks the burst.
-    t.after(&mut next, before, !store);
+    // The data access breaks the burst: the next fetch is non-sequential.
+    t.after(&mut next, before, true);
     saved.mmio_mark = next.budget;
     if !store {
         saved.data = value;
@@ -741,7 +740,7 @@ fn complete_local<T: Timing>(
     let elapsed = (c.mem.start - (before - fetch)) as u64;
     let value = access.perform_local(&mut c.mem, &mut core.registers, elapsed);
     next.idx += 1;
-    t.after(&mut next, before, !store);
+    t.after(&mut next, before, true);
     c.mmio_mark = next.budget;
     if !store {
         c.data = value;
@@ -750,7 +749,9 @@ fn complete_local<T: Timing>(
         c.internal_mark = next.budget;
     }
     let irq = &c.mem.registers.irq;
-    let taken = irq.irq_line && core.cpsr & (1 << 7) == 0;
+    // A request the store raised reaches the CPU at a cycle the run's limit
+    // does not know: the run ends.
+    let taken = (irq.irq_line && core.cpsr & (1 << 7) == 0) || irq.irq_line_rises_at.is_some();
     Some(if irq.power_state == PowerState::Running && !taken {
         Resume::On(next)
     } else {
@@ -1127,7 +1128,7 @@ fn leave(core: &mut Core, c: &Ctx<'_>, hot: Hot, start: u64, budget: i64) -> Opt
     let pc = c.pc(hot.idx);
     let pipeline = [c.half(pc), c.half(pc.wrapping_add(2))];
     let loaded = c.load_mark == hot.budget;
-    // An MMIO access leaves the next fetch sequential.
+    // An MMIO access breaks the burst like any data access.
     let mmio = c.mmio_mark == hot.budget;
     core.cpsr = hot.cpsr(core.cpsr);
     core.next_instruction_address = pc;
@@ -1137,7 +1138,7 @@ fn leave(core: &mut Core, c: &Ctx<'_>, hot: Hot, start: u64, budget: i64) -> Opt
     Some(Exit {
         cycle: start + spent as u64,
         open_bus: if loaded { c.data } else { fetch_latch(c, &hot, pc, pipeline) },
-        data_last: (loaded && !mmio) || c.store_mark == hot.budget,
+        data_last: loaded || mmio || c.store_mark == hot.budget,
         load_last: loaded,
         internal_last: c.internal_mark == hot.budget,
         discarded: c.discard_mark == hot.budget,

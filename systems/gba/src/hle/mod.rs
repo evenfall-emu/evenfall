@@ -218,6 +218,7 @@ impl Cpu {
         self.registers[15] = entry_address.wrapping_add(8);
         self.hle_irq_depth = 0;
         self.hle_interrupt_wait_mask = None;
+        self.hle_halt = false;
         self.hle_sound_channel_clear = None;
         self.hle_sound_driver_main = None;
         self.hle_service = None;

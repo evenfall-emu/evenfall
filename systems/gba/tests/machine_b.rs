@@ -629,6 +629,12 @@ fn hle_16_bit_differential_filter_wraps_halfword_deltas() {
     assert_eq!(machine.read_register(3), 0xdead_beef);
 }
 
+/// The retail SWI's cost around the service for an ARM caller in ROM at
+/// `WAITCNT` 0: the refill at the vector (2), the service-number byte load
+/// from ROM (N, 5), the dispatcher (39), the return's fetch (1) and the ARM
+/// refill at the caller (N + S words, 8 + 6).
+const RETAIL_SWI_FROM_ROM: u64 = 2 + 5 + 39 + 1 + 14;
+
 #[test]
 fn m_gba_bios_math_table_arc_tan_cases_preserve_fixed_point_bios_intermediates() {
     let rom = [0, 0, 9, 0xef];
@@ -654,7 +660,7 @@ fn m_gba_bios_math_table_arc_tan_cases_preserve_fixed_point_bios_intermediates()
         );
         assert_eq!(machine.read_cpsr(), 0x1f);
         if input == 0 {
-            assert_eq!(result.stopped_at, 53);
+            assert_eq!(result.stopped_at, 53 + RETAIL_SWI_FROM_ROM);
         }
     }
 }
@@ -687,7 +693,7 @@ fn m_gba_bios_math_table_arc_tan2_covers_axes_and_every_quadrant() {
         );
         assert_eq!(machine.read_cpsr(), 0x1f);
         if x == 0 || y == 0 {
-            assert_eq!(result.stopped_at, 19);
+            assert_eq!(result.stopped_at, 19 + RETAIL_SWI_FROM_ROM);
         }
     }
 }

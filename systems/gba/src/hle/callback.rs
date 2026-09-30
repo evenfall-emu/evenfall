@@ -3,12 +3,27 @@
 use crate::bus::{Access, AccessKind, AccessSource, AccessWidth, Bus};
 use crate::cpu::{
     Cpu, FaultReason, FaultStep, HLE_CALLBACK_RETURN_STUB, HLE_IRQ_RETURN_STUB, HleBranchResult,
-    HleSoundChannelClearContinuation, InstructionSet, StepOutcome, StepResult,
+    HleSoundChannelClearContinuation, InstructionSet, StepOutcome, StepResult, hle_bios_fetch,
 };
 
 use super::sound::{SOUNDAREA_ID, sound_read, sound_write};
 
+/// The cycles the retail `IntrWait` spends between the IRQ return that
+/// satisfies it and its return from the SWI, beyond the accesses HLE makes:
+/// checking and clearing its flag, the SWI epilogue and the refills. No
+/// document lists that BIOS code; the mGBA suite's timer count-up table,
+/// recorded on hardware, fixes the total. Its prescaled rows start a timer a
+/// fixed number of cycles after an `IntrWait` returns, and every one of
+/// them matches at 42 and at no neighboring value.
+const HLE_INTR_WAIT_RETURN_CYCLES: u64 = 42;
+
 impl Cpu {
+    /// Returns from an HLE IRQ with the bus cycles of the retail
+    /// trampoline's return (GBATEK, BIOS Interrupt handling):
+    /// `ldmfd r13!,{r0-r3,r12,r14}` at 138h loads the six registers the
+    /// entry stored below the IRQ stack pointer, then `subs r15,r14,4h` at
+    /// 13Ch fetches its opcode and refills at the return address. The
+    /// registers come from the HLE frame.
     pub fn complete_hle_irq(&mut self, bus: &mut Bus) -> StepResult {
         if self.pipeline.is_some() {
             bus.read(Access {
@@ -20,6 +35,17 @@ impl Cpu {
         } else {
             bus.elapse(1);
         }
+        let base = self.registers[13].wrapping_sub(24);
+        for index in 0..6 {
+            bus.read(Access {
+                address: base.wrapping_add(4 * index),
+                width: AccessWidth::Word,
+                kind: if index == 0 { AccessKind::Nonsequential } else { AccessKind::Sequential },
+                source: AccessSource::CpuData,
+            });
+        }
+        bus.elapse(1);
+        hle_bios_fetch(bus, HLE_IRQ_RETURN_STUB + 12, AccessKind::Nonsequential);
         debug_assert_ne!(self.hle_irq_depth, 0);
         self.hle_irq_depth -= 1;
         let frame = self.hle_irq_stack[usize::from(self.hle_irq_depth)];
@@ -33,6 +59,12 @@ impl Cpu {
             self.next_instruction_address.wrapping_add(if self.is_thumb() { 4 } else { 8 });
         self.refill_pipeline(bus);
         let wait_ended = self.hle_irq_depth == 0 && self.complete_hle_interrupt_wait(bus);
+        if wait_ended {
+            bus.elapse(HLE_INTR_WAIT_RETURN_CYCLES);
+        }
+        if self.hle_irq_depth == 0 {
+            self.end_hle_halt(bus);
+        }
         // The retail trampoline's return leaves its IRQ latch; an IntrWait
         // it ends then returns from its SWI, which leaves the SWI latch
         // (GBATEK, Reading from BIOS Memory).

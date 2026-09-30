@@ -152,10 +152,52 @@ pub struct IrqRegisters {
     pub interrupt_enable_mask: u16,
     pub interrupt_request_flags: u16,
     pub interrupt_master_enabled: bool,
+    /// The cycle at which a request that has risen (IME set and an enabled
+    /// flag raised) reaches the CPU, which sees it [`IRQ_LATENCY`] cycles
+    /// late; `None` when the CPU already sees the request or there is none.
+    pub irq_line_rises_at: Option<Cycle>,
+    /// Whether the CPU sees an interrupt request: derived from the
+    /// registers and [`Self::irq_line_rises_at`].
     #[codec(skip)]
     pub irq_line: bool,
     pub post_boot: u8,
     pub power_state: PowerState,
+}
+
+/// Cycles from the cycle an interrupt request rises to the first
+/// instruction boundary at which the CPU can take it. The mGBA suite's timer
+/// IRQ table, recorded on hardware, runs four one-cycle instructions after
+/// the overflow before the IRQ preempts the fifth. A request that falls
+/// reaches the CPU at once.
+pub const IRQ_LATENCY: Cycle = 4;
+
+impl IrqRegisters {
+    /// Whether IME is set and an enabled flag is raised: the request the
+    /// interrupt controller drives, before it reaches the CPU.
+    pub fn request(&self) -> bool {
+        self.interrupt_master_enabled
+            && self.interrupt_enable_mask & self.interrupt_request_flags != 0
+    }
+
+    /// Follows the registers after a change at `cycle`: a request that
+    /// rises reaches the CPU [`IRQ_LATENCY`] cycles later.
+    pub fn update_line(&mut self, cycle: Cycle) {
+        if !self.request() {
+            self.irq_line = false;
+            self.irq_line_rises_at = None;
+        } else if !self.irq_line && self.irq_line_rises_at.is_none() {
+            self.irq_line_rises_at = Some(cycle + IRQ_LATENCY);
+        }
+    }
+
+    /// Lets a risen request reach the CPU once `cycle` gets to it.
+    #[inline(always)]
+    pub fn reach(&mut self, cycle: Cycle) {
+        if self.irq_line_rises_at.is_some_and(|at| at <= cycle) {
+            self.irq_line_rises_at = None;
+            self.irq_line = true;
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
@@ -541,6 +583,11 @@ pub struct Bus {
     pub completed_frame_count: Cycle,
     #[codec(flatten)]
     pub irq: IrqRegisters,
+    /// Whether a store an engine run made moved the cycle at which an
+    /// interrupt request reaches the CPU, so that the run's device horizon
+    /// is found again when it finishes.
+    #[codec(skip)]
+    pub(crate) irq_arrival_moved: bool,
     pub waitcnt: u16,
     #[codec(skip)]
     pub game_pak_timing_key: u16,
@@ -768,6 +815,7 @@ impl Bus {
             bldy: 0,
             completed_frame_count: 0,
             irq: IrqRegisters::default(),
+            irq_arrival_moved: false,
             waitcnt: 0,
             game_pak_timing_key: 0,
             game_pak_n_cycles: [5; 3],
@@ -924,7 +972,7 @@ impl Bus {
         self.object_line_index = 0xffff;
         self.scanline_memo.invalidate();
         self.reset_video_policy(1);
-        self.update_irq_line();
+        self.irq.irq_line = self.irq.request() && self.irq.irq_line_rises_at.is_none();
         self.validate_state()?;
         self.apu.write_state(&mut evenfall_state::Sink::new(None, None))?;
         Ok(())
@@ -960,7 +1008,8 @@ impl Bus {
                 affine_segments, affine_segment_counts, affine_segment_line, mosaic_segments,
                 mosaic_segment_count, mosaic_segment_line, bg_affine_parameters,
                 bg_reference_points, bg_affine_current, win0h, win1h, win0v, win1v, winin,
-                winout, mosaic, bldcnt, bldalpha, bldy, completed_frame_count, irq, waitcnt,
+                winout, mosaic, bldcnt, bldalpha, bldy, completed_frame_count, irq,
+                irq_arrival_moved, waitcnt,
                 game_pak_timing_key, game_pak_n_cycles, game_pak_s_cycles, game_pak_prefetch,
                 duty_valid_until, fetch_kind, oam_compact, oam_compact_count, oam_compact_valid,
                 object_line, object_line_count, object_line_index, game_pak_code_active,
@@ -996,6 +1045,7 @@ impl Bus {
             counter: timer_zero.counter,
             reload: timer_zero.reload,
             prescaler_phase: timer_zero.prescaler_phase,
+            starting: timer_zero.starting,
         };
         zero_without_count_up.validate_state(prescaler).map_err(|_| InvalidSaveState)?;
         for timer in &self.timers[1..] {
@@ -1003,6 +1053,13 @@ impl Bus {
         }
         if let Some(gpio) = &self.cartridge_gpio {
             gpio.validate_state(self.current_cycle).map_err(|_| InvalidSaveState)?;
+        }
+        if let Some(at) = self.irq.irq_line_rises_at
+            && (!self.irq.request()
+                || at <= self.current_cycle
+                || at > self.current_cycle + IRQ_LATENCY)
+        {
+            return Err(InvalidSaveState);
         }
         for deadline in [
             self.sio_completion_cycle,
@@ -1085,13 +1142,7 @@ impl Bus {
                 self.fetch_kind = AccessKind::Sequential;
                 self.bios_code_active = access.address < BIOS_SIZE as u32;
             }
-            AccessSource::CpuData => {
-                self.fetch_kind = if access.address >> 24 == 4 {
-                    AccessKind::Sequential
-                } else {
-                    AccessKind::Nonsequential
-                };
-            }
+            AccessSource::CpuData => self.fetch_kind = AccessKind::Nonsequential,
             AccessSource::Dma => {}
         }
         if access.source == AccessSource::CpuCode && !(8..=13).contains(&(access.address >> 24)) {
@@ -1175,8 +1226,7 @@ impl Bus {
         let width = access.width;
         let region = address >> 24;
         if access.source == AccessSource::CpuData {
-            self.fetch_kind =
-                if region == 4 { AccessKind::Sequential } else { AccessKind::Nonsequential };
+            self.fetch_kind = AccessKind::Nonsequential;
         }
         match region {
             2 => {
@@ -1963,12 +2013,22 @@ impl Bus {
     }
 
     pub fn irq_pending(&self) -> bool {
-        self.irq.interrupt_master_enabled
-            && self.irq.interrupt_enable_mask & self.irq.interrupt_request_flags != 0
+        self.irq.request()
     }
 
+    /// Follows IE, IF and IME after a change at the current cycle. A request
+    /// that rises reaches the CPU at a device boundary: an open batch stops
+    /// there, even when the change came from outside a register write.
+    /// Out of line: it runs only when those registers change.
+    #[inline(never)]
     pub fn update_irq_line(&mut self) {
-        self.irq.irq_line = self.irq_pending();
+        self.irq.update_line(self.current_cycle);
+        if let Some(at) = self.irq.irq_line_rises_at
+            && self.batch_active
+            && at < self.batch_deadline
+        {
+            self.batch_deadline = at;
+        }
     }
 
     pub fn power_state(&self) -> PowerState {
@@ -1979,8 +2039,12 @@ impl Bus {
         self.irq.power_state = PowerState::Running;
     }
 
+    /// Whether a halted CPU wakes: an enabled flag is raised, and any
+    /// interrupt request it drives has reached the CPU, so that the CPU
+    /// wakes into the IRQ rather than running on before it.
     pub fn halt_wake_pending(&self) -> bool {
         self.irq.interrupt_enable_mask & self.irq.interrupt_request_flags != 0
+            && self.irq.irq_line_rises_at.is_none()
     }
 
     pub fn stop_wake_pending(&self) -> bool {
@@ -2560,6 +2624,11 @@ impl Bus {
             let index = ((offset - 0x100) / 4) as usize;
             if offset & 2 != 0 {
                 self.timers[index].write_control(value, self.prescaler_counter());
+                // A cascading timer counts overflows, not cycles: it has no
+                // start delay. Timer 0 ignores the count-up bit.
+                if index != 0 && self.timers[index].count_up_enabled() {
+                    self.timers[index].starting = false;
+                }
             } else {
                 self.timers[index].write_reload(value);
             }
@@ -3119,6 +3188,9 @@ impl Bus {
         for at in self.dma_start_cycles.into_iter().flatten() {
             boundary = boundary.min(at);
         }
+        if let Some(at) = self.irq.irq_line_rises_at {
+            boundary = boundary.min(at);
+        }
         if let Some(at) = self.next_external_input_cycle() {
             boundary = boundary.min(at);
         }
@@ -3182,6 +3254,7 @@ impl Bus {
         self.ppu_timing.elapse(cycles, &mut events);
         let end = self.current_cycle + cycles;
         let mut audio_requests = 0;
+        let mut timer_irq = false;
         if !self.devices_deferred {
             audio_requests |= self.sync_apu_to(end);
         }
@@ -3199,7 +3272,7 @@ impl Bus {
                 };
                 if overflows != 0 && timer.irq_enabled() {
                     self.irq.interrupt_request_flags |= 1 << (index + 3);
-                    self.update_irq_line();
+                    timer_irq = true;
                 }
                 if index < 2
                     && overflows != 0
@@ -3217,6 +3290,9 @@ impl Bus {
             self.refresh_timer_deadline();
         }
         self.current_cycle = end;
+        if timer_irq {
+            self.update_irq_line();
+        }
         self.apply_due_external_inputs();
         for (index, at) in self.dma_start_cycles.iter_mut().enumerate() {
             if *at == Some(self.current_cycle) {
@@ -3249,6 +3325,7 @@ impl Bus {
         if audio_requests != 0 {
             self.queue_audio_dma(audio_requests);
         }
+        self.irq.reach(end);
     }
 
     fn deliver_lcd_events(&mut self, events: &crate::video::timing::Events) {
@@ -5188,32 +5265,52 @@ mod tests {
             kind: AccessKind::Nonsequential,
             source: AccessSource::CpuData,
         };
+        // A request that rises reaches the CPU IRQ_LATENCY cycles after the
+        // cycle it rose in, and not one cycle sooner.
+        let arrives = |bus: &mut Bus| {
+            assert!(!bus.irq.irq_line);
+            assert_eq!(bus.irq.irq_line_rises_at, Some(bus.now() + IRQ_LATENCY));
+            bus.elapse(IRQ_LATENCY - 1);
+            assert!(!bus.irq.irq_line);
+            bus.elapse(1);
+            assert!(bus.irq.irq_line);
+            assert_eq!(bus.irq.irq_line_rises_at, None);
+        };
         bus.write(half(MMIO_BASE + 0x132), 0x4001);
         bus.write(half(MMIO_BASE + 0x200), 1 << 12);
         bus.write(half(MMIO_BASE + 0x208), 1);
         assert!(!bus.irq.irq_line);
         bus.set_keys(KeyState { a: true, ..KeyState::default() });
-        assert!(bus.irq.irq_line);
+        arrives(&mut bus);
         let byte = Access {
             address: MMIO_BASE + 0x203,
             width: AccessWidth::Byte,
             kind: AccessKind::Nonsequential,
             source: AccessSource::CpuData,
         };
+        // A request that falls reaches the CPU at once.
         bus.write(byte, 1 << 4);
         assert!(!bus.irq.irq_line);
         bus.set_keys(KeyState::default());
         bus.set_keys(KeyState { a: true, ..KeyState::default() });
-        assert!(bus.irq.irq_line);
+        arrives(&mut bus);
         bus.write(half(MMIO_BASE + 0x200), 0);
         assert!(!bus.irq.irq_line);
         bus.write(half(MMIO_BASE + 0x200), 1 << 12);
-        assert!(bus.irq.irq_line);
+        arrives(&mut bus);
         bus.write(half(MMIO_BASE + 0x208), 0);
         assert!(!bus.irq.irq_line);
         bus.write(half(MMIO_BASE + 0x208), 1);
-        assert!(bus.irq.irq_line);
+        arrives(&mut bus);
         bus.write(half(MMIO_BASE + 0x202), 1 << 12);
+        assert!(!bus.irq.irq_line);
+        // A request that falls before it arrives never reaches the CPU.
+        bus.set_keys(KeyState::default());
+        bus.set_keys(KeyState { a: true, ..KeyState::default() });
+        bus.elapse(1);
+        bus.write(half(MMIO_BASE + 0x202), 1 << 12);
+        assert_eq!(bus.irq.irq_line_rises_at, None);
+        bus.elapse(IRQ_LATENCY);
         assert!(!bus.irq.irq_line);
     }
 
