@@ -397,25 +397,3 @@ fn interpreter_runs_writes_conditions_and_blocks() {
     run("E2000070 FFFF", Format::CodeBreaker, &mut memory);
     assert_eq!(memory.get(0x0200_0070, Width::Half), 0x0f);
 }
-
-#[test]
-fn state_envelope_round_trips_and_rejects_damage() {
-    let cheats = vec![
-        cheat("D8BAE4D9 4864DCE5 A86CDBA5 19BA49B3", Format::ActionReplay),
-        cheat("82025BC4 E0FF", Format::CodeBreaker),
-        cheat("02025E90:0F423F00", Format::Raw),
-    ];
-    let mut bytes = state_prefix(&cheats);
-    let header = bytes.len();
-    bytes.extend_from_slice(b"EVENFALL...");
-    let (decoded, rest) = split_state(&bytes).unwrap();
-    assert_eq!(decoded.unwrap(), cheats);
-    assert_eq!(rest, b"EVENFALL...");
-    assert_eq!(split_state(b"EVENFALL...").unwrap(), (None, &b"EVENFALL..."[..]));
-    for index in [9, 13, header - 1] {
-        let mut damaged = bytes.clone();
-        damaged[index] ^= 1;
-        assert!(split_state(&damaged).is_err(), "byte {index}");
-    }
-    assert!(split_state(&bytes[..header - 1]).is_err());
-}

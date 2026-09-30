@@ -3,9 +3,9 @@
 //!
 //! A [`Cheat`] is parsed once into operations. The machine runs every active
 //! cheat at the first instruction boundary at or after each VBlank start, so
-//! applications depend only on emulated time. The active set is carried by
-//! portable states in an envelope around the unchanged `EVENFALL` v7 state; see
-//! `docs/design/cheats.md`.
+//! applications depend only on emulated time. The active set is a host
+//! setting, not machine state: save states never carry it, and loading one
+//! keeps the current set. See `docs/design/cheats.md`.
 
 mod crypt;
 mod formats;
@@ -64,22 +64,6 @@ impl Format {
 
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|format| format.name() == name)
-    }
-
-    /// Stable tag in the state envelope.
-    const fn tag(self) -> u8 {
-        match self {
-            Self::Raw => 0,
-            Self::GameShark => 1,
-            Self::GameSharkDecrypted => 2,
-            Self::ActionReplay => 3,
-            Self::ActionReplayDecrypted => 4,
-            Self::CodeBreaker => 5,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Option<Self> {
-        Self::ALL.into_iter().find(|format| format.tag() == tag)
     }
 
     fn shape(self) -> Shape {
@@ -397,7 +381,7 @@ fn next_vblank_after(progress: u64) -> u64 {
 /// A machine's cheat device: the active cheats and the video position of the
 /// next VBlank start they apply at. At every instruction boundary a host can
 /// observe, that position is the first VBlank start after the current one,
-/// so states need not store it.
+/// so a device moved onto another machine state re-arms from its position.
 #[derive(Clone, Debug)]
 pub(crate) struct Device {
     cheats: Vec<Cheat>,
@@ -407,6 +391,12 @@ pub(crate) struct Device {
 impl Device {
     pub(crate) fn new(cheats: Vec<Cheat>, bus: &Bus) -> Self {
         Self { cheats, next_vblank: next_vblank_after(bus.video_progress()) }
+    }
+
+    /// Re-arms for a machine whose video position changed without running,
+    /// such as one that loaded a state.
+    pub(crate) fn rearm(&mut self, bus: &Bus) {
+        self.next_vblank = next_vblank_after(bus.video_progress());
     }
 
     pub(crate) fn cheats(&self) -> &[Cheat] {
@@ -451,74 +441,4 @@ impl program::Memory for Bus {
         };
         self.cheat_write(address, width, value);
     }
-}
-
-/// Magic of the envelope that carries a cheat set in front of an `EVENFALL`
-/// state.
-pub const STATE_MAGIC: &[u8; 8] = b"EVGBCHT1";
-const STATE_BLOCK_LIMIT: usize = 64 * 1024;
-
-/// The envelope header for a state of a machine running `cheats`: magic,
-/// block length, the cheat block and a BLAKE3 digest of everything before it.
-pub(crate) fn state_prefix(cheats: &[Cheat]) -> Vec<u8> {
-    let mut block = Vec::new();
-    block.extend_from_slice(&(cheats.len() as u16).to_le_bytes());
-    for cheat in cheats {
-        block.push(cheat.format.tag());
-        block.extend_from_slice(&(cheat.lines.len() as u16).to_le_bytes());
-        for line in &cheat.lines {
-            block.extend_from_slice(&line.address.to_le_bytes());
-            block.extend_from_slice(&line.value.to_le_bytes());
-            block.push(line.digits);
-        }
-    }
-    let mut prefix = Vec::with_capacity(12 + block.len() + 32);
-    prefix.extend_from_slice(STATE_MAGIC);
-    prefix.extend_from_slice(&(block.len() as u32).to_le_bytes());
-    prefix.extend_from_slice(&block);
-    let digest = blake3::hash(&prefix);
-    prefix.extend_from_slice(digest.as_bytes());
-    prefix
-}
-
-/// Splits a state into its cheat set, if it has an envelope, and the inner
-/// `EVENFALL` state bytes. `Err` means a malformed envelope or cheat.
-pub(crate) fn split_state(bytes: &[u8]) -> Result<(Option<Vec<Cheat>>, &[u8]), ()> {
-    let Some(rest) = bytes.strip_prefix(STATE_MAGIC) else {
-        return Ok((None, bytes));
-    };
-    let length = u32::from_le_bytes(rest.get(..4).ok_or(())?.try_into().unwrap()) as usize;
-    if length > STATE_BLOCK_LIMIT || rest.len() < 4 + length + 32 {
-        return Err(());
-    }
-    let header = 12 + length;
-    if blake3::hash(&bytes[..header]).as_bytes()[..] != bytes[header..header + 32] {
-        return Err(());
-    }
-    let mut block = &rest[4..4 + length];
-    let mut take = |count: usize| -> Result<&[u8], ()> {
-        let (head, tail) = block.split_at_checked(count).ok_or(())?;
-        block = tail;
-        Ok(head)
-    };
-    let count = usize::from(u16::from_le_bytes(take(2)?.try_into().unwrap()));
-    let mut cheats = Vec::with_capacity(count.min(MAX_CHEATS));
-    for _ in 0..count {
-        let format = Format::from_tag(take(1)?[0]).ok_or(())?;
-        let line_count = usize::from(u16::from_le_bytes(take(2)?.try_into().unwrap()));
-        let mut lines = Vec::with_capacity(line_count.min(MAX_LINES));
-        for _ in 0..line_count {
-            let line = take(9)?;
-            lines.push(Line {
-                address: u32::from_le_bytes(line[0..4].try_into().unwrap()),
-                value: u32::from_le_bytes(line[4..8].try_into().unwrap()),
-                digits: line[8],
-            });
-        }
-        cheats.push(Cheat::from_lines(format, lines).map_err(|_| ())?);
-    }
-    if !block.is_empty() || cheats.is_empty() || check_set(&cheats).is_err() {
-        return Err(());
-    }
-    Ok((Some(cheats), &bytes[header + 32..]))
 }

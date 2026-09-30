@@ -165,7 +165,7 @@ export class Emulator extends EventTarget {
    * VBlank start; allowed while playing and recorded. An empty list removes
    * them. Resolves to the canonical active list. */
   setCheats(cheats: readonly CheatInput[]): Promise<Cheat[]>;
-  /** The active cheats; states, rewinds and resets can change them. */
+  /** The active cheats; only `setCheats` and `load` change them. */
   cheats(): Promise<Cheat[]>;
   /** Detect and normalize one code without changing the session. */
   parseCheat(code: string, format?: CheatFormat | "auto"): Promise<Cheat>;

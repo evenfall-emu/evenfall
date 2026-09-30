@@ -552,6 +552,7 @@ impl Session {
         .map_err(|(error, _)| error)?;
         let mut next = scratch.into_inner();
         next.load_state_in_place(&live)?;
+        next.adopt_cheats(&mut self.machine);
         next.set_audio_output(self.audio_output_enabled);
         next.bus.set_video_interval(self.video_interval);
         if let Some(recovery) = &mut self.video_recovery {
@@ -1242,6 +1243,55 @@ mod tests {
 
         selective.reset_with_save(&[]).unwrap();
         assert_eq!(selective.machine.cheats(), &backdrop("0000")[..]);
+    }
+
+    /// Rewind, rewind bundles and state loads keep the host's cheat set and
+    /// apply it at the restored position's VBlank starts. States and bundles
+    /// hold no cheats.
+    #[test]
+    fn rewinds_bundles_and_state_loads_keep_the_cheats() {
+        // AR v3 raw: add one to the word at 02001000 at every VBlank start.
+        let counter = vec![
+            Cheat::parse("84201000 00000001", Some(cheats::Format::ActionReplayDecrypted)).unwrap(),
+        ];
+        let count = |session: &Session| {
+            let mut word = [0; 4];
+            session.machine.inspect_memory(0x0200_1000, &mut word).unwrap();
+            u32::from_le_bytes(word)
+        };
+        let config = Config {
+            image: LOOP_ROM,
+            rewind: RewindConfig { interval_frames: 1, ..RewindConfig::default() },
+            ..Config::default()
+        };
+        let mut session = Session::create(config).unwrap();
+        let mut plain = Session::create(config).unwrap();
+        for target in [&mut session, &mut plain] {
+            for _ in 0..4 {
+                target.advance(target.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+            }
+        }
+        assert_eq!(session.write_rewind_bundle().unwrap(), plain.write_rewind_bundle().unwrap());
+        let bundle = session.write_rewind_bundle().unwrap();
+        let early = {
+            session.rewind(3).unwrap();
+            session.write_state().unwrap()
+        };
+
+        session.set_cheats(counter.clone()).unwrap();
+        let before = count(&session);
+        session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        assert_eq!(count(&session), before + 1);
+        session.rewind(1).unwrap();
+        assert_eq!(session.machine.cheats(), &counter[..]);
+        session.load_rewind_bundle(&bundle).unwrap();
+        assert_eq!(session.machine.cheats(), &counter[..]);
+        session.load_state(&early).unwrap();
+        assert_eq!(session.machine.cheats(), &counter[..]);
+        assert_eq!(count(&session), 0);
+        session.advance(session.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        assert_eq!(count(&session), 1);
+        assert!(session.write_state().unwrap() != early);
     }
 
     fn video_recovery_rom(fault_on_a: bool) -> [u8; 32] {

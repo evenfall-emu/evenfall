@@ -284,20 +284,14 @@ test("recorded cheat changes reproduce through scenarios, captures and states", 
     });
     assert.equal(replayed.status, "passed");
 
-    // States carry the active cheats; a plain state clears them.
+    // States hold no cheats: saving with or without them gives the same
+    // bytes, and loading keeps the loading core's set.
     const plain = core.saveState();
     core.setCheats([{ code: "02025E90:00000007" }]);
-    const withCheats = core.saveState();
-    assert.equal(
-      new TextDecoder().decode(withCheats.subarray(0, 8)),
-      "EVGBCHT1",
-    );
-    replay.loadState(withCheats);
-    assert.deepEqual(replay.cheats(), [
-      { format: "raw", code: "02025E90:00000007" },
-    ]);
+    assert.deepEqual(core.saveState(), plain);
+    replay.setCheats([{ code: "02000000:01" }]);
     replay.loadState(plain);
-    assert.deepEqual(replay.cheats(), []);
+    assert.deepEqual(replay.cheats(), [{ format: "raw", code: "02000000:01" }]);
     assert.throws(
       () =>
         core.setCheats([

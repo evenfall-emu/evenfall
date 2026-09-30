@@ -341,12 +341,12 @@ An invalid code rejects with `InvalidCheat: cheat N: line L: ...`.
 ROM patch codes and GameShark v1/v2 `DEADFACE` codes are not supported.
 When several formats read a code plausibly, detection fails and asks you to name one.
 
-The active cheats are part of the machine state.
-`saveState()` includes them.
-`loadState()`, `rewind()` and rewind bundles restore the cheats their state was saved with, and a state saved without cheats turns them off.
-Call `cheats()` after these to refresh what your page shows.
-`reset()` keeps the cheats, and `load()` starts without any.
-Recordings note each change at its cycle, and exported scenarios list them in an optional `cheats` field.
+The active cheats are a session setting that your page owns, not part of the machine state.
+`saveState()`, rewind checkpoints and rewind bundles never include them, so a state is the same bytes with or without cheats.
+`loadState()`, `rewind()`, `loadRewindBundle()` and `reset()` keep the current cheats, and they apply from the restored position's next VBlank start.
+Only `setCheats()` changes them, and `load()` starts a new game without any.
+Recordings keep replays exact instead: each one notes the cheats active when it starts and every change at its cycle.
+Exported scenarios list them in an optional `cheats` field, and failure bundles store the active cheats with each snapshot.
 [`design/cheats.md`](design/cheats.md) describes the formats, timing and evidence.
 
 ## Speed and fast-forward

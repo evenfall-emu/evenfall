@@ -84,7 +84,7 @@ export class WasmCore {
    * removes them. Returns the canonical active list.
    */
   setCheats(cheats: readonly CheatInput[]): Cheat[];
-  /** The active cheats; `loadState`, `rewind` and bundles restore theirs. */
+  /** The active cheats. States hold none, so loads and rewinds keep them. */
   cheats(): Cheat[];
   /** Detect and normalize one code; needs no loaded game. */
   parseCheat(code: string, format?: CheatFormat | "auto"): Cheat;

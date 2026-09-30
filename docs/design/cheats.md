@@ -4,10 +4,10 @@ The GBA core runs GameShark v1/v2, Action Replay v3, CodeBreaker and raw address
 Each code is decoded once into a short list of operations: writes, fills, slides, pointer writes, updates and conditionals.
 The machine runs every active cheat at a fixed point of emulated time, just after each VBlank start.
 A run with cheats is therefore as repeatable as one without, however the host slices execution.
-The active cheats are part of the machine state, so save states, rewind and recordings reproduce them.
+The active cheats are a host setting, not machine state: save states never carry them, and recordings reproduce them instead.
 
 [`cheats`](../../systems/gba/src/cheats/mod.rs) owns parsing, decryption and the interpreter.
-[`Machine`](../../systems/gba/src/machine.rs) decides when cheats run and how states carry them.
+[`Machine`](../../systems/gba/src/machine.rs) decides when cheats run and keeps them across state loads.
 Hosts reach them through the [CLI](../cli.md#cheats) and the [SDK](../sdk.md#cheats).
 
 ## Formats
@@ -121,49 +121,31 @@ Conditions read memory with zero-cycle inspection.
 With no cheats, the only added work is a check for the absent device per execution chunk, single step and HALT idle.
 The execution engine and devices are unchanged.
 
-## States, recordings and scenarios
+## Cheats, states and recordings
 
-A machine without cheats writes exactly the `EVENFALL` version 7 state described in [`save-states.md`](save-states.md).
-A machine with cheats writes the same state behind a short envelope that carries the cheat set.
-The v7 layout and schema digest stay unchanged, so the state's fixed layout holds in both cases.
-The envelope is small and exists only while cheats are on, whereas a fixed slot inside the v7 payload would add the largest cheat set's size to every state.
+The active cheat set is a setting of the session, owned by the host like the key mask.
+It is not machine state.
+A machine with cheats writes exactly the `EVENFALL` version 7 state described in [`save-states.md`](save-states.md), byte for byte the same as without them.
+Rewind checkpoints and rewind bundles hold states, so they hold no cheats either.
 
-Loading a state restores its cheat set, and a state without the envelope turns cheats off.
-Rewind checkpoints, rewind bundles and failure-bundle snapshots are states, so they carry cheats too.
-A reset keeps the cheat device, and loading a new game starts without cheats.
-The next application point is not stored: at every boundary a host observes, it is the first VBlank start after the current video position.
+Loading a state, rewinding and loading a rewind bundle keep the current cheat set.
+The set then applies from the first VBlank start after the restored position, as a set chosen at that moment would.
+A reset keeps the cheat set too, and loading a new game starts without cheats.
+Only a `setCheats` call, or the CLI's cheat flags at boot, changes it.
 
-Hosts change the cheat set with a call at the current cycle, and the change first applies at the next VBlank start.
-Recordings capture each change as a timed event:
+The machine does not store its next application point either.
+At every instruction boundary a host observes, it is the first VBlank start after the current video position, so the machine recomputes it after each load.
 
-- Selective video journals it with the host's other calls.
-- A failure bundle records a `setCheats` operation and replays it.
-- A gameplay recording exports a scenario with an optional `cheats` list of `{ at, cheats: [{ format, code }] }` events, in cycle order and no later than the last checkpoint.
+Because states do not carry the cheat set, recordings carry it.
+Hosts change the set with a call at the current cycle, and the change first applies at the next VBlank start.
+Each kind of recording notes the set at its start and every change as a timed event:
+
+- Selective video journals each change with the host's other calls, and its anchor copies carry the live set.
+- A failure bundle stores the active cheats with each snapshot and records each `setCheats` as an operation. Replay loads a snapshot, installs the snapshot's cheats in place of the replaying core's, and replays the operations.
+- A gameplay recording exports a scenario with an optional `cheats` list of `{ at, cheats: [{ format, code }] }` events, in cycle order and no later than the last checkpoint. Its first event, at the recording's first cycle, sets the cheats active when the recording started, from a cold boot or from its initial state.
 
 The scenario runner ends execution chunks at each event's cycle and applies the event at the first stop at or after it, before observing a checkpoint at the same cycle.
 A recorded event lands on the cycle where it was made, because that cycle was a stop of the recorded run.
-A recording that starts from a cold boot after a reset begins with an event restoring the kept cheats.
-
-### Envelope format
-
-All integers are little-endian.
-
-| Offset | Size | Field                                          |
-| -----: | ---: | ---------------------------------------------- |
-|      0 |    8 | magic `EVGBCHT1`                               |
-|      8 |    4 | cheat block length `n` (`u32`, at most 64 KiB) |
-|     12 |    n | cheat block                                    |
-| 12 + n |   32 | BLAKE3 of bytes 0 to 12 + n                    |
-| 44 + n |  ... | `EVENFALL` state                               |
-
-The cheat block is a `u16` cheat count, then for each cheat:
-
-- a format tag: 0 raw, 1 GameShark, 2 GameShark decrypted, 3 Action Replay, 4 Action Replay decrypted, 5 CodeBreaker
-- a `u16` line count
-- nine bytes per line: the address word, the value word and the value's digit count
-
-Cheats are stored as entered, with their resolved format, and decoded again on load.
-A block that does not decode, or a digest that does not match, rejects the whole state.
 
 ## Choices where sources disagree
 

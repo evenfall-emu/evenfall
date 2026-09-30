@@ -323,7 +323,7 @@ export class WasmCore {
     this.check(this.wasm.ef_set_cheats(cheats.length));
     return decodeCheats(this.output());
   }
-  /** The active cheats, canonical, as a state or reset left them. */
+  /** The active cheats, canonical. Loads, rewinds and resets keep them. */
   cheats() {
     this.requireLoaded();
     this.check(this.wasm.ef_cheats());
