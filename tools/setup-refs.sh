@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fetches the pinned references recorded in refs/README.md.
-# usage: tools/setup-refs.sh [name...]   (default: all of them)
+# usage: tools/setup-refs.sh [name...]   (default: all but the optional ones)
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -8,6 +8,10 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 install_ref() {
     local name=$1 url=$2 commit=$3 destination="$repo_root/refs/$1"
     if ((${#selected[@]})) && [[ " ${selected[*]} " != *" $name "* ]]; then
+        return
+    fi
+    # An optional ref is fetched only when named.
+    if [[ ${4:-} == optional ]] && [[ " ${selected[*]} " != *" $name "* ]]; then
         return
     fi
 
@@ -44,5 +48,5 @@ install_ref nanoboyadvance https://github.com/nba-emu/NanoBoyAdvance 55b5cf0ae3d
 install_ref delta https://github.com/rileytestut/Delta c1d3d068e019e6493eed45654569db3cc5beb86a
 install_ref gbadeltacore https://github.com/rileytestut/GBADeltaCore 869c34aeca9dd2b3fbd329092bb2743b0ae80c98
 install_ref vbam https://github.com/visualboyadvance-m/visualboyadvance-m 453fa0decf179360926fb417725a794aa496d6e3
-# Optional: only the benchmark's zigba adapter uses it.
-install_ref zigba https://github.com/evenfall-emu/zigba add59e5957b75f29d084813336ee20e300fc0b6e
+# Optional, fetched only when named: only the benchmark's zigba adapter uses it.
+install_ref zigba https://github.com/evenfall-emu/zigba add59e5957b75f29d084813336ee20e300fc0b6e optional

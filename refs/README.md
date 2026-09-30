@@ -6,7 +6,7 @@ The checkouts are kept out of Git, and this file records where they come from.
 ROMs, BIOS dumps, saves and other user content are never part of setup.
 
 ```sh
-tools/setup-refs.sh                   # every reference
+tools/setup-refs.sh                   # every reference except zigba, fetched only when named
 tools/setup-refs.sh gba-tests suite   # chosen references, by directory name
 ```
 
