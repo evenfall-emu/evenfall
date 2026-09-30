@@ -1,6 +1,6 @@
 # Video
 
-The GBA's video chip draws a 240×160 picture about 60 times a second.
+The GBA's video chip draws a 240x160 picture about 60 times a second.
 Outside its bitmap modes it keeps no picture in memory.
 It builds each line on the fly from a few layers: up to four backgrounds, up to 128 sprites, and a backdrop color behind everything.
 Windows can hide layers in parts of the screen, and color effects can blend or fade them.
@@ -17,7 +17,7 @@ These tricks are called raster effects, and an emulator has to reproduce them ex
   Lines 0–159 are visible, lines 160–227 are the invisible vertical blank.
 - **HBlank and VBlank.** The pause after each visible line (horizontal blank), and the 68 invisible lines after the last one (vertical blank).
   Games do most of their video updates during these pauses, when nothing is being drawn.
-- **Tile.** An 8×8 block of pixels.
+- **Tile.** An 8x8 block of pixels.
   Backgrounds and sprites are made of tiles stored in video memory (VRAM).
 - **Map.** A grid of tile numbers that lays tiles out into a background.
 - **Palette.** A table of 15-bit colors in palette RAM.
@@ -34,7 +34,7 @@ Evenfall draws one whole line at a time, at the moment that line's HBlank begins
 That alone would miss raster effects inside a line.
 So while a line is being scanned, [`video/history.rs`](../../../systems/gba/src/video/history.rs) records every change to the registers and memory that matter, with the dot where it lands, and the renderer replays those changes as it draws ([Raster effects](#raster-effects)).
 
-The result is a 240×160 frame of raw 15-bit colors.
+The result is a 240x160 frame of raw 15-bit colors.
 Any color correction happens afterwards in the host ([Presentation](#presentation)).
 
 The fast renderers draw several pixels at once.
@@ -113,9 +113,9 @@ The mode decides what kind of backgrounds are available:
 | 0    | text | text | text                                      | text   |
 | 1    | text | text | affine                                    | –      |
 | 2    | –    | –    | affine                                    | affine |
-| 3    | –    | –    | 240×160 direct color, one frame           | –      |
-| 4    | –    | –    | 240×160 8-bit palette indices, two frames | –      |
-| 5    | –    | –    | 160×128 direct color, two frames          | –      |
+| 3    | –    | –    | 240x160 direct color, one frame           | –      |
+| 4    | –    | –    | 240x160 8-bit palette indices, two frames | –      |
+| 5    | –    | –    | 160x128 direct color, two frames          | –      |
 
 Text backgrounds scroll, affine backgrounds can also rotate and scale, and bitmap modes 3–5 let a game draw pixels directly, at the cost of the other layers.
 GBATEK calls modes 6 and 7 prohibited, and Evenfall draws only the backdrop in them.
@@ -142,7 +142,7 @@ The undocumented register `GREENSWP` (`04000002h`) swaps the green parts of each
 
 ## Text backgrounds
 
-A text background is a map of 256 or 512 dots in each direction, built from 32×32-tile screen blocks of 2 KiB.
+A text background is a map of 256 or 512 dots in each direction, built from 32x32-tile screen blocks of 2 KiB.
 The write-only 9-bit `BGxHOFS` and `BGxVOFS` registers scroll it, and it wraps around at the edges.
 
 Each 16-bit map entry holds:
@@ -180,7 +180,7 @@ An affine background can be rotated, scaled and sheared.
 BG2 in modes 1–2 and BG3 in mode 2 are affine.
 Their map is a square of 128 to 1,024 dots (`128 << size`) of one-byte tile numbers, always in 256 colors.
 
-A 2×2 matrix (`BGxPA`–`BGxPD`, signed 8.8 fixed point) and a reference point (`BGxX`, `BGxY`, signed 28-bit with 8 fraction bits) map screen dots to map coordinates ([LCD I/O BG Rotation/Scaling][gbatek-affine]).
+A 2x2 matrix (`BGxPA`–`BGxPD`, signed 8.8 fixed point) and a reference point (`BGxX`, `BGxY`, signed 28-bit with 8 fraction bits) map screen dots to map coordinates ([LCD I/O BG Rotation/Scaling][gbatek-affine]).
 For dot x on a line, the source is the line's origin plus `x * PA` horizontally and `x * PC` vertically.
 A source outside the map is transparent, unless `BGxCNT` bit 13 asks for wrapping.
 
@@ -310,7 +310,7 @@ It needs both `DISPCNT` bit 12 (sprites) and bit 15 (sprite window).
 A dot already inside window 0 or 1 keeps that window's settings.
 This matches mGBA ([`software-obj.c`][mgba-objwin]).
 
-For ordinary edges the window is the rectangle `[X1, X2) × [Y1, Y2)`.
+For ordinary edges the window is the rectangle `[X1, X2) x [Y1, Y2)`.
 The sources disagree about the rest.
 GBATEK says X2 > 240 or X1 > X2 counts as X2 = 240, and the same vertically with 160.
 mGBA clips off-screen edges, but when X2 < X1 it wraps the window around the screen edges, `[X1, 240) ∪ [0, X2)`, and the same vertically.

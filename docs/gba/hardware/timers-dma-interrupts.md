@@ -232,11 +232,11 @@ Unlike a GBA, the stalled instruction then completes and the machine stops.
 
 ## Interrupts
 
-| Register | Address     | Meaning                                   |
-| -------- | ----------- | ----------------------------------------- |
-| `IE`     | `04000200h` | which interrupts are enabled, bits 0–13   |
-| `IF`     | `04000202h` | which are pending; writing 1 clears a bit |
-| `IME`    | `04000208h` | bit 0: master enable                      |
+| Register | Address     | Meaning                                    |
+| -------- | ----------- | ------------------------------------------ |
+| `IE`     | `04000200h` | which interrupts are enabled, bits 0–13    |
+| `IF`     | `04000202h` | which are pending (writing 1 clears a bit) |
+| `IME`    | `04000208h` | bit 0: master enable                       |
 
 | Bit  | Source       | Requested when                                                                         |
 | ---- | ------------ | -------------------------------------------------------------------------------------- |
