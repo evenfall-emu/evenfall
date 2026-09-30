@@ -27,6 +27,7 @@ import {
   type PokemonRules,
   type StoredRecords,
 } from "./bridges";
+import { defaultTypeSystem, type PokemonTypeSystem } from "./type-system";
 import { createGen3Catalog, type Gen3CatalogConfig } from "./catalog";
 import {
   gen3BattlePokemon,
@@ -48,6 +49,7 @@ import type {
 export interface PokemonMedia {
   readonly artwork: PokemonResources["artwork"];
   readonly links: PokemonLinksFactory | null;
+  readonly typeSystem: PokemonTypeSystem;
 }
 
 /** Arena facts for the overlay; games add the location details they verify. */
@@ -142,12 +144,16 @@ export function gen3Sources(format: Gen3Format): Gen3Sources {
   };
 }
 
-/** Artwork and links for the overlay, from any Pokémon resources. */
+/** Artwork, links and types for the overlay, from any Pokémon resources. */
 export const mediaView: View<{}, PokemonResources, PokemonMedia> = ({
   resources,
 }) => ({
   status: "ready",
-  data: { artwork: resources.artwork, links: resources.linksFactory ?? null },
+  data: {
+    artwork: resources.artwork,
+    links: resources.linksFactory ?? null,
+    typeSystem: resources.typeSystem ?? defaultTypeSystem,
+  },
 });
 
 /** Battle or overworld, without map details; games replace it when they know more. */

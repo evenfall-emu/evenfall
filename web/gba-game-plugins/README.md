@@ -32,8 +32,10 @@ runtime from the user's own ROM and emulated memory**:
 
 Nothing is bundled: no names, statistics, tables, sprites or other assets from
 any game are in this repository or its builds. Everything is read from the
-loaded ROM and discarded with the session. Observation is read-only; the
-package never writes game memory.
+loaded ROM and discarded with the session. The one exception is generic
+mechanics: the standard type-effectiveness chart used to rate moves in
+battle ([`src/type-system.ts`](src/type-system.ts)), which a game can
+override. Observation is read-only; the package never writes game memory.
 
 ## Supported builds
 
@@ -105,6 +107,14 @@ refreshes it.
   abilities, and the stat totals use the bridge's `stageAdjustedStats`, with
   an arrow on boosted or lowered stats. These are stage-adjusted, not a full
   damage calculation: ability, item, weather and move modifiers are excluded.
+- In battle, each damaging move is rated by type against the opposing side's
+  active battlers, for your Pokémon and the opponent's alike, including
+  benched ones: a black row for no effect, strong red for ×¼, light red for
+  ×½, light green for ×2 and strong green for ×4, with the multiplier beside
+  the name. In a double battle a move shows its best result among the
+  standing foes, and its tooltip names that foe. Status moves are not rated.
+  This is the type chart alone: abilities such as Levitate, items, weather
+  and type-changing moves are excluded.
 - Condition colors are interface conventions, not ROM data: burn is orange,
   paralysis yellow, freeze ice-blue, bleed red, sleep white, poison and
   unknown ailments purple.
@@ -142,7 +152,37 @@ Games are families over the shared Gen III views
 sources, views and resources, Heart & Soul spreads it with its layout and map
 context, and Elite Redux defines its own sources and views for the same
 overlay. A build is a manifest; `createGame(family, manifests)` registers
-further verified builds. See the
+further verified builds.
+
+Types are keys such as `fire` or `electric`, parsed from the ROM's type
+names ignoring case and punctuation. Without a pattern of its own, a name
+matches a key it abbreviates: the same first letter, then some of the key's
+letters in order, at least three in all. Truncations such as `ELECTR` and
+`FIGHT` and contractions such as `PSYCHC` or `GRND` therefore parse without
+configuration, so ROM hacks that keep the standard types work unchanged; a
+name that could abbreviate two types, such as `FIR`, stays unmapped. Badge
+colors and move ratings both follow the game's `typeSystem` resource, which
+defaults to the standard eighteen types and the Generation VI chart. A game
+whose types differ supplies its own:
+
+```ts
+import {
+  extendTypeSystem,
+  standardTypeDefinition,
+} from "@evenfall/gba-pokemon";
+
+const typeSystem = extendTypeSystem(standardTypeDefinition, {
+  types: {
+    sound: { color: "#7fc8d8" }, // a type the stylesheet lacks
+    fire: { pattern: /^(fire|flame)$/ }, // a name that is not an abbreviation
+  },
+  ids: { 9: null }, // type ID 9 (`???`) has no matchups
+  chart: { sound: { ghost: 0 }, fire: { fairy: 1 } }, // rows merge per attacker
+});
+```
+
+Types the system does not map show a plain badge and are not rated; as a
+defender they count as neutral. See the
 [Elite Redux profile](docs/profiles.md#elite-redux-265-beta2).
 
 ## Tests

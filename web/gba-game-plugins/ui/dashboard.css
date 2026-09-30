@@ -894,6 +894,75 @@ table {
   padding: 0;
   text-align: center;
 }
+/* Type matchups: each tone sets an accent and a row tint; themes can override them. */
+.matchup-immune {
+  --matchup-accent: #06080a;
+  --matchup-tint: #06080acc;
+  --matchup-text: #c9d1d9;
+}
+.matchup-quarter {
+  --matchup-accent: #e03131;
+  --matchup-tint: #e0313166;
+  --matchup-text: #fff;
+  --matchup-ink: #ff6b6b;
+}
+.matchup-half {
+  --matchup-accent: #ff9b8f;
+  --matchup-tint: #ff9b8f33;
+  --matchup-text: #122127;
+}
+.matchup-double {
+  --matchup-accent: #9be39a;
+  --matchup-tint: #9be39a33;
+  --matchup-text: #122127;
+}
+.matchup-quadruple {
+  --matchup-accent: #2f9e44;
+  --matchup-tint: #2f9e4466;
+  --matchup-text: #fff;
+  --matchup-ink: #51cf66;
+}
+.pokemon-move-table tr[class^="matchup-"] {
+  background: var(--matchup-tint);
+  box-shadow: inset 3px 0 var(--matchup-accent);
+}
+.pokemon-move-table .move-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pokemon-move-table .move-name .info-trigger {
+  flex: 1;
+  min-width: 0;
+}
+.matchup-label {
+  flex: none;
+  border-radius: 2px;
+  padding: 1px 4px;
+  background: var(--matchup-accent);
+  color: var(--matchup-text);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.matchup-immune .matchup-label {
+  box-shadow: inset 0 0 0 1px #5c6773;
+}
+.tip-matchup {
+  border-top: 1px solid #426274;
+  padding-top: 5px;
+  font-weight: 700;
+}
+.tip-matchup:not(.matchup-neutral) {
+  color: var(--matchup-ink, var(--matchup-accent));
+}
+.tip-matchup.matchup-immune {
+  color: var(--muted);
+}
+.tip-matchup small {
+  display: block;
+  font-weight: 400;
+  color: var(--muted);
+}
 .panel-empty {
   min-height: 96px;
   padding: 24px 12px;

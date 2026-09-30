@@ -13,3 +13,4 @@ export * from "./redux-catalog";
 export * from "./redux-record";
 export * from "./redux-trainers";
 export * from "./text";
+export * from "./type-system";

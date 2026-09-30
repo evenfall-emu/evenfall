@@ -29,6 +29,7 @@ import {
 } from "./model";
 import type { Gen3BattlePokemon } from "./gen3-record";
 import { decodePokemonText } from "./text";
+import type { PokemonTypeSystem } from "./type-system";
 
 /** A profile converts runtime flags to these semantic choices, not UI-specific fields. */
 export interface PokemonRules {
@@ -51,6 +52,8 @@ export interface PokemonResources {
     ref: PokemonArtworkRef | PokemonItemArtworkRef | PokemonTrainerArtworkRef,
   ) => PokemonImage;
   readonly linksFactory?: PokemonLinksFactory;
+  /** Replaces the default type keys, colors and chart; see `extendTypeSystem`. */
+  readonly typeSystem?: PokemonTypeSystem;
 }
 export type PokemonPartySymbols = {
   readonly gPlayerPartyCount: MemoryRef<number>;

@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useContext,
   useEffect,
   useId,
   useMemo,
@@ -9,7 +10,7 @@ import {
 } from "react";
 import { Combobox } from "@base-ui/react/combobox";
 import { useViews } from "@evenfall/gba/bridge/react";
-import { HpBar, hpTone, TypeBadge } from "./game-layout";
+import { HpBar, hpTone, TypeBadge, TypeSystemContext } from "./game-layout";
 import { usePokemonArtwork } from "./pokemon-ui";
 import { InfoTip } from "./info-tip";
 import type { BridgeState, GameArenaStatus } from "@evenfall/gba/bridge";
@@ -18,6 +19,7 @@ import { heartNSoul } from "../src/heart-n-soul";
 import { eliteRedux } from "../src/elite-redux";
 import { searchKey } from "../src/search";
 import type { PokemonResources } from "../src/bridges";
+import { defaultTypeSystem, type PokemonTypeSystem } from "../src/type-system";
 import type { BuildInfo, GameLayoutProps } from "./layout";
 import type {
   PokemonAbility,
@@ -33,6 +35,7 @@ import type {
   PokemonTrainerSearch,
   DescribedValue,
   MoveCategory,
+  PokemonMove,
 } from "../src/model";
 
 type Pokemon = PokemonDetails &
@@ -198,6 +201,43 @@ function Category({
   );
 }
 
+interface Matchup {
+  readonly multiplier: number;
+  readonly target: PokemonBattleBattler;
+}
+
+/** The damaging move's best type matchup among the standing opposing battlers. */
+function bestMatchup(
+  system: PokemonTypeSystem,
+  move: PokemonMove,
+  targets: readonly PokemonBattleBattler[],
+): Matchup | null {
+  if (move.category === "status" || move.power === 0) return null;
+  let best: Matchup | null = null;
+  for (const target of targets) {
+    if (!target.types || target.hp === 0) continue;
+    const multiplier = system.effectiveness(move.type, target.types);
+    if (multiplier !== null && (!best || multiplier > best.multiplier))
+      best = { multiplier, target };
+  }
+  return best;
+}
+
+const matchupTone = (multiplier: number) =>
+  multiplier === 0
+    ? "immune"
+    : multiplier < 0.5
+      ? "quarter"
+      : multiplier < 1
+        ? "half"
+        : multiplier === 1
+          ? "neutral"
+          : multiplier < 4
+            ? "double"
+            : "quadruple";
+const multiplierText = (multiplier: number) =>
+  `×${multiplier === 0.25 ? "¼" : multiplier === 0.5 ? "½" : multiplier}`;
+
 /** A layout can display any game-authored field without a UI-specific switch. */
 export function ArenaStatus({
   arena,
@@ -239,12 +279,16 @@ export function PokemonInspector({
   artwork,
   linksFactory,
   active = false,
+  targets = [],
 }: {
   pokemon?: Pokemon;
   artwork: Artwork;
   linksFactory?: PokemonLinksFactory;
   active?: boolean;
+  /** Opposing active battlers its moves are matched against. */
+  targets?: readonly PokemonBattleBattler[];
 }) {
+  const typeSystem = useContext(TypeSystemContext);
   if (!pokemon)
     return (
       <section className="inspector" aria-label="Selected Pokémon">
@@ -297,7 +341,7 @@ export function PokemonInspector({
           </div>
           <div className="selected-tags">
             {pokemon.types?.map((type) => (
-              <TypeBadge type={type.name} key={type.id} />
+              <TypeBadge type={type} key={type.id} />
             ))}
             {pokemon.hp !== undefined && <Condition pokemon={pokemon} />}
             {active && <span className="in-battle">In battle</span>}
@@ -479,38 +523,65 @@ export function PokemonInspector({
         <tbody>
           {Array.from({ length: 4 }, (_, slot) => {
             const move = pokemon.moves[slot];
+            const matchup = move && bestMatchup(typeSystem, move, targets);
+            const tone = matchup && matchupTone(matchup.multiplier);
+            const matchupLine =
+              matchup &&
+              `${multiplierText(matchup.multiplier)} against ${nameOf(matchup.target)}`;
             return (
-              <tr key={slot} data-tooltip-anchor>
+              <tr
+                key={slot}
+                data-tooltip-anchor
+                className={
+                  tone && tone !== "neutral" ? `matchup-${tone}` : undefined
+                }
+              >
                 {move ? (
                   <>
                     <td>
-                      <TypeBadge type={move.type.name} />
+                      <TypeBadge type={move.type} />
                     </td>
                     <th>
-                      <InfoTip
-                        label={`Move: ${displayName(move.name)}`}
-                        content={
-                          <>
-                            <div className="tip-heading">
-                              <h3>{displayName(move.name)}</h3>
-                              <TypeBadge type={move.type.name} />
-                            </div>
-                            <div className="move-facts">
-                              <span>
-                                Power {move.power > 0 ? move.power : "—"}
-                              </span>
-                              <Category category={move.category} detail />
-                            </div>
-                            <Description value={move} />
-                            <p className="tip-priority">
-                              Priority{" "}
-                              {priorityText(move.priority) ?? "Unavailable"}
-                            </p>
-                          </>
-                        }
-                      >
-                        {displayName(move.name)}
-                      </InfoTip>
+                      <div className="move-name">
+                        <InfoTip
+                          label={`Move: ${displayName(move.name)}${matchupLine ? `, ${matchupLine}` : ""}`}
+                          content={
+                            <>
+                              <div className="tip-heading">
+                                <h3>{displayName(move.name)}</h3>
+                                <TypeBadge type={move.type} />
+                              </div>
+                              <div className="move-facts">
+                                <span>
+                                  Power {move.power > 0 ? move.power : "—"}
+                                </span>
+                                <Category category={move.category} detail />
+                              </div>
+                              <Description value={move} />
+                              <p className="tip-priority">
+                                Priority{" "}
+                                {priorityText(move.priority) ?? "Unavailable"}
+                              </p>
+                              {matchupLine && (
+                                <p className={`tip-matchup matchup-${tone}`}>
+                                  {matchupLine}
+                                  <small>
+                                    Type chart only: abilities, items, weather
+                                    and move effects are excluded.
+                                  </small>
+                                </p>
+                              )}
+                            </>
+                          }
+                        >
+                          {displayName(move.name)}
+                        </InfoTip>
+                        {matchup && tone !== "neutral" && (
+                          <span className="matchup-label" aria-hidden="true">
+                            {multiplierText(matchup.multiplier)}
+                          </span>
+                        )}
+                      </div>
                     </th>
                     <td>
                       <Category category={move.category} />
@@ -568,6 +639,7 @@ export function PokemonRoster({
   label,
   message,
   activeSlots = [],
+  targets,
 }: {
   party: readonly PokemonPartyMember[];
   stored?: readonly PokemonDetails[];
@@ -577,6 +649,8 @@ export function PokemonRoster({
   label: string;
   message?: string;
   activeSlots?: readonly number[];
+  /** Opposing active battlers the selected Pokémon's moves are matched against. */
+  targets?: readonly PokemonBattleBattler[];
 }) {
   const [query, setQuery] = useState("");
   const [selectedId, select] = useState<string>();
@@ -707,6 +781,7 @@ export function PokemonRoster({
         pokemon={selected?.pokemon}
         artwork={artwork}
         linksFactory={linksFactory}
+        targets={targets}
         active={
           !!selected &&
           "slot" in selected.pokemon &&
@@ -975,7 +1050,7 @@ export interface PokemonDashboardProps {
   readonly context: BridgeState<{ readonly arena: GameArenaStatus }>;
   /** ROM-bound artwork and links; absent until the ROM is prepared. */
   readonly resources:
-    | Pick<PokemonResources, "artwork" | "linksFactory">
+    | Pick<PokemonResources, "artwork" | "linksFactory" | "typeSystem">
     | undefined;
   readonly trainerSearch?: PokemonTrainerSearch;
   /** The loaded build's provenance; a located build is marked as unreviewed. */
@@ -1003,6 +1078,12 @@ export function PokemonDashboard({
   const [mobilePanel, setMobilePanel] = useState<"team" | "info">("team");
   const panelId = useId();
   const artwork = usePokemonArtwork(resources);
+  // Badges and move matchups anywhere in the layout, including handed-off panels.
+  const typed = (layout: ReactNode) => (
+    <TypeSystemContext value={resources?.typeSystem ?? defaultTypeSystem}>
+      {layout}
+    </TypeSystemContext>
+  );
   const combat =
     battle.status === "ready" && battle.data.active ? battle.data : undefined;
   const members =
@@ -1071,6 +1152,8 @@ export function PokemonDashboard({
     .filter((b) => b.side === "opponent")
     .map((b) => b.partySlot);
   const opponents = battleParty("opponent", combat?.opponentParty ?? []);
+  const battlers = (side: "player" | "opponent") =>
+    combat?.battlers.filter((battler) => battler.side === side);
   const team = (
     <PokemonRoster
       key={`team:${timeline}`}
@@ -1085,6 +1168,7 @@ export function PokemonDashboard({
       }
       message={message}
       activeSlots={playerSlots}
+      targets={battlers("opponent")}
     />
   );
   const info =
@@ -1111,46 +1195,51 @@ export function PokemonDashboard({
         }
         message={opponentMessage}
         activeSlots={opponentSlots}
+        targets={battlers("player")}
       />
     );
   if (handheld)
-    return handheld({
-      summary: (
-        <HandheldSummary
-          party={battleParty("player", members)}
-          opponents={opponents.filter((member) =>
-            opponentSlots?.includes(member.slot),
-          )}
-          arena={arena}
-          artwork={artwork}
-        />
-      ),
-      panels: [
-        { id: "team", label: "Team", content: team },
-        {
-          id: "info",
-          label: combat ? "Battle" : "Info",
-          content: (
-            <>
-              <ArenaStatus build={build} arena={arena} />
-              {info}
-            </>
-          ),
-        },
-      ],
-    });
+    return typed(
+      handheld({
+        summary: (
+          <HandheldSummary
+            party={battleParty("player", members)}
+            opponents={opponents.filter((member) =>
+              opponentSlots?.includes(member.slot),
+            )}
+            arena={arena}
+            artwork={artwork}
+          />
+        ),
+        panels: [
+          { id: "team", label: "Team", content: team },
+          {
+            id: "info",
+            label: combat ? "Battle" : "Info",
+            content: (
+              <>
+                <ArenaStatus build={build} arena={arena} />
+                {info}
+              </>
+            ),
+          },
+        ],
+      }),
+    );
   // Beside the screen, the battle opens when one starts and the team when it
   // ends; the arena line stays above the screen.
   if (docked)
-    return docked({
-      heading: <ArenaStatus build={build} arena={arena} />,
-      panels: [
-        { id: "team", label: "Team", content: team },
-        { id: "info", label: combat ? "Battle" : "Info", content: info },
-      ],
-      focus: combat ? "info" : "team",
-    });
-  return (
+    return typed(
+      docked({
+        heading: <ArenaStatus build={build} arena={arena} />,
+        panels: [
+          { id: "team", label: "Team", content: team },
+          { id: "info", label: combat ? "Battle" : "Info", content: info },
+        ],
+        focus: combat ? "info" : "team",
+      }),
+    );
+  return typed(
     <main
       className="adventure-grid"
       data-game-layout="pokemon"
@@ -1182,7 +1271,7 @@ export function PokemonDashboard({
       <div className="dashboard-info" id={`${panelId}-info`}>
         {info}
       </div>
-    </main>
+    </main>,
   );
 }
 
@@ -1214,8 +1303,9 @@ export function Gen3Overlay({
       media && {
         artwork: media.artwork,
         linksFactory: media.links ?? undefined,
+        typeSystem: media.typeSystem,
       },
-    [media?.artwork, media?.links],
+    [media?.artwork, media?.links, media?.typeSystem],
   );
   const trainers = views?.trainers;
   const trainerReason =

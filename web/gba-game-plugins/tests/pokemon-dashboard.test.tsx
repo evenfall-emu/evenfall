@@ -14,9 +14,9 @@ it.each([
 ])(
   "colors the ROM type label %s as %s without changing its text",
   (type, color) => {
-    expect(renderToStaticMarkup(<TypeBadge type={type} />)).toBe(
-      `<span class="type-badge type-${color}">${type}</span>`,
-    );
+    expect(
+      renderToStaticMarkup(<TypeBadge type={{ id: 0, name: type }} />),
+    ).toBe(`<span class="type-badge type-${color}">${type}</span>`);
   },
 );
 
