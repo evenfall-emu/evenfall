@@ -229,16 +229,25 @@ measured on another loaded run; one-line rebuilds do not change.
 
 ## Where the speed comes from
 
-Each fast path below skips work only when nothing the guest can see could
-happen in the meantime: no device event, no visible pixel, no interrupt. When
-it can't be sure, it hands over to the ordinary path, which stays in the tree
-as the reference. Each has a test that runs both and compares what the guest
-would see (state bytes, pixels, samples, timing), not just whether the fast
-path ran. Most were ported from ZiGBA along with their reference.
+A cycle-accurate core spends most of its time on bookkeeping. The simple
+way to run it is to decode every instruction, advance every device after
+every bus access and draw every pixel one dot at a time. Most of that work
+can't change anything the guest sees. Between two device events, most of
+what the CPU does is invisible to the timers, the DMA and the display, and a
+line that uses no raster effect looks the same whether it is drawn dot by dot
+or in one pass.
 
-The [parity traces](parity.md) check the same thing end to end: the whole
+Each fast path below exploits that. It batches work up to the next point
+where the guest could notice a difference, such as a device event, a visible
+pixel or an interrupt. When it can't prove that nothing is observable, it
+hands over to the ordinary path, which stays in the tree as the reference.
+
+Every fast path has a test that runs it and its reference side by side and
+compares what the guest would see (state bytes, pixels, samples and timing).
+The [parity traces](parity.md) check the same thing end to end. The whole
 core, fast paths included, must match ZiGBA byte for byte however the host
-slices execution.
+slices execution. Most fast paths were ported from ZiGBA along with their
+reference.
 
 ### Deferred devices
 
@@ -269,7 +278,8 @@ DMA is pending, it runs every beat that ends before the next device event in
 one loop, from RAM or the latch to RAM, VRAM or OAM, as long as each address
 stays in its region. Devices catch up at the end. A VRAM write during a
 visible pixel goes through the per-beat path at its own cycle while the line's
-raster history has room; once it is full, writes skip their history snapshot.
+raster history has room. Once the history is full, writes skip their history
+snapshot.
 VRAM beats that no visible pixel can see are compared and copied one
 scanline-memo page at a time.
 
@@ -279,7 +289,7 @@ scanline-memo page at a time.
   `vram_dma_runs_match_the_per_beat_loop` and
   `vram_writes_skip_snapshots_only_when_history_is_full` in
   [`bus/mod.rs`](../systems/gba/src/bus/mod.rs), which compare state bytes,
-  raster history and pixels; `dma_at_lcd_boundary_preserves_deferred_batch`
+  raster history and pixels, and `dma_at_lcd_boundary_preserves_deferred_batch`
   for timing.
 - Gap: nothing switches the direct beat dispatch off to compare it with the
   generic one on its own.
@@ -308,11 +318,12 @@ code the engine has decoded, and MMIO the device batch can't take. The
 - Reference: `Cpu::step`, `Core::execute_arm` and `execute_thumb`.
 - Checked by: randomized comparisons in
   [`engine/tests.rs`](../systems/gba/src/cpu/engine/tests.rs) and
-  [`cpu/mod.rs`](../systems/gba/src/cpu/mod.rs) (registers, flags, clocks,
-  memory, caches, raster history, prefetch state and where runs stop); tests
-  for MMIO, DMA setup, IRQ entry and BIOS code in `cpu/mod.rs`; and
-  `run_registers_match_the_bus` in
-  [`bus/kernel.rs`](../systems/gba/src/bus/kernel.rs).
+  [`cpu/mod.rs`](../systems/gba/src/cpu/mod.rs), which compare registers,
+  flags, clocks, memory, caches, raster history, prefetch state and where
+  runs stop. Tests in `cpu/mod.rs` cover MMIO, DMA setup, IRQ entry and BIOS
+  code, and `run_registers_match_the_bus` in
+  [`bus/kernel.rs`](../systems/gba/src/bus/kernel.rs) covers the registers a
+  run serves itself.
 
 ### Streamed Thumb fetches
 
@@ -404,7 +415,7 @@ Writes mark what they change, and a marked change drops the saved line
 ### Selective video
 
 When the host won't show a frame, [`Session`](../systems/gba/src/session.rs)
-skips drawing it; everything else runs as usual. If the host asks for those
+skips drawing it, and everything else runs as usual. If the host asks for those
 pixels later, [`VideoRecovery`](../systems/gba/src/video_recovery.rs) replays
 the calls since the last drawn frame with video on and returns the exact
 picture ([research note](research/selective-video.md)).
