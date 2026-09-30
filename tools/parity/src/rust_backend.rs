@@ -276,7 +276,7 @@ pub fn run_linked(
 }
 
 /// Return the most specific field containing the first mismatching byte.
-/// The codec trace is payload-relative; the ZIGBAST1 header is 133 bytes.
+/// The codec trace is payload-relative, after the state's 133-byte header.
 pub fn state_field(machine: &mut Machine, state: &[u8], offset: usize) -> String {
     const HEADER: usize = Machine::STATE_HEADER_SIZE;
     if offset < HEADER {

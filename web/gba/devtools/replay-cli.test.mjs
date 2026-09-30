@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 test("CLI keeps exit codes distinct, never overwrites evidence, and replays failures against their identity", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "zigba-devtools-cli-"));
+  const directory = await mkdtemp(join(tmpdir(), "evenfall-devtools-cli-"));
   const run = (args) =>
     spawnSync(process.execPath, args, { encoding: "utf8", timeout: 30000 });
   try {

@@ -99,7 +99,9 @@ export class WasmCore {
     this.loaded = false;
     this.timeline = null;
     this.sampleSequence = 0;
-    if (exports.zb_version() !== 1) throw new Error("Unsupported WASM ABI");
+    // A module from another ABI (an older prefix) lacks `ef_version`.
+    if (typeof exports.ef_version !== "function" || exports.ef_version() !== 1)
+      throw new Error("Unsupported WASM ABI");
   }
   replaceTimeline() {
     this.timeline = crypto.randomUUID();
@@ -111,8 +113,8 @@ export class WasmCore {
         text.decode(
           new Uint8Array(
             this.wasm.memory.buffer,
-            this.wasm.zb_error_ptr(),
-            this.wasm.zb_error_len(),
+            this.wasm.ef_error_ptr(),
+            this.wasm.ef_error_len(),
           ),
         ),
       );
@@ -122,20 +124,20 @@ export class WasmCore {
     if (!this.loaded) throw new Error("NoSession");
   }
   upload(data) {
-    this.check(this.wasm.zb_prepare(data.length));
+    this.check(this.wasm.ef_prepare(data.length));
     if (data.length)
       new Uint8Array(
         this.wasm.memory.buffer,
-        this.wasm.zb_input_ptr(),
+        this.wasm.ef_input_ptr(),
         data.length,
       ).set(data);
   }
   output() {
-    const length = this.wasm.zb_output_len();
+    const length = this.wasm.ef_output_len();
     return length
       ? new Uint8Array(
           this.wasm.memory.buffer,
-          this.wasm.zb_output_ptr(),
+          this.wasm.ef_output_ptr(),
           length,
         ).slice()
       : new Uint8Array();
@@ -164,12 +166,12 @@ export class WasmCore {
     const sampleRate = uint(options.sampleRate ?? 48000, 192000, "sample rate");
     if (image.length + bios.length + save.length > 41 * 1024 * 1024)
       throw new RangeError("InputTooLarge");
-    this.check(this.wasm.zb_prepare(image.length + bios.length + save.length));
+    this.check(this.wasm.ef_prepare(image.length + bios.length + save.length));
     const payload =
       image.length + bios.length + save.length
         ? new Uint8Array(
             this.wasm.memory.buffer,
-            this.wasm.zb_input_ptr(),
+            this.wasm.ef_input_ptr(),
             image.length + bios.length + save.length,
           )
         : new Uint8Array();
@@ -178,7 +180,7 @@ export class WasmCore {
     payload.set(save, image.length + bios.length);
     const zipped = options.zipped ?? (image[0] === 0x50 && image[1] === 0x4b);
     this.check(
-      this.wasm.zb_load(
+      this.wasm.ef_load(
         image.length,
         bios.length,
         save.length,
@@ -197,41 +199,38 @@ export class WasmCore {
   // Cheap probes for hosts that do not need a copied register file or fault text.
   currentCycle() {
     this.requireLoaded();
-    return this.wasm.zb_cycle();
+    return this.wasm.ef_cycle();
   }
   hasFault() {
     this.requireLoaded();
-    return this.check(this.wasm.zb_fault()) === 1;
+    return this.check(this.wasm.ef_fault()) === 1;
   }
   inspect() {
     this.requireLoaded();
     const w = this.wasm;
-    const ptr = w.zb_cpu_ptr();
+    const ptr = w.ef_cpu_ptr();
     const cpu = new Uint32Array(w.memory.buffer, ptr, 18).slice();
     const hash = (this.romHash ??= Array.from(
-      new Uint8Array(w.memory.buffer, w.zb_rom_hash_ptr(), 20),
+      new Uint8Array(w.memory.buffer, w.ef_rom_hash_ptr(), 20),
       (b) => b.toString(16).padStart(2, "0"),
     ).join(""));
     let fault = null;
-    if (this.check(w.zb_fault()) === 1) fault = text.decode(this.output());
+    if (this.check(w.ef_fault()) === 1) fault = text.decode(this.output());
     return {
-      cycle: w.zb_cycle(),
-      frames: w.zb_frames(),
+      cycle: w.ef_cycle(),
+      frames: w.ef_frames(),
       registers: cpu.slice(0, 16),
       cpsr: cpu[16],
       nextInstructionAddress: cpu[17],
       romHash: hash,
-      rtcEnabled:
-        typeof w.zb_rtc_enabled === "function"
-          ? Boolean(w.zb_rtc_enabled())
-          : undefined,
-      saveType: SAVE_TYPES[w.zb_save_type()],
+      rtcEnabled: Boolean(w.ef_rtc_enabled()),
+      saveType: SAVE_TYPES[w.ef_save_type()],
       fault,
     };
   }
   setKeys(mask) {
     this.requireLoaded();
-    this.check(this.wasm.zb_keys(uint(mask, 1023, "key mask")));
+    this.check(this.wasm.ef_keys(uint(mask, 1023, "key mask")));
   }
   runUntil(deadline, events = [], inputDeadline = deadline) {
     this.requireLoaded();
@@ -241,7 +240,7 @@ export class WasmCore {
       throw new RangeError("At most 1024 events per bounded run");
     const packet = new Uint8Array(events.length * 16);
     const view = new DataView(packet.buffer);
-    let previous = this.wasm.zb_cycle();
+    let previous = this.wasm.ef_cycle();
     for (let i = 0; i < events.length; i++) {
       const { at, keys } = events[i];
       cycle(at);
@@ -255,20 +254,20 @@ export class WasmCore {
     }
     this.upload(packet);
     const status = this.check(
-      this.wasm.zb_run_until(deadline, events.length, inputDeadline),
+      this.wasm.ef_run_until(deadline, events.length, inputDeadline),
     );
     return {
-      cycle: this.wasm.zb_cycle(),
-      frames: this.wasm.zb_frames(),
+      cycle: this.wasm.ef_cycle(),
+      frames: this.wasm.ef_frames(),
       reason: reasons[status],
-      inputsConsumed: this.wasm.zb_inputs_consumed(),
+      inputsConsumed: this.wasm.ef_inputs_consumed(),
     };
   }
   step() {
     this.requireLoaded();
     return {
       reason: ["executed", "halted", "power_stopped", "faulted"][
-        this.check(this.wasm.zb_step())
+        this.check(this.wasm.ef_step())
       ],
       ...this.inspect(),
     };
@@ -276,7 +275,7 @@ export class WasmCore {
   readMemory(address, length) {
     this.requireLoaded();
     this.check(
-      this.wasm.zb_read_memory(
+      this.wasm.ef_read_memory(
         uint(address, 0xffffffff, "address"),
         uint(length, 1048576, "length"),
       ),
@@ -301,11 +300,10 @@ export class WasmCore {
   frame(output) {
     this.requireLoaded();
     // Explicit observations retain their exact-cycle meaning during skips.
-    if (this.wasm.zb_canonical_frame)
-      this.check(this.wasm.zb_canonical_frame());
+    this.check(this.wasm.ef_canonical_frame());
     const frame = new Uint16Array(
       this.wasm.memory.buffer,
-      this.wasm.zb_frame_ptr(),
+      this.wasm.ef_frame_ptr(),
       240 * 160,
     );
     if (output === undefined) return frame.slice();
@@ -316,30 +314,30 @@ export class WasmCore {
   }
   canSnapshot() {
     this.requireLoaded();
-    return this.wasm.zb_frame_canonical
-      ? Boolean(this.wasm.zb_frame_canonical())
+    return this.wasm.ef_frame_canonical
+      ? Boolean(this.wasm.ef_frame_canonical())
       : true;
   }
   setVideoInterval(interval) {
     this.requireLoaded();
     uint(interval, 16, "video interval");
     if (interval < 1) throw new RangeError("Invalid video interval");
-    this.check(this.wasm.zb_video_interval(interval));
+    this.check(this.wasm.ef_video_interval(interval));
   }
   videoFrameId() {
     this.requireLoaded();
-    return this.wasm.zb_video_frame_id();
+    return this.wasm.ef_video_frame_id();
   }
   videoFrameCycle() {
     this.requireLoaded();
-    return this.wasm.zb_video_frame_cycle();
+    return this.wasm.ef_video_frame_cycle();
   }
   // Cheap, stable last selected image for presentation; does not reconstruct.
   presentationFrame(output) {
     this.requireLoaded();
     const frame = new Uint16Array(
       this.wasm.memory.buffer,
-      this.wasm.zb_present_frame_ptr(),
+      this.wasm.ef_present_frame_ptr(),
       240 * 160,
     );
     if (output === undefined) return frame.slice();
@@ -356,10 +354,10 @@ export class WasmCore {
       (!(output instanceof Int16Array) || output.length < 16384)
     )
       throw new RangeError("Invalid audio buffer");
-    const count = this.check(this.wasm.zb_drain_audio());
+    const count = this.check(this.wasm.ef_drain_audio());
     const samples = new Int16Array(
       this.wasm.memory.buffer,
-      this.wasm.zb_audio_ptr(),
+      this.wasm.ef_audio_ptr(),
       count * 2,
     );
     if (output === undefined) return samples.slice();
@@ -371,53 +369,53 @@ export class WasmCore {
     this.requireLoaded();
     if (typeof enabled !== "boolean")
       throw new TypeError("Audio output must be boolean");
-    this.check(this.wasm.zb_audio_output(Number(enabled)));
+    this.check(this.wasm.ef_audio_output(Number(enabled)));
   }
   exportRom() {
     this.requireLoaded();
-    this.check(this.wasm.zb_export_rom());
+    this.check(this.wasm.ef_export_rom());
     return this.output();
   }
   exportSave() {
     this.requireLoaded();
-    this.check(this.wasm.zb_export_save());
+    this.check(this.wasm.ef_export_save());
     return this.output();
   }
   resetWithSave(save) {
     this.requireLoaded();
     this.upload(bytes(save, "save"));
-    this.check(this.wasm.zb_reset_save());
+    this.check(this.wasm.ef_reset_save());
     this.replaceTimeline();
     return this.inspect();
   }
   saveState() {
     this.requireLoaded();
-    this.check(this.wasm.zb_write_state());
+    this.check(this.wasm.ef_write_state());
     return this.output();
   }
   loadState(state) {
     this.requireLoaded();
     this.upload(bytes(state, "state"));
-    this.check(this.wasm.zb_load_state());
+    this.check(this.wasm.ef_load_state());
     this.replaceTimeline();
     return this.inspect();
   }
   saveRewindBundle() {
     this.requireLoaded();
-    this.check(this.wasm.zb_write_rewind_bundle());
+    this.check(this.wasm.ef_write_rewind_bundle());
     return this.output();
   }
   loadRewindBundle(bundle) {
     this.requireLoaded();
     this.upload(bytes(bundle, "rewind bundle"));
-    this.check(this.wasm.zb_load_rewind_bundle());
+    this.check(this.wasm.ef_load_rewind_bundle());
     this.replaceTimeline();
     return this.inspect();
   }
   // Budget-bounded engine rewind history. The byte budget bounds stored
   // history (0 disables); resolution coarsens with age. The interval is the
   // nominal 1x capture cadence in frames; compression is 'delta' (anchored
-  // word-run deltas), 'fast' (level-1 deflate) or 'off'. Stored bytes stay
+  // copy/literal deltas), 'fast' (level-1 deflate) or 'off'. Stored bytes stay
   // opaque to callers.
   setRewindConfig(
     budgetBytes = 15 * 1024 * 1024,
@@ -430,7 +428,7 @@ export class WasmCore {
     const mode = { off: 0, fast: 1, delta: 2 }[compression];
     if (!Number.isInteger(mode))
       throw new RangeError("Invalid rewind compression");
-    this.check(this.wasm.zb_rewind_config(budget, interval, mode));
+    this.check(this.wasm.ef_rewind_config(budget, interval, mode));
   }
   // Private host-policy notification. Q8 avoids per-frame clock input while
   // keeping capture cadence in Zig.
@@ -438,22 +436,22 @@ export class WasmCore {
     this.requireLoaded();
     if (!Number.isFinite(multiplier) || multiplier < 0.5 || multiplier > 16)
       throw new RangeError("Invalid rewind speed");
-    this.check(this.wasm.zb_rewind_speed(Math.round(multiplier * 256)));
+    this.check(this.wasm.ef_rewind_speed(Math.round(multiplier * 256)));
   }
   rewind(steps = 1) {
     this.requireLoaded();
-    this.check(this.wasm.zb_rewind(uint(steps, 1024, "rewind steps")));
+    this.check(this.wasm.ef_rewind(uint(steps, 1024, "rewind steps")));
     this.replaceTimeline();
     return this.inspect();
   }
   rewindDepth() {
     this.requireLoaded();
-    return this.wasm.zb_rewind_depth();
+    return this.wasm.ef_rewind_depth();
   }
   rewindInfo(index) {
     this.requireLoaded();
     this.check(
-      this.wasm.zb_rewind_info(uint(index, 0xffffffff, "rewind index")),
+      this.wasm.ef_rewind_info(uint(index, 0xffffffff, "rewind index")),
     );
     const out = this.output();
     const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
@@ -466,7 +464,7 @@ export class WasmCore {
   rewindFrame(index) {
     this.requireLoaded();
     this.check(
-      this.wasm.zb_rewind_frame(uint(index, 0xffffffff, "rewind index")),
+      this.wasm.ef_rewind_frame(uint(index, 0xffffffff, "rewind index")),
     );
     const out = this.output();
     if (out.byteLength !== 240 * 160 * 2)
@@ -474,7 +472,7 @@ export class WasmCore {
     return new Uint16Array(out.buffer, out.byteOffset, 240 * 160).slice();
   }
   dispose() {
-    this.wasm.zb_dispose();
+    this.wasm.ef_dispose();
     this.loaded = false;
     this.timeline = null;
   }

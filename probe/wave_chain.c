@@ -8,7 +8,7 @@
  * each cycle shows a 128-zero run, 16 ascending 4-sample runs, and one
  * 64-sample run of 112; a broken chain looping one bank alone could never
  * produce both the zero runs and the 112 marker. The validator checks that
- * analytic structure (see test/probe_cases.zig).
+ * analytic structure (see validator/probe_cases.rs).
  * Single-bank sequencing is covered by the wave_ramp probe. HLE boot only.
  */
 

@@ -145,7 +145,7 @@ pub struct WriteResult {
 }
 
 /// IE, IF, IME, POSTFLG and HALTCNT, with the IRQ line they drive: a
-/// flat stretch of ZiGBA's bus state, grouped so that an engine run can
+/// flat stretch of the bus state, grouped so that an engine run can
 /// read and write them through one reference ([`EngineMemory`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Codec)]
 pub struct IrqRegisters {
@@ -411,7 +411,7 @@ pub struct ThumbStream {
 }
 
 #[derive(Codec)]
-#[codec(module = "zigba.bus.state.v6")]
+#[codec(module = "evenfall.gba.bus")]
 pub struct Bus {
     pub ewram: Box<[u8; EWRAM_SIZE]>,
     pub iwram: Box<[u8; IWRAM_SIZE]>,
@@ -420,6 +420,8 @@ pub struct Bus {
     pub palette: [u8; PALETTE_SIZE],
     pub vram: Box<[u8; VRAM_SIZE]>,
     pub oam: [u8; OAM_SIZE],
+    /// Encoded last: its length depends on the save type.
+    #[codec(last)]
     pub save: SaveDevice,
     pub frame_pixels: Box<[u16; SCREEN_WIDTH * SCREEN_HEIGHT]>,
     #[codec(skip)]
@@ -4434,7 +4436,8 @@ mod tests {
         assert_eq!(rom.as_ptr(), upload_bytes);
     }
 
-    /// Zig: "DMA3 immediate starts two cycles after its enabling write, copies halfwords, clears enable, and requests IRQ".
+    /// An immediate DMA3 starts two cycles after its enabling write, copies
+    /// halfwords, clears its enable bit and requests an IRQ.
     #[test]
     fn dma3_immediate_starts_two_cycles_after_enabling_write() {
         let mut bus = Bus::init(&[]);
@@ -4461,7 +4464,7 @@ mod tests {
         assert_eq!(bus.irq.interrupt_request_flags & (1 << 11), 1 << 11);
     }
 
-    /// ZiGBA probe-vdma: VBlank DMA3 uploads a solid tile without enabling VBlank IRQ.
+    /// A VBlank DMA3 uploads a solid tile while the VBlank IRQ stays disabled.
     #[test]
     fn vblank_dma_starts_without_vblank_irq_enable() {
         let mut bus = Bus::init(&[]);
@@ -4518,7 +4521,8 @@ mod tests {
         assert_eq!(bus.apu_cycle, bus.current_cycle);
     }
 
-    /// Zig: "DMA source zero reuses the shared transfer latch without advancing".
+    /// A DMA from source zero reuses the shared transfer latch without
+    /// advancing the source.
     #[test]
     fn dma_source_zero_reuses_shared_transfer_latch() {
         let mut bus = Bus::init(&[]);
@@ -4550,7 +4554,8 @@ mod tests {
         assert_eq!(bus.dma_channels[3].latched_source, 0);
     }
 
-    /// Zig: "SIO synchronization waits for both normal peers and rejects one past the deadline".
+    /// Normal-mode SIO waits for both peers and rejects one that arrives past
+    /// the deadline.
     #[test]
     fn sio_peer_arriving_after_master_deadline_is_rejected() {
         let mut master = Bus::init(&[]);
@@ -4570,7 +4575,8 @@ mod tests {
         );
     }
 
-    /// Zig: "four-player SIO exchanges every multiplayer word at the parent baud deadline".
+    /// Four-player SIO exchanges every multiplayer word at the parent's baud
+    /// deadline.
     #[test]
     fn multiplayer_sio_delivers_all_four_words_at_parent_deadline() {
         let mut buses = std::array::from_fn::<Bus, 4, _>(|_| Bus::init(&[]));
@@ -4597,7 +4603,7 @@ mod tests {
         }
     }
 
-    /// Zig: "UART CTS waits until the peer receiver has capacity".
+    /// UART CTS holds the sender until the peer receiver has capacity.
     #[test]
     fn uart_cts_waits_for_receiver_capacity() {
         let mut sender = Bus::init(&[]);
@@ -4620,7 +4626,6 @@ mod tests {
         assert!(sender.uart_tx_completion_cycle.is_some());
     }
 
-    /// Zig: "BIOS hard reset preserves host audio suppression".
     #[test]
     fn bios_hard_reset_preserves_host_audio_suppression() {
         let mut bus = Bus::init(&[]);
@@ -4634,7 +4639,8 @@ mod tests {
         assert_eq!(bus.drain_audio_samples(&mut samples), 2);
     }
 
-    /// Zig: "no-event materialization precedes register reset and hard reset clock changes".
+    /// Deferred device clocks catch up, without any event due, before a
+    /// register reset or a hard reset changes them.
     #[test]
     fn deferred_clock_materializes_before_register_and_hard_reset() {
         let mut bus = Bus::init(&[]);
@@ -4656,7 +4662,7 @@ mod tests {
         bus.end_device_batch();
     }
 
-    /// ZiGBA's event horizon defers APU and timer clocks across LCD events;
+    /// The event horizon defers APU and timer clocks across LCD events.
     /// HALT still delivers the visible HBlank edges at their exact cycles.
     #[test]
     fn halted_lcd_events_do_not_materialize_unobserved_devices() {
@@ -4682,7 +4688,8 @@ mod tests {
         }
     }
 
-    /// Zig: "delegated FIFO timer overflows match eager delivery through refill and schedule changes".
+    /// Timer overflows delegated to the sound FIFOs match eager delivery
+    /// through refills and schedule changes.
     #[test]
     fn fifo_only_timer_overflows_match_eager_refill_and_irq_schedule() {
         let mut eager = Bus::init(&[]);
@@ -4766,7 +4773,7 @@ mod tests {
         assert_eq!(fifo.pop(), Some(0xa7));
     }
 
-    /// Zig: RAM accesses preserve byte order, unaligned mirror wrapping and bus timing.
+    /// RAM accesses preserve byte order, unaligned mirror wrapping and bus timing.
     #[test]
     fn ram_mirror_crossing_preserves_little_endian_byte_order() {
         let mut ram = [0u8; 8];
@@ -4809,7 +4816,7 @@ mod tests {
         }
     }
 
-    /// Zig: bitmap modes leave the lower half of mirrored VRAM unmapped.
+    /// Bitmap modes leave the lower half of mirrored VRAM unmapped.
     #[test]
     fn bitmap_modes_leave_lower_mirrored_vram_unmapped() {
         assert_eq!(vram_index(0x0601_8000, 0), Some(0x1_0000));
@@ -4820,7 +4827,6 @@ mod tests {
         assert_eq!(vram_obj_boundary(4), 0x1_4000);
     }
 
-    /// Zig: "Game Pak prefetch batching matches single-cycle advancement through capacity".
     #[test]
     fn game_pak_prefetch_batching_matches_single_cycle_advancement_through_capacity() {
         let mut batched = Bus::init(&[0; 64]);
@@ -4844,7 +4850,7 @@ mod tests {
         assert_eq!(batched.game_pak_prefetch.countdown, 0);
     }
 
-    /// Zig: "fused Thumb Game Pak refill matches two ordinary fetches".
+    /// A fused Thumb Game Pak refill matches two ordinary fetches.
     #[test]
     fn fused_thumb_refill_matches_two_scalar_fetches() {
         let rom = std::array::from_fn::<u8, 256, _>(|i| (i as u8).wrapping_mul(53));
@@ -4921,7 +4927,6 @@ mod tests {
         bus.end_device_batch();
     }
 
-    /// Zig: "cached IRQ line follows IE IF IME writes and keypad edges".
     #[test]
     fn cached_irq_line_follows_ie_if_ime_writes_and_keypad_edges() {
         let mut bus = Bus::init(&[]);
@@ -4960,7 +4965,6 @@ mod tests {
         assert!(!bus.irq.irq_line);
     }
 
-    /// Zig: "stable bus state retains only strictly future explicit deadlines".
     #[test]
     fn stable_bus_state_retains_only_strictly_future_explicit_deadlines() {
         let mut bus = Bus::init(&[]);
@@ -4974,7 +4978,6 @@ mod tests {
         assert!(bus.validate_state().is_ok());
     }
 
-    /// Zig: "normal-mode internal-clock SIO transfers complete at their bit-clock deadline".
     #[test]
     fn normal_mode_internal_clock_sio_transfers_complete_at_bit_clock_deadline() {
         for (control, cycles, normal32) in [(0x4083, 8 * 8, false), (0x5081, 32 * 64, true)] {
@@ -5024,7 +5027,6 @@ mod tests {
         }
     }
 
-    /// Zig: "JoyBus status and reset commands return the GBA type and raise reset IRQ".
     #[test]
     fn joy_bus_status_and_reset_commands_return_gba_type_and_raise_reset_irq() {
         let mut bus = Bus::init(&[]);
@@ -5056,7 +5058,7 @@ mod tests {
         assert_eq!(bus.irq.interrupt_request_flags & (1 << 7), 1 << 7);
     }
 
-    /// Zig: timed key changes apply at their exact cycle, before serial and LCD events.
+    /// Timed key changes apply at their exact cycle, before serial and LCD events.
     #[test]
     fn timed_key_changes_apply_at_their_exact_cycle() {
         let mut bus = Bus::init(&[]);

@@ -1,6 +1,6 @@
 mod rust_backend;
 
-use evenfall_replay::{Difference, InputChange, Scenario, Trace, compare};
+use evenfall_replay::{Difference, InputChange, Scenario, Trace};
 use std::{
     env,
     error::Error,
@@ -70,6 +70,18 @@ fn build() -> Result<(), Box<dyn Error>> {
         return Err("ZiGBA schema differs from committed v6 fixture".into());
     }
     Ok(())
+}
+
+/// Compares two traces. ZiGBA and Evenfall write different save-state
+/// formats, so state blobs are compared only when both traces use the same
+/// one: slices of one emulator, not one emulator against the other.
+fn compare(a: &Trace, b: &Trace) -> Vec<Difference> {
+    let format = |trace: &Trace| trace.0.first().map(|o| o.state.get(..12).map(<[u8]>::to_vec));
+    let mut differences = evenfall_replay::compare(a, b);
+    if format(a) != format(b) {
+        differences.retain(|difference| difference.kind != "state");
+    }
+    differences
 }
 
 fn trace(path: &Path) -> io::Result<Trace> {
@@ -348,5 +360,36 @@ fn main() -> Result<(), Box<dyn Error>> {
             Err("usage: evenfall-parity oracle build | oracle run SCENARIO [OUTPUT] | run SCENARIO | run --all | compare A B"
                 .into())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use evenfall_replay::{Cpu, Observation};
+
+    fn trace(state: &[u8], frame: u8) -> Trace {
+        Trace(vec![Observation {
+            requested_cycle: 1,
+            cycle: 1,
+            frames: 0,
+            cpu: Cpu { registers: [0; 16], pc: 0, cpsr: 0 },
+            audio_rate: 32_768,
+            frame: vec![frame; 2],
+            audio: Vec::new(),
+            save: Vec::new(),
+            state: state.to_vec(),
+        }])
+    }
+
+    #[test]
+    fn states_are_compared_only_within_one_format() {
+        let kinds = |a, b| compare(&a, &b).into_iter().map(|d| d.kind).collect::<Vec<_>>();
+        let seven = b"EVENFALL\x07\0\0\0payload";
+        let other_payload = b"EVENFALL\x07\0\0\0changed";
+        let other_format = b"ZIGBAST1\x06\0\0\0payload";
+        assert_eq!(kinds(trace(seven, 0), trace(other_payload, 0)), ["state"]);
+        assert_eq!(kinds(trace(seven, 0), trace(&other_format[..], 1)), ["pixel"]);
+        assert!(kinds(trace(seven, 0), trace(&other_format[..], 0)).is_empty());
     }
 }

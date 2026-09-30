@@ -1,203 +1,137 @@
 # Scanline memo
 
-The scanline memo lets `Bus::render_scanline` leave a line's frame surfaces as
-they are when nothing the line depends on has changed since it was last
-composed. [`video/scanline_memo.rs`](../../systems/gba/src/video/scanline_memo.rs)
-owns the memo; [`video/render.rs`](../../systems/gba/src/video/render.rs)
-owns the register key and recorded reads, and
-[`bus/mod.rs`](../../systems/gba/src/bus/mod.rs) marks writes. The memo is
-transient: `#[codec(skip)]` excludes it from save states, and a state load,
-reset or accepted framebuffer invalidates it. Rust stores it in a box; its
-size is not ZiGBA's in-memory size.
+In menus, dialogue boxes, pause screens and idle scenes, nearly every frame looks exactly like the one before.
+Games still keep writing to video memory, often rewriting the same values, so the display chip still has to be emulated.
+But redrawing an unchanged line only writes the same bytes again.
 
-The memo infers no pixel. A kept line holds bytes the renderer wrote from
-inputs that are still equal; the whole mechanism exists to prove that equality
-cheaply. ZiGBA's [`performance.md`](../../refs/zigba/docs/performance.md)
-explains the original performance context.
+The scanline memo skips that work.
+It remembers what each line's drawing depended on, and when none of it has changed since the line was last drawn, it leaves the line as it is.
+It never guesses a pixel: a kept line holds exactly the bytes the renderer wrote from inputs that are still equal, and the whole mechanism exists to prove that equality cheaply.
 
-## Context
+In one measured idle scene of a commercial game, a frame writes 1,024 palette bytes (none of them different), 380 VRAM bytes (57 of them different), 256 OAM words and 6 display registers, yet 95.7% of lines come out exactly as they already were.
 
-In static phases (menus, dialogue, pause and idle scenes) nearly every frame
-repeats the previous one, even though games keep writing video memory. In a
-ZiGBA idle scene of a commercial game, a frame writes 1,024 palette bytes (none of
-them changed), 380 VRAM bytes (57 changed), 256 OAM words and 6 LCD
-registers, yet 95.7% of line renders produce exactly the pixels the frame
-surfaces already hold.
+The code is split in three places:
 
-A scanline without raster history is a pure function of two inputs: the live
-LCD registers it reads and the video memory its composition reads. If both are
-unchanged, recomposing the line would write the same bytes again.
+- [`video/scanline_memo.rs`](../../systems/gba/src/video/scanline_memo.rs) holds the memo,
+- [`video/render.rs`](../../systems/gba/src/video/render.rs) builds the register key and records what each line reads,
+- [`bus/mod.rs`](../../systems/gba/src/bus/mod.rs) marks writes.
 
-## Mechanism
+The memo isn't part of the machine's state.
+`#[codec(skip)]` leaves it out of save states, and loading a state, resetting or accepting a rebuilt frame clears it.
 
-### Key
+## What a line depends on
 
-`ScanlineRegisters` holds every live register that a line without
-raster history reads: DISPCNT, green swap, the four BGxCNT, the BG offsets,
-the six window registers, BLDCNT, BLDALPHA and BLDY, MOSAIC, the BG affine
-parameters and the current affine reference points.
+A line without raster history (no register or memory change during the line) depends on only two things: the display registers it reads, and the video memory it reads.
+If both are unchanged, drawing it again would give the same result.
+The memo tracks each of them in its own way.
 
-Any change to one of them calls `Memo::mark_registers`. The next rendered line
-rebuilds the key once (`Memo::set_registers`), and a key that differs from the
-previous one gets a new version number. A line composed under the current
-version skips the key comparison entirely. After a version change, each line
-compares its stored key once and adopts the new version if the keys are equal,
-so register values that a game writes between lines are still kept wherever
-they repeat frame after frame.
+### The register key
+
+`ScanlineRegisters` holds every register a line without raster history reads: `DISPCNT`, green swap, the four `BGxCNT`, the background offsets, the six window registers, `BLDCNT`, `BLDALPHA` and `BLDY`, `MOSAIC`, the affine parameters and the current affine reference points.
+
+Any change to one of them calls `Memo::mark_registers`.
+The next line drawn rebuilds the key once (`Memo::set_registers`), and a key that differs from the previous one gets a new version number.
+A line drawn under the current version skips comparing keys entirely.
+After a version change, each line compares its stored key once, and adopts the new version if the keys are equal.
+So registers a game writes between lines are still matched wherever they repeat frame after frame.
 
 ### Recorded reads
 
-Each composition records the 1 KiB VRAM pages it read (`Reads.vram_pages`):
-text map rows, text tile rows, bitmap rows and regular-object tile rows.
+Each line records the 1 KiB VRAM pages it read (`Reads.vram_pages`): map rows, tile rows, bitmap rows and sprite tile rows.
 
-- The layer-major text rows record the page of each tile row as they read it
-  (a tile row never crosses a page) and the pages of the map rows.
-- The front-to-back reference's tile-row path relies on a page holding 32
-  whole 4bpp tiles or 16 whole 8bpp tiles, so a map entry's page follows from
-  its tile number alone; consecutive lines usually share their map row, so
-  the pages of a map block are cached per background and block (`TilePages`).
-- An untransformed bitmap row records the pages of its source row.
-- Lines that use the per-dot text path, affine backgrounds, transformed
-  bitmaps, and affine or mosaic objects record every page.
-- A line also records whether it read an OAM affine matrix.
+- The layer-major text rows record the page of each tile row as they read it (a tile row never crosses a page), and the pages of the map rows.
+- The reference renderer's tile-row path relies on a page holding exactly 32 whole 16-color tiles or 16 whole 256-color tiles, so a map entry's page follows from its tile number alone.
+  Consecutive lines usually share their map row, so the pages of a map block are cached per background and block (`TilePages`).
+- An unscaled bitmap row records the pages of its source row.
+- Lines that use the per-dot text path, affine backgrounds, transformed bitmaps, or affine or mosaic sprites record every page.
+- A line also records whether it read a sprite rotation matrix from OAM.
 
-Every line depends on the whole palette and on the attributes of each object
-whose rows include it; these need no recording.
+Every line depends on the whole palette, and on the attributes of each sprite that covers it, so those need no recording.
 
-### Change marks
+## Marking changes
 
-Changes are marked where they happen, not found by comparison:
+Changes are marked where they happen, not found by comparison afterwards:
 
-| Event                                                                         | Mark                                                   |
-| ----------------------------------------------------------------------------- | ------------------------------------------------------ |
-| A palette write that changes at least one byte                                | `mark_palette`                                         |
-| A VRAM write that changes a byte (`write_vram_byte`)                          | `mark_vram` for that byte's page                       |
-| Any halfword or word OAM write, from the CPU or DMA (OAM ignores byte writes) | `mark_oam`                                             |
-| RegisterRamReset                                                              | a mark for each region it clears, and `mark_registers` |
-| Any write to the LCD register block, of any width, from the CPU or DMA        | `mark_registers`                                       |
-| The per-line affine reference advance and its reload at the frame wrap        | `mark_registers`                                       |
+| Event                                                                      | Mark                                                   |
+| -------------------------------------------------------------------------- | ------------------------------------------------------ |
+| a palette write that changes at least one byte                             | `mark_palette`                                         |
+| a VRAM write that changes a byte (`write_vram_byte`)                       | `mark_vram` for that byte's page                       |
+| any 16- or 32-bit OAM write, from the CPU or DMA (OAM ignores byte writes) | `mark_oam`                                             |
+| `RegisterRamReset`                                                         | a mark for each region it clears, and `mark_registers` |
+| any write to the display registers, of any width, from the CPU or DMA      | `mark_registers`                                       |
+| the per-line affine reference step, and its reload when the frame wraps    | `mark_registers`                                       |
 
-Marking changed bytes rather than stores is what makes the memo work on real
-games. The ZiGBA idle scene above rewrites its whole palette every frame, so
-marking every palette store would keep no line at all. Marks are recorded
-only when bytes actually change.
+Marking changed bytes rather than every store is what makes the memo work on real games.
+The idle scene above rewrites its whole palette every frame with the same values, so marking every palette store would keep no line at all.
 
-### Application
+Before each line is drawn, `Memo::observe` applies the pending marks:
 
-Before each rendered line, `Memo::observe` applies pending marks:
+- A changed palette invalidates every line.
+- A changed VRAM page invalidates the lines that read it.
+- Each sprite whose 8 bytes differ from the memo's own 1 KiB copy of OAM invalidates its old and new lines when its attributes (bytes 0–5) changed, and every line that read a matrix when its matrix entry (bytes 6–7) changed.
 
-- a changed palette invalidates every line;
-- a changed VRAM page invalidates the lines that read it;
-- each object whose 8 bytes differ from the memo's own 1 KiB copy of OAM
-  invalidates its old and new rows when its attributes (bytes 0–5) changed,
-  and every line that read a matrix when its affine parameter (bytes 6–7)
-  changed.
-
-Lines composed earlier in the frame are invalidated like later ones, so a
-change in the middle of a frame costs only the lines that read what changed.
+Lines drawn earlier in the frame are invalidated like later ones, so a change in the middle of a frame only costs the lines that read what changed.
 In the idle scene the memo applies marks about once per frame.
 
-Lines with raster history (scroll, palette or VRAM, window, blend, affine or
-mosaic records within the line) are always composed and never kept
-(`Bus::has_raster_history`, `Memo::forget`). For every other line,
-`Memo::holds` decides whether the surfaces are kept; otherwise the line is
-composed and `Memo::store` records its key version and reads.
+Lines with raster history (scroll, palette, VRAM, window, blend, affine or mosaic changes during the line) are always drawn and never kept (`Bus::has_raster_history`, `Memo::forget`).
+For every other line, `Memo::holds` decides whether to keep it.
+Otherwise the line is drawn, and `Memo::store` records its key version and reads.
 
-### An alternative: snapshot comparison
+### Why not compare snapshots
 
-A simpler design compares all video memory (96 KiB of VRAM, the palette and
-OAM) with a snapshot at every frame start, and the whole key on every line.
-It can keep the same static lines, but a write within a frame invalidates
-every later line of that frame and, through the fresh snapshot, the whole
-next frame. Change marks also preserve hits when frames change mid-frame.
+A simpler design would compare all video memory (96 KiB of VRAM, the palette and OAM) with a snapshot at every frame start, and the whole key on every line.
+It keeps the same static lines, but a write in the middle of a frame invalidates every later line of that frame and, through the new snapshot, the whole next frame.
+Change marks keep lines even when something changes mid-frame.
 
-## Invariants
+## Rules the memo depends on
 
-The memo is correct only while these rules hold. The key, each write path and
-each invalidation point carries a short comment naming its part in them.
+The memo is only correct while these rules hold.
+The key, each write path and each invalidation point carries a short comment naming its part in them.
 
-1. **Every renderer input is in the key, in the raster history or in the
-   recorded reads.** A new register, memory region or host option that changes
-   pixels must join one of them. A renderer read must also stay inside the
-   memory it records: text tile fetches past the background side of VRAM read
-   as zero rather than touching object tile data.
-2. **Every path that changes the palette, VRAM or OAM marks it, and every
-   change to a key register calls `mark_registers`.** A new write path (a
-   debugger poke, a DMA or HLE fast path, a direct copy) must store through
-   the existing functions or mark.
-3. **Anything that replaces the surfaces, the registers or video memory
-   wholesale calls `Memo::invalidate`.** State load, reset and framebuffer
-   replacement (`Bus::accept_canonical_framebuffer`) do. Tests and tools that
-   edit `Bus` fields directly must do the same.
-4. **Recovery replays from a canonical copy.** Rust's
-   [`VideoRecovery`](../../systems/gba/src/video_recovery.rs) anchors on a
-   copy of the live `Machine` taken at a canonical frame, and the copy
-   invalidates its memo, as state load does. Frames selective video skips
-   compose nothing; their marks apply before the next rendered line.
+1. **Every renderer input is in the key, the raster history or the recorded reads.**
+   A new register, memory region or host option that changes pixels must join one of them.
+   A renderer read must also stay inside the memory it records: text tile fetches past the background part of VRAM read as zero instead of touching sprite tiles.
+2. **Every path that changes the palette, VRAM or OAM marks it, and every change to a key register calls `mark_registers`.**
+   A new write path (a debugger write, a DMA or BIOS fast path, a direct copy) must store through the existing functions, or mark.
+3. **Anything that replaces the frame, the registers or video memory wholesale calls `Memo::invalidate`.**
+   Loading a state, resetting and accepting a rebuilt frame (`Bus::accept_canonical_framebuffer`) do.
+   Tests and tools that edit `Bus` fields directly must do the same.
+4. **Rebuilding skipped frames starts from a clean copy.**
+   [`VideoRecovery`](../../systems/gba/src/video_recovery.rs) replays from a copy of the machine taken at a drawn frame, and the copy clears its memo, as loading a state does.
+   Frames skipped during fast-forward draw nothing, and their marks apply before the next line drawn.
 
 ## Check mode
 
 Check mode is the safety net against an input or write path someone forgets.
-It is on in debug and test builds; optimized builds can opt in with the
-`scanline-memo-check` Cargo feature. It panics on the first violation:
+It is on in debug and test builds, and optimized builds can turn it on with the `scanline-memo-check` Cargo feature.
+It panics on the first violation:
 
-- every line the memo would keep is composed again (`Bus::check_kept_scanline`),
-  and its colors must come out exactly as kept (kept lines are always drawn by
-  the layer-major compositor, which writes no other frame surface);
-- the key is rebuilt for every line and must equal the live key whenever no
-  register change was marked (`Memo::verify_registers`);
-- each frame start compares the palette, VRAM and OAM with a snapshot taken at
-  the previous one, and every difference must be covered by a mark made after
-  that snapshot (`Memo::unmarked_change`). Marks still pending when a snapshot is
-  taken describe changes the snapshot already holds, so they cannot cover
-  later ones.
+- Every line the memo would keep is drawn again (`Bus::check_kept_scanline`), and its colors must come out exactly as kept.
+  Kept lines are always drawn by the layer-major compositor, which writes nothing else per frame.
+- The key is rebuilt for every line, and must equal the live key whenever no register change was marked (`Memo::verify_registers`).
+- Each frame start compares the palette, VRAM and OAM with a snapshot taken at the previous one, and every difference must be covered by a mark made after that snapshot (`Memo::unmarked_change`).
+  Marks still pending when a snapshot is taken describe changes the snapshot already holds, so they can't cover later ones.
 
-Check mode catches unmarked video-memory changes and recomposes held lines,
-but verifies only paths a workload reaches. The original ZiGBA mutation
-tests are evidence for the checker; the Rust memo tests include unmarked
-memory and stale-mark cases.
+Check mode only verifies the paths a workload reaches.
 
 ## When it helps
 
-The memo helps in static phases (menus, dialogue, idle and pause scenes),
-where lines repeat both their key and the pages they read. It does not help
-when the key changes every frame (scrolling, per-frame affine motion), when
-the palette changes (a fade invalidates every line), or when a game changes
-the tiles or maps its lines read every frame. There every line is composed and
-the memo costs only its bookkeeping, which measures as zero within noise.
+The memo helps in static scenes (menus, dialogue, idle and pause screens), where lines repeat both their key and the pages they read.
+It doesn't help when the key changes every frame (scrolling, rotating), when the palette changes (a fade invalidates every line), or when a game rewrites the tiles or maps its lines read every frame.
+There every line is drawn, and the memo's bookkeeping costs nothing measurable.
 
-## Measurements
+## How it is checked
 
-In ZiGBA, change marks reduced loop time by about 9–12% on static-scene
-workloads compared with no memo. In forced-miss runs their bookkeeping cost
-was within measurement noise, while snapshot comparison added about 1.4%.
-These measurements motivate the choice of change marks; they are not Evenfall
-performance measurements. The final state, cycle and image agreed with the
-no-memo reference in ZiGBA's comparison.
-
-## Tests and reproduction
-
-- [`video/scanline_memo.rs`](../../systems/gba/src/video/scanline_memo.rs): "marked memory
-  changes invalidate the lines that read them", "check mode finds video memory
-  changed without a mark" and "check mode does not let marks made before its
-  snapshot cover later changes".
-- [`video/tests.rs`](../../systems/gba/src/video/tests.rs) compares kept and
-  fresh lines after changed bitmap pages and checks raster history.
-- ZiGBA's broader bus-write and reset tests are in
-  [`test/bus_test.zig`](../../refs/zigba/test/bus_test.zig).
-
-A release check-mode build enables `scanline-memo-check`. ZiGBA's original
-performance harness is documented in
-[`tools/mgba-bench/README.md`](../../refs/zigba/tools/mgba-bench/README.md).
+- [`video/scanline_memo.rs`](../../systems/gba/src/video/scanline_memo.rs) checks that marked changes invalidate the lines that read them, that check mode finds video memory changed without a mark, and that marks made before a snapshot can't cover later changes.
+- [`video/tests.rs`](../../systems/gba/src/video/tests.rs) compares kept and freshly drawn lines after every kind of input change, including changed bitmap pages and raster history.
+- [`tests/bus.rs`](../../systems/gba/tests/bus.rs) covers the wider bus write and reset paths.
+- Every debug and test run has check mode on, so the whole test suite exercises it.
 
 ## Open questions
 
-- Background fetches at or past the OBJ side of VRAM read as zero, but lines
-  that address it still record the OBJ pages their tile numbers name. This
-  costs only memo hits.
-- Applying VRAM marks scans every line's pages: once per frame in the measured
-  workloads, but up to once per line for a game that changes VRAM between
-  lines.
+- Background fetches past the background part of VRAM read as zero, but lines that address them still record the sprite pages their tile numbers name.
+  This only costs kept lines.
+- Applying VRAM marks scans every line's pages.
+  That happens about once per frame in the measured workloads, but could be once per line for a game that changes VRAM between lines.
 - Any palette change invalidates every line, so fades keep nothing.
-- Check mode verifies only paths a workload reaches; each new mark needs a
-  unit test that reaches it.
+- Check mode only verifies paths a workload reaches, so each new mark needs a unit test that reaches it.

@@ -1,9 +1,9 @@
-//! Byte-exact headless CLI fixtures from ZiGBA's `build.zig` test-host step.
+//! Byte-exact headless CLI fixtures.
 
 use std::process::Command;
 
 #[test]
-fn zigba_build_cli_fixtures() {
+fn headless_cli_output_matches_fixtures() {
     let directory = std::env::temp_dir().join(format!(
         "evenfall-cli-fixtures-{}-{}",
         std::process::id(),

@@ -1,9 +1,11 @@
-//! ZiGBA version-6 envelope around a machine-owned payload and media identity.
+//! The save-state envelope around a machine-owned payload and media identity.
 use crate::{Codec, Digest, Error, Result, Sink, Source};
 use alloc::vec::Vec;
 
-pub const MAGIC: &[u8; 8] = b"ZIGBAST1";
-pub const VERSION: u32 = 6;
+pub const MAGIC: &[u8; 8] = b"EVENFALL";
+pub const VERSION: u32 = 7;
+/// Names the encoding rules at the start of every schema description.
+pub const CODEC_NAME: &str = "evenfall.state-codec.fixed-slots.v1";
 pub const MAX_PAYLOAD: u64 = 1024 * 1024;
 pub const HEADER_SIZE: usize = 133;
 
@@ -27,12 +29,16 @@ impl Binding {
     }
 }
 
-/// The machine supplies Cycle::schema, Cpu::schema, Bus::schema in order.
-pub fn schema_digest(schema: impl FnOnce(&mut Sink<'_>) -> Result<()>) -> Result<Digest> {
+/// The digest of the codec rules, the payload's name and the payload schema
+/// that `schema` writes.
+pub fn schema_digest(
+    payload: &str,
+    schema: impl FnOnce(&mut Sink<'_>) -> Result<()>,
+) -> Result<Digest> {
     let mut hash = blake3::Hasher::new();
     let mut sink = Sink::new(None, Some(&mut hash));
-    crate::schema_name(&mut sink, "zigba.state-codec.le-minimal.v1")?;
-    crate::schema_name(&mut sink, "zigba.machine.payload.v6")?;
+    crate::schema_name(&mut sink, CODEC_NAME)?;
+    crate::schema_name(&mut sink, payload)?;
     schema(&mut sink)?;
     Ok(*hash.finalize().as_bytes())
 }

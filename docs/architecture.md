@@ -1,137 +1,169 @@
 # Architecture
 
-Evenfall's core is a deterministic machine without host I/O. Hosts supply
-media and timestamped input and observe pixels, PCM, saves, inspection and
-portable state. This page describes the shared Rust seams and the GBA core;
-device behavior is ported from the pinned local ZiGBA checkout's
-`refs/zigba/docs/hardware/` reference.
+Evenfall is a family of console emulators in one Rust codebase, starting with the Game Boy Advance.
+Its central idea is that the emulated console is a pure function of its inputs.
+Given the same ROM, BIOS, settings and button presses at the same cycles, it produces the same pixels, audio samples, saves and save states, every time, on every host, however the host chooses to slice the work.
+
+Everything else follows from that.
+Save states and rewind are exact because nothing outside the machine affects it.
+A bug report can be a file that reproduces the bug ([`devtools.md`](devtools.md)).
+The browser build can be checked byte for byte against the native one.
+And every fast path can be tested against a simple reference, because both must give identical results.
+
+This page describes how the code is layered, how time flows through it, and where each piece lives.
+How each part of the GBA behaves is in [`gba/hardware/`](gba/hardware/README.md).
+
+## Layers
 
 ```text
-CLI · native parity · WebAssembly adapter
-                       │
-                GBA Session (host policy)
-                       │
-              GBA Machine ── evenfall-host::System
-                 │      │
-        GBA Cpu ─┘      └─ GBA Bus (memory and time)
-            │                  │
-      cpu-arm Core       video · APU · timers · DMA · IRQ
-                              serial · cartridge and save
+ hosts:  CLI (evenfall-gba) · WebAssembly module + JS SDK · test tools
+                               │
+                               ▼
+ Session       host policy: uploads, one frame per call, audio resampling,
+               rewind, rebuilding skipped frames
+                               │
+                               ▼
+ Machine       the console: boot, run, step, faults, save states
+ (implements evenfall-host::System)
+                 │                          │
+                 ▼                          ▼
+ Cpu            ARM7TDMI state,     Bus    master clock, memory map,
+ (cpu-arm Core, execution engine,          wait states, device scheduling
+  HLE BIOS)                                 │
+                                            ▼
+                               video · sound · timers · DMA · interrupts
+                               serial · cartridge and save chip
 ```
 
-## Shared crates and boundaries
+Each layer only talks to the one below it, and only the top one touches the outside world.
 
-[`evenfall-host`](../crates/host/src/lib.rs) defines `System`: a small
-system-neutral contract for master cycles, bounded runs, timestamped input,
-faults, completed BGR555 video, drained audio, battery save bytes, zero-cycle
-inspection and transactional portable state. A system's native `Input` type
-already carries its timestamp. CPU registers, cartridge sensors and link
-cables are deliberately outside this trait; callers that need them use the
-concrete GBA API. No cross-ISA CPU trait is required.
+- **The core has no I/O.**
+  `Machine` never reads a file, a clock or an audio device.
+  Hosts hand it ROM bytes and timestamped inputs, and read back pixels, samples, save bytes and states.
+  That is what makes it deterministic and lets the same core run natively and in a browser.
+- **`Session` holds host policy.**
+  It decides how much to run per call, resamples audio to the host's rate, keeps rewind history, and skips drawing frames during fast-forward.
+  None of that changes what the console does.
+- **Hosts own the rest.**
+  The CLI reads and writes files.
+  The browser's Worker paces play against the wall clock, and the page draws, plays sound and stores saves ([`design/web-runtime.md`](design/web-runtime.md)).
 
-[`evenfall-cpu-arm`](../crates/cpu-arm/src/lib.rs) implements the ARM7TDMI
-registers, pipeline and ARM/Thumb execution against a timed memory-access
-trait. [`evenfall-audio`](../crates/audio/src/lib.rs) owns stereo sample types
-and host-rate resampling. [`evenfall-state`](../crates/state/src/lib.rs) and
-[`evenfall-state-derive`](../crates/state-derive/src/lib.rs) provide the
-canonical codec, schema, envelope and rewind storage. The independent
-[`evenfall-replay`](../crates/replay/src/lib.rs) records timed scenarios and
-compares byte-exact observations without depending on an ISA.
+## Shared crates
 
-[`Machine`](../systems/gba/src/machine.rs) is the GBA hardware seam and
-implements `System`. It owns the CPU and Bus, chooses HLE, skip-BIOS or
-external-BIOS boot, runs one step or a bounded slice, latches typed faults,
-offers inspection and exposes state save/load. Construction allocates the
-large machine directly on the heap; Session and Bus share immutable ROM and
-BIOS handles, including during transactional scratch loads and resets.
-`run_linked_until` schedules connected machines together. No filesystem,
-audio device or wall clock belongs in `Machine`.
+The `crates/` directory holds code meant to serve more than one console.
+A crate is only extracted once there is real code to share, so there is no placeholder for future systems.
 
-[`Bus`](../systems/gba/src/bus/mod.rs) owns the master clock, memory map,
-wait states, prefetch, open bus, MMIO side effects and device scheduling. CPU
-and DMA accesses carry their width, sequential classification and source;
-the Bus brings devices to the access cycle and delivers events in order.
-The GBA [`Cpu`](../systems/gba/src/cpu/mod.rs) owns architectural and HLE
-continuation state, adapts `cpu-arm::Core` to Bus accesses and chooses between
-the ordinary runner and one-step execution. Within the ordinary runner, the
-[execution engine](../systems/gba/src/cpu/engine/mod.rs) runs code from RAM
-and Game Pak ROM out of pre-decoded op caches until the next device event,
-and the interpreter takes every instruction it refuses
-([research](research/execution-engine.md)). The
-[`HLE`](../systems/gba/src/hle/mod.rs) module supplies BIOS services and their
-timed continuations without making them part of the generic ARM core.
+- [`evenfall-host`](../crates/host/src/lib.rs) defines `System`, the contract every emulated console implements: the current cycle, bounded runs with timestamped input, the sticky fault, the latest frame, audio samples, battery save bytes, save states, and reading guest memory without side effects.
+  Things only one console has, such as CPU registers, cartridge sensors or link cables, stay out of it and are reached through that console's own API.
+- [`evenfall-cpu-arm`](../crates/cpu-arm/src/lib.rs) is the ARM7TDMI interpreter: registers, pipeline, and ARM and Thumb execution against a timed memory trait.
+  It knows nothing about the GBA, so the Nintendo DS's ARM7 could reuse it.
+  There is deliberately no CPU trait shared across instruction sets.
+- [`evenfall-state`](../crates/state/src/lib.rs) and [`evenfall-state-derive`](../crates/state-derive/src/lib.rs) are the save-state codec, its layout description, the file envelope and rewind storage ([`design/save-states.md`](design/save-states.md)).
+- [`evenfall-audio`](../crates/audio/src/lib.rs) holds the stereo sample type and the resampler.
+- [`evenfall-replay`](../crates/replay/src/lib.rs) records timed scenarios and compares exact observations, independent of any instruction set.
 
-[`Session`](../systems/gba/src/session.rs) is host policy around Machine. It
-owns uploaded ROM/BIOS buffers, validates configuration, limits a call to at
-most one frame, resamples PCM, manages rewind and reconstructs omitted video
-on demand. [`VideoRecovery`](../systems/gba/src/video_recovery.rs) journals
-bounded calls and replays them with full video on a raw copy of the machine
-taken at the last presented frame, publishing only exact pixels; the live
-CPU, audio and cycle do not change. Host mutations must pass through Session
-while selective video is active so they enter its journal.
+## The GBA core
 
-## Time and faults
+[`Machine`](../systems/gba/src/machine.rs) is the console.
+It owns the CPU and the bus, boots in HLE, skip-BIOS or real-BIOS mode, runs one instruction or a bounded slice, keeps a sticky fault, and saves and loads states.
+The machine is large, so construction allocates it directly on the heap.
+ROM and BIOS bytes are shared, immutable buffers, so the scratch machines used to check a state or reset don't copy them.
+`run_linked_until` runs several machines together for link-cable play ([`serial.md`](gba/hardware/serial.md#linking-consoles)).
 
-`Cycle` is a GBA master-clock count: 16,777,216 Hz, 280,896 cycles per
-frame. The Bus is its authority. CPU fetch, data and internal work consume
-timed bus cycles; device deadlines, DMA requests and input are delivered at
-their emulated cycles. Inputs due now apply before guest work; equal-cycle
-inputs retain their caller order. A run may overshoot `yield_at` to complete
-an atomic instruction and reports that boundary instead of hiding it.
-`input_deadline` keeps future inputs visible across a host's internal slices;
-`Slice::stop_at` preserves a caller's STOP wake horizon when Session splits at
-a rendered frame boundary. HALT advances eligible devices; STOP freezes
-CPU-clocked devices while external inputs and independent serial events may
-wake it. Slicing must not change guest results.
+[`Bus`](../systems/gba/src/bus/mod.rs) owns time.
+It holds the master clock, the memory map, wait states, the cartridge prefetch buffer and open bus, and it schedules every device.
+Every CPU and DMA access carries its width, whether it is sequential, and who made it.
+The bus brings devices up to the cycle of the access and delivers their events in order ([`memory.md`](gba/hardware/memory.md)).
 
-Invalid guest behavior is a typed, cycle- and instruction-stamped
-[`Fault`](../systems/gba/src/machine.rs). The fault is sticky: subsequent runs
-report it without advancing time, and a faulted machine cannot write a save
-state. A successful state load or fresh construction replaces the faulted
-execution. Faults diagnose an unsupported or undefined operation rather than
-guessing guest behavior.
+[`Cpu`](../systems/gba/src/cpu/mod.rs) connects the generic `cpu-arm` core to the bus and holds the state of BIOS routines in progress.
+Most code runs through the [execution engine](../systems/gba/src/cpu/engine/mod.rs), which runs pre-decoded instructions from RAM and cartridge ROM until the next device event.
+The interpreter runs everything the engine refuses, and is the reference it is tested against ([`performance.md`](performance.md#execution-engine)).
+The [HLE BIOS](../systems/gba/src/hle/mod.rs) implements the BIOS routines in Rust, outside the generic ARM core ([`bios.md`](gba/hardware/bios.md)).
 
-## State and host interfaces
+[`Session`](../systems/gba/src/session.rs) wraps `Machine` with host policy.
+It owns uploaded ROM and BIOS buffers, checks settings, runs at most one frame per call, resamples audio, keeps rewind history and rebuilds skipped frames on demand.
+[`VideoRecovery`](../systems/gba/src/video_recovery.rs) does the rebuilding: it replays the calls since the last drawn frame, with drawing on, in a copy of the machine taken at that frame, and returns only exact pixels.
+The live machine's CPU, audio and cycle don't change.
+While frames are being skipped, every change a host makes must go through `Session`, so it is part of what gets replayed.
 
-`Machine::write_state` and `write_state_alloc` produce ZiGBA's `ZIGBAST1`
-version 6 envelope, bound to the exact ROM, BIOS, boot mode and durable
-schema. `load_state` checks the envelope and hardware invariants in a
-heap-allocated scratch machine before swapping it into service; failed loads
-leave the old machine untouched. Hardware state includes the CPU, master
-cycle, memory, devices and pending work. Host input cursors, output audio,
-caches, resampler and rewind history are transient. See
-[`design/save-states.md`](design/save-states.md) and
-[`design/rewind.md`](design/rewind.md) for the formats. Cartridge battery
-saves are distinct from portable states; choosing and atomically persisting a
-save file belongs to [`host_save`](../systems/gba/src/host/host_save.rs).
+## How time flows
 
-[`evenfall-gba`](../systems/gba/src/bin/evenfall-gba.rs) is the headless native CLI
-([usage](cli.md)); [`session_probe`](../systems/gba/src/bin/session_probe.rs)
-is the native side of session parity. The
-[`tools/parity`](../tools/parity/README.md) oracle and scenario runner compare
-Rust observations against ZiGBA. The
-[`web/gba`](../web/gba/README.md) WebAssembly ABI and JS host adapter call
-Session rather than implementing hardware. Broader game compatibility remains
-open; the source map describes the code present now.
+`Cycle` counts ticks of the GBA's master clock: 16,777,216 per second, 280,896 per frame.
+The bus is the only authority on it.
+Every instruction fetch, data access and internal cycle the CPU performs costs bus cycles, and device events, DMA requests and inputs all happen at exact cycles.
 
-## Rust source map
+Here is what happens when a host asks for one frame:
 
-| Area                                                                                                                                                                                         | Responsibility                                             |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| [`crates/host`](../crates/host/src/lib.rs), [`crates/replay`](../crates/replay/src/lib.rs)                                                                                                   | Generic system contract and scenario observation           |
-| [`crates/cpu-arm`](../crates/cpu-arm/src/lib.rs), [`systems/gba/src/cpu`](../systems/gba/src/cpu/mod.rs)                                                                                     | ARM/Thumb ISA and GBA execution/HLE continuation seam      |
-| [`systems/gba/src/hle`](../systems/gba/src/hle/mod.rs)                                                                                                                                       | BIOS emulation and timed services                          |
-| [`systems/gba/src/machine.rs`](../systems/gba/src/machine.rs), [`systems/gba/src/bus`](../systems/gba/src/bus/mod.rs)                                                                        | Host-facing hardware control; timed memory and devices     |
-| [`systems/gba/src/video`](../systems/gba/src/video/mod.rs), [`systems/gba/src/apu.rs`](../systems/gba/src/apu.rs)                                                                            | LCD timing, raster histories, rendering and sound hardware |
-| [`systems/gba/src/timer.rs`](../systems/gba/src/timer.rs), [`systems/gba/src/dma.rs`](../systems/gba/src/dma.rs)                                                                             | Timers and DMA channel state                               |
-| [`systems/gba/src/cartridge`](../systems/gba/src/cartridge/mod.rs), [`systems/gba/src/multiboot.rs`](../systems/gba/src/multiboot.rs)                                                        | Save protocols, GPIO, RTC, sensors and MultiBoot           |
-| [`systems/gba/src/session.rs`](../systems/gba/src/session.rs), [`systems/gba/src/video_recovery.rs`](../systems/gba/src/video_recovery.rs)                                                   | Bounded host session, rewind and skipped-frame recovery    |
-| [`crates/state`](../crates/state/src/lib.rs), [`crates/state-derive`](../crates/state-derive/src/lib.rs)                                                                                     | Portable codec, envelope, schema and rewind                |
-| [`crates/audio`](../crates/audio/src/lib.rs), [`systems/gba/src/rom_image.rs`](../systems/gba/src/rom_image.rs), [`systems/gba/src/host/host_save.rs`](../systems/gba/src/host/host_save.rs) | Resampling, ROM import and native save-file policy         |
-| [`systems/gba/src/bin`](../systems/gba/src/bin/evenfall-gba.rs), [`tools/parity`](../tools/parity/README.md)                                                                                 | Native hosts and differential checks                       |
-| [`web/gba`](../web/gba/README.md)                                                                                                                                                            | GBA WebAssembly ABI, JS SDK and Worker host                |
+1. The host calls `Session::advance` (or `run_slice_with_input` with inputs), and the session calls `Machine::run_slice` for at most one frame.
+2. Inputs due now are applied before any guest code runs, and inputs at the same cycle keep the host's order.
+3. The bus opens a batch.
+   Devices don't advance on every access, only when something could observe them: an I/O access, a device event, or the end of the batch ([`performance.md`](performance.md#deferred-devices)).
+4. The CPU runs instructions, through the execution engine where it can.
+   Each run stops just before the next device event, so timers, DMA and the display see every access at its exact cycle.
+5. At cycle 960 of each visible line, the display draws the whole line, replaying any register changes made during it ([`video.md`](gba/hardware/video.md#raster-effects)).
+   Timer overflows feed sound samples, and DMA copies run inside the access they interrupt.
+6. If the CPU halts, the bus skips straight to the next event that could wake it.
+   STOP freezes everything clocked by the console, while inputs and link-cable transfers can still wake it.
+7. The run ends at the requested cycle, or at the first instruction boundary after it, since an instruction can't be split.
+   The result says exactly where it stopped, instead of hiding the overshoot.
+8. The host takes the frame and drains the audio samples.
 
-Unit tests live next to their modules. Ported integration suites exercise the
-Machine and Bus independently; parity scenarios compare whole-machine
-checkpoints against ZiGBA rather than deriving their expected bytes from Rust.
-The checking layers and commands are in [`testing.md`](testing.md).
+Two details keep slicing from changing results.
+A run has a separate yield point and input deadline, so a host can split one request into several calls without changing which inputs apply where.
+And when `Session` splits a run at a frame boundary, `Slice::stop_at` keeps the caller's STOP wake-up horizon.
+
+## Faults
+
+When a game does something the hardware doesn't define, such as an UNPREDICTABLE instruction or a DMA that never lets go of the bus, Evenfall doesn't guess.
+The machine stops with a typed [`Fault`](../systems/gba/src/machine.rs), stamped with the cycle and instruction.
+
+The fault is sticky.
+Later runs report it without advancing time, and a faulted machine can't write a save state.
+Loading a valid state or creating a new machine clears it.
+The host is never harmed: a fault is data, not a crash ([`cpu.md`](gba/hardware/cpu.md#undefined-versus-unpredictable)).
+
+## Saves and states
+
+`Machine::write_state` writes a `ZIGBAST1` version 6 state, bound to the exact ROM, BIOS, boot mode and state layout.
+`load_state` checks the file and the hardware state in a scratch machine, and only then swaps it in, so a failed load leaves the running game untouched.
+A state holds everything that affects what the console does next: the CPU, the master cycle, memory, devices and pending work.
+Input cursors, audio already produced, caches, the resampler and rewind history are left out.
+[`design/save-states.md`](design/save-states.md) and [`design/rewind.md`](design/rewind.md) describe the formats.
+
+The game's own battery save is separate from save states.
+Choosing the save file and writing it safely belongs to the native host, in [`host_save`](../systems/gba/src/host/host_save.rs).
+
+## Hosts
+
+- [`evenfall-gba`](../systems/gba/src/bin/evenfall-gba.rs) is the command-line runner ([`cli.md`](cli.md)).
+- [`web/gba`](../web/gba/README.md) is the WebAssembly module and the `@evenfall/gba` SDK ([`sdk.md`](sdk.md)).
+  They call `Session` and implement no hardware themselves.
+- [`session_probe`](../systems/gba/src/bin/session_probe.rs) is the native side of the test that compares the native and WebAssembly builds.
+
+## Where the code lives
+
+Shared crates:
+
+- [`crates/host`](../crates/host/src/lib.rs): the `System` contract.
+- [`crates/cpu-arm`](../crates/cpu-arm/src/lib.rs): the ARM7TDMI interpreter.
+- [`crates/state`](../crates/state/src/lib.rs), [`crates/state-derive`](../crates/state-derive/src/lib.rs): save-state codec, envelope, layout and rewind storage.
+- [`crates/audio`](../crates/audio/src/lib.rs): samples and resampling.
+- [`crates/replay`](../crates/replay/src/lib.rs): scenarios and observations.
+
+The GBA core, in `systems/gba/src/`:
+
+- [`machine.rs`](../systems/gba/src/machine.rs): the console, boot, runs, faults and states.
+- [`bus/`](../systems/gba/src/bus/mod.rs): the clock, memory map and device scheduling.
+- [`cpu/`](../systems/gba/src/cpu/mod.rs): the GBA side of the CPU and the execution engine.
+- [`hle/`](../systems/gba/src/hle/mod.rs): the replacement BIOS.
+- [`video/`](../systems/gba/src/video/mod.rs): display timing, raster histories and drawing.
+- [`apu.rs`](../systems/gba/src/apu.rs): the sound chip.
+- [`timer.rs`](../systems/gba/src/timer.rs), [`dma.rs`](../systems/gba/src/dma.rs): timers and DMA channels.
+- [`cartridge/`](../systems/gba/src/cartridge/mod.rs), [`multiboot.rs`](../systems/gba/src/multiboot.rs): save chips, the GPIO port, clock and sensors, and MultiBoot.
+- [`session.rs`](../systems/gba/src/session.rs), [`video_recovery.rs`](../systems/gba/src/video_recovery.rs): host policy, rewind and rebuilding skipped frames.
+- [`rom_image.rs`](../systems/gba/src/rom_image.rs), [`host/host_save.rs`](../systems/gba/src/host/host_save.rs): ROM import, the title database and native save files.
+- [`bin/`](../systems/gba/src/bin/evenfall-gba.rs): the native programs.
+
+The browser side is in [`web/gba`](../web/gba/README.md).
+Unit tests sit next to their modules, and integration tests in `systems/gba/tests/` drive the machine and the bus from outside.
+[`testing.md`](testing.md) describes how everything is checked.

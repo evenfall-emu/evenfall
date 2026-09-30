@@ -13,7 +13,7 @@ for (const name of ["evenfall-gba.wasm", "evenfall-gba-scalar.wasm"]) {
   if (Buffer.from(wasm).includes(".debug_info"))
     fail(`${name} carries DWARF; rebuild a stripped WASM binary`);
   const { instance } = await WebAssembly.instantiate(wasm, {});
-  if (instance.exports.zb_version() !== 1)
+  if (instance.exports.ef_version() !== 1)
     fail(`${name} ABI does not match core.js`);
   console.log(`@evenfall/gba: ${name} ${wasm.length} bytes, ABI 1`);
 }

@@ -4,7 +4,7 @@
  * (8,8) with left half palette 1 (red) and right half palette 2 (green) at
  * priority 0, and OBJ1 at (12,8) solid palette 3 (blue) at priority 1.
  * After two frames the validator checks the analytic framebuffer (see
- * test/probe_cases.zig): backdrop black elsewhere, red/green for
+ * validator/probe_cases.rs): backdrop black elsewhere, red/green for
  * x=8..15 with OBJ0 winning the x=12..15 overlap on priority, blue for
  * x=16..19, rows 8..15. Exercises OAM upload, tile fetch, per-pixel
  * priority, and palette-0 transparency end to end.

@@ -1,5 +1,5 @@
-//! ZiGBA's headless CLI, with file policy separated from the machine, and
-//! Evenfall's GDB remote debugging mode.
+//! The headless CLI, with file policy separated from the machine, and its
+//! GDB remote debugging mode.
 
 use evenfall_gba::bus::{KeyState, TimedInput, TimedInputChange};
 use evenfall_gba::cpu::InstructionSet;
@@ -46,7 +46,7 @@ fn keys_from_bits(bits: u16) -> KeyState {
     }
 }
 
-/// Zig 0.16's Wyhash final v4.1, seed zero. The `wyhash` crate's top-level
+/// Wyhash final v4.1, seed zero. The `wyhash` crate's top-level
 /// function implements a different generation and changes `--frame-hash`.
 fn frame_wyhash(input: &[u8]) -> u64 {
     const SECRET: [u64; 4] = [
@@ -346,7 +346,7 @@ impl Execution {
     }
 }
 
-/// ZiGBA's `run`: a fixed instruction count, ending early when the CPU
+/// `run`: a fixed instruction count, ending early when the CPU
 /// sleeps with nothing left to wake it.
 fn run_steps(
     execution: &mut Execution,
@@ -568,10 +568,11 @@ impl Connection {
 mod tests {
     use super::frame_wyhash;
 
-    /// Independent results from Zig 0.16 std.hash.Wyhash.hash(0, bytes),
-    /// including either side of both the 16- and 48-byte block boundaries.
+    /// Reference results for Wyhash final v4.1 with seed zero, computed with
+    /// Zig 0.16's `std.hash.Wyhash`, including either side of both the 16-
+    /// and 48-byte block boundaries.
     #[test]
-    fn frame_hash_matches_zig_wyhash_vectors() {
+    fn frame_hash_matches_reference_wyhash_vectors() {
         assert_eq!(frame_wyhash(&[0, 1, 3, 8, 21, 55]), 0x85a2_09c1_31ba_b780);
         let pixels: Vec<u8> = (0..240 * 160 * 2).map(|i| (i * 37 + 11) as u8).collect();
         for (length, expected) in [

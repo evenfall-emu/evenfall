@@ -235,7 +235,7 @@ impl ArmAluHandler {
     }
 }
 
-/// The flat prefix of ZiGBA's `Cpu` state, through `spsr_undefined`.
+/// The flat prefix of the GBA `Cpu` state, through `spsr_undefined`.
 /// The GBA wrapper flattens this into the same durable field order.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Codec)]
 pub struct Core {
@@ -1345,8 +1345,8 @@ mod tests {
         }
     }
 
-    /// ZiGBA `executeThumbMultipleTransfer`: admitted RAM blocks match every
-    /// scalar beat, including a listed base register and a trailing load I cycle.
+    /// Admitted Thumb multiple-transfer RAM blocks match every scalar beat,
+    /// including a listed base register and a trailing load I cycle.
     #[test]
     fn thumb_ram_blocks_match_per_beat_reference() {
         for (instruction, base_register) in [(0xc10b, 1), (0xca25, 2)] {
@@ -1370,7 +1370,7 @@ mod tests {
         }
     }
 
-    /// ZiGBA `switchBankedMode`: FIQ has private r8–r14 while System and User share their bank.
+    /// FIQ has private r8–r14 while System and User share their bank.
     #[test]
     fn switch_banked_mode() {
         let mut cpu = Core::new(0x0800_0000, 0x1F);
@@ -1385,7 +1385,7 @@ mod tests {
         assert_eq!(&cpu.registers[8..15], &[18, 19, 20, 21, 22, 23, 24]);
     }
 
-    /// ZiGBA `decodeOperand2`: register LSR #32 carries bit 31; LSR #0 by register does not shift.
+    /// Register LSR #32 carries bit 31; LSR #0 by register does not shift.
     #[test]
     fn register_shift_boundary() {
         let shifted = Core::decode_register_shift(0x8000_0003, 1, 32);
@@ -1394,7 +1394,7 @@ mod tests {
         assert_eq!(unshifted, ShifterResult { value: 0x8000_0003, carry: None });
     }
 
-    /// ZiGBA `executeArm`: SUBS pc, lr, #4 restores T and its target's bit 1.
+    /// SUBS pc, lr, #4 restores T and its target's bit 1.
     #[test]
     fn data_processing_exception_return_to_thumb() {
         let mut cpu = Core::new(0x0800_0100, 0x92);
@@ -1408,7 +1408,7 @@ mod tests {
         assert!(bus.reads.is_empty());
     }
 
-    /// ZiGBA `executeSingleDataTransfer`: STR pc stores address +12, not the visible address +8.
+    /// STR pc stores address +12, not the visible address +8.
     #[test]
     fn str_pc_and_unaligned_ldr_pc() {
         let mut cpu = Core::new(0x0800_0040, 0x1f);
@@ -1426,7 +1426,7 @@ mod tests {
         assert_eq!(bus.internal, 1);
     }
 
-    /// ZiGBA `executeSingleDataTransfer` / jsmolka-arm test 353: the I bit of
+    /// jsmolka-arm test 353: the I bit of
     /// a transfer selects a shifted register, not a rotated immediate.
     #[test]
     fn register_offset_transfer_indexes_and_writes_back() {
@@ -1445,7 +1445,7 @@ mod tests {
         assert_eq!(bus.internal, 1);
     }
 
-    /// ZiGBA `executeSingleDataTransfer`: bit 25 selects a register offset, not a rotated immediate.
+    /// Bit 25 selects a register offset, not a rotated immediate.
     #[test]
     fn arm_str_register_offset_uses_shifted_register_value() {
         let mut cpu = Core::new(0x0800_0040, 0x1f);
@@ -1495,7 +1495,7 @@ mod tests {
         }
     }
 
-    /// ZiGBA `executeBlockDataTransfer`: empty STM transfers one aligned PC beat and steps by 64.
+    /// Empty STM transfers one aligned PC beat and steps by 64.
     #[test]
     fn empty_stm_preserves_low_base_bits() {
         let mut cpu = Core::new(0x0800_0020, 0x1f);
@@ -1509,7 +1509,7 @@ mod tests {
         assert_eq!(cpu.registers[2], 0x0300_0043);
     }
 
-    /// ZiGBA `executeMultiplyRegisters`: timing captures Rs before an aliased destination changes it.
+    /// Timing captures Rs before an aliased destination changes it.
     #[test]
     fn multiply_destination_alias_keeps_original_timing() {
         let mut cpu = Core::new(0, 0x1f);
@@ -1521,7 +1521,7 @@ mod tests {
         assert_eq!(bus.internal, 4);
     }
 
-    /// ZiGBA `executeThumb`: BX selects ARM only for an even target, without rounding a Thumb return to a word.
+    /// BX selects ARM only for an even target, without rounding a Thumb return to a word.
     #[test]
     fn thumb_bx_interworks_but_pop_pc_does_not() {
         let mut cpu = Core::new(0x0800_0002, 0x3f);
@@ -1541,7 +1541,7 @@ mod tests {
         assert_eq!(bus.internal, 1);
     }
 
-    /// ZiGBA `executeThumb`: an empty PUSH sends one aligned PC+6 beat and moves SP by 64.
+    /// An empty PUSH sends one aligned PC+6 beat and moves SP by 64.
     #[test]
     fn thumb_empty_push_preserves_stack_low_bits() {
         let mut cpu = Core::new(0x0800_0042, 0x3f);

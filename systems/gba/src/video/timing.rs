@@ -167,7 +167,6 @@ impl PpuTiming {
 mod tests {
     use super::*;
 
-    /// Zig: an advance ending on a boundary still emits every event
     #[test]
     fn an_advance_ending_on_a_boundary_still_emits_every_event() {
         let mut timing = PpuTiming {
@@ -189,7 +188,6 @@ mod tests {
         assert_eq!(events.frames_completed, 0);
     }
 
-    /// Zig: one large advance preserves frame wrapping and later boundaries
     #[test]
     fn one_large_advance_preserves_frame_wrapping_and_later_boundaries() {
         let mut timing =
@@ -204,7 +202,7 @@ mod tests {
         assert!(events.vcount_irq);
     }
 
-    // Independent per-boundary oracle from ZiGBA's stepToRawBoundaryForTest.
+    // Independent per-boundary oracle for the event-skipping paths.
     fn step_to_raw_boundary_for_test(timing: &mut PpuTiming) -> (Cycle, bool) {
         let hblank = timing.cycle_in_line < 960;
         let cycles = Cycle::from(if hblank { 960 } else { 1232 } - timing.cycle_in_line);
@@ -223,7 +221,6 @@ mod tests {
         (cycles, timing.line == 0 || timing.line == 160 || vcount)
     }
 
-    /// Zig: silent boundaries end exactly at the next boundary that delivers an event
     #[test]
     fn silent_boundaries_end_exactly_at_the_next_boundary_that_delivers_an_event() {
         for hblank_irq in [0, 1 << 4] {

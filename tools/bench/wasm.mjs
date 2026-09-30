@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // WebAssembly counterpart of run.mjs: times modules that export the
-// @evenfall/gba ABI (Evenfall's and ZiGBA's) on the benchmark ROMs in Node.
+// @evenfall/gba ABI on the benchmark ROMs in Node.
 // Each observation is a fresh Node process pinned to one CPU; module order
 // rotates per round and workload. Ratios are geometric means of matched-round
 // loop-time ratios against the first module. The final framebuffer hash uses
@@ -29,28 +29,28 @@ function observe(modulePath, romPath, frames, warm) {
     if (result < 0) {
       const text = new Uint8Array(
         w.memory.buffer,
-        w.zb_error_ptr(),
-        w.zb_error_len(),
+        w.ef_error_ptr(),
+        w.ef_error_len(),
       );
       throw new Error(new TextDecoder().decode(text));
     }
     return result;
   };
   const rom = readFileSync(romPath);
-  check(w.zb_prepare(rom.length));
-  new Uint8Array(w.memory.buffer, w.zb_input_ptr(), rom.length).set(rom);
-  check(w.zb_load(rom.length, 0, 0, 0, 1, 0, 0n, 48000));
-  check(w.zb_audio_output(0));
-  const start = w.zb_cycle();
+  check(w.ef_prepare(rom.length));
+  new Uint8Array(w.memory.buffer, w.ef_input_ptr(), rom.length).set(rom);
+  check(w.ef_load(rom.length, 0, 0, 0, 1, 0, 0n, 48000));
+  check(w.ef_audio_output(0));
+  const start = w.ef_cycle();
   const run = (frame) => {
     const deadline = start + BigInt(frame + 1) * FRAME_CYCLES;
-    check(w.zb_run_until(deadline, 0, deadline));
+    check(w.ef_run_until(deadline, 0, deadline));
   };
   for (let frame = 0; frame < warm; frame++) run(frame);
   const began = performance.now();
   for (let frame = warm; frame < frames; frame++) run(frame);
   const seconds = (performance.now() - began) / 1000;
-  const pixels = new Uint16Array(w.memory.buffer, w.zb_frame_ptr(), 240 * 160);
+  const pixels = new Uint16Array(w.memory.buffer, w.ef_frame_ptr(), 240 * 160);
   let hash = 0xcbf29ce484222325n;
   for (const pixel of pixels) {
     for (const byte of [pixel & 0xff, (pixel >> 8) & 0x7f]) {
