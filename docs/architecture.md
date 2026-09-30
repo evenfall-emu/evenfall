@@ -124,7 +124,7 @@ The host is never harmed: a fault is data, not a crash ([`cpu.md`](gba/hardware/
 
 ## Saves and states
 
-`Machine::write_state` writes a `ZIGBAST1` version 6 state, bound to the exact ROM, BIOS, boot mode and state layout.
+`Machine::write_state` writes a version 7 state, bound to the exact ROM, BIOS, boot mode and state layout.
 `load_state` checks the file and the hardware state in a scratch machine, and only then swaps it in, so a failed load leaves the running game untouched.
 A state holds everything that affects what the console does next: the CPU, the master cycle, memory, devices and pending work.
 Input cursors, audio already produced, caches, the resampler and rewind history are left out.

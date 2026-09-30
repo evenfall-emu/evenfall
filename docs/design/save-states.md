@@ -9,8 +9,8 @@ A battery save works in any emulator and survives Evenfall updates.
 A save state is tied to the exact ROM and BIOS it was made with, and to this version of the state format.
 It is for picking up where you left off, not for long-term storage.
 
-The format is `ZIGBAST1` version 6.
-Its name comes from Evenfall's predecessor, and states saved there load here too.
+The format is Evenfall's own, magic `EVENFALL`, version 7.
+Its payload has a fixed layout: every field sits at the same offset in every state, and a state's length depends only on the save type.
 
 ## How it works
 
@@ -36,7 +36,7 @@ It provides the `Codec` trait, a `Sink` that counts, hashes and optionally recor
 
 Every state has these properties:
 
-- **The same everywhere.** The encoding has no pointers, padding or unused union storage, and integer widths and byte order don't depend on the host.
+- **The same everywhere.** The encoding has no pointers, and integer widths and byte order don't depend on the host.
   A state written by the native build loads in the browser and the other way round.
 - **Exact.** Everything the CPU and devices were in the middle of, including pending work, survives a round trip.
 - **All or nothing.** A load checks the file and the hardware state in a scratch machine before replacing the running one.
@@ -50,8 +50,8 @@ All integers are little-endian.
 
 |  Offset | Size | Field                                      |
 | ------: | ---: | ------------------------------------------ |
-|       0 |    8 | magic `ZIGBAST1`                           |
-|       8 |    4 | version `u32` (6)                          |
+|       0 |    8 | magic `EVENFALL`                           |
+|       8 |    4 | version `u32` (7)                          |
 |      12 |   32 | BLAKE3 digest of the layout description    |
 |      44 |    8 | payload length `u64`, at most 1 MiB        |
 |      52 |    1 | boot mode: 0 HLE, 1 skip-BIOS, 2 real BIOS |
@@ -63,9 +63,21 @@ All integers are little-endian.
 | 133 + n |   32 | payload BLAKE3 digest                      |
 
 Nothing may follow the final digest.
-The payload is the master cycle (`u64`), then the CPU, then the bus, each field in the format's declaration order.
-The bus includes memory, I/O registers, video histories, timers, DMA, the serial port, the cartridge and the sound chip.
+The payload is the master cycle (`u64`), then the CPU, then the bus, each field in declaration order.
+The bus includes memory, I/O registers, video histories, timers, DMA, the serial port, the cartridge and the sound chip, and ends with the save chip's contents.
 The ROM and BIOS themselves aren't stored, only their digests.
+
+### Why a fixed layout
+
+Every field has a fixed offset, so tools can find anything in a state without decoding it: a hex editor, a diff between two states, or a test that reads one field.
+For example, the framebuffer always starts at payload offset 395913.
+[`state-layout.txt`](../../systems/gba/tests/fixtures/state-layout.txt) lists the offset and length of every field, and the payload length for each save type (478,761 bytes with no save chip, 609,847 with 128 KiB Flash).
+
+Two rules make the layout fixed:
+
+- **Fixed slots.** An optional value or a union takes a slot as large as its largest variant: a presence or tag byte, then the value, zero-filled to the end of the slot.
+  Decoding rejects a slot whose padding isn't zero, so every state has exactly one encoding.
+- **Variable length last.** The save chip's contents are the only field whose length depends on its value, so they come last, and nothing after them moves.
 
 ## How the payload is encoded
 
@@ -76,32 +88,35 @@ The ROM and BIOS themselves aren't stored, only their digests.
 | `bool`           | one byte, 0 or 1                                                            |
 | float            | raw IEEE bit pattern                                                        |
 | enum             | integer tag, unknown tags rejected                                          |
-| optional         | presence `bool`, then the value if present                                  |
+| optional         | presence byte, then the value in a zero-filled slot                         |
 | array            | elements in order, byte arrays verbatim                                     |
-| struct           | fields in declaration order, no padding                                     |
-| tagged union     | tag, then only the active variant                                           |
+| struct           | fields in declaration order                                                 |
+| tagged union     | tag byte, then the active variant in a slot as large as the largest one     |
 
 Nobody writes an encoder by hand.
 `#[derive(Codec)]` generates both the encoding and a description of the layout from each Rust type, with a few attributes:
 
-- `#[codec(bits = N)]` stores a field that is narrower than its Rust type, such as a 4-bit volume in a `u8`.
+- `#[codec(bits = N)]` stores a field that is narrower than its Rust type, such as a 4-bit volume in a `u8`, and `#[codec(tag_bits = N)]` does the same for an enum's tag.
 - `#[codec(skip)]` leaves out a field that isn't hardware state, such as a cache.
   Decoding writes into existing storage, so skipped fields keep their values.
 - `#[codec(flatten)]` lays a nested struct's fields out as if they belonged to the parent, which keeps the CPU's layout flat.
+- `#[codec(last)]` marks the one field whose length varies, the save chip, so it goes at the end.
+- `#[codec(rename)]` keeps a field's name in the format stable when the Rust name changes.
 
-Field renames and custom encoders keep the format's field names stable and give unused array slots a fixed value.
+A type stored in a fixed slot must have a fixed length (`Codec::ENCODED_LEN`), and the build fails otherwise.
 
 ### The layout digest
 
 Because the encoding follows the types, a change to any hardware struct changes the format.
 The layout description catches that.
-It lists the codec and payload identities, then every stored field of the CPU and bus with its name, type, width, array length and enum variants, and its BLAKE3 digest goes in the header.
-
-The description Evenfall produces must equal the version 6 [fixture](../../tools/parity/fixtures/schema-v6.bin) byte for byte, not just hash to a plausible value, so an accidental layout change fails a test.
+It names the encoding rules, then lists every stored field of the machine (`evenfall.gba.machine`, `cpu`, `bus`, `apu`) with its name, type, width, array length and enum variants, and its BLAKE3 digest goes in the header.
+Adding, removing, reordering, renaming or retyping a stored field changes the digest.
 A state whose digest doesn't match is rejected with `SaveStateSchemaMismatch`.
 
-A matching layout doesn't prove the values are right.
-A test also pins the exact bytes of a whole state produced by a fixed sequence, against a stored fixture.
+[`state-layout.txt`](../../systems/gba/tests/fixtures/state-layout.txt) records the version, the digest and every field's offset and length, and a test fails when the code no longer produces it.
+Changing the layout is a new format: bump `Machine::STATE_VERSION` and the rewind bundle version, since bundles contain states, then regenerate the fixture with `UPDATE_STATE_LAYOUT=1 cargo test -p evenfall-gba --lib state_layout`.
+The regeneration refuses a new digest under the old version number.
+States of other versions stop loading.
 
 ## Writing a state
 
@@ -153,7 +168,7 @@ These are reset, recomputed, or kept as host settings.
 |                          | Battery save                  | Save state                            | Rewind bundle                        |
 | ------------------------ | ----------------------------- | ------------------------------------- | ------------------------------------ |
 | Contains                 | the save chip only            | the whole machine, save chip included | the live state, history and settings |
-| Bound to                 | the save type and size        | ROM, BIOS, boot mode and format v6    | the same media, through its states   |
+| Bound to                 | the save type and size        | ROM, BIOS, boot mode and format v7    | the same media, through its states   |
 | Survives a format change | yes                           | no                                    | no                                   |
 | Real-time clock          | not included                  | included                              | included                             |
 | Owned by                 | `Machine::save_data`, session | `Machine`, `Session`                  | `Session`, `RewindBuffer`            |
@@ -172,10 +187,10 @@ Tracing is only a diagnostic and doesn't change the format.
 
 ## How it is checked
 
-- [`tests/machine_b.rs`](../../systems/gba/tests/machine_b.rs) pins the exact bytes of a version 6 state, checks that a round trip resumes bit-identical execution, and covers the envelope's digest and framing, media binding, rejected states with the running machine untouched, timer and display invariants, and host audio not being saved.
-- `schema_matches_zigba_version_six` compares `Machine::schema_description` with the layout fixture byte for byte.
-- [`crates/state/tests/codec.rs`](../../crates/state/tests/codec.rs) locks the encoding of every type, the derive attributes, the layout description, the envelope, the order of checks and tracing.
-- `buffered_snapshots_match_streamed_state_bytes_for_owned_media` in [`session.rs`](../../systems/gba/src/session.rs) checks that the two writers produce the same bytes.
+- `state_layout_matches_the_fixture` in [`machine.rs`](../../systems/gba/src/machine.rs) compares the version, digest and every field's offset and length with [`state-layout.txt`](../../systems/gba/tests/fixtures/state-layout.txt).
+- [`tests/machine_b.rs`](../../systems/gba/tests/machine_b.rs) checks that a round trip resumes bit-identical execution, and covers the envelope's digest and framing, media binding, rejected states with the running machine untouched, timer and display invariants, and host audio not being saved.
+- [`crates/state/tests/codec.rs`](../../crates/state/tests/codec.rs) locks the encoding of every type, fixed slots and their zero padding, the derive attributes, the layout description, the envelope, the order of checks and tracing.
+- `buffered_snapshots_match_streamed_state_bytes_for_owned_and_shared_media` in [`session.rs`](../../systems/gba/src/session.rs) checks that the two writers produce the same bytes.
 
 ## Known limits
 
