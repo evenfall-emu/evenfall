@@ -6,7 +6,7 @@ use evenfall_gba::host::host_save;
 use evenfall_gba::machine::{BootMode, Config, Machine, StepOutcome};
 use std::io::{self, Write};
 
-const USAGE: &str = "usage: evenfall-gba run --steps <count> [--bios <path>] [--save-type <type>] [--save-file <path>] [--state-in <path>] [--state-out <path>] [--trace <path>] [--trace-from <steps>] [--input <movie>] [--quiet] [--frame-hash] [--no-rtc | --rtc-epoch <seconds>] [--no-solar | --solar-level <0..255>] [--no-gyro | --gyro-sample <0..4095>] [--rumble | --no-rumble] [--no-tilt | --tilt <x> <y>] <rom.gba|rom.zip>\n";
+const USAGE: &str = "usage: evenfall-gba run --steps <count> [--bios <path>] [--save-type <type>] [--save-file <path>] [--state-in <path>] [--state-out <path>] [--trace <path>] [--trace-from <steps>] [--input <movie>] [--cheat <[format:]code>]... [--cheats <file>] [--quiet] [--frame-hash] [--no-rtc | --rtc-epoch <seconds>] [--no-solar | --solar-level <0..255>] [--no-gyro | --gyro-sample <0..4095>] [--rumble | --no-rumble] [--no-tilt | --tilt <x> <y>] <rom.gba|rom.zip>\n";
 
 fn main() {
     let stdout = io::stdout();
@@ -173,6 +173,21 @@ fn run(args: &[String], stdout: &mut impl Write) -> Result<(), Box<dyn std::erro
             writeln!(stdout, "state load failed: {error:?}")?;
             return Ok(());
         }
+    }
+    if !options.cheats.is_empty() || options.cheat_file.is_some() {
+        let mut cheats = Vec::new();
+        if let Some(path) = options.cheat_file {
+            let text = std::fs::read_to_string(path)?;
+            cheats = host_save::parse_cheat_file(&text)
+                .map_err(|(number, error)| format!("cheat {number} in {path}: {error}"))?;
+        }
+        for spec in &options.cheats {
+            cheats.push(
+                host_save::parse_cheat_spec(spec)
+                    .map_err(|error| format!("cheat {spec:?}: {error}"))?,
+            );
+        }
+        machine.set_cheats(cheats).map_err(|error| format!("cheats: {error}"))?;
     }
     let mut trace = match options.trace_path {
         Some(path) => Some(io::BufWriter::new(std::fs::File::create(path)?)),
