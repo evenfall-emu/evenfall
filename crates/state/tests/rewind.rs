@@ -1,34 +1,7 @@
 use evenfall_state::{
-    Codec, Error,
-    envelope::{self, Binding},
+    Error,
     rewind::{self, Compression, RewindBuffer, RewindConfig},
 };
-
-/// "word-run diff round-trips length changes and rejects malformed deltas"
-#[test]
-fn word_run_diff_round_trips_length_changes_and_rejects_malformed_deltas() {
-    let base = b"0123456789abcdefghij";
-    for target in [
-        &b"0123456789abcdefghij"[..],
-        &b"0123X56789abcdeZZhij"[..],
-        b"0123",
-        b"0123456789abcdefghij-longer!",
-        b"",
-    ] {
-        let delta = rewind::diff(base, target);
-        assert_eq!(rewind::patch(base, &delta, target.len()).unwrap(), target);
-    }
-    let delta = rewind::diff(base, b"0123X56789abcdeZZhij");
-    // ZiGBA rewind.zig's independent output: one skipped and four copied words.
-    assert_eq!(
-        delta,
-        [2, 1, 4, 88, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 90, 90, 104, 105, 106]
-    );
-    assert_eq!(rewind::patch(base, &delta[..delta.len() - 1], 20), Err(Error::InvalidSaveState));
-    assert_eq!(rewind::patch(base, &delta, 8), Err(Error::InvalidSaveState));
-    assert_eq!(rewind::patch(base, &[2, 0x7f, 0x7f], 20), Err(Error::InvalidSaveState));
-    assert_eq!(rewind::patch(base, &[0xff], 20), Err(Error::InvalidSaveState));
-}
 
 #[test]
 fn copy_diff_round_trips_shifted_moved_and_resized_targets_and_rejects_malformed_deltas() {
@@ -64,7 +37,6 @@ fn copy_diff_round_trips_shifted_moved_and_resized_targets_and_rejects_malformed
     assert_eq!(rewind::copy_patch(&base, &[0xff], 0), Err(Error::InvalidSaveState));
 }
 
-/// "persisted inflater accepts independent stored fixed and dynamic vectors and rejects bad framing"
 #[test]
 fn persisted_inflater_accepts_independent_stored_fixed_and_dynamic_vectors() {
     let cases: &[(&str, Vec<u8>)] = &[
@@ -100,7 +72,6 @@ fn persisted_inflater_accepts_independent_stored_fixed_and_dynamic_vectors() {
     }
 }
 
-/// "deflate framing rejects over-long and truncated payloads without large allocs"
 #[test]
 fn deflate_framing_rejects_overlong_and_truncated_payloads() {
     assert_eq!(
@@ -118,11 +89,8 @@ fn deflate_framing_rejects_overlong_and_truncated_payloads() {
     for end in 8..stored.len() {
         assert_eq!(rewind::inflate(&stored[..end]), Err(Error::InvalidSaveState));
     }
-    let delta = rewind::encode_delta(b"hello", b"world!");
-    assert_eq!(rewind::decode_delta(b"hello", &delta).unwrap(), b"world!");
 }
 
-/// "age exponent selects exact historical states with oldest-first ties"
 #[test]
 fn age_exponent_selects_exact_historical_states_with_oldest_first_ties() {
     for (exponent, expected) in [
@@ -150,7 +118,6 @@ fn age_exponent_selects_exact_historical_states_with_oldest_first_ties() {
     }
 }
 
-/// "square-root age weighting still prefers freeing expensive entries"
 #[test]
 fn square_root_age_weighting_prefers_freeing_expensive_entries() {
     let mut buffer = RewindBuffer::new(RewindConfig {
@@ -169,7 +136,6 @@ fn square_root_age_weighting_prefers_freeing_expensive_entries() {
     );
 }
 
-/// "capture cadence ticks once per interval, scales with speed, and resets on clear"
 #[test]
 fn capture_cadence_scales_with_speed_and_resets() {
     let mut buffer = RewindBuffer::new(RewindConfig {
@@ -217,96 +183,35 @@ fn bundle_round_trip_and_corrupt_history_rejection() {
             RewindBuffer::read_bundle(&corrupt, validate).err(),
             Some(Error::InvalidRewindBundle)
         );
-        // Copy deltas need version 2; other bundles stay ZiGBA's version 1.
-        let version = u32::from_le_bytes(serialized[8..12].try_into().unwrap());
-        assert_eq!(version, if compression == Compression::Delta { 2 } else { 1 });
-        if compression == Compression::Delta {
+        assert_eq!(&serialized[..8], b"EFREWIND");
+        assert_eq!(serialized[8..12], 3u32.to_le_bytes());
+        // Earlier versions embedded states that no longer load.
+        for version in [2u32, 4] {
             corrupt = serialized.clone();
-            corrupt[8..12].copy_from_slice(&1u32.to_le_bytes());
+            corrupt[8..12].copy_from_slice(&version.to_le_bytes());
             let len = corrupt.len() - 32;
             let digest = blake3::hash(&corrupt[..len]);
             corrupt[len..].copy_from_slice(digest.as_bytes());
             assert_eq!(
                 RewindBuffer::read_bundle(&corrupt, validate).err(),
-                Some(Error::InvalidRewindBundle)
+                Some(Error::UnsupportedRewindBundleVersion)
             );
         }
-        corrupt = serialized.clone();
-        corrupt[8..12].copy_from_slice(&3u32.to_le_bytes());
-        let len = corrupt.len() - 32;
-        let digest = blake3::hash(&corrupt[..len]);
-        corrupt[len..].copy_from_slice(digest.as_bytes());
-        assert_eq!(
-            RewindBuffer::read_bundle(&corrupt, validate).err(),
-            Some(Error::UnsupportedRewindBundleVersion)
-        );
     }
 }
 
 #[test]
-fn zig_frame_inflates_and_rust_frames_preserve_length_and_content() {
-    // Produced by Zig 0.16 against rewind.zig `deflate(.level_1)`.
-    let zig_frame = [
+fn independent_frame_inflates_and_rust_frames_preserve_length_and_content() {
+    // A level-1 frame from an independent encoder, Zig 0.16's `std.compress.flate`.
+    let independent_frame = [
         220, 0, 0, 0, 0, 0, 0, 0, 115, 116, 10, 114, 116, 118, 116, 1, 81, 138, 6, 134, 70, 198,
         38, 166, 102, 230, 22, 150, 32, 238, 208, 23, 5, 0,
     ];
     let raw = b"ABRACADABRA!0123456789".repeat(10);
-    assert_eq!(rewind::inflate(&zig_frame).unwrap(), raw);
+    assert_eq!(rewind::inflate(&independent_frame).unwrap(), raw);
     for level in [1, 6] {
         let rust_frame = rewind::deflate(&raw, level);
         assert_eq!(&rust_frame[..8], &(raw.len() as u64).to_le_bytes());
         assert_eq!(rewind::inflate(&rust_frame).unwrap(), raw);
     }
-}
-
-fn digest(hex: &str) -> [u8; 32] {
-    let mut result = [0; 32];
-    for (chunk, byte) in hex.as_bytes().as_chunks::<2>().0.iter().zip(&mut result) {
-        *byte = u8::from_str_radix(core::str::from_utf8(chunk).unwrap(), 16).unwrap();
-    }
-    result
-}
-
-#[test]
-fn zigba_bundle_imports_and_reexports_original_compressed_entries() {
-    // Generated by fixtures/generate-zigba-rewind-bundle.zig with ZiGBA's
-    // Session and a synthetic four-byte ROM. It contains three delta entries.
-    let fixture = include_bytes!("fixtures/zigba-rewind-bundle.bin");
-    let schema = digest("295f36e1576cb4de3009a41143428e8c02a334e046cbb7e13d04c507a8fcb0bd");
-    let binding = Binding::from_media(0, &[0xfe, 0xff, 0xff, 0xea], &[]);
-    let validate = |bytes: &[u8]| {
-        let mut cycle = 0u64;
-        envelope::read(bytes, binding, schema, |payload| {
-            cycle.decode(payload)?;
-            let remaining = (payload.limit.unwrap() - payload.count) as usize;
-            payload.read_all(&mut vec![0; remaining])
-        })?;
-        Ok((cycle / 280_896, cycle))
-    };
-    let (live, history) = RewindBuffer::read_bundle(fixture, validate).unwrap();
-    assert_eq!(history.depth(), 3);
-    assert_eq!(
-        blake3::hash(&live).as_bytes(),
-        &digest("30ecc6b995f24f813c54226b6bf3f6383f663786d8bd138f16faae178b0105f0")
-    );
-    for (index, expected) in [
-        "34815714e5e90439d3a581f96d607c87749e90f362bf2bf313c742adaa8d00d3",
-        "5805f0a165c62c578d69b8084b7bcb1a985e77c5b61e529d65e9a09538b2c227",
-        "30ecc6b995f24f813c54226b6bf3f6383f663786d8bd138f16faae178b0105f0",
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        assert_eq!(history.info(index).unwrap().frame, (index + 1) as u64);
-        let decoded = history.decode(index).unwrap();
-        assert_eq!(blake3::hash(&decoded).as_bytes(), &digest(expected));
-    }
-    // The imported payloads are never re-deflated on export.
-    assert_eq!(history.write_bundle(&live).unwrap().as_slice(), fixture);
-
-    let upload = fixture.to_vec();
-    let (owned_live, owned_history) = RewindBuffer::read_bundle_owned(upload, validate).unwrap();
-    assert_eq!(owned_live, live);
-    assert_eq!(owned_history.write_bundle(&owned_live).unwrap().as_slice(), fixture);
-    assert_eq!(owned_history.decode(2).unwrap(), history.decode(2).unwrap());
 }

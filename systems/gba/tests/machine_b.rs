@@ -113,23 +113,6 @@ fn hle_sound_channel_clear_leaves_an_invalid_sound_area_untouched() {
     assert_eq!(machine.read_register(2), 0x2222_2222);
 }
 
-/// ZiGBA: `save-state v6 byte schema is locked by a deterministic fixture`.
-#[test]
-fn save_state_v6_byte_schema_is_locked_by_a_deterministic_fixture() {
-    // Exact canonical bytes, not just a round trip. This digest and length
-    // come from ZiGBA's fixture in test/machine_test.zig:6493.
-    let rom = [0xfe, 0xff, 0xff, 0xea];
-    let machine = machine(&rom);
-    let bytes = encode_machine_state(&machine);
-    let expected_digest = [
-        0xd2, 0x20, 0x66, 0xfe, 0x98, 0xc2, 0xb0, 0x88, 0x6b, 0x09, 0x77, 0x09, 0x9d, 0x1f, 0x71,
-        0x46, 0xe2, 0x56, 0x3f, 0xc8, 0x3a, 0xb7, 0xb1, 0x09, 0xd9, 0x43, 0x5b, 0xbe, 0x52, 0xac,
-        0x93, 0xd5,
-    ];
-    assert_eq!(bytes.len(), 478_558);
-    assert_eq!(blake3::hash(&bytes).as_bytes(), &expected_digest);
-}
-
 #[test]
 fn canonical_save_state_round_trip_resumes_bit_identical_execution() {
     let words: [u32; 3] = [0xe3a0_0005, 0xe283_3001, 0xeaff_fffd];
@@ -163,7 +146,7 @@ fn canonical_save_state_round_trip_resumes_bit_identical_execution() {
     assert_eq!(machine.next_instruction_address(), resumed.next_instruction_address());
 }
 
-/// ZiGBA: `save-state envelope rejects wrong media version corruption truncation and trailing data`.
+/// A failed load leaves the machine unchanged.
 #[test]
 fn save_state_envelope_rejects_wrong_media_version_corruption_truncation_and_trailing_data() {
     let rom = [0xfe, 0xff, 0xff, 0xea];
@@ -248,7 +231,6 @@ fn save_state_writer_rejects_impossible_ppu_phases_past_deadlines_and_incomplete
     }
 }
 
-/// ZiGBA: `save-state envelope binds BIOS and boot mode`.
 #[test]
 fn save_state_envelope_binds_bios_and_boot_mode() {
     let rom = [0xfe, 0xff, 0xff, 0xea];

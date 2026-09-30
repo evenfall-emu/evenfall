@@ -6,18 +6,10 @@ fn state_bytes(apu: &Apu) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// ZiGBA `Apu.writeStateSchema` and `Apu.writeState`, for default and active
-/// square/noise/wave/FIFO state, including 13 cycles of deferred oscillator debt.
+/// Exact APU payloads for default and active square, noise, wave and FIFO
+/// state, including 13 cycles of deferred oscillator debt.
 #[test]
-fn apu_state_schema_and_payload_match_zigba() {
-    let mut schema = Vec::new();
-    Apu::write_state_schema(&mut Sink::new(Some(&mut schema), None)).unwrap();
-    assert_eq!(schema.len(), 1726);
-    assert_eq!(
-        blake3::hash(&schema).to_hex().as_str(),
-        "bf1a9650daa72882643f2fa37846b0a34488c95490ad5af8f5f9e2987432d349"
-    );
-
+fn apu_state_payload_is_exact() {
     let mut apu = Apu::default();
     let default = state_bytes(&apu).unwrap();
     assert_eq!(default.len(), 247);

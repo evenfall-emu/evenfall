@@ -8,7 +8,7 @@ struct Core {
     small: [u8; 2],
 }
 #[derive(Codec, Default, Debug, PartialEq)]
-#[codec(module = "zigba.bus.state.v6")]
+#[codec(module = "evenfall.test.device.v1")]
 struct Device {
     #[codec(flatten)]
     core: Core,
@@ -56,8 +56,10 @@ fn structs_flatten_skip_narrow_and_module_schema() {
     let original =
         Device { core: Core { x: 0x1234, small: [5, 7] }, transient: 99, r#type: Some(9) };
     assert_eq!(encoded(&original), [0x34, 0x12, 5, 7, 1, 9]);
+    let absent = Device { core: Core { x: 0x1234, small: [5, 7] }, transient: 0, r#type: None };
+    assert_eq!(encoded(&absent), [0x34, 0x12, 5, 7, 0, 0]);
     let mut expected = Vec::new();
-    name(&mut expected, "zigba.bus.state.v6");
+    name(&mut expected, "evenfall.test.device.v1");
     name(&mut expected, "x");
     expected.extend_from_slice(b"u\x10\0");
     name(&mut expected, "small");
@@ -76,7 +78,9 @@ fn structs_flatten_skip_narrow_and_module_schema() {
 #[test]
 fn enum_and_union_tag_schema_and_values() {
     assert_eq!(encoded(&Kind::Flash128), [4]);
-    assert_eq!(encoded(&Choice::Value(-1234)), [1, 0x2e, 0xfb]);
+    // Every payload fills the slot of the largest, `record`.
+    assert_eq!(encoded(&Choice::Empty), [0, 0, 0, 0]);
+    assert_eq!(encoded(&Choice::Value(-1234)), [1, 0x2e, 0xfb, 0]);
     assert_eq!(encoded(&Choice::Record { a: 7, b: 0x1234 }), [2, 7, 0x34, 0x12]);
     let mut kind = b"eu\x03\0\x03\0\0\0".to_vec();
     for (n, value) in [("nonsequential", 0), ("cpu_code", 3), ("flash128", 4)] {
@@ -108,7 +112,7 @@ fn enum_and_union_tag_schema_and_values() {
 #[test]
 fn envelope_framing_and_validation_order() {
     let binding = Binding::from_media(2, b"rom", b"bios");
-    let digest = envelope::schema_digest(|s| {
+    let digest = envelope::schema_digest("evenfall.test.payload.v1", |s| {
         u64::schema(s)?;
         Core::schema(s)
     })
@@ -120,8 +124,8 @@ fn envelope_framing_and_validation_order() {
     };
     let state = envelope::write_buffered(binding, digest, write).unwrap();
     assert_eq!(state, envelope::write_streaming(binding, digest, write).unwrap());
-    assert_eq!(&state[..8], b"ZIGBAST1");
-    assert_eq!(&state[8..12], &6u32.to_le_bytes());
+    assert_eq!(&state[..8], b"EVENFALL");
+    assert_eq!(&state[8..12], &7u32.to_le_bytes());
     assert_eq!(&state[44..52], &12u64.to_le_bytes());
     assert_eq!(&state[52..61], &[2, 3, 0, 0, 0, 0, 0, 0, 0]);
     let load = |bytes: &[u8], media, schema| {
@@ -135,7 +139,7 @@ fn envelope_framing_and_validation_order() {
     };
     assert_eq!(load(&state, binding, digest), Ok(()));
     let mut changed = state.clone();
-    changed[8] = 7;
+    changed[8] = 6;
     assert_eq!(load(&changed, binding, digest), Err(Error::UnsupportedSaveStateVersion));
     assert_eq!(load(&state, binding, [0; 32]), Err(Error::SaveStateSchemaMismatch));
     changed = state.clone();
@@ -216,7 +220,7 @@ fn custom_encoder_and_tracer_do_not_change_payload() {
 }
 
 #[derive(Codec)]
-#[codec(schema_prefix = "zigba.cpu.state.v6")]
+#[codec(schema_prefix = "evenfall.test.cpu.v1")]
 struct Prefixed {
     value: u8,
 }
@@ -232,7 +236,7 @@ struct Transparent {
 #[test]
 fn cpu_prefix_and_transparent_save_device_schema() {
     let mut expected = Vec::new();
-    name(&mut expected, "zigba.cpu.state.v6");
+    name(&mut expected, "evenfall.test.cpu.v1");
     expected.extend_from_slice(b"s\x01\0\0\0");
     name(&mut expected, "value");
     expected.extend_from_slice(b"u\x08\0");
@@ -241,4 +245,87 @@ fn cpu_prefix_and_transparent_save_device_schema() {
     let value = Transparent { state: Prefixed { value: 7 }, tag: 99 };
     assert_eq!(value.tag, 99);
     assert_eq!(encoded(&value), [7]);
+}
+
+#[derive(Codec, Default, Debug, PartialEq)]
+struct Slots {
+    #[codec(last)]
+    grows: Tail,
+    maybe: Option<u32>,
+    choice: Choice,
+    #[codec(bits = 12)]
+    narrow: Option<[u16; 2]>,
+}
+
+/// A value whose length depends on its content, like a save medium.
+#[derive(Default, Debug, PartialEq)]
+struct Tail(u8);
+impl Codec for Tail {
+    const ENCODED_LEN: Option<usize> = None;
+    fn encode(&self, sink: &mut Sink<'_>) -> evenfall_state::Result<()> {
+        sink.write_all(&[self.0])?;
+        sink.write_all(&vec![0xee; usize::from(self.0)])
+    }
+    fn decode(&mut self, source: &mut Source<'_>) -> evenfall_state::Result<()> {
+        self.0.decode(source)?;
+        source.read_all(&mut vec![0; usize::from(self.0)])
+    }
+    fn schema(sink: &mut Sink<'_>) -> evenfall_state::Result<()> {
+        sink.write_all(b"t")
+    }
+}
+
+#[test]
+fn options_and_unions_fill_fixed_zeroed_slots_and_last_fields_follow() {
+    assert_eq!(<Option<u32>>::ENCODED_LEN, Some(5));
+    assert_eq!(Choice::ENCODED_LEN, Some(4));
+    assert_eq!(Kind::ENCODED_LEN, Some(1));
+    assert_eq!(evenfall_state::narrow_len::<Option<[u16; 2]>>(12), 5);
+    assert_eq!(Slots::ENCODED_LEN, None);
+    assert_eq!(Device::ENCODED_LEN, Some(6));
+
+    let empty = Slots::default();
+    let full = Slots {
+        grows: Tail(2),
+        maybe: Some(0x0403_0201),
+        choice: Choice::Value(-2),
+        narrow: Some([0xabc, 0x123]),
+    };
+    let empty_bytes = encoded(&empty);
+    assert_eq!(empty_bytes, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(
+        encoded(&full),
+        [1, 1, 2, 3, 4, 1, 0xfe, 0xff, 0, 1, 0xbc, 0x0a, 0x23, 0x01, 2, 0xee, 0xee]
+    );
+    let mut schema_expected = b"s\x04\0\0\0".to_vec();
+    for (field, kind) in [
+        ("maybe", &b"?u\x20\0"[..]),
+        ("choice", &schema::<Choice>()),
+        ("narrow", b"?a\x02\0\0\0\0\0\0\0u\x0c\0"),
+        ("grows", b"t"),
+    ] {
+        name(&mut schema_expected, field);
+        schema_expected.extend_from_slice(kind);
+    }
+    assert_eq!(schema::<Slots>(), schema_expected);
+
+    for value in [&empty, &full] {
+        let mut decoded = Slots { grows: Tail(9), maybe: Some(9), ..Slots::default() };
+        let bytes = encoded(value);
+        let mut source = Source::new(&bytes);
+        decoded.decode(&mut source).unwrap();
+        assert_eq!(&decoded, value);
+        assert!(source.input.is_empty());
+    }
+    // Padding is part of the encoding: a nonzero byte in any slot's unused
+    // tail is invalid, for absent options, short variants and narrow options.
+    for at in [1, 4, 8, 10, 13] {
+        let mut corrupt = empty_bytes.clone();
+        corrupt[at] = 1;
+        let result = Slots::default().decode(&mut Source::new(&corrupt));
+        assert_eq!(result, Err(Error::InvalidSaveState), "byte {at}");
+    }
+    let mut corrupt = encoded(&full);
+    corrupt[8] = 1;
+    assert_eq!(Slots::default().decode(&mut Source::new(&corrupt)), Err(Error::InvalidSaveState));
 }

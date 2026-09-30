@@ -1112,7 +1112,7 @@ mod tests {
         let payload = entry + 33;
         let cases = [
             (0, 0),
-            (8, 3),
+            (8, 2),
             (16, 0),
             (history + 3, 255),
             (history + 6, 255),
@@ -1122,6 +1122,7 @@ mod tests {
             (history + 49, 1),
             (anchor + 16, 7),
             (entry + 8, 1),
+            (entry + 24, 2),
             (entry + 24, 255),
             (entry + 25, 255),
             (payload + 3, 255),

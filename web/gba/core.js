@@ -415,7 +415,7 @@ export class WasmCore {
   // Budget-bounded engine rewind history. The byte budget bounds stored
   // history (0 disables); resolution coarsens with age. The interval is the
   // nominal 1x capture cadence in frames; compression is 'delta' (anchored
-  // word-run deltas), 'fast' (level-1 deflate) or 'off'. Stored bytes stay
+  // copy/literal deltas), 'fast' (level-1 deflate) or 'off'. Stored bytes stay
   // opaque to callers.
   setRewindConfig(
     budgetBytes = 15 * 1024 * 1024,

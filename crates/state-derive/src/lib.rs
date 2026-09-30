@@ -1,4 +1,4 @@
-//! Derives ZiGBA-compatible value and schema traversal.
+//! Derives the state codec: value traversal, encoded length and schema.
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Data, DeriveInput, Fields, parse_macro_input};
@@ -6,6 +6,7 @@ use syn::{Data, DeriveInput, Fields, parse_macro_input};
 #[derive(Default)]
 struct Options {
     skip: bool,
+    last: bool,
     flatten: bool,
     rename: Option<String>,
     module: Option<String>,
@@ -21,6 +22,8 @@ fn options(attrs: &[syn::Attribute]) -> syn::Result<Options> {
         attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("skip") {
                 result.skip = true;
+            } else if meta.path.is_ident("last") {
+                result.last = true;
             } else if meta.path.is_ident("flatten") {
                 result.flatten = true;
             } else if meta.path.is_ident("rename") {
@@ -92,7 +95,12 @@ fn expand(item: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             let mut dec = Vec::new();
             let mut schemas = Vec::new();
             let mut counts = Vec::new();
-            for field in &fields.named {
+            let mut lens = Vec::new();
+            // `last` fields follow all others, so a field whose length
+            // depends on its value moves nothing after it.
+            let is_last = |f: &&syn::Field| options(&f.attrs).is_ok_and(|o| o.last);
+            let ordered = fields.named.iter().filter(|f| !is_last(f));
+            for field in ordered.chain(fields.named.iter().filter(is_last)) {
                 let id = field.ident.as_ref().unwrap();
                 let ty = &field.ty;
                 let o = options(&field.attrs)?;
@@ -100,6 +108,7 @@ fn expand(item: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                     continue;
                 }
                 let field_name = name(id, &o);
+                lens.push(field_len(ty, &o));
                 counts.push(if o.flatten {
                     quote!(<#ty as ::evenfall_state::Codec>::FIELD_COUNT)
                 } else {
@@ -112,7 +121,13 @@ fn expand(item: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                 } else {
                     quote!(::evenfall_state::Codec::encode(&self.#id, sink))
                 };
-                enc.push(quote!(sink.field(#field_name, |sink| #encoding)?;));
+                // Flattened fields trace under this struct's path, as the
+                // schema lists them.
+                enc.push(if o.flatten {
+                    quote!(#encoding?;)
+                } else {
+                    quote!(sink.field(#field_name, |sink| #encoding)?;)
+                });
                 dec.push(if let Some(bits) = o.bits { quote!(::evenfall_state::NarrowCodec::decode_bits(&mut self.#id, source, #bits)?;) }
                     else { quote!(::evenfall_state::Codec::decode(&mut self.#id, source)?;) });
                 schemas.push(if o.flatten { quote!(<#ty as ::evenfall_state::Codec>::schema_fields(sink)?;) }
@@ -141,6 +156,11 @@ fn expand(item: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                 quote!(sink.write_all(b"s")?; Self::FIELD_COUNT.encode(sink)?; Self::schema_fields(sink))
             };
             quote! {
+                const ENCODED_LEN: ::core::option::Option<usize> = {
+                    let len = ::core::option::Option::Some(0usize);
+                    #(let len = ::evenfall_state::len::sum(len, #lens);)*
+                    len
+                };
                 fn encode(&self, sink: &mut ::evenfall_state::Sink<'_>) -> ::evenfall_state::Result<()> { #(#enc)* Ok(()) }
                 fn decode(&mut self, source: &mut ::evenfall_state::Source<'_>) -> ::evenfall_state::Result<()> { #(#dec)* Ok(()) }
                 fn schema(sink: &mut ::evenfall_state::Sink<'_>) -> ::evenfall_state::Result<()> { use ::evenfall_state::Codec as _; #schema_root }
@@ -158,6 +178,15 @@ fn expand(item: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     };
     Ok(quote!(impl #imp ::evenfall_state::Codec for #ident #ty #where_clause { #methods }))
 }
+/// The encoded length of a field, as an `Option<usize>` expression.
+fn field_len(ty: &syn::Type, o: &Options) -> proc_macro2::TokenStream {
+    if let Some(bits) = o.bits {
+        quote!(::core::option::Option::Some(::evenfall_state::narrow_len::<#ty>(#bits)))
+    } else {
+        quote!(<#ty as ::evenfall_state::Codec>::ENCODED_LEN)
+    }
+}
+
 fn enum_methods(data: &syn::DataEnum, o: &Options) -> syn::Result<proc_macro2::TokenStream> {
     let plain = data.variants.iter().all(|v| matches!(v.fields, Fields::Unit));
     let bits = if plain {
@@ -174,6 +203,7 @@ fn enum_methods(data: &syn::DataEnum, o: &Options) -> syn::Result<proc_macro2::T
     let mut reads = Vec::new();
     let mut variants = Vec::new();
     let mut payloads = Vec::new();
+    let mut payload_lens = Vec::new();
     let mut previous = quote!(0i128);
     for (i, v) in data.variants.iter().enumerate() {
         let tag = i as u128;
@@ -203,6 +233,7 @@ fn enum_methods(data: &syn::DataEnum, o: &Options) -> syn::Result<proc_macro2::T
                     writes.push(quote!(Self::#id => { (#i as u128).encode_bits(sink, #bits)?; }));
                     reads.push(quote!(#tag => Self::#id,));
                     payloads.push(quote!(::evenfall_state::schema_name(sink, #field_name)?; <() as ::evenfall_state::Codec>::schema(sink)?;));
+                    payload_lens.push(quote!(::core::option::Option::Some(0usize)));
                 }
                 Fields::Unnamed(fs) if fs.unnamed.len() == 1 => {
                     let ty = &fs.unnamed.first().unwrap().ty;
@@ -210,6 +241,7 @@ fn enum_methods(data: &syn::DataEnum, o: &Options) -> syn::Result<proc_macro2::T
                     reads.push(quote!(#tag => { let mut value: #ty = ::core::default::Default::default(); value.decode(source)?; Self::#id(value) },));
                     payloads
                         .push(quote!(::evenfall_state::schema_field::<#ty>(sink, #field_name)?;));
+                    payload_lens.push(quote!(<#ty as ::evenfall_state::Codec>::ENCODED_LEN));
                 }
                 Fields::Named(fs) => {
                     let ids: Vec<_> = fs.named.iter().map(|f| f.ident.as_ref().unwrap()).collect();
@@ -229,6 +261,13 @@ fn enum_methods(data: &syn::DataEnum, o: &Options) -> syn::Result<proc_macro2::T
                         quote!(::evenfall_state::schema_name(sink, #name)?; <#ty as ::evenfall_state::NarrowCodec>::schema_bits(sink, #bits)?;)
                     } else { quote!(::evenfall_state::schema_field::<#ty>(sink, #name)?;) }).collect();
                     let count = ids.len() as u32;
+                    let lens: Vec<_> =
+                        tys.iter().zip(&opts).map(|(ty, o)| field_len(ty, o)).collect();
+                    payload_lens.push(quote!({
+                        let len = ::core::option::Option::Some(0usize);
+                        #(let len = ::evenfall_state::len::sum(len, #lens);)*
+                        len
+                    }));
                     writes.push(quote!(Self::#id { #(#ids),* } => { (#i as u128).encode_bits(sink, #bits)?; #(#encs)* }));
                     reads.push(quote!(#tag => { #(let mut #vars: #tys = ::core::default::Default::default(); #decs)* Self::#id { #(#ids: #vars),* } },));
                     payloads.push(quote!(::evenfall_state::schema_name(sink, #field_name)?; sink.write_all(b"s")?; #count.encode(sink)?; #(#fieldschemas)*));
@@ -243,14 +282,37 @@ fn enum_methods(data: &syn::DataEnum, o: &Options) -> syn::Result<proc_macro2::T
         }
     }
     let count = data.variants.len() as u32;
+    // A union pads every payload to its largest variant's.
+    let (encoded_len, start_encode, pad, start_decode, skip) = if plain {
+        (
+            quote!(::core::option::Option::Some(::evenfall_state::len::bytes(#bits))),
+            quote!(),
+            quote!(),
+            quote!(),
+            quote!(),
+        )
+    } else {
+        (
+            quote!({
+                let payload = 0usize;
+                #(let payload = ::evenfall_state::len::max(payload, ::evenfall_state::len::fixed(#payload_lens));)*
+                ::core::option::Option::Some(::evenfall_state::len::bytes(#bits) + payload)
+            }),
+            quote!(let start = sink.count;),
+            quote!(sink.pad_slot(start, ::evenfall_state::len::fixed(Self::ENCODED_LEN))?;),
+            quote!(let start = source.count;),
+            quote!(source.skip_slot(start, ::evenfall_state::len::fixed(Self::ENCODED_LEN))?;),
+        )
+    };
     let schema = if plain {
         quote!(sink.write_all(b"e")?; sink.write_all(b"u")?; #bits.encode(sink)?; #count.encode(sink)?; #(#variants)* Ok(()))
     } else {
         quote!(sink.write_all(b"v")?; sink.write_all(b"e")?; sink.write_all(b"u")?; #bits.encode(sink)?; #count.encode(sink)?; #(#variants)* #count.encode(sink)?; #(#payloads)* Ok(()))
     };
     Ok(quote! {
-        fn encode(&self, sink: &mut ::evenfall_state::Sink<'_>) -> ::evenfall_state::Result<()> { use ::evenfall_state::{Codec as _, NarrowCodec as _}; match self { #(#writes)* } Ok(()) }
-        fn decode(&mut self, source: &mut ::evenfall_state::Source<'_>) -> ::evenfall_state::Result<()> { use ::evenfall_state::{Codec as _, NarrowCodec as _}; let mut tag = 0u128; tag.decode_bits(source, #bits)?; *self = match tag { #(#reads)* _ => return Err(::evenfall_state::Error::InvalidSaveState) }; Ok(()) }
+        const ENCODED_LEN: ::core::option::Option<usize> = #encoded_len;
+        fn encode(&self, sink: &mut ::evenfall_state::Sink<'_>) -> ::evenfall_state::Result<()> { use ::evenfall_state::{Codec as _, NarrowCodec as _}; #start_encode match self { #(#writes)* } #pad Ok(()) }
+        fn decode(&mut self, source: &mut ::evenfall_state::Source<'_>) -> ::evenfall_state::Result<()> { use ::evenfall_state::{Codec as _, NarrowCodec as _}; #start_decode let mut tag = 0u128; tag.decode_bits(source, #bits)?; *self = match tag { #(#reads)* _ => return Err(::evenfall_state::Error::InvalidSaveState) }; #skip Ok(()) }
         fn schema(sink: &mut ::evenfall_state::Sink<'_>) -> ::evenfall_state::Result<()> { use ::evenfall_state::Codec as _; use ::evenfall_state::NarrowCodec as _; #schema }
     })
 }
