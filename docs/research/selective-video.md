@@ -1,80 +1,80 @@
 # Selective video
 
-At high playback speeds the host does not present every emulated frame.
-[`Bus`](../../systems/gba/src/bus/mod.rs) can skip pixel production on
-unselected frames without skipping LCD events, affine references, raster
-histories, mosaic, DMA, interrupts or audio. [`Session`](../../systems/gba/src/session.rs)
-owns the requested interval and [`VideoRecovery`](../../systems/gba/src/video_recovery.rs)
-reconstructs exact pixels for saves and reads between published frames.
-[`web/gba/worker.js`](../../web/gba/worker.js) chooses the interval for the
-browser. The scanline memo receives change marks across skipped frames
-([`scanline-memo.md`](scanline-memo.md)).
+At 8x speed, a screen shows at most one emulated frame in eight, yet drawing is one of the most expensive things the emulator does.
+Selective video skips drawing the frames nobody will see.
 
-## Selection and publication
+Skipping frames usually makes emulators inexact: a skipped frame's picture is simply wrong, and a save state taken then captures that wrong picture.
+Evenfall keeps it exact.
+It skips only the drawing itself.
+Display events, affine steps, raster histories, mosaic, DMA, interrupts and sound all keep running on their exact cycles.
+And whenever someone needs a skipped frame's real picture, for a save state or a screenshot, it rebuilds it exactly.
 
-`Session::set_video_interval` accepts 1–16. Above 2× playback the browser
-requests the ceiling of speed, and 1 otherwise. `Bus::set_video_interval`
-records the request; frame wrap latches it into `video_render_current` and
-`video_skip_remaining`. Repeating a request does not restart the countdown.
-On a skipped frame only `render_scanline` is omitted; emulated state continues
-on its original cycle timeline. Above 2× the Worker also disables **host**
-audio output while leaving emulated sound state active.
+The pieces:
 
-`video_published_pixels` stores the last completed selected image, copied
-after visible line 159. `video_frame_id` and `video_frame_cycle` identify it;
-`published_framebuffer` never forces reconstruction. The ordinary framebuffer
-can be partially rendered or marked non-canonical without tearing the
-published image. The browser posts only a newly published frame; display
-scheduling belongs to the frontend.
+- [`Bus`](../../systems/gba/src/bus/mod.rs) skips drawing on frames that aren't selected.
+- [`Session`](../../systems/gba/src/session.rs) holds the requested interval.
+- [`VideoRecovery`](../../systems/gba/src/video_recovery.rs) rebuilds exact pixels when they are needed between shown frames.
+- [`web/gba/worker.js`](../../web/gba/worker.js) chooses the interval for the browser.
 
-## Exact reconstruction
+The scanline memo still receives change marks during skipped frames ([`scanline-memo.md`](scanline-memo.md)).
+[`performance.md`](../performance.md#skipping-frames) shows the speedup.
 
-While the interval exceeds one, `Session` journals advancing calls, key
-changes and steps, with their ending cycles and timed inputs. As in Evenfall,
-the anchor is a raw copy of the live machine: `rebase` copies it into
-`VideoRecovery`'s one preallocated replay `Machine` with `Machine::copy_from`,
-which reuses the replay machine's boxes, forgets decoded code and invalidates
-the scanline memo. `materialize` switches the replay machine to full video
-with host audio disabled and replays the journal on it; it then equals the
-live machine and anchors an empty journal, so reconstruction needs no second
-copy. A reconstruction that fails part-way leaves no anchor, and later ones
-return `VideoRecoveryDiverged` until the next rebase. Both operations and
-inputs are bounded to 4,096 entries.
+## Choosing and showing frames
 
-Calls ending at a newly completed selected image rebase. `Session::run_slice_with_input`
-splits runs at `Bus::next_rendered_frame_cycle`; before the journal fills or
-the anchor exceeds 32 frames of emulated time, recovery materializes and
-rebases rather than discarding history. Even if STOP freezes the CPU, the
-`Slice` carries the caller's `stop_at` separately from the internal
-`yield_at`, so a serial event can still wake it.
+`Session::set_video_interval` accepts 1 to 16.
+Above 2x speed the browser asks for `ceil(speed)`, and 1 otherwise.
+`Bus::set_video_interval` records the request, and the next frame wrap applies it (`video_render_current`, `video_skip_remaining`).
+Asking again for the same interval doesn't restart the countdown.
 
-`materialize` checks each replayed operation's end cycle and compares the
-replayed CPU, cycle and fault with the live machine before copying **only**
-pixels back through `Bus::accept_canonical_framebuffer` (which invalidates
-the scanline memo). Live RAM, timers, audio queues and cycle remain intact.
-Mismatch returns `VideoRecoveryDiverged`.
+On a skipped frame, only `render_scanline` is left out, and everything else continues on its usual cycles.
+Above 2x the Worker also turns off host audio output, while the sound chip keeps running.
 
-Selection, publication and recovery fields are transient, excluded from the
-portable state. `Machine::write_state` rejects a non-canonical framebuffer;
-`Session::write_state` and `Session::canonical_framebuffer` reconstruct first.
-Loading a state or resetting replaces the anchor; returning to interval 1
-materializes current pixels before dropping recovery. A fault remains
-terminal and cannot become a resumable save. Hosts must route every
-mutation through `Session`: debugger writes directly to its machine and
-linked-machine host mutations are not journaled. This cache does not replay
-host PCM and is not a portable save format.
+`video_published_pixels` holds the last selected frame, copied after visible line 159, and `video_frame_id` and `video_frame_cycle` identify it.
+`published_framebuffer` returns it and never triggers a rebuild.
+The ordinary framebuffer can be half drawn, or marked as not canonical, without tearing the published frame.
+The browser only sends a frame when a new one is published, and when to display it is the page's decision.
 
-## Verification and open questions
+## Rebuilding exact pixels
 
-[`session.rs`](../../systems/gba/src/session.rs) tests arbitrary-cycle exact
-state/input restoration, bounded history, faults, STOP horizons, and
-transactional load and reset. There is no test yet that compares audio,
-DMA histories or browser publication with full video.
+While the interval is above one, `Session` keeps a journal of every call that advances the machine, every key change and every step, with their ending cycles and timed inputs.
+The journal starts from an anchor: a raw copy of the machine at the last drawn frame.
 
-- Whether selective video alone reaches 16x playback depends on how much CPU
-  work the game does. That limit is unmeasured.
-- A second rendering thread is not part of this design. A pure PPU worker
-  would require immutable scanline state and owned raster histories; replaying
-  the CPU on another core would duplicate work.
-- Linked-machine host mutations bypass recovery. An explicit save or frame
-  read during selective playback pays for replay since the anchor.
+- `rebase` copies the live machine into `VideoRecovery`'s one preallocated replay machine with `Machine::copy_from`, reusing its memory, forgetting decoded code and clearing the scanline memo.
+- `materialize` turns full drawing on in the replay machine, with host audio off, and replays the journal on it.
+  The replay machine then equals the live one, and becomes the new anchor with an empty journal, so rebuilding never needs a second copy.
+
+The journal holds at most 4,096 operations and 4,096 inputs.
+Calls that end at a newly selected frame rebase.
+`Session::run_slice_with_input` splits runs at `Bus::next_rendered_frame_cycle`, and before the journal fills or the anchor is 32 frames old, recovery rebuilds and rebases instead of dropping history.
+If STOP freezes the CPU, the `Slice` carries the caller's `stop_at` separately from the internal `yield_at`, so a serial transfer can still wake it.
+
+A rebuild checks its own work.
+`materialize` checks each replayed operation's end cycle, and compares the replayed CPU, cycle and fault with the live machine.
+Only then does it copy back the pixels, and only the pixels, through `Bus::accept_canonical_framebuffer` (which clears the scanline memo).
+The live machine's RAM, timers, audio queue and cycle are untouched.
+A mismatch returns `VideoRecoveryDiverged`.
+A rebuild that fails part-way leaves no anchor, and later rebuilds also return `VideoRecoveryDiverged` until the next rebase.
+
+## Rules for hosts
+
+- **States need real pixels.** `Machine::write_state` refuses a frame that isn't canonical, while `Session::write_state` and `Session::canonical_framebuffer` rebuild first.
+- **Nothing here is saved.** Selection, publication and recovery are left out of save states.
+  Loading a state or resetting replaces the anchor, and returning to interval 1 rebuilds the current pixels before dropping recovery.
+- **Faults stay faults.** A faulted machine can't become a save state through a rebuild.
+- **Changes go through `Session`.** Only calls made through the session are journaled.
+  A debugger writing directly to the machine, or changes to linked machines, aren't replayed.
+- **Host audio isn't rebuilt.** The journal doesn't replay host audio, and isn't a save format.
+
+## How it is checked
+
+[`session.rs`](../../systems/gba/src/session.rs) checks exact state and input restoration at arbitrary cycles with runs split inside frames, bounded history, faults, STOP horizons, and loads and resets that fail without side effects.
+`copies_continue_exactly_like_their_source` in [`machine.rs`](../../systems/gba/src/machine.rs) checks that a raw copy continues exactly like its source.
+There is no test yet that compares audio, DMA histories or browser publication with full drawing.
+
+## Open questions
+
+- Whether selective video alone reaches 16x depends on how much CPU work a game does, and that limit hasn't been measured.
+- A second drawing thread isn't part of this design.
+  A separate display worker would need immutable line state and its own raster histories, and replaying the CPU on another core would duplicate work.
+- Changes to linked machines bypass recovery.
+- An explicit save or frame read during fast-forward pays for replaying everything since the anchor.
