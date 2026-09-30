@@ -256,7 +256,7 @@ session's tests live in
 browser tests in `web/gba` exercise the SDK. No test yet covers rewind
 under allocation failure, or a full rewind session in a browser.
 
-A [bundle in the older format](../../crates/state/tests/fixtures/zigba-rewind-bundle.bin)
+A [bundle written by Evenfall's predecessor](../../crates/state/tests/fixtures/zigba-rewind-bundle.bin)
 checks that Evenfall imports it, decodes every checkpoint to the expected
 state, and exports the imported entries unchanged.
 

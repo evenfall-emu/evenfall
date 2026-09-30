@@ -9,8 +9,9 @@ The first system is the Game Boy Advance. It is deterministic: the same ROM
 and timestamped inputs always give the same pixels, audio samples, battery
 saves and save states, however the host slices execution. It draws every
 frame and emulates audio exactly, and still runs in about half of mGBA's
-time. Later systems (Nintendo DS, N64, GameCube, Wii) will share its crates
-as they are extracted from concrete uses.
+time. It replaces ZiGBA, our earlier emulator written in Zig, whose save
+states still load. Later systems (Nintendo DS, N64, GameCube, Wii) will share
+its crates as they are extracted from concrete uses.
 
 > Evenfall does not include BIOS images or games. Bring your own legally
 > obtained files. Evenfall is not affiliated with or endorsed by Nintendo.

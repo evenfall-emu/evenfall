@@ -1,10 +1,11 @@
 # Save states
 
 A portable save state captures durable GBA hardware state at an instruction
-boundary. The format is `ZIGBAST1` version 6. Restoring a valid state with
-the same media resumes exactly the same execution.
-States are for compatible builds, not long-term interchange; battery saves
-carry game progress across state-format changes.
+boundary. Restoring a valid state with the same media resumes exactly the
+same execution. The format is `ZIGBAST1` version 6. Its name comes from
+Evenfall's predecessor, so states saved there load here too. States are for
+compatible builds, not long-term storage. Battery saves carry game progress
+across state-format changes.
 
 [`Machine`](../../systems/gba/src/machine.rs) owns the GBA writer, loader,
 schema description and semantic validation. The independent, `no_std` codec in
