@@ -157,7 +157,7 @@ pass.
 | Suite                  | Fails under HLE                                                                                                                                                                                                                                       | Fails under Cult-of-GBA BIOS                                                                    | Causes                                                                                                                                                                                                      |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Memory tests           | ROM, ROM out-of-bounds, IWRAM, EWRAM, palette, VRAM, VRAM OBJ and OAM loads and their mirrors; SRAM loads and stores and their mirrors; BIOS load                                                                                                     | SRAM loads and stores and their mirrors; BIOS load; BIOS out-of-bounds load; out-of-bounds load | [HLE `CpuSet` halfwords](#hle-cpuset-halfword-copies), [SRAM block transfers](#block-transfers-on-sram), [HLE `IntrWait` latch](#hle-intrwait-latch), [replacement BIOS](#hle-and-replacement-bios-effects) |
-| I/O read tests         | the upper halves of write-only and unused words: `BG0VOFS`–`BG3VOFS`, `BG2PB`, `BG2PD`, `BG2X_HI`, `BG2Y_HI` and their BG3 counterparts, `WIN1H`, `WIN1V`, `DMA0`–`DMA3` `SAD_HI`/`DAD_HI`, `FIFO_A_HI`, `FIFO_B_HI`, and `4Eh`, `56h`, `5Ah`, `5Eh`, `8Eh`, `AAh`, `AEh`, `E2h`–`FEh` | same                                                                                            | [Thumb open bus](#thumb-open-bus)                                                                                                                                                                           |
+| I/O read tests         | pass | pass | |
 | Timing tests           | Calibration; BIOS Division, Division 2, Sqrt, Sqrt 2, Sqrt 3, ArcTan; CpuSet; Trivial and Short DMA (16 and 32/to ROM)                                                                                                                                | same, except BIOS ArcTan passes                                                                 | [timer and IRQ latency](#timer-and-irq-latency), [HLE and BIOS timing](#hle-and-replacement-bios-effects), [DMA residual](#known-residuals)                                                                 |
 | Timer count-up tests   | every test                                                                                                                                                                                                                                            | every test                                                                                      | [timer and IRQ latency](#timer-and-irq-latency)                                                                                                                                                             |
 | Timer IRQ tests        | every test                                                                                                                                                                                                                                            | every test                                                                                      | [timer and IRQ latency](#timer-and-irq-latency)                                                                                                                                                             |
@@ -168,7 +168,7 @@ pass.
 | DMA tests              | pass                                                                                                                                                                                                                                                  | pass                                                                                            |                                                                                                                                                                                                             |
 | SIO register R/W tests | pass                                                                                                                                                                                                                                                  | pass                                                                                            |                                                                                                                                                                                                             |
 | SIO timing tests       | Normal8/256k, Normal8/2M, Normal32/256k, Normal32/2M                                                                                                                                                                                                  | same                                                                                            | [timer and IRQ latency](#timer-and-irq-latency)                                                                                                                                                             |
-| Misc. edge case tests  | DMA Prefetch, H-blank bit start, DMA count latching                                                                                                                                                                                                   | same                                                                                            | [Thumb open bus](#thumb-open-bus), [HBlank flag](#hblank-flag), [DMA count latch](#dma-count-latch)                                                                                                         |
+| Misc. edge case tests  | DMA Prefetch, H-blank bit start, DMA count latching                                                                                                                                                                                                   | same                                                                                            | [DMA Prefetch](#dma-prefetch), [HBlank flag](#hblank-flag), [DMA count latch](#dma-count-latch) |
 
 ### Deviations from the recorded hardware
 
@@ -176,22 +176,16 @@ Each of these is a core behavior that the suite's hardware table
 contradicts, inherited unchanged from ZiGBA. Candidate fixes and what they
 must preserve are in [`roadmap.md`](roadmap.md#mgba-suite-rom-findings).
 
-#### Thumb open bus
+#### DMA Prefetch
 
-The I/O read suite (`src/io-read.c`) reads each register with `LDRH` from
-Thumb ROM code whose next words are `DEADDEADh`, so open bus reads `DEADh`.
-Write-only and unused halves already read as open bus
-([`memory.md`](gba/hardware/memory.md#open-bus-and-unused-io)). In Thumb
-state, though, the core's open-bus word carries the fetched halfword in its
-low half and zero above it, while the hardware tables show the halfword in
-both halves when Thumb code runs from ROM. The low halves read `DEADh` and
-pass; the upper halves read zero instead of `DEADh`. "DMA Prefetch" reads upward from `10000000h` and
-expects every value to hold a Thumb opcode from `4000h`–`403Fh` in each half
-until an HBlank DMA's last word, `DEAD0000h`,
-appears on the bus at `10002A94h`; the core stops at the first read,
-`00004003h`. This is the [open-bus composition](gba/hardware/memory.md#open-questions)
-question, now answered for ROM code. The DMA part of that test, a CPU read
-returning the last DMA value, is not reached.
+"DMA Prefetch" reads upward from `10000000h` with `LDMIA` from Thumb ROM
+code while a repeating HBlank DMA3 copies `DEAD0000h` within IWRAM. Every
+read returns the opcode the CPU prefetched, `4003h` in both halves, until
+one read follows an HBlank DMA and returns its word. The core now returns
+both values as the hardware table does, but the DMA's word appears at the
+read of `10002540h` instead of `10002A90h`. Which read that is depends on
+the loop's cycles per iteration, the cycles each DMA takes from the CPU and
+where in the line the HBlank DMA starts.
 
 #### HBlank flag
 
@@ -370,7 +364,8 @@ the interpreter without the execution engine faults at the same cycle too.
 Open bus decides only when the copy ends. Between DMA transfers, a Thumb read
 of unmapped memory from Game Pak code returns the halfword the CPU last
 prefetched, here the loop's `D1F9h`: repeated in both halves per GBATEK,
-mGBA and NanoBoyAdvance, zero-extended in ZiGBA. Neither holds `FFh`. The
+mGBA, NanoBoyAdvance and Evenfall, zero-extended in ZiGBA. Neither holds
+`FFh`. The
 copy ends at a read that follows a Direct Sound FIFO DMA, whose word the core
 returns as open bus; mGBA and NanoBoyAdvance also return the last DMA value
 to a CPU read that follows a transfer. The copy's length on hardware thus

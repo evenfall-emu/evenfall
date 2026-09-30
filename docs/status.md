@@ -85,6 +85,10 @@ match:
   readable half, as the mGBA suite's hardware table records; ZiGBA reads
   some back and others as zero
   ([`gba/hardware/memory.md`](gba/hardware/memory.md#open-bus-and-unused-io)).
+- **Thumb open bus** carries the prefetched halfword in both halves from
+  ROM and the other 16-bit buses, and follows GBATEK's rules for BIOS, OAM
+  and IWRAM code; ZiGBA zero-extends it
+  ([`gba/hardware/memory.md`](gba/hardware/memory.md#open-bus-and-unused-io)).
 
 The others change no emulated result:
 

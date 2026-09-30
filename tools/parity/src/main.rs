@@ -28,6 +28,18 @@ fn command(program: &str, args: &[&std::ffi::OsStr], cwd: &Path) -> Result<(), B
     Ok(())
 }
 
+/// The patches `oracle build` applies to its scratch copy of ZiGBA, in
+/// order: the schema export, then Evenfall's deliberate differences from
+/// ZiGBA's guest behavior, so the oracle behaves as the Rust core does
+/// (docs/parity.md).
+const ORACLE_PATCHES: &[&str] = &[
+    "schema-root.patch",
+    "bios-protection.patch",
+    "dma-stall.patch",
+    "io-read.patch",
+    "thumb-open-bus.patch",
+];
+
 fn build() -> Result<(), Box<dyn Error>> {
     let root = root();
     let scratch = output().join("zigba");
@@ -41,10 +53,7 @@ fn build() -> Result<(), Box<dyn Error>> {
         &root,
     )?;
     fs::copy(root.join("tools/parity/oracle/schema.zig"), scratch.join("src/parity_schema.zig"))?;
-    // The schema export, then Evenfall's deliberate differences from ZiGBA's
-    // guest behavior, so the oracle behaves as the Rust core does
-    // (docs/parity.md).
-    for name in ["schema-root.patch", "bios-protection.patch", "dma-stall.patch", "io-read.patch"] {
+    for name in ORACLE_PATCHES {
         let patch = fs::File::open(root.join("tools/parity/patches").join(name))?;
         let status =
             Command::new("patch").args(["-p1", "-d"]).arg(&scratch).stdin(patch).status()?;

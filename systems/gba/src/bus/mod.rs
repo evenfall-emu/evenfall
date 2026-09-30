@@ -1101,17 +1101,19 @@ impl Bus {
         match address >> 24 {
             0 if address < BIOS_SIZE as u32 => {
                 let value = self.read_protected_bios(address, width, access.source);
-                self.complete_read(value, 1)
+                self.complete_access(access, value, 1)
             }
-            2 => self.complete_read(self.read_ewram(address, width), ewram_cycles(width)),
-            3 => self.complete_read(self.read_iwram(address, width), 1),
+            2 => self.complete_access(access, self.read_ewram(address, width), ewram_cycles(width)),
+            3 => self.complete_access(access, self.read_iwram(address, width), 1),
             4 => {
                 let value = self.read_mmio(address, width);
                 self.complete_read(value, 1)
             }
-            5 => self.complete_read(self.read_palette(address, width), video_cycles(width)),
-            6 => self.complete_read(self.read_vram(address, width), video_cycles(width)),
-            7 => self.complete_read(self.read_oam(address, width), 1),
+            5 => {
+                self.complete_access(access, self.read_palette(address, width), video_cycles(width))
+            }
+            6 => self.complete_access(access, self.read_vram(address, width), video_cycles(width)),
+            7 => self.complete_access(access, self.read_oam(address, width), 1),
             8..=13
                 if width == AccessWidth::Half
                     && self.save.is_eeprom()
@@ -1489,7 +1491,7 @@ impl Bus {
         debug_assert_eq!(self.game_pak_prefetch.countdown, duty);
         self.continue_game_pak_prefetch(2);
         self.game_pak_prefetch.head_address = next + 2;
-        self.open_bus_value = second;
+        self.open_bus_value = half_on_both_lanes(second);
         self.current_cycle = end;
         Some([first, second])
     }
@@ -3986,11 +3988,52 @@ impl Bus {
 
     #[inline(always)]
     fn complete_read(&mut self, value: u32, cycles: Cycle) -> ReadResult {
+        self.complete_read_latching(value, value, cycles)
+    }
+
+    /// [`Self::complete_read`] for a read that leaves `latch` on the data
+    /// bus.
+    #[inline(always)]
+    fn complete_read_latching(&mut self, value: u32, latch: u32, cycles: Cycle) -> ReadResult {
         let started_at = self.current_cycle;
-        self.open_bus_value = value;
+        self.open_bus_value = latch;
         self.advance(cycles);
         self.service_pending_dma();
         ReadResult { value, cycles: self.current_cycle - started_at }
+    }
+
+    /// [`Self::complete_read`] for `access`: an opcode fetch leaves
+    /// [`Self::fetch_latch`] on the data bus, any other read its value.
+    #[inline(always)]
+    fn complete_access(&mut self, access: Access, value: u32, cycles: Cycle) -> ReadResult {
+        let latch = if access.source == AccessSource::CpuCode {
+            self.fetch_latch(access.address, access.width, value)
+        } else {
+            value
+        };
+        self.complete_read_latching(value, latch, cycles)
+    }
+
+    /// The word an opcode fetch of `value` at `address` leaves on the data
+    /// bus, which a later read of unused memory returns (GBATEK,
+    /// Unpredictable Things: Reading from Unused Memory). An ARM fetch
+    /// leaves its word. A Thumb fetch over a 16-bit bus (EWRAM, palette RAM,
+    /// VRAM, Game Pak ROM) presents its halfword on both halves; one from
+    /// the 32-bit BIOS or OAM reads the whole aligned word; IWRAM drives
+    /// only the addressed half, and the other half keeps the bus's previous
+    /// value.
+    #[inline(always)]
+    fn fetch_latch(&self, address: u32, width: AccessWidth, value: u32) -> u32 {
+        if width != AccessWidth::Half {
+            return value;
+        }
+        match address >> 24 {
+            0 if address < BIOS_SIZE as u32 => self.bios_latch,
+            2 | 5 | 6 | 8..=13 => half_on_both_lanes(value),
+            3 => iwram_half_latch(self.open_bus_value, address, value),
+            7 => self.read_oam(address & !3, AccessWidth::Word),
+            _ => value,
+        }
     }
 
     fn read_game_pak(&mut self, mut access: Access) -> ReadResult {
@@ -4027,14 +4070,14 @@ impl Bus {
                 {
                     self.continue_game_pak_prefetch(opcode_bytes);
                 }
-                self.complete_read(value, 1);
+                self.complete_access(access, value, 1);
                 return ReadResult { value, cycles: self.current_cycle - started_at };
             }
             if self.game_pak_prefetch.countdown != 0
                 && aligned == self.game_pak_prefetch.last_address
             {
                 let remaining = self.game_pak_prefetch.countdown;
-                self.complete_read(value, remaining);
+                self.complete_access(access, value, remaining);
                 self.game_pak_prefetch.head_address = aligned.wrapping_add(u32::from(opcode_bytes));
                 self.game_pak_prefetch.count = 0;
                 return ReadResult { value, cycles: self.current_cycle - started_at };
@@ -4048,7 +4091,7 @@ impl Bus {
         let fetch_started = self.current_cycle;
         let epoch = self.dma_epoch;
         let cycles = self.game_pak_cycles(access);
-        self.complete_read(value, cycles);
+        self.complete_access(access, value, cycles);
         self.reprice_interrupted_game_pak_access(access, fetch_started, cycles, epoch);
         if self.waitcnt & (1 << 14) != 0 {
             self.start_game_pak_prefetch(aligned, opcode_bytes);
@@ -4495,6 +4538,20 @@ fn vram_index(address: u32, dispcnt: u16) -> Option<usize> {
 
 fn vram_obj_boundary(dispcnt: u16) -> usize {
     if dispcnt & 7 >= 3 { 0x14000 } else { 0x10000 }
+}
+
+/// A halfword on a 16-bit bus, as the 32-bit data bus carries it: on both
+/// halves.
+#[inline(always)]
+pub(crate) fn half_on_both_lanes(half: u32) -> u32 {
+    half.wrapping_mul(0x0001_0001)
+}
+
+/// The data bus after IWRAM, which drives only the addressed half, presents
+/// `half` at `address`: the other half keeps `latch`'s.
+#[inline(always)]
+pub(crate) fn iwram_half_latch(latch: u32, address: u32, half: u32) -> u32 {
+    if address & 2 == 0 { (latch & 0xffff_0000) | half } else { (latch & 0xffff) | (half << 16) }
 }
 
 pub fn is_byte_wide_save_address(address: u32) -> bool {

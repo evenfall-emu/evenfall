@@ -97,11 +97,31 @@ it before use ([`bios.md`](bios.md#fault-containment)).
 ## Open bus and unused I/O
 
 A read that reaches no device returns **open bus**: whatever value the bus
-last carried, not zero. ZiGBA keeps one `open_bus_value`, the value of the
-most recent bus read by any master: a CPU instruction fetch, a CPU data read,
-or a DMA read. Reads of unmapped regions return it, with the byte or halfword
-lane selected by the address, and cost one cycle. A Thumb fetch leaves only
-its halfword there, with the upper half zero.
+last carried, not zero. The bus keeps one `open_bus_value`, the word the
+most recent bus read by any master left on the data bus: a CPU instruction
+fetch, a CPU data read, or a DMA read. Reads of unmapped regions return it,
+with the byte or halfword lane selected by the address, and cost one cycle.
+A data read or an ARM fetch leaves the value read. A Thumb fetch leaves a
+word that depends on the region's bus
+([GBATEK, Unpredictable Things: Reading from Unused Memory][gbatek-unpredictable]):
+
+| Thumb fetch from                        | Open-bus word after it                                      |
+| --------------------------------------- | ----------------------------------------------------------- |
+| EWRAM, palette RAM, VRAM, Game Pak ROM  | the halfword in both halves (16-bit bus)                    |
+| BIOS, OAM                               | the whole aligned word (32-bit bus)                         |
+| IWRAM                                   | the halfword in its own half; the other half is unchanged   |
+
+With the CPU two fetches ahead, a Thumb instruction at `$` that reads
+unused memory therefore sees `[$+4]` twice from ROM, and from IWRAM `[$+4]`
+beside `[$+2]`, or beside half of the data word the previous instruction
+loaded, as GBATEK's `OldLO`/`OldHI` note describes. The mGBA suite's
+hardware tables confirm the ROM rule (`src/io-read.c`, "DMA Prefetch" in
+`src/misc-edge.c`); the BIOS, OAM and IWRAM rules rest on GBATEK alone.
+ZiGBA leaves every Thumb fetch's halfword zero-extended; this is a
+deliberate difference ([`roadmap.md`](../../roadmap.md#mgba-suite-rom-findings)).
+Pinned by "thumb opcode fetches compose the open bus word per region" in
+[`tests/bus.rs`](../../../systems/gba/tests/bus.rs); the engine
+differentials compare the latch each run leaves with stepping.
 
 DMA has its own latch for sources it never reads; see
 [`timers-dma-interrupts.md`](timers-dma-interrupts.md).
@@ -375,12 +395,12 @@ that any change is visible.
   whole BIOS word, are untested on hardware; the core follows GBATEK's
   "opcode" wording and the 32-bit BIOS bus. Distinguishing them needs a
   Nintendo BIOS and a probe that reads the latch after such accesses.
-- **Open-bus composition.** ZiGBA returns the last value read, and a Thumb
-  fetch stores only its halfword. How the prefetched opcodes compose the
-  open-bus word in Thumb state, per region (GBATEK, Unpredictable Things), is
-  not modeled. Guest code that reads unmapped memory by mistake can depend
-  on it: Game B's runaway string copy ends only when open bus yields `FFh`
-  ([compatibility](../../compatibility.md#guest-faults-in-user-supplied-games)).
+- **Open-bus composition outside ROM code.** The Thumb rules for BIOS,
+  OAM and IWRAM code follow GBATEK without a hardware measurement here.
+  Halfword and byte data reads leave their value zero-extended, and writes
+  leave the latch alone, as in ZiGBA; the 16-bit buses presumably drive
+  both halves for data too, which only a following read of unused memory
+  in the same instruction (an `LDM` beat) or a DMA could observe.
 - **Video-memory contention.** GBATEK's memory map adds one cycle when the
   CPU accesses video memory while the LCD does; ZiGBA charges palette, VRAM
   and OAM accesses fixed cycles.

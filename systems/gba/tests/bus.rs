@@ -392,6 +392,62 @@ fn write_only_mmio_reads_follow_the_recorded_hardware_table() {
     assert_eq!(0x0010, bus.bldy);
 }
 
+/// GBATEK, Unpredictable Things (Reading from Unused Memory): a Thumb
+/// opcode fetch leaves its halfword on both halves of the data bus when it
+/// comes over a 16-bit bus (EWRAM, palette RAM, VRAM, Game Pak ROM), the
+/// whole aligned word when it comes from the 32-bit BIOS or OAM, and only
+/// its own half from IWRAM, whose other half keeps the bus's previous
+/// value. ARM fetches and data reads leave the value read.
+#[test]
+fn thumb_opcode_fetches_compose_the_open_bus_word_per_region() {
+    let bios: Vec<u8> = (0..16 * 1024_u32).map(|i| (i * 7 + 3) as u8).collect();
+    let mut rom = vec![0u8; 0x100];
+    rom[0x10..0x14].copy_from_slice(&0x8765_4321_u32.to_le_bytes());
+    let mut bus = Bus::init_with_bios(&rom, &bios);
+    for (address, value) in [
+        (0x0200_0010, 0x2222_1111),
+        (0x0300_0010, 0x3333_4444),
+        (0x0300_0020, 0xdead_beef),
+        (0x0500_0010, 0x5555_6666),
+        (0x0600_0010, 0x7777_0666),
+        (0x0700_0010, 0x0999_8888),
+    ] {
+        write_word(&mut bus, address, value);
+    }
+    let fetch = |bus: &mut Bus, address: u32, width: AccessWidth| {
+        bus.read(access(address, width, AccessKind::Sequential, AccessSource::CpuCode)).value
+    };
+    let seed = |bus: &mut Bus| {
+        assert_eq!(0xdead_beef, read_word(bus, 0x0300_0020));
+        assert_eq!(0xdead_beef, bus.open_bus_value);
+    };
+    let bios_word = u32::from_le_bytes(bios[4..8].try_into().unwrap());
+    for (address, half, latch) in [
+        (0x0800_0012, 0x8765, 0x8765_8765),
+        (0x0200_0012, 0x2222, 0x2222_2222),
+        (0x0500_0010, 0x6666, 0x6666_6666),
+        (0x0600_0012, 0x7777, 0x7777_7777),
+        (0x0700_0012, 0x0999, 0x0999_8888),
+        (0x0000_0006, bios_word >> 16, bios_word),
+        (0x0300_0010, 0x4444, 0xdead_4444),
+        (0x0300_0012, 0x3333, 0x3333_beef),
+    ] {
+        seed(&mut bus);
+        assert_eq!(half, fetch(&mut bus, address, AccessWidth::Half), "{address:08x}");
+        assert_eq!(latch, bus.open_bus_value, "latch after a Thumb fetch at {address:08x}");
+    }
+    // Two IWRAM fetches fill both halves.
+    seed(&mut bus);
+    fetch(&mut bus, 0x0300_0010, AccessWidth::Half);
+    fetch(&mut bus, 0x0300_0012, AccessWidth::Half);
+    assert_eq!(0x3333_4444, bus.open_bus_value);
+    // An ARM fetch and a halfword data read leave the value read.
+    assert_eq!(0x8765_4321, fetch(&mut bus, 0x0800_0010, AccessWidth::Word));
+    assert_eq!(0x8765_4321, bus.open_bus_value);
+    assert_eq!(0x8765, read_half(&mut bus, 0x0800_0012));
+    assert_eq!(0x8765, bus.open_bus_value);
+}
+
 /// ZiGBA: "unused and read-only MMIO writes are ignored"
 #[test]
 fn unused_and_read_only_mmio_writes_are_ignored() {

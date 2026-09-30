@@ -14,7 +14,7 @@ use super::mem::{Mem, Running};
 use super::{CodeCache, Load, Mmio, Op, PAGE_SHIFT, ROM_PAGE_SLOTS, Reg, fresh_ops, split_memory};
 use crate::bus::{
     AccessKind, AccessWidth, Bus, EWRAM_SIZE, IWRAM_SIZE, PowerState, PrefetchClock, RomData,
-    read_ram,
+    half_on_both_lanes, iwram_half_latch, read_ram,
 };
 use evenfall_cpu_arm::{Core, InstructionSet, Pipeline};
 
@@ -195,7 +195,14 @@ impl<const EW: bool> Timing for Ram<EW> {
     fn after(self, _h: &mut Hot, _before: i64, _breaking: bool) {}
     #[inline(always)]
     fn refill(self, h: &mut Hot, _target: u32, _head: u32) -> i64 {
-        2 * self.fetch(h)
+        let cycles = 2 * self.fetch(h);
+        if !EW {
+            // IWRAM's exit latch depends on whether a refill followed the
+            // last load (`leave`): mark where this one ends. `ready` means
+            // nothing else to RAM timing.
+            h.ready = h.budget - cycles;
+        }
+        cycles
     }
     #[inline(always)]
     fn rom_load(self, _: &Hot, _: i64, _: &RomData<'_>, _: u32, _: AccessWidth) -> Option<i64> {
@@ -340,7 +347,13 @@ struct Ctx<'a> {
     discard_mark: i64,
     mmio_mark: i64,
     /// The last load's bus value, the open-bus latch if it ends the run.
+    /// In IWRAM, where a fetch drives one half of the bus, it is also the
+    /// latch the instruction at `load_next` starts from; a run there starts
+    /// with the bus's latch, `load_mark` its budget and `load_next` its
+    /// first instruction.
     data: u32,
+    /// The address of the instruction after the last load.
+    load_next: u32,
     /// Whether every slot of the page and the halfwords after them are
     /// plain code, so that a branch within it needs no target check.
     clean: bool,
@@ -552,6 +565,7 @@ struct Saved {
     discard_mark: i64,
     mmio_mark: i64,
     data: u32,
+    load_next: u32,
     clean: bool,
 }
 
@@ -565,6 +579,8 @@ impl Saved {
             discard_mark: -1,
             mmio_mark: -1,
             data: 0,
+            // Odd: no instruction follows a load yet.
+            load_next: 1,
             clean: false,
         }
     }
@@ -580,6 +596,7 @@ impl Saved {
             discard_mark: self.discard_mark,
             mmio_mark: self.mmio_mark,
             data: self.data,
+            load_next: self.load_next,
             clean: self.clean,
         }
     }
@@ -595,6 +612,7 @@ impl Ctx<'_> {
             discard_mark: self.discard_mark,
             mmio_mark: self.mmio_mark,
             data: self.data,
+            load_next: self.load_next,
             clean: self.clean,
         }
     }
@@ -674,6 +692,7 @@ fn serve<T: Timing>(
     if !store {
         saved.data = value;
         saved.load_mark = next.budget;
+        saved.load_next = saved.base.wrapping_add(next.idx << 1);
         saved.internal_mark = next.budget;
     }
     if bus.engine_may_go_on(limit, core.cpsr & (1 << 7) != 0) {
@@ -727,6 +746,7 @@ fn complete_local<T: Timing>(
     if !store {
         c.data = value;
         c.load_mark = next.budget;
+        c.load_next = c.pc(next.idx);
         c.internal_mark = next.budget;
     }
     let irq = &c.mem.registers.irq;
@@ -772,12 +792,18 @@ fn ram_runs<const EW: bool>(
     let budget = (limit - start) as i64;
     let mask = (if EW { EWRAM_SIZE } else { IWRAM_SIZE }) as u32 - 1;
     let place = if EW { Place::Ewram } else { Place::Iwram };
+    let latch = bus.open_bus_value;
     let (mem, _) = split_memory(bus.engine_memory(false), budget);
     let mut c = Saved::new(pc & !mask).ctx(mem, place);
     if !enters(core, &c, pc) {
         return None;
     }
     let mut hot = Hot::from_cpsr(budget, pc.wrapping_sub(c.base) >> 1, core.cpsr);
+    if !EW {
+        // The first instruction's fetch drives one half of the bus's latch.
+        (c.data, c.load_mark, c.load_next) = (latch, budget, pc);
+        hot.ready = i64::MAX;
+    }
     let access = loop {
         let (next, stop) = ram_loop::<EW>(ops, &mut c, core, hot);
         hot = next;
@@ -1110,12 +1136,31 @@ fn leave(core: &mut Core, c: &Ctx<'_>, hot: Hot, start: u64, budget: i64) -> Opt
         Some(Pipeline { instructions: pipeline, instruction_set: InstructionSet::Thumb });
     Some(Exit {
         cycle: start + spent as u64,
-        open_bus: if loaded { c.data } else { pipeline[1] },
+        open_bus: if loaded { c.data } else { fetch_latch(c, &hot, pc, pipeline) },
         data_last: (loaded && !mmio) || c.store_mark == hot.budget,
         load_last: loaded,
         internal_last: c.internal_mark == hot.budget,
         discarded: c.discard_mark == hot.budget,
     })
+}
+
+/// The open-bus latch after a run whose last instruction loaded nothing, as
+/// the interpreter's fetches leave it ([`Bus::read`]): the last fetch, of
+/// `pipeline[1]` at `pc + 2`, on both halves of the 16-bit EWRAM and Game
+/// Pak buses; in IWRAM in its own half, beside the fetch at `pc`, or beside
+/// what the last load (or the run's start) left if that fetch came before
+/// it: when no refill followed it and `pc + 2` is the second fetch after
+/// it.
+fn fetch_latch(c: &Ctx<'_>, hot: &Hot, pc: u32, pipeline: [u32; 2]) -> u32 {
+    if c.place != Place::Iwram {
+        return half_on_both_lanes(pipeline[1]);
+    }
+    let before = if c.load_next.wrapping_add(2) == pc && hot.ready > c.load_mark {
+        c.data
+    } else {
+        iwram_half_latch(0, pc, pipeline[0])
+    };
+    iwram_half_latch(before, pc.wrapping_add(2), pipeline[1])
 }
 
 /// Runs one page's ops from `state` until one is refused or a branch
@@ -1719,6 +1764,7 @@ fn transfer<const N: usize, T: Timing, const MODE: u8>(
     }
     c.data = value;
     c.load_mark = h.budget;
+    c.load_next = c.pc(h.idx);
     c.internal_mark = h.budget;
     Flow::Next
 }
@@ -1811,6 +1857,7 @@ fn pop<const N: usize, T: Timing>(
     h.idx += 1;
     t.after(h, before, true);
     c.load_mark = h.budget;
+    c.load_next = c.pc(h.idx);
     c.internal_mark = h.budget;
     Flow::Next
 }
@@ -1883,6 +1930,7 @@ fn multiple<const N: usize, T: Timing>(
     t.after(h, before, true);
     if load {
         c.load_mark = h.budget;
+        c.load_next = c.pc(h.idx);
         c.internal_mark = h.budget;
     } else {
         c.store_mark = h.budget;

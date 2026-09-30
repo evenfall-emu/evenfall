@@ -128,15 +128,34 @@ suites must still pass.
   The ported test "unmapped and unused MMIO reads distinguish open-bus words
   from paired zero halves" takes its paired-zero example at `66h` instead of
   `4Eh`.
-- **Thumb open-bus composition.** Compose the Thumb open-bus word from the
-  prefetched opcodes per region, as GBATEK describes; for ROM code the suite
-  shows the halfword in both halves. Evidence: the upper halves of unused I/O
-  words and "DMA Prefetch" (`src/misc-edge.c`). Only ROM code is measured
-  here; the BIOS, OAM and IWRAM compositions GBATEK lists need their own
-  evidence or a recorded choice. The change alters when Game B's runaway copy
-  ends ([compatibility](compatibility.md#guest-faults-in-user-supplied-games)).
-  Once it passes, "DMA Prefetch" also checks that a CPU read after a DMA
-  returns the DMA's last value.
+- **Decision: Thumb opcode fetches compose the open-bus word per region**
+  (a deliberate guest-visible difference from ZiGBA, whose Thumb fetch
+  leaves its halfword zero-extended). A Thumb fetch over a 16-bit bus
+  (EWRAM, palette RAM, VRAM, Game Pak ROM) leaves its halfword on both
+  halves of the open-bus latch; one from the BIOS or OAM leaves the whole
+  aligned word; one from IWRAM replaces only its own half, so the other half
+  keeps the bus's previous value, a data word when the previous instruction
+  loaded one. ARM fetches and data reads are unchanged. Evidence: GBATEK,
+  "Unpredictable Things: Reading from Unused Memory", which lists these
+  compositions, and for ROM code the mGBA suite's hardware tables: the upper
+  halves of unused and write-only I/O words read the prefetched opcode
+  (`src/io-read.c`), and "DMA Prefetch" (`src/misc-edge.c`) reads
+  `4003h` in both halves. The BIOS, OAM and IWRAM rules follow GBATEK
+  alone; IWRAM's is the bus-level form of GBATEK's `OldLO`/`OldHI` note,
+  where mGBA 0.10.5 approximates the other half with the previous opcode.
+  Compatibility effect: guest reads of unused memory from Thumb code see
+  the new word. Game B's runaway copy reads `D1F9D1F9h` instead of
+  `0000D1F9h`; neither holds `FFh`, but the copy writes different bytes,
+  so where it ends may change; the game is user-supplied and was not re-run
+  ([compatibility](compatibility.md#guest-faults-in-user-supplied-games)).
+  The pre-decoded engine composes the latch it leaves the same way: in
+  IWRAM it tracks where the last load (or the run's start) left the latch
+  and whether a refill followed. No state-layout change. The parity harness
+  applies [`thumb-open-bus.patch`](../tools/parity/patches/thumb-open-bus.patch)
+  to its ZiGBA copy. The ported test "active IWRAM fetches preserve mirrors
+  wrapping widths and complete bus effects" expects the composed halfword
+  latch. "DMA Prefetch" now reads the DMA's last value; its break address
+  still differs (see the HBlank item below).
 - **HBlank flag edge.** Raise `DISPSTAT`'s HBlank flag about 46 cycles after
   the HBlank IRQ and DMA request (GBATEK's 1,006 cycles into the line).
   Evidence: "H-blank bit start" flip intervals. The suite does not time the
