@@ -197,7 +197,7 @@ The policy section holds, in order, the budget `u32`, interval `u16`, compressio
 
 Each entry holds its frame, cycle and sequence (`u64` each), its encoding `u8` (0 raw, 1 deflate, 2 word-run delta, 3 copy delta), its anchor id `u32`, its stored length `u32` and the stored bytes.
 
-## Tests
+## How it is checked
 
 The buffer's tests live in [`crates/state/tests/rewind.rs`](../../crates/state/tests/rewind.rs), with checks of private storage in [`crates/state/src/rewind.rs`](../../crates/state/src/rewind.rs).
 The session's tests live in [`systems/gba/src/session.rs`](../../systems/gba/src/session.rs), and the browser tests in `web/gba` exercise the SDK.
