@@ -46,6 +46,10 @@ async function manifest(image = rom) {
 test("strict manifest rejects ambiguous timing, unknown fields, unbounded work and inconsistent BIOS", async () => {
   const m = await manifest();
   validateScenario(m);
+  validateScenario({
+    ...m,
+    cheats: [{ at: "10", cheats: [{ code: "02000000:01", format: "raw" }] }],
+  });
   for (const mutate of [
     (m) => (m.inputs[0].at = 100),
     (m) => (m.config.clock = "wall"),
@@ -55,6 +59,14 @@ test("strict manifest rejects ambiguous timing, unknown fields, unbounded work a
     (m) => (m.checkpoints[0].at = "18446744073709551616"),
     (m) => m.inputs.reverse(),
     (m) => (m.checkpoints[0].memory[0].address = 0xffffffff),
+    (m) => (m.cheats = [{ at: "10", cheats: [{ code: "x", lang: "en" }] }]),
+    (m) => (m.cheats = [{ at: "10", cheats: [{ code: "x", format: "gs3" }] }]),
+    (m) => (m.cheats = [{ at: "280897", cheats: [] }]),
+    (m) =>
+      (m.cheats = [
+        { at: "20", cheats: [] },
+        { at: "10", cheats: [] },
+      ]),
   ]) {
     const copy = structuredClone(m);
     mutate(copy);

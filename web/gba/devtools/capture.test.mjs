@@ -339,3 +339,36 @@ test("periodic snapshots defer omitted pixels but budget/manual recovery stays e
     b.dispose();
   }
 });
+
+test("a snapshot taken with cheats active replays them exactly, whatever the replaying core has", async () => {
+  const [a, b] = await pair();
+  try {
+    // AR v3 raw: add one to the word at 02001000 at every VBlank start.
+    const counter = [
+      { format: "action-replay-decrypted", code: "84201000 00000001" },
+    ];
+    a.setCheats(counter);
+    const recorder = new FailureRecorder(a, {
+      identity,
+      maxSnapshots: 1,
+      snapshotIntervalCycles: F,
+    });
+    for (let at = F / 4n; at <= 3n * F; at += F / 4n) recorder.runUntil(at);
+    recorder.setCheats([{ format: "raw", code: "02001004:0000BEEF" }]);
+    recorder.runUntil(3n * F + F / 2n);
+    recorder.setCheats(counter);
+    for (let at = 4n * F; at <= 6n * F; at += F / 4n) recorder.runUntil(at);
+    const bundle = JSON.parse(JSON.stringify(recorder.capture("manual")));
+    const snapshot = bundle.snapshots.at(-1);
+    assert.ok(BigInt(snapshot.cycle) > 3n * F);
+    assert.deepEqual(snapshot.cheats, counter);
+    // A different set on the replaying core must not leak into the replay.
+    b.setCheats([{ format: "raw", code: "02001000:00000000" }]);
+    replayFailureBundle(b, bundle, { identity });
+    assert.deepEqual(b.saveState(), a.saveState());
+    assert.deepEqual(b.cheats(), a.cheats());
+  } finally {
+    a.dispose();
+    b.dispose();
+  }
+});

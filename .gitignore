@@ -21,6 +21,7 @@ node_modules/
 /web/gba/pkg/
 /web/gba/*.wasm
 
+.agents/
 /.amp/in/
 .amp/portals/*
 /tools/bench/diag/build/

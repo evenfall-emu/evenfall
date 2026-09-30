@@ -22,6 +22,15 @@ export const SAVE_TYPES = Object.freeze([
   "eeprom512",
   "eeprom8k",
 ]);
+/** Cheat code formats, in the WASM ABI's order. `auto` detects the format. */
+export const CHEAT_FORMATS = Object.freeze([
+  "raw",
+  "gameshark",
+  "gameshark-decrypted",
+  "action-replay",
+  "action-replay-decrypted",
+  "codebreaker",
+]);
 const reasons = [
   "deadline",
   "instruction_boundary_after_deadline",
@@ -29,6 +38,46 @@ const reasons = [
   "faulted",
 ];
 const text = new TextDecoder();
+const utf8 = new TextEncoder();
+
+// Cheat records: format byte (255 detects), u32 length, UTF-8 code text.
+function encodeCheats(cheats) {
+  if (!Array.isArray(cheats) || cheats.length > 256)
+    throw new RangeError("Cheats must be an array of at most 256 entries");
+  const parts = cheats.map((cheat) => {
+    if (!cheat || typeof cheat.code !== "string")
+      throw new TypeError("A cheat needs a code string");
+    const format = cheat.format ?? "auto";
+    const index = format === "auto" ? 255 : CHEAT_FORMATS.indexOf(format);
+    if (index < 0) throw new RangeError(`Invalid cheat format: ${format}`);
+    return { index, code: utf8.encode(cheat.code) };
+  });
+  const out = new Uint8Array(
+    parts.reduce((sum, part) => sum + 5 + part.code.length, 0),
+  );
+  const view = new DataView(out.buffer);
+  let offset = 0;
+  for (const { index, code } of parts) {
+    out[offset] = index;
+    view.setUint32(offset + 1, code.length, true);
+    out.set(code, offset + 5);
+    offset += 5 + code.length;
+  }
+  return out;
+}
+function decodeCheats(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const cheats = [];
+  for (let offset = 0; offset < bytes.length;) {
+    const length = view.getUint32(offset + 1, true);
+    cheats.push({
+      format: CHEAT_FORMATS[bytes[offset]],
+      code: text.decode(bytes.subarray(offset + 5, offset + 5 + length)),
+    });
+    offset += 5 + length;
+  }
+  return cheats;
+}
 
 function uint(value, max, label) {
   if (!Number.isInteger(value) || value < 0 || value > max)
@@ -100,7 +149,7 @@ export class WasmCore {
     this.timeline = null;
     this.sampleSequence = 0;
     // A module from another ABI (an older prefix) lacks `ef_version`.
-    if (typeof exports.ef_version !== "function" || exports.ef_version() !== 1)
+    if (typeof exports.ef_version !== "function" || exports.ef_version() !== 2)
       throw new Error("Unsupported WASM ABI");
   }
   replaceTimeline() {
@@ -262,6 +311,29 @@ export class WasmCore {
       reason: reasons[status],
       inputsConsumed: this.wasm.ef_inputs_consumed(),
     };
+  }
+  /**
+   * Replaces the active cheats with `[{ code, format? }]` entries, effective
+   * from the next VBlank start. Resolves to their canonical `{ format, code }`.
+   */
+  setCheats(cheats) {
+    this.requireLoaded();
+    const records = encodeCheats(cheats);
+    this.upload(records);
+    this.check(this.wasm.ef_set_cheats(cheats.length));
+    return decodeCheats(this.output());
+  }
+  /** The active cheats, canonical. Loads, rewinds and resets keep them. */
+  cheats() {
+    this.requireLoaded();
+    this.check(this.wasm.ef_cheats());
+    return decodeCheats(this.output());
+  }
+  /** Parses and normalizes one code without a loaded game. */
+  parseCheat(code, format = "auto") {
+    this.upload(encodeCheats([{ code, format }]));
+    this.check(this.wasm.ef_parse_cheat());
+    return decodeCheats(this.output())[0];
   }
   step() {
     this.requireLoaded();

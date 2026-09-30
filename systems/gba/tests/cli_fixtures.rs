@@ -68,3 +68,43 @@ fn headless_cli_output_matches_fixtures() {
     assert!(usage.stderr.is_empty());
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+/// The cheat flags reach the guest: a loop loads the EWRAM word
+/// at 02000000 into r0, and the `--cheat` or `--cheats` value must reach it
+/// once the first VBlank has passed.
+#[test]
+fn cheat_flags_patch_memory_the_guest_reads() {
+    let directory =
+        std::env::temp_dir().join(format!("evenfall-cli-cheats-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    // mov r1, #0x02000000; loop: ldr r0, [r1]; b loop
+    let rom: Vec<u8> =
+        [0xe3a0_1402u32, 0xe591_0000, 0xeaff_fffd].iter().flat_map(|w| w.to_le_bytes()).collect();
+    let rom_path = directory.join("loop.gba");
+    std::fs::write(&rom_path, rom).unwrap();
+    let cheat_file = directory.join("codes.txt");
+    std::fs::write(&cheat_file, "# raw\n!raw\n02000000:0000BEEF\n").unwrap();
+    let run = |extra: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_evenfall-gba"))
+            .args(["run", "--steps", "40000", "--quiet", "--save-type", "none"])
+            .args(extra)
+            .arg(&rom_path)
+            .output()
+            .unwrap();
+        (output.status.success(), String::from_utf8(output.stdout).unwrap(), output.stderr)
+    };
+    let r0 = |stdout: &str| stdout.trim_end().rsplit("r0=").next().unwrap().to_owned();
+    let (ok, stdout, _) = run(&[]);
+    assert!(ok);
+    assert_eq!(r0(&stdout), "00000000");
+    let (ok, stdout, _) = run(&["--cheat", "raw:02000000:0000002A"]);
+    assert!(ok, "{stdout}");
+    assert_eq!(r0(&stdout), "0000002a");
+    let (ok, stdout, _) = run(&["--cheats", cheat_file.to_str().unwrap()]);
+    assert!(ok, "{stdout}");
+    assert_eq!(r0(&stdout), "0000beef");
+    let (ok, _, stderr) = run(&["--cheat", "action-replay:0202XYZ0 00000001"]);
+    assert!(!ok);
+    assert!(String::from_utf8_lossy(&stderr).contains("not a code line"));
+    std::fs::remove_dir_all(&directory).unwrap();
+}

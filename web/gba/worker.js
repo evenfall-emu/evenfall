@@ -194,7 +194,7 @@ async function command(method, args) {
     const bytes = new Uint8Array(await response.arrayBuffer());
     build = { wasmSha256: await sha256(bytes) };
     core = await WasmCore.create(bytes);
-    return { abiVersion: 1 };
+    return { abiVersion: 2 };
   }
   if (!core) throw new Error("NotInitialized");
   if (method === "cancel") {
@@ -466,6 +466,8 @@ async function command(method, args) {
       {
         const result = core.loadState(args[0]);
         beginRecording(initial.options);
+        // The new recording starts from the loaded state, not a cold boot.
+        recording.start();
         clearPresentation();
         sendFrame();
         return result;
@@ -489,6 +491,12 @@ async function command(method, args) {
       return core.loaded ? core.captureMemory() : null;
     case "setKeys":
       return execution().setKeys(args[0]);
+    case "setCheats":
+      return execution().setCheats(args[0]);
+    case "cheats":
+      return core.cheats();
+    case "parseCheat":
+      return core.parseCheat(args[0], args[1]);
     case "saveState":
       return core.saveState();
     case "saveRewindBundle":

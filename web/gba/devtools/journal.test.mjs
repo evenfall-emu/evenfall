@@ -222,3 +222,93 @@ test("scheduled inputs crossed by a bounded slice remain exportable and determin
     replay.dispose();
   }
 });
+test("recorded cheat changes reproduce through scenarios, captures and states", async () => {
+  const core = await WasmCore.create(wasm),
+    replay = await WasmCore.create(wasm),
+    other = await WasmCore.create(wasm);
+  const F = 280896n;
+  const word = (target, address) =>
+    new DataView(target.readMemory(address, 4).buffer).getUint32(0, true);
+  try {
+    core.load(rom, config);
+    const recording = new GameplayRecording(core, {
+      ...config,
+      build: { wasmSha256: await sha256(wasm) },
+    });
+    const advance = (frames) => {
+      const end = core.currentCycle() + frames * F;
+      while (core.currentCycle() < end) {
+        const next = core.currentCycle() + F / 4n;
+        recording.runUntil(next < end ? next : end);
+        recording.drainAudio();
+      }
+    };
+    advance(1n);
+    // Pokémon Emerald (USA) "Infinite Money", published encrypted: it
+    // decrypts to 04225E90 000F423F, 999999 at 02025E90.
+    assert.deepEqual(recording.setCheats([{ code: "C051CCF6 975E8DA1" }]), [
+      { format: "action-replay", code: "C051CCF6 975E8DA1" },
+    ]);
+    advance(2n);
+    assert.equal(word(core, 0x02025e90), 999999);
+    // Set a counting code just before a VBlank start: a replay that
+    // applied the change later would miss one addition.
+    let vblank = (core.currentCycle() / F) * F + 197120n;
+    if (vblank <= core.currentCycle() + 40n) vblank += F;
+    while (core.currentCycle() < vblank - 40n) {
+      const next = core.currentCycle() + F / 4n;
+      recording.runUntil(next < vblank - 40n ? next : vblank - 40n);
+      recording.drainAudio();
+    }
+    assert.ok(core.currentCycle() < vblank);
+    recording.setCheats([
+      { format: "action-replay-decrypted", code: "84225E90 00000001" },
+    ]);
+    advance(2n);
+    // Clear it just after the next VBlank start, far from the one after.
+    recording.runUntil(core.currentCycle() + 1000n);
+    assert.equal(word(core, 0x02025e90), 999999 + 3);
+    recording.setCheats([]);
+    advance(1n);
+    recording.checkpoint("end");
+    const item = await recording.scenario();
+    assert.equal(item.manifest.cheats.length, 3);
+    const result = await runScenario(replay, item.manifest, item.assets);
+    assert.equal(result.status, "passed", result.failures.join("; "));
+    assert.deepEqual(replay.saveState(), core.saveState());
+
+    const bundle = recording.recorder.capture();
+    other.load(rom, config);
+    const replayed = await replayFailureBundleAsync(other, bundle, {
+      identity: bundle.identity,
+    });
+    assert.equal(replayed.status, "passed");
+
+    // States hold no cheats: saving with or without them gives the same
+    // bytes, and loading keeps the loading core's set.
+    const plain = core.saveState();
+    core.setCheats([{ code: "02025E90:00000007" }]);
+    assert.deepEqual(core.saveState(), plain);
+    replay.setCheats([{ code: "02000000:01" }]);
+    replay.loadState(plain);
+    assert.deepEqual(replay.cheats(), [{ format: "raw", code: "02000000:01" }]);
+    assert.throws(
+      () =>
+        core.setCheats([
+          {
+            code: "00000000 1802603C 00002100 00000000",
+            format: "action-replay-decrypted",
+          },
+        ]),
+      /InvalidCheat: cheat 1: line 1: ROM patch codes are not supported/,
+    );
+    assert.deepEqual(core.parseCheat("9E6AC862 823AB7A8 46B7D9E4 A709E9E1"), {
+      format: "gameshark",
+      code: "9E6AC862 823AB7A8\n46B7D9E4 A709E9E1",
+    });
+  } finally {
+    core.dispose();
+    replay.dispose();
+    other.dispose();
+  }
+});

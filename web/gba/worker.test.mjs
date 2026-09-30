@@ -140,3 +140,62 @@ test("a load awaiting its BIOS digest excludes other commands, so the recording 
     globalThis.Worker = previousWorker;
   }
 });
+
+test("SDK cheats are recorded into exported scenarios and kept by rewind, state loads and reset", async () => {
+  const previousWorker = globalThis.Worker;
+  globalThis.Worker = BrowserWorker;
+  let emulator;
+  try {
+    emulator = await Emulator.create({
+      wasmUrl: `data:application/wasm;base64,${wasm.toString("base64")}`,
+    });
+    assert.deepEqual(await emulator.parseCheat("82025BC4 E0FF"), {
+      format: "codebreaker",
+      code: "82025BC4 E0FF",
+    });
+    await emulator.load(new Uint8Array([0xfe, 0xff, 0xff, 0xea]));
+    await emulator.setRewindConfig(undefined, 1);
+    await emulator.runUntil(2n * F);
+    const money = [{ format: "raw", code: "02025E90:000F423F" }];
+    const at = String((await emulator.inspect()).cycle);
+    assert.deepEqual(
+      await emulator.setCheats([{ code: "02025e90:000f423f" }]),
+      money,
+    );
+    await emulator.runUntil(4n * F);
+    const read = async () =>
+      new DataView((await emulator.readMemory(0x02025e90, 4)).buffer).getUint32(
+        0,
+        true,
+      );
+    assert.equal(await read(), 999999);
+    const { manifest } = await emulator.exportScenario("cheats");
+    assert.deepEqual(manifest.cheats, [{ at, cheats: money }]);
+    // States hold no cheats: a rewind and a state load keep the set, and a
+    // recording that starts from a loaded state begins with it.
+    await emulator.rewind(3);
+    assert.deepEqual(await emulator.cheats(), money);
+    const state = await emulator.saveState();
+    await emulator.setCheats([]);
+    assert.deepEqual(await emulator.saveState(), state);
+    await emulator.setCheats(money);
+    const loaded = await emulator.loadState(state);
+    assert.deepEqual(await emulator.cheats(), money);
+    const fromState = await emulator.exportScenario("from state");
+    assert.ok(fromState.assets.state);
+    assert.deepEqual(fromState.manifest.cheats, [
+      { at: String(loaded.cycle), cheats: money },
+    ]);
+    await emulator.reset();
+    assert.deepEqual(await emulator.cheats(), money);
+    const fresh = await emulator.exportScenario("after reset");
+    assert.deepEqual(fresh.manifest.cheats, [{ at: "0", cheats: money }]);
+    await assert.rejects(
+      emulator.setCheats([{ code: "nonsense" }]),
+      /InvalidCheat/,
+    );
+  } finally {
+    await emulator?.dispose();
+    globalThis.Worker = previousWorker;
+  }
+});

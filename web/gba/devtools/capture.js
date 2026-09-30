@@ -156,10 +156,12 @@ export class FailureRecorder {
       if (state.length > this.maxSnapshotBytes)
         throw new Error("Snapshot exceeds maxSnapshotBytes");
       const cycle = this.currentCycle();
+      // States hold no cheats: the active set replays beside the state.
       this.snapshots.push({
         cycle: String(cycle),
         nextOperation: this.sequence,
         state,
+        cheats: this.core.cheats?.() ?? [],
       });
       this.snapshotBytes += state.length;
       while (
@@ -331,6 +333,9 @@ export class FailureRecorder {
   setKeys(mask) {
     return this.invoke("setKeys", [mask]);
   }
+  setCheats(cheats) {
+    return this.invoke("setCheats", [cheats]);
+  }
   step() {
     return this.invoke("step", empty);
   }
@@ -412,6 +417,7 @@ export class FailureRecorder {
         cycle: s.cycle,
         nextOperation: s.nextOperation,
         stateBase64: encode(s.state),
+        cheats: s.cheats,
       })),
       operations: this.operations,
       artifacts,
@@ -481,7 +487,14 @@ export function validateFailureBundle(bundle) {
       typeof snapshot.stateBase64 !== "string" ||
       !/^(0|[1-9][0-9]*)$/.test(snapshot.cycle) ||
       !Number.isSafeInteger(snapshot.nextOperation) ||
-      snapshot.nextOperation < 0
+      snapshot.nextOperation < 0 ||
+      (snapshot.cheats !== undefined &&
+        (!Array.isArray(snapshot.cheats) ||
+          snapshot.cheats.some(
+            (cheat) =>
+              typeof cheat?.code !== "string" ||
+              typeof cheat.format !== "string",
+          )))
     )
       throw new Error("Invalid failure snapshot");
   }
@@ -506,6 +519,8 @@ function* replayOperations(core, bundle, { identity } = {}) {
   if (!bundle.history.replayable || !snapshot)
     throw new Error("No replayable snapshot retained");
   core.loadState(decode(snapshot.stateBase64));
+  // A load keeps the replaying core's cheats, so install the snapshot's.
+  core.setCheats(snapshot.cheats ?? []);
   const results = [];
   let expectedSequence = snapshot.nextOperation;
   for (const operation of bundle.operations.filter(
@@ -527,7 +542,9 @@ function* replayOperations(core, bundle, { identity } = {}) {
             ? { ...event, at: BigInt(event.at) }
             : event,
         );
-    } else if (!["setKeys", "step", "drainAudio"].includes(operation.method))
+    } else if (
+      !["setKeys", "setCheats", "step", "drainAudio"].includes(operation.method)
+    )
       throw new Error("Unsupported replay operation");
     let result, caught;
     try {

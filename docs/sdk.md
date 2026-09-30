@@ -92,17 +92,17 @@ For other terms, contact [contact@evenfall-emu.org](mailto:contact@evenfall-emu.
 
 ### Entry points
 
-| Import                                   | Contents                                                                                           |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `@evenfall/gba`                          | `Emulator` (asynchronous, one Worker per session), `KEYS`, `CYCLES_PER_FRAME`, `SAVE_TYPES`, types |
-| `@evenfall/gba/core`                     | `WasmCore`, the synchronous adapter for Node and Workers                                           |
-| `@evenfall/gba/devtools/scenario`        | `runScenario`, `validateScenario`, `sha1`, `sha256`, `jsonSafe`                                    |
-| `@evenfall/gba/devtools/capture`         | `FailureRecorder`, `validateFailureBundle`, `replayFailureBundle`, `replayFailureBundleAsync`      |
-| `@evenfall/gba/bridge`                   | typed read-only views of game memory ([Game bridges](#game-bridges))                               |
-| `@evenfall/gba/bridge/react`             | `BridgeProvider`, `useViews`, `useBridge`, `useBridgeResources` (React 18+, optional)              |
-| `@evenfall/gba/audio-worklet`            | the `evenfall-audio` AudioWorklet processor, loaded by URL                                         |
-| `@evenfall/gba/evenfall-gba.wasm`        | the core, built with SIMD                                                                          |
-| `@evenfall/gba/evenfall-gba-scalar.wasm` | the core, built without SIMD                                                                       |
+| Import                                   | Contents                                                                                                            |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `@evenfall/gba`                          | `Emulator` (asynchronous, one Worker per session), `KEYS`, `CYCLES_PER_FRAME`, `SAVE_TYPES`, `CHEAT_FORMATS`, types |
+| `@evenfall/gba/core`                     | `WasmCore`, the synchronous adapter for Node and Workers                                                            |
+| `@evenfall/gba/devtools/scenario`        | `runScenario`, `validateScenario`, `sha1`, `sha256`, `jsonSafe`                                                     |
+| `@evenfall/gba/devtools/capture`         | `FailureRecorder`, `validateFailureBundle`, `replayFailureBundle`, `replayFailureBundleAsync`                       |
+| `@evenfall/gba/bridge`                   | typed read-only views of game memory ([Game bridges](#game-bridges))                                                |
+| `@evenfall/gba/bridge/react`             | `BridgeProvider`, `useViews`, `useBridge`, `useBridgeResources` (React 18+, optional)                               |
+| `@evenfall/gba/audio-worklet`            | the `evenfall-audio` AudioWorklet processor, loaded by URL                                                          |
+| `@evenfall/gba/evenfall-gba.wasm`        | the core, built with SIMD                                                                                           |
+| `@evenfall/gba/evenfall-gba-scalar.wasm` | the core, built without SIMD                                                                                        |
 
 Every JavaScript entry point has type declarations.
 This page summarizes the interface, and [`emulator.d.ts`](../web/gba/emulator.d.ts), [`core.d.ts`](../web/gba/core.d.ts) and the [devtools declarations](../web/gba/devtools/) are the reference.
@@ -199,6 +199,7 @@ Cycles are unsigned 64-bit `bigint` values, so don't convert long-running counte
 | Lifecycle               | `Emulator.create(options?)`, `load(image, options?)`, `dispose()`, `terminate(message?)`                                                                            |
 | Playing                 | `play()`, `pause()`, `setSpeed(multiplier)`, `setKeys(mask)`                                                                                                        |
 | Running by hand         | `runUntil(deadline, inputs?)`, `step()`                                                                                                                             |
+| Cheats                  | `setCheats(cheats)`, `cheats()`, `parseCheat(code, format?)`                                                                                                        |
 | Looking inside          | `inspect()`, `frame()`, `readMemory(address, length)`, `captureMemory()`, `exportRom()`                                                                             |
 | Saves and states        | `exportSave()`, `reset()`, `resetWithSave(save)`, `saveState()`, `loadState(bytes)`                                                                                 |
 | Rewind                  | `setRewindConfig(...)`, `rewind(steps?)`, `rewindDepth()`, `rewindCheckpoints()`, `rewindFrame(index)`, `saveRewindBundle()`, `loadRewindBundle(bytes)`             |
@@ -308,6 +309,45 @@ Failed calls reject with an `Error` whose message names the cause:
 | `SessionDisposed`                                                                | the session was disposed or terminated                            |
 
 Load and state errors carry the core's error name, for example `NoGbaInZip`, `SaveTypeConflict` or `SaveStateRomMismatch`.
+
+## Cheats
+
+`setCheats(cheats)` turns on a list of cheat codes and resolves to the active list in canonical form.
+Each entry is `{ code, format? }`, and the result is a list of `{ format, code }`.
+`format` defaults to `"auto"`, which detects it, or names one of `CHEAT_FORMATS`:
+
+- `raw`: one address and value per line, like `02025E90:0F423F00`
+- `gameshark` and `gameshark-decrypted`: GameShark Advance and Action Replay v1/v2 codes, encrypted or raw
+- `action-replay` and `action-replay-decrypted`: Action Replay v3 codes, also sold as GameShark v3, encrypted or raw
+- `codebreaker`: CodeBreaker and GameShark SP codes
+
+```ts
+await emulator.setCheats([
+  { code: "D8BAE4D9 4864DCE5\nA86CDBA5 19BA49B3" }, // Emerald master (AR v3)
+  { code: "C051CCF6 975E8DA1" }, // Infinite money
+  { format: "codebreaker", code: "82005274 0001" },
+]);
+```
+
+An empty list turns every cheat off.
+`cheats()` returns the active list.
+`parseCheat(code, format?)` detects and normalizes one code without touching the session, which suits a cheat editor.
+The SDK keeps no names and no disabled cheats: your page owns its cheat list and passes the enabled ones.
+
+A change takes effect at the next VBlank start.
+Cheats then run at the first instruction boundary at or after every VBlank start, so results don't depend on speed or how the worker slices time.
+`setCheats` works while playing.
+An invalid code rejects with `InvalidCheat: cheat N: line L: ...`.
+ROM patch codes and GameShark v1/v2 `DEADFACE` codes are not supported.
+When several formats read a code plausibly, detection fails and asks you to name one.
+
+The active cheats are a session setting that your page owns, not part of the machine state.
+`saveState()`, rewind checkpoints and rewind bundles never include them, so a state is the same bytes with or without cheats.
+`loadState()`, `rewind()`, `loadRewindBundle()` and `reset()` keep the current cheats, and they apply from the restored position's next VBlank start.
+Only `setCheats()` changes them, and `load()` starts a new game without any.
+Recordings keep replays exact instead: each one notes the cheats active when it starts and every change at its cycle.
+Exported scenarios list them in an optional `cheats` field, and failure bundles store the active cheats with each snapshot.
+[`design/cheats.md`](design/cheats.md) describes the formats, timing and evidence.
 
 ## Speed and fast-forward
 

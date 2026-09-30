@@ -17,6 +17,15 @@ export class GameplayRecording {
     this.gap = false;
     this.end = undefined;
     this.initialState = coldBoot ? undefined : this.core.saveState();
+    // States hold no cheats, so the scenario sets the active ones at its
+    // first cycle, after a cold boot or its initial state.
+    this.cheatEvents = [];
+    const active = this.core.cheats();
+    if (active.length)
+      this.cheatEvents.push({
+        at: String(this.core.currentCycle()),
+        cheats: active,
+      });
     this.initialSave = this.core.exportSave();
     this.recorder = new FailureRecorder(this.core, {
       identity: {
@@ -78,6 +87,15 @@ export class GameplayRecording {
     const at = this.recorder.currentCycle();
     const result = this.invoke("setKeys", [keys]);
     this.appendInput(at, keys);
+    return result;
+  }
+  setCheats(cheats) {
+    const at = this.recorder.currentCycle();
+    const result = this.invoke("setCheats", [cheats]);
+    if (this.enabled && !this.full) {
+      if (this.cheatEvents.length === 1024) this.gap = true;
+      else this.cheatEvents.push({ at: String(at), cheats: result });
+    }
     return result;
   }
   runUntil(...args) {
@@ -167,6 +185,8 @@ export class GameplayRecording {
         maxAudioBytes: 268435456,
       },
     };
+    const cheats = this.cheatEvents.filter((e) => BigInt(e.at) <= BigInt(end));
+    if (cheats.length) manifest.cheats = cheats;
     validateScenario(manifest);
     return { manifest, assets };
   }

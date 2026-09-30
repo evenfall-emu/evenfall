@@ -2861,6 +2861,50 @@ fn a_dma_livelock_stalls_the_cpu_at_the_same_cycle_under_any_host_slicing() {
     assert!(observations[0] == observations[2]);
 }
 
+/// Cheats apply during a DMA stall as they do in HALT: at each VBlank start
+/// the stall reaches, at the same cycle under any host slicing. The cheat
+/// adds one to the word the FIFO DMAs copy, so the audio records the cycle
+/// of every application.
+#[test]
+fn cheats_apply_during_a_dma_stall_at_the_same_cycle_under_any_host_slicing() {
+    use evenfall_gba::cheats::{Cheat, Format};
+    let rom = [
+        0x10, 0x00, 0x9f, 0xe5, 0x10, 0x10, 0x9f, 0xe5, 0x00, 0x10, 0x80, 0xe5, 0x0c, 0x10, 0x9f,
+        0xe5, 0xb0, 0x10, 0xc0, 0xe1, 0xfe, 0xff, 0xff, 0xea, 0x04, 0x01, 0x00, 0x04, 0x00, 0xff,
+        0x80, 0x00, 0xfd, 0xff, 0x00, 0x00,
+    ];
+    // AR v3 raw: add one to the word at 02002000, the FIFO DMAs' source.
+    let counter =
+        vec![Cheat::parse("84202000 00000001", Some(Format::ActionReplayDecrypted)).unwrap()];
+    let end = evenfall_gba::bus::Bus::MAX_DMA_BURST_CYCLES + 3 * Machine::CYCLES_PER_FRAME;
+    let mut results = Vec::new();
+    for slice in [Machine::CYCLES_PER_FRAME, 64, 1007] {
+        let mut machine = machine(&rom);
+        start_fifo_dma_livelock(&mut machine);
+        // The call that reaches the burst limit returns at the same cycle
+        // under every slicing; the cheat is set there.
+        let mut armed = false;
+        let run = run_through_dma_stall(
+            &mut machine,
+            end,
+            |_| slice,
+            |machine| {
+                if machine.bus.dma_stalled() && !armed {
+                    machine.set_cheats(counter.clone()).unwrap();
+                    armed = true;
+                }
+            },
+        );
+        assert!(machine.bus.dma_stalled());
+        let mut word = [0; 4];
+        machine.inspect_memory(0x0200_2000, &mut word).unwrap();
+        assert!(u32::from_le_bytes(word) >= 2, "the cheat runs during the stall");
+        results.push((run.limit_returned_at, run.later_audio, stall_observation(&machine)));
+    }
+    assert!(results[0] == results[1]);
+    assert!(results[0] == results[2]);
+}
+
 /// Evenfall's own oracle for the stall's end (`docs/roadmap.md`, "DMA that
 /// never releases the bus"): the same livelock, which a repeating VBlank DMA0
 /// ends by writing a table of timer controls whose 64th entry stops both

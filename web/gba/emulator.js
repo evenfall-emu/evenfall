@@ -1,5 +1,5 @@
 import { wasmSimd } from "./core.js";
-export { KEYS, CYCLES_PER_FRAME, SAVE_TYPES } from "./core.js";
+export { KEYS, CYCLES_PER_FRAME, SAVE_TYPES, CHEAT_FORMATS } from "./core.js";
 
 /** An isolated emulator session. All methods serialize through its Worker. */
 export class Emulator extends EventTarget {
@@ -132,6 +132,15 @@ export class Emulator extends EventTarget {
   }
   setKeys(mask) {
     return this.request("setKeys", [mask]);
+  }
+  setCheats(cheats) {
+    return this.request("setCheats", [cheats]);
+  }
+  cheats() {
+    return this.request("cheats");
+  }
+  parseCheat(code, format = "auto") {
+    return this.request("parseCheat", [code, format]);
   }
   runUntil(deadline, inputs = []) {
     return this.request("runUntil", [deadline, inputs]);

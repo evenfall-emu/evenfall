@@ -8,6 +8,7 @@ use evenfall_audio::StereoSample;
 use evenfall_gba::{
     bus::{KeyState, TimedInput, TimedInputChange},
     cartridge::save::Type as SaveType,
+    cheats::{Cheat, Format},
     machine::{StateError, StepOutcome, StopReason},
     session::{self, Config, RewindCompression, RewindConfig, Session},
     video_recovery,
@@ -110,6 +111,8 @@ fn session_error(error: session::Error) -> String {
         session::Error::Run(error) => format!("{error:?}"),
         session::Error::Image(error) => format!("{error:?}"),
         session::Error::Rewind(error) => format!("{error:?}"),
+        session::Error::Recovery(video_recovery::Error::Cheats(error))
+        | session::Error::Cheats(error) => format!("InvalidCheat: {error}"),
         session::Error::Recovery(error) => recovery_error(error),
         other => format!("{other:?}"),
     }
@@ -139,7 +142,7 @@ fn copy_upload(bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ef_version() -> u32 {
-    1
+    2
 }
 
 #[unsafe(no_mangle)]
@@ -630,6 +633,83 @@ pub extern "C" fn ef_rewind_frame(index: u32) -> i32 {
             bytes.extend_from_slice(&pixel.to_le_bytes());
         }
         state.replace_output(bytes);
+        Ok(0)
+    })
+}
+
+/// Cheat records share one layout both ways: a format byte (an index into
+/// `Format::ALL`, or 255 for detection on input), a little-endian `u32`
+/// length and that many bytes of UTF-8 code text.
+fn parse_cheats(input: &[u8], count: u32) -> Result<Vec<Cheat>, String> {
+    let mut cheats = Vec::new();
+    let mut rest = input;
+    for index in 0..count as usize {
+        let invalid = || "InvalidInputLength".to_string();
+        let (&format, tail) = rest.split_first().ok_or_else(invalid)?;
+        let (length, tail) = tail.split_first_chunk::<4>().ok_or_else(invalid)?;
+        let (text, tail) =
+            tail.split_at_checked(u32::from_le_bytes(*length) as usize).ok_or_else(invalid)?;
+        rest = tail;
+        let format = match format {
+            255 => None,
+            index => Some(*Format::ALL.get(usize::from(index)).ok_or("InvalidCheatFormat")?),
+        };
+        let text = std::str::from_utf8(text).map_err(|_| "InvalidCheatText")?;
+        let cheat = Cheat::parse(text, format)
+            .map_err(|error| format!("InvalidCheat: cheat {}: {error}", index + 1))?;
+        cheats.push(cheat);
+    }
+    if !rest.is_empty() {
+        return Err("InvalidInputLength".into());
+    }
+    Ok(cheats)
+}
+
+fn cheat_records(cheats: &[Cheat]) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    for cheat in cheats {
+        let code = cheat.code();
+        let format = Format::ALL.iter().position(|&format| format == cheat.format()).unwrap();
+        bytes.try_reserve(5 + code.len()).map_err(|_| "OutOfMemory")?;
+        bytes.push(format as u8);
+        bytes.extend_from_slice(&(code.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(code.as_bytes());
+    }
+    Ok(bytes)
+}
+
+/// Replaces the active cheats with `count` records from the input buffer
+/// and outputs them in canonical form.
+#[unsafe(no_mangle)]
+pub extern "C" fn ef_set_cheats(count: u32) -> i32 {
+    call(|state| {
+        let cheats = parse_cheats(&state.input, count)?;
+        let session = active(state)?;
+        session.set_cheats(cheats).map_err(session_error)?;
+        let records = cheat_records(session.machine.cheats())?;
+        state.replace_output(records);
+        Ok(0)
+    })
+}
+
+/// Outputs the active cheats in canonical form.
+#[unsafe(no_mangle)]
+pub extern "C" fn ef_cheats() -> i32 {
+    call(|state| {
+        let records = cheat_records(active(state)?.machine.cheats())?;
+        state.replace_output(records);
+        Ok(0)
+    })
+}
+
+/// Parses one record from the input buffer without a session and outputs
+/// it in canonical form.
+#[unsafe(no_mangle)]
+pub extern "C" fn ef_parse_cheat() -> i32 {
+    call(|state| {
+        let cheats = parse_cheats(&state.input, 1)?;
+        let records = cheat_records(&cheats)?;
+        state.replace_output(records);
         Ok(0)
     })
 }
