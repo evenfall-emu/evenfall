@@ -2,7 +2,7 @@
 
 The GBA link port has four signal lines (SC, SD, SI, SO) and one register
 set whose meaning changes with the selected mode: Normal 8- or 32-bit,
-Multiplayer, UART, general-purpose (GPIO) and JoyBus. ZiGBA models each mode
+Multiplayer, UART, general-purpose (GPIO) and JoyBus. Evenfall models each mode
 as a device behind those shared registers, keeps write latches separate from
 read visibility, and exchanges data between machines only through a
 host-independent seam, `synchronize_sio`, which couples endpoints whose
@@ -19,9 +19,8 @@ The hardware reference is GBATEK's
 chapter. Pinned mGBA 0.10.5 and the pinned mGBA hardware suite
 ([`sio-read.c`](https://github.com/mgba-emu/suite/blob/e6942030d25ffe3ba76c72b73a86da073ec857cc/src/sio-read.c),
 [`sio-timing.c`](https://github.com/mgba-emu/suite/blob/e6942030d25ffe3ba76c72b73a86da073ec857cc/src/sio-timing.c))
-are the comparison and test sources;
-[ZiGBA's `refs/README.md`](../../../refs/zigba/refs/README.md)
-records the exact commits.
+are the comparison and test sources.
+[`refs/README.md`](../../../refs/README.md) records the exact commits.
 
 ## Mode selection
 
@@ -41,7 +40,7 @@ records the exact commits.
 clear `RCNT.15` before any Normal, Multiplayer or UART transfer can start.
 The `probe-link` ROMs do this explicitly.
 
-Mode changes have side effects that ZiGBA applies at the write:
+Mode changes have side effects that Evenfall applies at the write:
 
 - Setting `RCNT.15` cancels a pending Normal or Multiplayer transfer.
 - Entering or leaving UART mode clears all UART state: both queues, the byte
@@ -73,7 +72,7 @@ are read-only to the CPU. The JoyBus registers `JOYCNT` (`140h`), `JOY_RECV`
 [JoyBus](#joybus). The unused halfwords at `136h`, `142h` and `15Ah` read
 zero and ignore writes.
 
-`SIOCNT` mixes writable control with live status. ZiGBA's write masks and
+`SIOCNT` mixes writable control with live status. Evenfall's write masks and
 fixed read bits are:
 
 | Mode        | Writable bits                                                                                                               | Read-only bits                                        |
@@ -84,7 +83,7 @@ fixed read bits are:
 
 `RCNT` bits 4–8 and 14 are writable and bits 9–13 read zero in every mode.
 Bits 0–3 report the SC, SD, SI and SO line levels, which GBATEK calls
-undocumented. ZiGBA does not model live line levels on a cable; it returns
+undocumented. Evenfall does not model live line levels on a cable; it returns
 the disconnected-port values the suite observed: `5h` in Normal mode, `Fh` in
 Multiplayer and UART, `Ch` in JoyBus. In general-purpose mode bits 0–3 read
 back the written data bits.
@@ -95,7 +94,7 @@ The pinned suite's `sio-read.c` selects six modes on a console with nothing
 plugged in, writes all ones to each of fifteen halfword addresses and reads
 the value back. For `SIOCNT` and `RCNT` the write preserves the mode bits
 (`CFFFh` or `3FFFh` plus the mode); every other address receives `FFFFh`.
-ZiGBA reproduces all 90 results:
+Evenfall reproduces all 90 results:
 
 | Address                | Normal-8 | Normal-32 | Multiplayer | UART   | GPIO   | JoyBus |
 | ---------------------- | -------- | --------- | ----------- | ------ | ------ | ------ |
@@ -111,7 +110,7 @@ ZiGBA reproduces all 90 results:
 
 The GPIO and JoyBus rows leave `SIOCNT` in its Normal-8 selection. The test
 "SIO register masks and disconnected line states match the pinned mGBA
-suite" in [ZiGBA's `bus_test.zig`](../../../refs/zigba/test/bus_test.zig) pins the matrix.
+suite" in [`tests/bus.rs`](../../../systems/gba/tests/bus.rs) pins the matrix.
 `JOYSTAT` (`158h`) is absent because the suite's rows labelled `JOYSTAT`
 address `15Ah`; see [JoyBus](#joybus).
 
@@ -127,7 +126,7 @@ one bit takes 64 master cycles at 256 KHz or 8 cycles at 2 MHz
 | 8-bit  | 512 cycles   | 64 cycles  |
 | 32-bit | 2,048 cycles | 256 cycles |
 
-The deadline is fixed when START is written. At completion ZiGBA clears
+The deadline is fixed when START is written. At completion Evenfall clears
 START, stores the received value (all ones from a disconnected port) in the
 low byte of `SIODATA8`, keeping the high byte as written, or in both
 `SIODATA32` halves, and requests `IF` bit 7 if `SIOCNT.14` is set. The
@@ -138,7 +137,7 @@ These durations agree with the suite's `sio-timing.c` Normal rows: each
 reported timer value is the transfer duration plus a constant 121 cycles.
 That 121-cycle harness overhead is inferred from the four cases, not a
 published hardware rule. The suite's Multiplayer rows expect a timeout on a
-disconnected port; ZiGBA likewise leaves a peerless Multiplayer START
+disconnected port, and Evenfall likewise leaves a peerless Multiplayer START
 pending.
 
 An external-clock transfer stays pending until a clocked peer is coupled. A
@@ -164,12 +163,12 @@ chain: data shifts from the first endpoint to the last, each endpoint
 receives the preceding endpoint's data register, and the parent receives
 zero because its SI line is grounded
 ([GBATEK, one-way multiplayer](https://rust-console.github.io/gbatek-gbaonly/#sionormalmode)).
-ZiGBA requires the first endpoint to use the internal clock and every other
+Evenfall requires the first endpoint to use the internal clock and every other
 endpoint the external clock, delivers each child the data register value its
 predecessor holds when the transfer is coupled, and returns zero to the
 parent. Pinned mGBA 0.10.5 has the same topology, but its
 [TODO-marked receive path](https://github.com/mgba-emu/mgba/blob/0.10.5/src/gba/sio/lockstep.c#L249-L276)
-gives the parent disconnected-high data (`FFh` or `FFFFFFFFh`). ZiGBA follows
+gives the parent disconnected-high data (`FFh` or `FFFFFFFFh`). Evenfall follows
 the hardware description.
 
 GBATEK marks direct GBA-to-GBA UART wiring and voltage levels as uncertain, so
@@ -181,7 +180,7 @@ electrically safe physical cable.
 Multiplayer exchanges one 16-bit word per endpoint among up to four consoles
 and is valid only on `.cable_multi`
 ([GBATEK Multi-Player mode](https://rust-console.github.io/gbatek-gbaonly/#siomultiplayermode)).
-ZiGBA's protocol:
+Evenfall's protocol:
 
 - Cable order assigns IDs: the first endpoint is the parent (ID 0), the rest
   are children 1–3.
@@ -199,7 +198,7 @@ ZiGBA's protocol:
 - The error bit (`SIOCNT.6`) is never set.
 
 The deadline is the parent's START cycle plus a duration chosen by the
-parent's baud setting and the endpoint count. ZiGBA uses pinned mGBA 0.10.5's
+parent's baud setting and the endpoint count. Evenfall uses pinned mGBA 0.10.5's
 [`GBASIOCyclesPerTransfer`](https://github.com/mgba-emu/mgba/blob/0.10.5/src/gba/sio.c#L14-L19)
 table:
 
@@ -244,7 +243,7 @@ anything below except the register readback.
 
 The idle status is `0020h` (RX empty), so writing every control bit reads
 back `7FAFh`, matching the suite. GBATEK's CTS prose says the flag is "set to
-always/blindly", contradicting its own bit table; ZiGBA follows the table.
+always/blindly", contradicting its own bit table; Evenfall follows the table.
 
 `SIODATA8` (`12Ah`) has separate transmit and receive paths: a read pops the
 oldest received byte (0 when empty), a write queues a byte for transmission.
@@ -261,7 +260,7 @@ starts shifting when `SIOCNT.10` is set and either CTS is disabled or the
 peer has granted CTS. When it finishes, the next queued byte starts.
 
 GBATEK defines CTS as the SC input being low, which the crossed cable ties to
-the peer's receiver state. ZiGBA models the grant directly: at each
+the peer's receiver state. Evenfall models the grant directly: at each
 `synchronize_sio`, a sender's CTS is granted while the peer has RX enabled,
 has room in its receive storage and has no byte already arriving. Each
 completed byte consumes the grant. A CTS-gated sender with no peer therefore
@@ -285,11 +284,11 @@ write `SIOCNT` before queuing data; the `probe-uart` sender does so.
 ### Errors and interrupts
 
 GBATEK lists three error causes: a bad stop bit, a parity mismatch and
-receive overrun. The peer seam carries whole bytes, so ZiGBA produces only
+receive overrun. The peer seam carries whole bytes, so Evenfall produces only
 overrun. A `SIOCNT` read returns the error bit and then clears it, so the
 clearing read observes the 1.
 
-With `SIOCNT.14` set, ZiGBA requests `IF` bit 7 whenever status bit 4, 5 or 6
+With `SIOCNT.14` set, Evenfall requests `IF` bit 7 whenever status bit 4, 5 or 6
 changes from 0 to 1. This is a strict edge reading of GBATEK's "become set":
 enabling the IRQ while a bit is already 1 requests nothing. Because RX empty
 is 1 at idle, reading the last received byte raises an interrupt, as does a
@@ -297,7 +296,7 @@ write that fills transmit storage.
 
 ### Timing
 
-The only sourced timing values are the four nominal baud rates. ZiGBA derives
+The only sourced timing values are the four nominal baud rates. Evenfall derives
 a frame duration from them; Rust keeps the calculation in
 [`bus/mod.rs`](../../../systems/gba/src/bus/mod.rs):
 
@@ -324,7 +323,7 @@ the values above.
 
 In JoyBus mode (`RCNT.15:14 = 11b`) the GBA is always a slave: an external
 master, such as a GameCube, sends commands and the GBA answers. It cannot
-originate a command, so ZiGBA models JoyBus as an external-master command
+originate a command, so Evenfall models JoyBus as an external-master command
 seam rather than another cable
 ([GBATEK JOY BUS mode](https://rust-console.github.io/gbatek-gbaonly/#siojoybusmode)).
 `SIOCNT` plays no part in the protocol.
@@ -377,7 +376,7 @@ or clear any register.
 
 ### Registers
 
-| Register                     | ZiGBA behavior                                                                                                                               |
+| Register                     | Evenfall behavior                                                                                                                            |
 | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `JOYCNT` (`140h`)            | Bits 0–2 are the RESET, receive-complete and send-complete flags, cleared by writing 1. Bit 6 enables the serial IRQ. All other bits read 0. |
 | `JOY_RECV` (`150h`, `152h`)  | Filled by WRITE. Reading either half clears `JOYSTAT.1`. CPU writes are ignored.                                                             |
@@ -393,18 +392,18 @@ Setting a `JOYCNT` flag without an IRQ request does not.
 GBATEK confidently ties the `JOYCNT.6` interrupt to RESET but questions
 whether READ and WRITE interrupt, and is unsure which of commands `14h` and
 `15h` sets bits 1 and 2. mGBA raises the interrupt for RESET, READ and WRITE
-and sets bit 1 for WRITE and bit 2 for READ. ZiGBA follows mGBA.
+and sets bit 1 for WRITE and bit 2 for READ. Evenfall follows mGBA.
 
 For `JOYSTAT`, GBATEK says a CPU write to `JOY_TRANS` sets bit 1 and a CPU
 read of `JOY_RECV` clears bit 3. mGBA uses the opposite pairing, consistently
 treating bit 1 as "received data unread" and bit 3 as "transmit data
-pending". ZiGBA adopts mGBA's coherent mapping. The suite cannot settle the
+pending". Evenfall adopts mGBA's coherent mapping. The suite cannot settle the
 question: every row it labels `JOYSTAT` reads the reserved address
 `0400015Ah` instead of `04000158h`, so its zero results say nothing about the
 real register.
 
 The suite's JoyBus row writes each payload halfword and reads 0 back, which
-ZiGBA matches. mGBA 0.10.5 instead stores and returns the written payload, so
+Evenfall matches. mGBA 0.10.5 instead stores and returns the written payload, so
 it is a command-semantics reference here, not evidence for disconnected
 payload access.
 
@@ -440,7 +439,7 @@ in different modes or any has `RCNT.15` set. Errors:
 The completion cycle always comes from the clock master's START write (or the
 UART sender's start), so coupling late within the transfer window does not
 move it. An endpoint that has already executed beyond that cycle cannot
-receive data in its past; ZiGBA reports `MissedDeadline` rather than silently
+receive data in its past; Evenfall reports `MissedDeadline` rather than silently
 reordering events.
 
 ### `run_linked_until`
@@ -501,9 +500,9 @@ woken by the parent's Multiplayer transfer.
 | JoyBus RESET command          | only `JOYCNT.0` and the optional IRQ                                                                                                                                                                                                                                                                           |
 
 mGBA's `RegisterRamReset` clears `JOYCNT` and both payload registers but does
-not write `JOYSTAT`; ZiGBA also clears `JOYSTAT`. The test "HLE
+not write `JOYSTAT`; Evenfall also clears `JOYSTAT`. The test "HLE
 RegisterRamReset exposes the SIO reset group and unconditional data-low bug"
-in [ZiGBA's `machine_test.zig`](../../../refs/zigba/test/machine_test.zig) pins this table.
+in [`tests/machine_a.rs`](../../../systems/gba/tests/machine_a.rs) pins this table.
 The HLE reset services themselves are described in [`bios.md`](bios.md).
 
 ## Not implemented
@@ -525,12 +524,12 @@ The HLE reset services themselves are described in [`bios.md`](bios.md).
 
 ## Tests and probes
 
-Register, timing and cable behavior is pinned by ZiGBA's serial tests in
-[`bus_test.zig`](../../../refs/zigba/test/bus_test.zig) (register matrix, Normal
+Register, timing and cable behavior is pinned by the serial tests in
+[`tests/bus.rs`](../../../systems/gba/tests/bus.rs) (register matrix, Normal
 deadlines, both cable topologies, Multiplayer timing and absent slots, UART
 FIFO, overrun, CTS and deadlines, JoyBus commands and scheduling, HALT wake)
 and by the linked-scheduler and reset tests in
-[`machine_test.zig`](../../../refs/zigba/test/machine_test.zig). The bare-metal probes
+[`tests/machine_a.rs`](../../../systems/gba/tests/machine_a.rs) and [`tests/machine_b.rs`](../../../systems/gba/tests/machine_b.rs). The bare-metal probes
 listed under "Serial links" in [`probe/README.md`](../../../probe/README.md)
 (`probe-link`, `probe-multi4`, `probe-stop-sio`, `probe-uart`,
 `probe-joybus`, `probe-joybustx`, `probe-mb2slave`, `probe-mb2mhz`) run
@@ -544,7 +543,7 @@ complete ROM exchanges through `run_linked_until`.
   four cases.
 - Normal mode over the multi-player cable gives the parent zero per GBATEK;
   no hardware capture here confirms it against mGBA's `FFh`.
-- GBATEK says many games test `RCNT.0` (SC) in Multiplayer mode; ZiGBA
+- GBATEK says many games test `RCNT.0` (SC) in Multiplayer mode; Evenfall
   returns a fixed 1.
 - General-purpose mode reads back written `RCNT` data bits for input pins;
   GBATEK describes internal pull-ups.
@@ -559,7 +558,7 @@ complete ROM exchanges through `run_linked_until`.
 - JoyBus: whether READ and WRITE request the serial IRQ, and which
   `JOYSTAT` bits the CPU-side accesses touch.
 - JoyBus: bit rate, framing, the phase at which payload, flags and `IF`
-  become visible, and whether JoyBus runs in or wakes STOP; ZiGBA lets an
+  become visible, and whether JoyBus runs in or wakes STOP; Evenfall lets an
   armed JoyBus completion wake STOP.
 - JoyBus payload registers: 32-bit access, and `JOY_TRANS` readback after a
   command.

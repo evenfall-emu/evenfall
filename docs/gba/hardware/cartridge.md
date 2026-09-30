@@ -3,7 +3,7 @@
 A GBA cartridge is more than a ROM image. It can carry a save medium on the
 8-bit save bus, a four-bit GPIO port inside the ROM chip with a real-time
 clock or sensors behind it, and, for two titles, a tilt sensor in the save
-address range. ZiGBA models each of these as a device with its own protocol
+address range. Evenfall models each of these as a device with its own protocol
 state. The core owns every bit-level protocol and its timing; the host owns
 files, wall-clock time and the physical value a sensor reports.
 
@@ -21,8 +21,8 @@ No public Nintendo specification of the backup chips or cartridge
 peripherals was located. The hardware reference is GBATEK's
 [cartridge chapter](https://rust-console.github.io/gbatek-gbaonly/#gbacartridges),
 cross-checked against pinned mGBA 0.10.5 and NanoBoyAdvance
-([ZiGBA's `refs/README.md`](../../../refs/zigba/refs/README.md) records the revisions). Where they
-disagree, this page says which one ZiGBA follows.
+([`refs/README.md`](../../../refs/README.md) records the revisions). Where they
+disagree, this page says which one Evenfall follows.
 
 ## Header and ROM bus
 
@@ -41,7 +41,7 @@ The first 192 bytes of the ROM are the header
 | `0BDh`        | 1    | Complement: `-(sum of 0A0h..0BCh) - 19h`, low byte |
 | `0BEh`        | 2    | Reserved                                           |
 
-ZiGBA does not validate the header. HLE boot enters `08000000h` without the
+Evenfall does not validate the header. HLE boot enters `08000000h` without the
 logo and complement checks the retail BIOS performs; with an external BIOS
 image those checks run as ordinary BIOS code. The core reads only the game
 code, to select cartridge peripherals and to consult the save-type database.
@@ -90,7 +90,7 @@ SRAM and FRAM share one software interface: 32 KiB at
 `0E000000h`–`0E007FFFh`, direct byte loads and stores, no commands and no
 busy time
 ([GBATEK](https://rust-console.github.io/gbatek-gbaonly/#gbacartbackupsramfram)).
-FRAM differs only in how it retains data, so ZiGBA treats them as one device.
+FRAM differs only in how it retains data, so Evenfall treats them as one device.
 A new SRAM image is filled with `FFh`. The `jsmolka-unsafe` validator
 exercises the 32 KiB mirroring.
 
@@ -101,7 +101,7 @@ Flash occupies `0E000000h`–`0E00FFFFh` and is driven by byte commands. With
 `S+5555h`, `55h` to `S+2AAAh`
 ([GBATEK](https://rust-console.github.io/gbatek-gbaonly/#gbacartbackupflashrom)):
 
-| Operation     | Sequence after the prefix                      | ZiGBA behavior                                                                                 |
+| Operation     | Sequence after the prefix                      | Evenfall behavior                                                                              |
 | ------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | Enter ID mode | `90h` to `S+5555h`                             | Reads at offset 0 and 1 return manufacturer and device; other offsets read `FFh`               |
 | Exit ID mode  | `F0h` to `S+5555h`                             | Normal reads resume                                                                            |
@@ -115,7 +115,7 @@ machine to idle. On a fixed 64 KiB device the bank command is ignored.
 
 GBATEK documents these retail IDs (device in the high byte, manufacturer in
 the low byte): `D4BFh` SST, `1CC2h` Macronix, `1B32h` Panasonic and `3D1Fh`
-Atmel for 64 KiB; `1362h` Sanyo and `09C2h` Macronix for 128 KiB. ZiGBA
+Atmel for 64 KiB; `1362h` Sanyo and `09C2h` Macronix for 128 KiB. Evenfall
 reports the Macronix IDs for common Flash.
 
 Program and erase completion runs on the emulated clock, never on the host
@@ -123,7 +123,7 @@ file. Vendor timings are not established: GBATEK lists only timeouts, and
 pinned mGBA's
 [timing notes](https://github.com/mgba-emu/mgba/blob/0.10.5/src/gba/savedata.c#L21-L31)
 record erase times from about 2,000 to 30,000 cycles depending on the chip
-and call its constants estimates. ZiGBA adopts mGBA's 30,000-cycle
+and call its constants estimates. Evenfall adopts mGBA's 30,000-cycle
 sector-erase estimate and, like mGBA, ties a settling sector only to sector
 erase: reads of that sector return `5Fh` until the deadline while other
 sectors read normally. Byte
@@ -132,7 +132,7 @@ programs and chip erase are readable immediately, which matches the pinned
 The `5Fh` value and deadline are compatibility policy, not a claim that every
 chip answers the same way.
 
-ZiGBA does not model vendor status polling, the Macronix-only `F0h`
+Evenfall does not model vendor status polling, the Macronix-only `F0h`
 terminate-after-timeout command, or GBATEK's note that Flash reads work only
 from code executing outside the ROM.
 
@@ -176,13 +176,13 @@ unit, and addresses and data are sent MSB first:
 | Write        | 73 bits | 81 bits | `10`, block address, 64 data bits, `0` |
 
 The 8 KiB part uses the low 10 address bits (1,024 blocks); GBATEK says the
-upper four should be zero, and ZiGBA discards a command in which they are
+upper four should be zero, and Evenfall discards a command in which they are
 not. A command whose final bit is 1 is discarded. A write commits all eight
 bytes at its final bit and makes the chip busy for 108,368 cycles, GBATEK's
 figure of about 6.5 ms.
 
 GBATEK reports that serial streams sent with `LDRH`/`STRH` do not work on
-hardware. ZiGBA accepts serial input only from DMA3 halfword writes; a CPU
+hardware. Evenfall accepts serial input only from DMA3 halfword writes; a CPU
 store to the window goes down the ROM path and is ignored. Reads are
 different: software polls for completion with ordinary `LDRH`, so any
 halfword read of the window returns the next pending data bit, or, with no
@@ -205,7 +205,7 @@ word-aligned ID strings (`EEPROM_Vnnn`, `SRAM_Vnnn`, `FLASH_Vnnn`,
 homebrew and hacks, stale, or duplicated, and `EEPROM_Vnnn` does not give
 the capacity
 ([GBATEK, backup IDs](https://rust-console.github.io/gbatek-gbaonly/#gbacartbackupids)).
-ZiGBA therefore layers several sources of evidence, most specific first, and
+Evenfall therefore layers several sources of evidence, most specific first, and
 never truncates an existing save on a guess.
 
 1. **Explicit type.** A configured type other than `auto` is used as given.
@@ -258,7 +258,7 @@ never truncates an existing save on a guess.
      unlock prefix and exits stays unresolved.
 
 mGBA also starts undecided and classifies from traffic, but tells SRAM from
-Flash by the first write's address; ZiGBA requires the full unlock sequence
+Flash by the first write's address; Evenfall requires the full unlock sequence
 so an ordinary SRAM write to `5555h` is not mistaken for Flash. open_agb_firm
 [describes](https://github.com/profi200/open_agb_firm#save-type-detection) a
 similar database-plus-fallback design and the same weakness of signatures in
@@ -269,8 +269,8 @@ GBATEK notes that EEPROM capacity is hardcoded in software, so inferring it
 from DMA length is an emulator convenience, not a hardware query. Even mGBA
 [notes](https://github.com/mgba-emu/mgba/blob/0.10.5/README.md#L244) that
 its Flash-size detection fails in some cases, so the explicit type remains
-the final override. Detection is pinned by ZiGBA's runtime-detection tests in
-[`bus_test.zig`](../../../refs/zigba/test/bus_test.zig) and the marker, database
+the final override. Detection is pinned by the runtime-detection tests in
+[`tests/bus.rs`](../../../systems/gba/tests/bus.rs) and the marker, database
 and file-size tests in [`cartridge/save.rs`](../../../systems/gba/src/cartridge/save.rs)
 and [`host/host_save.rs`](../../../systems/gba/src/host/host_save.rs).
 
@@ -283,8 +283,8 @@ exit the medium's raw bytes are written to a temporary file, synced, and
 atomically renamed over the destination; nothing is written while the medium
 is unresolved or `none`. Exports hold only the medium's bytes, with no RTC or
 device trailer. The web session applies the same selection rules to save
-bytes its host supplies. Flags and examples are in ZiGBA's
-[`cli.md`](../../../refs/zigba/docs/cli.md); the Rust CLI lives in
+bytes its host supplies. Flags and examples are in
+[`cli.md`](../../cli.md#saves-and-states). The CLI's save handling lives in
 [`host/host_save.rs`](../../../systems/gba/src/host/host_save.rs).
 
 ## GPIO port
@@ -299,7 +299,7 @@ mapped into the ROM window
 | `080000C6h` | DIRECTION | 3–0: 0 input, 1 output      |
 | `080000C8h` | CONTROL   | 0: 0 write-only, 1 readable |
 
-ZiGBA creates the port only when a GPIO device is attached; otherwise these
+Evenfall creates the port only when a GPIO device is attached; otherwise these
 addresses are plain ROM. Its behavior:
 
 - CONTROL starts at write-only. While it is 0, reads return the ROM bytes
@@ -312,7 +312,7 @@ addresses are plain ROM. Its behavior:
   names only `080000C4h`, and mGBA intercepts writes only in the first
   window.
 - Halfword stores are the reliable case. GBATEK says byte stores are ignored
-  and wonders whether that holds only on the DS; ZiGBA ignores them and
+  and wonders whether that holds only on the DS; Evenfall ignores them and
   splits a word store into two halfword writes, low half first.
 - Writes cost Game Pak wait states. An HLE `HardReset` does not reset the
   port.
@@ -340,7 +340,7 @@ A ROM with no listed code but an `RTC_V` string anywhere in its image gets an
 RTC, because ROM hacks and translations often change the game code but keep
 the RTC library. FireRed, LeafGreen and Pokémon Mystery Dungeon stay
 RTC-free. NanoBoyAdvance also marks the Golden Sun games (`AGSE`, `AGFE`) as
-RTC cartridges while mGBA does not; ZiGBA does not guess. Detection only
+RTC cartridges while mGBA does not; Evenfall does not guess. Detection only
 proposes a configuration: the host passes the final one to `Machine.Config`
 (`rtc_epoch_seconds`, `solar_level`, `gyro_sample`, `rumble`,
 `tilt_sample`), and the CLI can force each device on or off
@@ -375,7 +375,7 @@ and the next command needs a fresh start.
 
 Bits travel least significant first. The command byte has signature `6h` in
 bits 3–0, the register in bits 6–4, and bit 7 set for a read. Like
-NanoBoyAdvance, ZiGBA also accepts a command sent in reverse bit order; a
+NanoBoyAdvance, Evenfall also accepts a command sent in reverse bit order; a
 byte without the signature ends the transaction.
 
 | Register        | Write | Read  | Payload                        |
@@ -390,7 +390,7 @@ byte without the signature ends the transaction.
 | 7 free          | `76h` | `F6h` | none                           |
 
 GBATEK says the reserved registers read `FFh` and notes that Boktai writes
-one byte to alarm 1; ZiGBA follows both emulators in giving them no payload.
+one byte to alarm 1; Evenfall follows both emulators in giving them no payload.
 
 ### Calendar and control
 
@@ -401,7 +401,7 @@ consistent. Years `00`–`99` map to 2000–2099, and weekday 0 is Sunday.
 
 The control register:
 
-| Bit | Meaning                             | ZiGBA                                |
+| Bit | Meaning                             | Evenfall                             |
 | --- | ----------------------------------- | ------------------------------------ |
 | 1   | IRQ duty or hold, otherwise unknown | stored                               |
 | 3   | per-minute IRQ enable               | stored; no periodic IRQ is generated |
@@ -410,7 +410,7 @@ The control register:
 | 7   | power-off flag, cleared by reading  | read-only; never set                 |
 
 Control starts at `40h` (24-hour mode). That is the mGBA and NanoBoyAdvance
-compatibility default, not GBATEK's `82h` battery-failure value; ZiGBA has
+compatibility default, not GBATEK's `82h` battery-failure value; Evenfall has
 no cold-battery configuration. In 12-hour mode the hour reads `00`–`11` in
 BCD with the PM flag in bit 7, GBATEK's GBA-specific placement (the DS uses
 bit 6). mGBA omits the PM flag and NanoBoyAdvance puts it in bit 6. Writes
@@ -422,7 +422,7 @@ changes nothing. A valid write rebases the clock to the written value at the
 cycle of the payload's last bit. The weekday is independently writable and
 kept as an offset from the calendar weekday; a time-only write keeps the
 date and weekday. Neither reference emulator implements these writes, so
-this is ZiGBA's policy rather than a checked behavior.
+this is Evenfall's policy rather than a checked behavior.
 
 ### Reset and interrupt strobes
 
@@ -479,7 +479,7 @@ the top of Boktai's gauge. A level change takes effect immediately, even
 mid-conversion.
 
 NanoBoyAdvance increments on the falling clock edge and mGBA on the rising
-one; both give one count per complete pulse. ZiGBA takes the falling edge.
+one; both give one count per complete pulse. Evenfall takes the falling edge.
 The native frontends start a detected sensor at level 156 and the web session
 at 128.
 
@@ -504,7 +504,7 @@ from about `354h` (fast counter-clockwise) through `6C0h` at rest to `9E3h`
 cartridges start at `6C0h`.
 
 GBATEK warns that hardware needs at least three sequential WS0 ARM
-instructions between clock changes. ZiGBA charges the Game Pak wait states
+instructions between clock changes. Evenfall charges the Game Pak wait states
 but accepts faster toggling: enforcing an analog minimum would need
 measurements and could break software that other emulators run.
 
@@ -516,7 +516,7 @@ external pulldown
 ([GBATEK](https://rust-console.github.io/gbatek-gbaonly/#gbacartrumble)). The
 line may stay asserted. `Machine::rumble_active()` exposes the result.
 GBATEK is unsure whether Drill Dozer uses the same line; mGBA configures it
-that way and ZiGBA follows.
+that way and Evenfall follows.
 
 ### Tilt sensor (Yoshi, Koro Koro Puzzle)
 
@@ -556,7 +556,7 @@ console.
   [`cartridge/gpio.rs`](../../../systems/gba/src/cartridge/gpio.rs) carry unit tests
   for markers, the database, file sizes, EEPROM byte traffic, Atmel pages,
   feature detection and RTC state validation.
-- ZiGBA's [`bus_test.zig`](../../../refs/zigba/test/bus_test.zig) covers runtime detection,
+- [`tests/bus.rs`](../../../systems/gba/tests/bus.rs) covers runtime detection,
   Flash commands and sector erase, EEPROM polling and capacities, GPIO
   masking and fallback, RTC commands, writes and strobes, and the solar,
   gyro, rumble and tilt protocols.
@@ -587,7 +587,7 @@ console.
 - Force-IRQ pulse width and polarity, and the per-minute interrupt's phase
   and duty cycle.
 - Which RTC state survives console reset, cartridge removal and battery
-  failure; ZiGBA also lacks a persistent clock offset and local time.
+  failure; Evenfall also lacks a persistent clock offset and local time.
 - Solar threshold calibration, and whether a light change should be latched
   at counter reset.
 - Gyro clock-rate limits, tilt conversion latency, and Drill Dozer's rumble

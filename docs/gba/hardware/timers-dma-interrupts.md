@@ -2,7 +2,7 @@
 
 This page covers the four hardware timers, the four DMA channels, the
 interrupt controller and the HALT and STOP power states. All of them run on
-the master clock owned by `Bus` ([ZiGBA architecture](../../../refs/zigba/docs/architecture.md)).
+the master clock owned by `Bus` ([architecture](../../architecture.md#time-and-faults)).
 The per-device state lives in [`timer.rs`](../../../systems/gba/src/timer.rs) (`Timer`)
 and [`dma.rs`](../../../systems/gba/src/dma.rs) (`Channel`); scheduling, arbitration
 and interrupt delivery live in [`bus/mod.rs`](../../../systems/gba/src/bus/mod.rs).
@@ -44,15 +44,15 @@ The other control bits are not writable (mask `00C7h`).
   timers. The `probe-timer` probe checks a chain of three timers.
 - **Timer 0 always counts the master clock.** GBATEK marks control bit 2 as
   unused for timer 0, and pinned mGBA restricts cascade to timers 1–3
-  (`src/gba/timer.c`). ZiGBA keeps the written bit in the register but never
+  (`src/gba/timer.c`). Evenfall keeps the written bit in the register but never
   lets it select the clock. Eager advancement, batched deadlines, HALT
   advancement and state validation all apply that rule, including to state
   restored without register writes (tests "timer zero unused count-up bit
   preserves the exact batched IRQ deadline" and "timer zero unused count-up
   bit cannot bypass state phase validation" in
-  [ZiGBA's `bus_test.zig`](../../../refs/zigba/test/bus_test.zig)).
+  [`tests/bus.rs`](../../../systems/gba/tests/bus.rs)).
 
-Evenfall, like ZiGBA, does not tick timers every cycle.
+Evenfall does not tick timers every cycle.
 `Timer::cycles_until_overflow` gives the
 next master-clock overflow, which the bus treats as a device deadline;
 counters are materialized before any access to a timer register and at that
@@ -132,7 +132,7 @@ Pinned mGBA aligns every prescaled tick to its global cycle count
 [`timer.c`][mgba-timer]), and pinned NanoBoyAdvance takes the prescaler
 offset from its global timestamp (`OnControlWritten` in
 `src/nba/src/hw/timer/timer.cc`). Both are comparisons, not specifications;
-neither cites a hardware capture. The assumptions ZiGBA makes where the
+neither cites a hardware capture. The assumptions Evenfall makes where the
 suite is silent are listed under [Open questions](#open-questions).
 
 ## DMA
@@ -195,11 +195,11 @@ requests start three cycles after their trigger, as in pinned mGBA.
 The test "DMA3 immediate starts two cycles after its enabling write, copies
 halfwords, clears enable, and requests IRQ" measures the whole sequence, and
 "code branched to after an immediate DMA copy runs the copied opcodes"
-([ZiGBA's `machine_test.zig`](../../../refs/zigba/test/machine_test.zig)) covers Golden Sun:
+([`tests/machine_a.rs`](../../../systems/gba/tests/machine_a.rs)) covers Golden Sun:
 The Lost Age's boot copy, where Thumb ROM code branches into the destination
 two instructions after the trigger.
 
-| Start timing                                         | Trigger in ZiGBA                                                                                                |
+| Start timing                                         | Trigger in Evenfall                                                                                             |
 | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | Immediate                                            | the enabling write                                                                                              |
 | VBlank                                               | start of line 160                                                                                               |
@@ -220,7 +220,7 @@ VBlank start.
 GBATEK orders DMA0 above DMA1, DMA2 and DMA3 and says lower-priority channels
 pause until higher-priority ones complete. Pinned mGBA transfers one unit at a
 time, updates the channel's count and addresses, then arbitrates again.
-ZiGBA uses the equivalent rule: a read/write beat is indivisible, but after
+Evenfall uses the equivalent rule: a read/write beat is indivisible, but after
 each non-final beat a newly ready higher-priority channel runs before the
 suspended channel's next beat, which resumes from its preserved addresses and
 index (`Bus::service_higher_priority_dma`). A final beat completes its channel,
@@ -231,7 +231,7 @@ DMA3 between beats" pins the order.
 ### Transfer timing
 
 GBATEK gives a transfer's cost as `2N + 2(n−1)S + xI`, with x = 2 normally or
-4 when source and destination are both in Game Pak memory. In ZiGBA each
+4 when source and destination are both in Game Pak memory. In Evenfall each
 beat is a read and a write that the bus prices by region, width and wait
 states like any other access:
 
@@ -242,7 +242,7 @@ states like any other access:
   overshoots the suite's ROM-destination rows by exactly N − S.
 - Completion costs two internal cycles for every transfer, and there is no
   other per-transfer overhead. The suite's Game Pak-to-Game Pak rows fit two,
-  not GBATEK's four. ZiGBA charges them after the final beat while the
+  not GBATEK's four. Evenfall charges them after the final beat while the
   channel is still active, then applies the destination reload, enable
   clearing and the completion IRQ, so neither the CPU nor another channel
   sees the channel finish early.
@@ -265,7 +265,7 @@ listed under [Open questions](#open-questions).
 ### Addresses
 
 GBATEK gives DMA0 a 27-bit source, DMA1–3 28-bit sources, DMA0–2 27-bit
-destinations and DMA3 a 28-bit destination. ZiGBA applies these masks as the
+destinations and DMA3 a 28-bit destination. Evenfall applies these masks as the
 register halves are written (`Channel::write_source_high`,
 `Channel::write_destination_high`). When the enable bit rises it copies both
 registers into internal pointers and aligns only those copies down to the
@@ -297,7 +297,7 @@ With destination control 3 (increment/reload), GBATEK copies `DAD` into the
 internal destination pointer again at each repeat; it does not mention the
 low address bits. The suite's unaligned DMA store rows (`memory.c`, "DMA0–3
 16 (unaligned)" and "32 (unaligned 1–3)") exercise only the copy at enable,
-where the unit lands on the rounded-down halfword or word. ZiGBA treats the
+where the unit lands on the rounded-down halfword or word. Evenfall treats the
 reload as the same copy and drops the same bits
 (`Channel::reload_latched_destination`), so every repeat writes the unit the
 first transfer wrote: a 32-bit HBlank repeat programmed with `BG0VOFS`
@@ -328,16 +328,16 @@ within its own transfer is ready again as it completes. The arbiter then
 never releases the bus: on hardware the CPU stalls for good while video and
 audio keep running.
 
-ZiGBA services DMA inside the CPU access it follows, so such a burst would
+Evenfall services DMA inside the CPU access it follows, so such a burst would
 never return control to the host. A burst therefore ends after 2^24 cycles
 (`Bus.max_dma_burst_cycles`, about one second of guest time and many times
 the longest possible single transfer). Before its next transfer starts, the
 bus latches a `DmaLivelock` (channel and start cycle), drops pending requests
 and runs no further DMA; `Machine` reports a terminal `dma_livelock` fault at
 the next instruction boundary. Guest behavior is exact up to the limit, and
-the fault lands on the same cycle under any host slicing (ZiGBA test "a DMA
+the fault lands on the same cycle under any host slicing (test "a DMA
 livelock is a terminal fault at the same cycle under any host slicing" in
-[`machine_test.zig`](../../../refs/zigba/test/machine_test.zig)). Unlike hardware,
+[`tests/machine_b.rs`](../../../systems/gba/tests/machine_b.rs)). Unlike hardware,
 the stalled instruction then completes without DMA and the machine stops.
 
 ## Interrupts
@@ -368,7 +368,7 @@ instruction boundary where that line is set and CPSR.I is clear
 ([`cpu.md`](cpu.md); [GBATEK, GBA Interrupt Control][gbatek-irq]).
 
 `KEYCNT` (`04000132h`) selects keys in bits 0–9, AND (bit 15 set) or OR
-condition, and the IRQ enable in bit 14. ZiGBA requests the keypad IRQ when
+condition, and the IRQ enable in bit 14. Evenfall requests the keypad IRQ when
 the condition turns from false to true; `probe-keypad` pins that edge model,
 which rejects IRQs on release. Whether hardware is edge- or level-triggered
 is unmeasured.
@@ -376,7 +376,7 @@ is unmeasured.
 ## HALT and STOP
 
 Writing `HALTCNT` (`04000301h`) with a byte enters Halt when bit 7 is clear
-and Stop when it is set ([GBATEK, GBA System Control][gbatek-system]). ZiGBA
+and Stop when it is set ([GBATEK, GBA System Control][gbatek-system]). Evenfall
 also enters them on a halfword write to `04000300h` (`POSTFLG` and `HALTCNT`
 together), selecting by bit 15. The BIOS wait services write the same
 register ([`bios.md`](bios.md)). A multi-step HLE BIOS service defers Halt
@@ -396,7 +396,7 @@ pending Halt wake independently of IME" and "HALTCNT byte writes select Halt
 or Stop and Halt resumes at the following instruction" pin these rules.
 
 **Stop.** GBATEK says most of the hardware, including sound and video, is
-paused. ZiGBA wakes only on an enabled keypad (bit 12), Game Pak (bit 13) or
+paused. Evenfall wakes only on an enabled keypad (bit 12), Game Pak (bit 13) or
 serial (bit 7) request (`Bus::stop_wake_pending`), and freezes every device
 clocked by the system clock: timers and the prescaler counter, the LCD,
 audio, DMA and Game Pak prefetch. The serial peripherals are the exception.
@@ -406,7 +406,7 @@ still advances through their armed deadlines, and a completion can wake it
 spans, so `Bus::idle_stop_until` moves `prescaler_origin` by each one to keep
 the prescaler counter frozen with the timers. `probe-halt-stop` wakes Halt
 with a timer IRQ and Stop with a key press; `probe-stop-sio` wakes Stop with
-a link transfer; ZiGBA's test "HLE Stop freezes system clocks and runUntil
+a link transfer. The test "HLE Stop freezes system clocks and runUntil
 reports the stopped state" checks the frozen timer and LCD.
 
 **Host view.** GBATEK notes that the GBA locks up if Halt's condition never
@@ -419,24 +419,24 @@ no armed serial event reports `power_stopped` without advancing its clock
 
 ## Open questions
 
-- **One shared prescaler counter.** ZiGBA uses one counter for all four
+- **One shared prescaler counter.** Evenfall uses one counter for all four
   timers. The suite tests only timer 0, and per-timer counters that are never
   reset and start together cannot be told apart from one.
-- **Prescaler phase at power-on and after the BIOS boot.** ZiGBA starts the
+- **Prescaler phase at power-on and after the BIOS boot.** Evenfall starts the
   counter at cycle zero in every boot mode. The suite cannot see the absolute
   phase, and HLE boot and `IntrWait` skip BIOS code, so HLE runs do not
   reproduce the suite's absolute counts. alyosha's `gba-tests` timer notes
   (second-hand) describe the post-power-on divider state as dependent on
   exact power-on timing.
-- **Divisor changes.** ZiGBA adds no extra tick when a running timer's
+- **Divisor changes.** Evenfall adds no extra tick when a running timer's
   divisor changes and the selected tap switches.
-- **Prescaler during STOP.** ZiGBA freezes the counter with the timers; no
+- **Prescaler during STOP.** Evenfall freezes the counter with the timers; no
   hardware test covers it.
 - **Counter reset by disable.** Disfavored by the suite fit, not excluded
   without an official-BIOS run of the harness.
 - **Timer enable edge.** Pinned NanoBoyAdvance applies a control write one
   cycle late and the reload one cycle after that (its `CHANGELOG.md` credits
-  alyosha for the enable-delay overflow case). ZiGBA keeps its own latency
+  alyosha for the enable-delay overflow case). Evenfall keeps its own latency
   until a focused hardware test decides.
 - **HBlank DMA on VBlank lines.** Three implementations agree it does not
   run; a hardware capture across lines 160–227 would make it a measured
@@ -445,7 +445,7 @@ no armed serial event reports `power_stopped` without advancing its clock
   reload path.
 - **IWRAM-to-ROM DMA under prefetch.** With ROM code, the prefetch buffer
   enabled and `WAITCNT` `4000h` or `4004h`, the suite's IWRAM-to-ROM rows
-  read one cycle more than ZiGBA, in ARM and Thumb.
+  read one cycle more than Evenfall, in ARM and Thumb.
 - **Interrupted Game Pak access.** The N − S charge for a CPU Game Pak access
   that a DMA interrupts fits every prefetch-off suite column, but the bus
   mechanism behind it, including why a transfer starting on the access's
@@ -455,8 +455,8 @@ no armed serial event reports `power_stopped` without advancing its clock
 - **Unmodeled DMA features.** DMA3 video capture, the Game Pak DRQ bit and
   the special timing of DMA0 do nothing.
 - **Livelock after the limit.** Hardware stalls the CPU indefinitely while
-  video and audio continue; ZiGBA stops with a fault instead.
-- **Keypad IRQ trigger.** ZiGBA is edge-triggered; level behavior has not
+  video and audio continue; Evenfall stops with a fault instead.
+- **Keypad IRQ trigger.** Evenfall is edge-triggered; level behavior has not
   been measured.
 
 [gbatek-timers]: https://rust-console.github.io/gbatek-gbaonly/#gbatimers

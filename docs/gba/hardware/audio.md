@@ -9,7 +9,7 @@ No public Nintendo register specification for the sound hardware exists. This
 page rests on the unofficial [GBATEK sound chapter][gbatek-sound], a
 [DS Lite hardware experiment and test ROM][mgba-1847] reported against mGBA,
 pinned [mGBA 0.10.5](https://github.com/mgba-emu/mgba/tree/0.10.5) and
-NanoBoyAdvance as comparisons, and ZiGBA's analytic sound probes
+NanoBoyAdvance as comparisons, and Evenfall's analytic sound probes
 ([`probe/README.md`](../../../probe/README.md)). The model lives in
 [`apu.rs`](../../../systems/gba/src/apu.rs) (`Apu`); timer and DMA
 coupling lives in [`bus/mod.rs`](../../../systems/gba/src/bus/mod.rs).
@@ -38,14 +38,14 @@ boundaries.
 Lengths, frequencies and trigger bits are write-only
 ([GBATEK channel sections][gbatek-ch1]). Byte writes reach the individual
 register halves, so writing a frequency's low byte neither retriggers the
-channel nor erases its high bits (ZiGBA test "APU byte writes preserve
+channel nor erases its high bits (test "APU byte writes preserve
 write-only frequency lanes" in
-[`bus_test.zig`](../../../refs/zigba/test/bus_test.zig)).
+[`tests/bus.rs`](../../../systems/gba/tests/bus.rs)).
 `SOUNDCNT_X` bits 0–3 report which channels are on; a channel turns off when
 its length expires, its DAC is disabled or a sweep overflows, not when its
 envelope reaches zero.
 
-PSG channel outputs are levels 0–15. ZiGBA does not assume full DMG/CGB
+PSG channel outputs are levels 0–15. Evenfall does not assume full DMG/CGB
 identity: pinned mGBA selects a distinct GBA style for these channels, and its
 trigger paths ([square][mgba-gb-square], [wave and noise][mgba-gb-wave-noise])
 are the main implementation comparison for edge cases.
@@ -73,7 +73,7 @@ and bit 15 forces 75%, the GBA-specific addition (`probe-wave`).
 
 GBATEK describes each bank as a 128-bit shift register
 ([Sound Channel 3][gbatek-ch3]), so data read back after playback is rotated.
-ZiGBA rotates the playing span, one bank or both banks as one 64-sample span
+Evenfall rotates the playing span, one bank or both banks as one 64-sample span
 in two-bank mode, left by one sample per step, and always outputs its top
 nibble. Output samples are the same as a position-pointer model by
 construction. Pinned mGBA rotates the same way in `gb/audio.c`.
@@ -100,7 +100,7 @@ The reset value on trigger is disputed. GBATEK states X = 40h (7-bit) or
 4000h (15-bit) for the GBA, and NanoBoyAdvance independently uses
 `lfsr_init[] = { 0x4000, 0x0040 }`. Pinned mGBA resets to all ones (7Fh or
 7FFFh) in its shared Game Boy core. No available source measures the first
-samples on silicon, so ZiGBA follows the higher-ranked GBATEK claim.
+samples on silicon, so Evenfall follows the higher-ranked GBATEK claim.
 
 ### Frame sequencer, length, envelope and sweep
 
@@ -164,11 +164,11 @@ probes enable master sound before programming channels.
 | `FIFO_A`     | `040000A0h` | four signed 8-bit samples, least significant byte first (write-only)                                                                                                                 |
 | `FIFO_B`     | `040000A4h` | as `FIFO_A`                                                                                                                                                                          |
 
-A PSG master volume n means `(n + 1)/8`, so zero is 1/8, not mute. ZiGBA
+A PSG master volume n means `(n + 1)/8`, so zero is 1/8, not mute. Evenfall
 treats the prohibited PSG ratio 3 as 100%. The reset bits 11 and 15 are
 write-one strobes, not stored flags: `SOUNDCNT_H` keeps only mask `770Fh`,
 as pinned mGBA does ([`io.c`][mgba-io]), so they read back zero. GBATEK marks
-`SOUNDBIAS` bit 0 as unused and ZiGBA, like mGBA, does not store it (mask
+`SOUNDBIAS` bit 0 as unused and Evenfall, like mGBA, does not store it (mask
 `C3FEh`; test "Direct Sound control and bias expose only hardware-backed
 bits").
 
@@ -176,7 +176,7 @@ bits").
 
 GBATEK gives each FIFO a capacity of eight 32-bit words
 ([DMA Sound][gbatek-dma-sound]). The hardware experiment refines that into
-**seven queued words plus a separate four-byte playback word**, and ZiGBA
+**seven queued words plus a separate four-byte playback word**, and Evenfall
 models exactly that (`DirectSoundFifo`: an eight-slot ring whose read and
 write indices distinguish at most seven queued words, plus the playback
 word and its remaining byte count):
@@ -200,7 +200,7 @@ word and its remaining byte count):
   commits a whole word slot with untouched lanes").
 - **Overflow.** Writing an eighth word when seven are queued wraps the ring,
   which then appears empty, as the experiment reported.
-- **Underrun.** With the playback word and the queue both empty, ZiGBA
+- **Underrun.** With the playback word and the queue both empty, Evenfall
   outputs zero. The experiment only inferred the hardware's output here.
 - **Reset strobes.** Bits 11 and 15 of `SOUNDCNT_H` clear the queued words
   but keep the playback word and the sample currently output, as pinned mGBA
@@ -224,7 +224,7 @@ bus timing, source stepping, the completion IRQ and the source pointer
 carried across requests
 ([`timers-dma-interrupts.md`](timers-dma-interrupts.md)).
 
-In ZiGBA:
+In Evenfall:
 
 - When such a channel is enabled with its programmed destination at a FIFO,
   `Bus::write_mmio_half` rewrites its control to fixed destination and 32-bit
@@ -237,7 +237,7 @@ In ZiGBA:
 
 The hardware experiment found that width is forced but an arbitrary
 destination is not: the threshold request drove a four-word DMA to it. mGBA
-rejects such a destination and GBATEK calls it invalid, so ZiGBA does not
+rejects such a destination and GBATEK calls it invalid, so Evenfall does not
 model it (see [Open questions](#open-questions)). DMA3 cannot feed the
 FIFOs.
 
@@ -274,7 +274,7 @@ resolutions 1–3 analogously discard two, three or four low bits. The
 hardware then outputs each code as a 1-bit PWM pulse train at the master
 clock ([GBATEK][gbatek-control]).
 
-ZiGBA's DAC seam is the selected-depth code, not the PWM bit stream. It
+Evenfall's DAC seam is the selected-depth code, not the PWM bit stream. It
 keeps samples signed and in 10-bit units: it clears the discarded low bits
 from both the clipped output and the bias, and emits their difference. This
 is equivalent to the narrower PWM code: it preserves the analog scale while
@@ -319,7 +319,7 @@ changes. Band-limited reconstruction is not implemented.
 split buffers, backpressure, upsampling, downsampling, reset and the absence
 of drift.
 
-ZiGBA advances the square and noise oscillators lazily. Their elapsed cycles
+Evenfall advances the square and noise oscillators lazily. Their elapsed cycles
 accumulate and are applied before anything can observe them (a DAC sample
 while one of them is audible, a frame-sequencer step, a register write that
 affects them, or a state write), so the result is identical to advancing
@@ -355,22 +355,22 @@ left.
   machine without a measured edge trace.
 - **FIFO reset strobe.** Whether every hardware revision keeps the playing
   word and current DAC sample across a reset strobe needs a focused test.
-- **Unrouted Direct Sound channels.** ZiGBA, like mGBA, does not consume FIFO
+- **Unrouted Direct Sound channels.** Evenfall, like mGBA, does not consume FIFO
   data for a channel routed to neither side; hardware is untested.
-- **FIFO underrun output.** ZiGBA outputs zero; the experiment only inferred
+- **FIFO underrun output.** Evenfall outputs zero; the experiment only inferred
   the hardware's value.
 - **Master disable and re-enable.** FIFO survival across a master-enable
   cycle and the first sample after re-enabling are not established by the
   available hardware report.
 - **Sound DMA to a non-FIFO destination.** Hardware apparently performs the
-  four-word transfer to any destination; ZiGBA never starts it.
-- **Sound DMA control read-back.** ZiGBA rewrites a FIFO channel's control
+  four-word transfer to any destination; Evenfall never starts it.
+- **Sound DMA control read-back.** Evenfall rewrites a FIFO channel's control
   bits on enable; whether hardware changes the readable bits is untested.
-- **PSG output level.** ZiGBA mixes PSG levels as unsigned values, so a
+- **PSG output level.** Evenfall mixes PSG levels as unsigned values, so a
   channel spans 0 to about +F0h at full volume; GBATEK describes each PSG as
   spanning ±80h. The difference is a DC offset that changes clipping
   headroom.
-- **Prohibited PSG ratio.** ZiGBA treats `SOUNDCNT_H` ratio 3 as 100%.
+- **Prohibited PSG ratio.** Evenfall treats `SOUNDCNT_H` ratio 3 as 100%.
 
 [gbatek-sound]: https://rust-console.github.io/gbatek-gbaonly/#gbasoundcontroller
 [gbatek-ch1]: https://rust-console.github.io/gbatek-gbaonly/#gbasoundchannel1tonesweep

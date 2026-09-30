@@ -8,18 +8,17 @@ owns the register key and recorded reads, and
 [`bus/mod.rs`](../../systems/gba/src/bus/mod.rs) marks writes. The memo is
 transient: `#[codec(skip)]` excludes it from save states, and a state load,
 reset or accepted framebuffer invalidates it. Rust stores it in a box; its
-size is not ZiGBA's in-memory size.
+size is not Evenfall's in-memory size.
 
 The memo infers no pixel. A kept line holds bytes the renderer wrote from
 inputs that are still equal; the whole mechanism exists to prove that equality
-cheaply. ZiGBA's [`performance.md`](../../refs/zigba/docs/performance.md)
-explains the original performance context.
+cheaply.
 
 ## Context
 
 In static phases (menus, dialogue, pause and idle scenes) nearly every frame
 repeats the previous one, even though games keep writing video memory. In a
-ZiGBA idle scene of a commercial game, a frame writes 1,024 palette bytes (none of
+Evenfall idle scene of a commercial game, a frame writes 1,024 palette bytes (none of
 them changed), 380 VRAM bytes (57 changed), 256 OAM words and 6 LCD
 registers, yet 95.7% of line renders produce exactly the pixels the frame
 surfaces already hold.
@@ -78,7 +77,7 @@ Changes are marked where they happen, not found by comparison:
 | The per-line affine reference advance and its reload at the frame wrap        | `mark_registers`                                       |
 
 Marking changed bytes rather than stores is what makes the memo work on real
-games. The ZiGBA idle scene above rewrites its whole palette every frame, so
+games. The Evenfall idle scene above rewrites its whole palette every frame, so
 marking every palette store would keep no line at all. Marks are recorded
 only when bytes actually change.
 
@@ -153,7 +152,7 @@ It is on in debug and test builds; optimized builds can opt in with the
   later ones.
 
 Check mode catches unmarked video-memory changes and recomposes held lines,
-but verifies only paths a workload reaches. The original ZiGBA mutation
+but verifies only paths a workload reaches. The original Evenfall mutation
 tests are evidence for the checker; the Rust memo tests include unmarked
 memory and stale-mark cases.
 
@@ -174,12 +173,10 @@ the memo costs only its bookkeeping, which measures as zero within noise.
   snapshot cover later changes".
 - [`video/tests.rs`](../../systems/gba/src/video/tests.rs) compares kept and
   fresh lines after changed bitmap pages and checks raster history.
-- ZiGBA's broader bus-write and reset tests are in
-  [`test/bus_test.zig`](../../refs/zigba/test/bus_test.zig).
+- Broader bus-write and reset tests are in
+  [`tests/bus.rs`](../../systems/gba/tests/bus.rs).
 
-A release check-mode build enables `scanline-memo-check`. ZiGBA's original
-performance harness is documented in
-[`tools/mgba-bench/README.md`](../../refs/zigba/tools/mgba-bench/README.md).
+A release check-mode build enables `scanline-memo-check`.
 
 ## Open questions
 

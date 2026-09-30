@@ -4,12 +4,12 @@ The GBA's 16 KiB BIOS ROM boots the console, holds the exception vectors and
 the IRQ trampoline, and provides services through `SWI`: waits, arithmetic,
 block copies, affine setup, decompression, resets, MultiBoot and Nintendo's
 sound driver. Software can observe its startup state, the protected-read
-latch, register clobbers, memory effects and timing, so Evenfall, like ZiGBA, offers two
+latch, register clobbers, memory effects and timing, so Evenfall offers two
 explicit modes and never blurs them:
 
 1. **External BIOS.** A user-supplied 16 KiB image runs through the ordinary
    CPU and bus, exactly like cartridge code.
-2. **HLE.** A port of ZiGBA's original replacement, the default, starts from the
+2. **HLE.** An original replacement, the default, starts from the
    post-boot state and implements each service in Rust with its documented
    inputs, outputs, memory effects, errors, timing and interrupt behavior. It
    contains no Nintendo code and is labeled as a replacement, because it
@@ -27,15 +27,15 @@ built-in replacement ([`bios.c`][mgba-bios], [`hle-bios.s`][mgba-hle-bios]).
 
 ## Boot modes
 
-| Mode          | `Machine.Config.boot` | CLI             | Start                                             | SWI and IRQ      |
-| ------------- | --------------------- | --------------- | ------------------------------------------------- | ---------------- |
-| HLE           | `.hle` (default)      | no `--bios`     | `08000000h`, System mode                          | ZiGBA's services |
-| External BIOS | `.external_bios`      | `--bios <path>` | reset vector, Supervisor mode, IRQ and FIQ masked | the image's code |
-| Skip BIOS     | `.skip_bios`          | library only    | `08000000h`, System mode                          | the image's code |
+| Mode          | `Machine.Config.boot` | CLI             | Start                                             | SWI and IRQ         |
+| ------------- | --------------------- | --------------- | ------------------------------------------------- | ------------------- |
+| HLE           | `.hle` (default)      | no `--bios`     | `08000000h`, System mode                          | Evenfall's services |
+| External BIOS | `.external_bios`      | `--bios <path>` | reset vector, Supervisor mode, IRQ and FIQ masked | the image's code    |
+| Skip BIOS     | `.skip_bios`          | library only    | `08000000h`, System mode                          | the image's code    |
 
 The [`validator`](../../../systems/gba/tests/validator/main.rs) `--bios <path>`
-option reruns the jsmolka suites under external boot (see ZiGBA's
-[`testing.md`](../../../refs/zigba/docs/testing.md)). A save state records the boot
+option reruns the jsmolka suites under external boot (see
+[`testing.md`](../../testing.md#rom-validators)). A save state records the boot
 mode and the BIOS image's hash and loads only into a machine with the same
 pair ([`design/save-states.md`](../../design/save-states.md)).
 
@@ -75,7 +75,7 @@ machine ([GBATEK, BIOS RAM Usage][gbatek-ram];
 always forces blank (GBATEK SWI 01h); pinned mGBA installs the same default on
 every reset path ([`io.c`][mgba-io]). The test "HLE boot exposes the post-BIOS
 System stack pointer and forced blank"
-([ZiGBA's `machine_test.zig`](../../../refs/zigba/test/machine_test.zig)) pins it.
+([`tests/machine_a.rs`](../../../systems/gba/tests/machine_a.rs)) pins it.
 
 ## How HLE runs a service
 
@@ -206,7 +206,7 @@ retail routine would. The host still regains control after every step.
 Compressed data from untrusted sources should not be treated as a hardened
 input format.
 
-ZiGBA tests in [`machine_test.zig`](../../../refs/zigba/test/machine_test.zig) cover each
+Tests in [`tests/machine_b.rs`](../../../systems/gba/tests/machine_b.rs) cover each
 format, including "HLE HuffUnComp reads a halfword-aligned bitstream as
 rotated words" and "HLE run-length VRAM output from an odd destination ends
 its padding".
@@ -373,7 +373,7 @@ inside the service (overshooting by at most about one budget), and the CLI's
 `--steps` and `--trace` count steps, so a long call appears as repeated
 records of its `SWI`.
 
-ZiGBA tests in [`machine_test.zig`](../../../refs/zigba/test/machine_test.zig) cover each
+Tests in [`tests/machine_b.rs`](../../../systems/gba/tests/machine_b.rs) cover each
 property, among them "HLE HuffUnComp without a terminal returns to runUntil
 while video advances", "an IRQ raised inside a multi-step HLE service is
 taken when the service returns" and "multi-step HLE services reach the same
@@ -492,7 +492,7 @@ disassembly (commit `24efa52ac04fedcba4a8b952b76454d3b11a6fa0`), and
 mGBA 0.10.5 and [SAT-R/sa2][sa2] cross-check the MP2K channel layout and
 mixer state transitions. The Cult-of-GBA replacement BIOS maps
 `SoundDriverMain` to a no-op, so it is not an oracle here. Where
-VisualBoyAdvance-M disagrees with the retail instructions, ZiGBA follows the
+VisualBoyAdvance-M disagrees with the retail instructions, Evenfall follows the
 instructions: its reverb shift, its SoundArea-relative DAC write, and its
 `8600h` for `SoundDriverVSyncOn` (the retail routine builds `B600h` from
 `B6h << 8` and `5Bh << 9`).
@@ -519,7 +519,7 @@ unassigned service, a BIOS-internal callback, malformed driver data, or a
 pointer that would break a bus invariant. None of these aborts the host or
 returns fake success. Each stops at a typed, sticky `Machine.Fault` stamped
 with the cycle and instruction
-([ZiGBA architecture](../../../refs/zigba/docs/architecture.md)). The
+([architecture](../../architecture.md#time-and-faults)). The
 latch is transient: it is not part of portable state, a faulted machine
 refuses to write a save state, and loading a valid pre-fault state clears
 it. The CLI prints one stable diagnostic line and still persists the
@@ -588,7 +588,7 @@ external-BIOS mode.
 
 ## Legal boundary
 
-ZiGBA ships no Nintendo BIOS, commercial ROMs, keys or extracted assets, in
+Evenfall ships no Nintendo BIOS, commercial ROMs, keys or extracted assets, in
 the repository or in release packages, and its tests use homebrew ROMs and
 repository-owned probes. Users supply any content they are entitled to use;
 BIOS images, ROMs and saves stay gitignored. The HLE BIOS is original code
@@ -596,12 +596,12 @@ with recorded provenance for every behavior. It was cross-checked against a
 public disassembly but contains no BIOS bytes, which is also why it cannot
 reproduce behavior that depends on reading them.
 
-ZiGBA's external-boot validation uses the Cult-of-GBA open replacement BIOS
-(pinned in [`refs/README.md`](../../../refs/zigba/refs/README.md)), never Nintendo's.
+External-boot validation uses the Cult-of-GBA open replacement BIOS
+(pinned in [`refs/README.md`](../../../refs/README.md)), never Nintendo's.
 Agreement proves that the external boot path and bus behave; disagreement
 with expectations derived from Nintendo's BIOS is replacement behavior, not
 hardware truth. Copying mGBA code, rather than studying its behavior, would
-carry its [MPL-2.0 file-level obligations][mgba-license]; ZiGBA copies none.
+carry its [MPL-2.0 file-level obligations][mgba-license]; Evenfall copies none.
 
 Emulator users should also know the law's limits. In the United States, the
 Copyright Office explains that 17 U.S.C. §117's archival-copy rule is limited
@@ -616,7 +616,7 @@ private-copy rules vary by jurisdiction.
   HLE `HardReset` does set 1.
 - **No retail-BIOS run.** A Nintendo image has never been run by the
   maintainers; compatibility under a retail BIOS is not claimed.
-- **Run-length VRAM parity.** Address-parity pairing (ZiGBA) or
+- **Run-length VRAM parity.** Address-parity pairing (Evenfall) or
   count-parity pairing without padding (Cult-of-GBA): which one the retail
   routine uses is unverified.
 - **IRQ handler state.** GBATEK says the user handler is called in ARM state;

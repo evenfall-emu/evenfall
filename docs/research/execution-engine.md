@@ -149,9 +149,8 @@ compare the engine with stepping:
 
 The Thumb ROM, ARM IWRAM and runner tests in
 [`cpu/mod.rs`](../../systems/gba/src/cpu/mod.rs) and
-[`audit_tests.rs`](../../systems/gba/src/cpu/audit_tests.rs), ported from
-ZiGBA's kernel tests, drive the engine too, and the parity harness runs
-every scenario through it under several slice schedules.
+[`audit_tests.rs`](../../systems/gba/src/cpu/audit_tests.rs) drive the
+engine too.
 
 ## Open questions
 

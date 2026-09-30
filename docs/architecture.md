@@ -2,9 +2,8 @@
 
 Evenfall's core is a deterministic machine without host I/O. Hosts supply
 media and timestamped input and observe pixels, PCM, saves, inspection and
-portable state. This page describes the shared Rust seams and the GBA core;
-device behavior is ported from the pinned local ZiGBA checkout's
-`refs/zigba/docs/hardware/` reference.
+portable state. This page describes the shared Rust crates and the GBA core.
+How each GBA device behaves is described in [`gba/hardware/`](gba/hardware/README.md).
 
 ```text
 CLI · native parity · WebAssembly adapter

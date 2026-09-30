@@ -1,8 +1,7 @@
 # Hardware reference
 
 These pages describe how the Game Boy Advance behaves, as far as public
-evidence establishes it, and how Evenfall models it. ZiGBA is the port's
-behavioral oracle. They are written for contributors and for anyone
+evidence establishes it, and how Evenfall models it. They are written for contributors and for anyone
 implementing a GBA emulator.
 
 | Page                                                   | Covers                                                                                                            |
@@ -39,18 +38,17 @@ names its source. When sources disagree, the higher one wins:
 - **Emulators** at pinned revisions, [mGBA 0.10.5](https://github.com/mgba-emu/mgba/tree/0.10.5)
   and [NanoBoyAdvance](https://github.com/nba-emu/NanoBoyAdvance), as
   comparisons. Where they disagree with each other or with GBATEK, the page
-  says which behavior ZiGBA follows and why.
+  says which behavior Evenfall follows and why.
 
 Exact revisions of every external reference are listed in
-ZiGBA's [`refs/README.md`](../../../refs/zigba/refs/README.md).
+[`refs/README.md`](../../../refs/README.md).
 
 ## Conventions
 
 - Addresses and register values are hexadecimal, written `04000200h` or
   `0x04000200`.
 - Times are in master-clock cycles (16,777,216 Hz) unless stated otherwise.
-- "ZiGBA" paragraphs identify the oracle's evidence and open questions; Rust
-  modules linked from these pages own the corresponding Evenfall behavior.
+- The Rust modules linked from these pages own the behavior they describe.
 - Each page ends with **open questions**: behavior no available source
-  settles, and the assumption ZiGBA makes until a hardware test does. They are
+  settles, and the assumption Evenfall makes until a hardware test does. They are
   the best starting points for anyone with a GBA and a way to measure it.

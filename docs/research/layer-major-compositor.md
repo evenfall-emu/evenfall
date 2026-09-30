@@ -7,7 +7,7 @@ pixels at a time. [`video/compose.rs`](../../systems/gba/src/video/compose.rs)
 owns the line pipeline and the kernel, [`video/lanes.rs`](../../systems/gba/src/video/lanes.rs)
 the vector lanes, [`video/backgrounds.rs`](../../systems/gba/src/video/backgrounds.rs)
 the row renderers and [`video/objects.rs`](../../systems/gba/src/video/objects.rs)
-the object rows. ZiGBA's front-to-back passes in
+the object rows. Evenfall's front-to-back passes in
 [`video/render.rs`](../../systems/gba/src/video/render.rs) remain the
 reference and draw every line with raster history.
 
@@ -32,7 +32,7 @@ reference and draw every line with raster history.
    - Bitmap rows copy one (possibly translated) source row when PA is 1.0,
      PC is 0 and mosaic is off; otherwise they sample like affine rows.
 2. **Object rows.** Objects are visited in descending OAM order, as in
-   ZiGBA. Every opaque pixel overwrites the _front_ row, so it ends holding
+   Evenfall. Every opaque pixel overwrites the _front_ row, so it ends holding
    the lowest-indexed object, and replaces the _minimum_ row when its
    priority is at or below the stored one, so that row ends holding the
    smallest priority, ties to the lower index. The line's object list comes
@@ -48,7 +48,7 @@ reference and draw every line with raster history.
    objects merge, then color effects apply, and only the final color is
    stored in `frame_pixels`.
 
-The object merge reproduces ZiGBA's per-pixel compositor exactly. Replaying
+The object merge reproduces Evenfall's per-pixel compositor exactly. Replaying
 its sequential rule over the objects at one pixel gives: if any admitted
 object's priority is at or above the top background's, the front object
 becomes the top surface whatever its own priority and the background becomes
@@ -108,7 +108,7 @@ benchmark ROMs, lines with raster history other than VRAM writes are rare:
 
 The compositor writes no per-frame auxiliary surface. The top and second
 surfaces of the last composed line stay in its buffers and are exposed through
-`Bus::composed_surfaces`, which tests use in place of ZiGBA's frame-sized
+`Bus::composed_surfaces`, which tests use in place of Evenfall's frame-sized
 priority, layer and second-surface arrays; those arrays belong to the
 reference passes. The scanline memo's check mode recomposes kept lines and
 compares their colors.
@@ -123,7 +123,7 @@ compares their colors.
   reference only for pages the line reads" covers the history exception.
 - [`video/compose.rs`](../../systems/gba/src/video/compose.rs): "vector lanes
   match the scalar kernel".
-- The ported ZiGBA renderer tests compare the compositor with the per-dot and
+- The renderer tests compare the compositor with the per-dot and
   per-pixel reference renderers.
 
 ## Open questions

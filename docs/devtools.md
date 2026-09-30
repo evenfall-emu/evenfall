@@ -117,7 +117,7 @@ decimal strings. Input assets are identified by SHA-1; observed outputs
 (frames, audio, saves, states and memory) by SHA-256.
 
 Version-1 manifests identified assets by SHA-256. The SDK validates version-2
-manifests; ZiGBA's `upgrade-scenario.mjs` CLI is not part of this workspace.
+manifests; Evenfall's `upgrade-scenario.mjs` CLI is not part of this workspace.
 
 | Field         | Contract                                                                                                                                                                                                                                                                                                                    |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

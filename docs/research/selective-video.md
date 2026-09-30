@@ -30,7 +30,7 @@ scheduling belongs to the frontend.
 ## Exact reconstruction
 
 While the interval exceeds one, `Session` journals advancing calls, key
-changes and steps, with their ending cycles and timed inputs. As in ZiGBA,
+changes and steps, with their ending cycles and timed inputs. As in Evenfall,
 the anchor is a raw copy of the live machine: `rebase` copies it into
 `VideoRecovery`'s one preallocated replay `Machine` with `Machine::copy_from`,
 which reuses the replay machine's boxes, forgets decoded code and invalidates
@@ -68,15 +68,11 @@ host PCM and is not a portable save format.
 
 [`session.rs`](../../systems/gba/src/session.rs) tests arbitrary-cycle exact
 state/input restoration, bounded history, faults, STOP horizons, and
-transactional load/reset. ZiGBA's broader comparisons with full video,
-including audio, bus DMA histories and browser publication, remain in its
-[`session.zig`](../../refs/zigba/src/session.zig),
-[`bus_test.zig`](../../refs/zigba/test/bus_test.zig) and
-[`core.test.mjs`](../../refs/zigba/web/core.test.mjs); their throughput
-results are not a Rust parity measurement.
+transactional load and reset. There is no test yet that compares audio,
+DMA histories or browser publication with full video.
 
-- Selective video alone cannot reach the requested 16× rate on ZiGBA's
-  measured scene; remaining CPU work dominates there. Rust's limit is open.
+- Whether selective video alone reaches 16x playback depends on how much CPU
+  work the game does. That limit is unmeasured.
 - A second rendering thread is not part of this design. A pure PPU worker
   would require immutable scanline state and owned raster histories; replaying
   the CPU on another core would duplicate work.

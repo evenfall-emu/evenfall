@@ -4,8 +4,6 @@
 a fixed number of instructions and prints cycles, instructions, faults and an
 optional framebuffer hash. It uses the HLE BIOS unless given an external BIOS.
 The runner lives in [`systems/gba/src/bin/evenfall-gba.rs`](../systems/gba/src/bin/evenfall-gba.rs).
-Its flags and output are ZiGBA's `zigba` CLI's; only the program name
-differs.
 
 ```sh
 cargo run -p evenfall-gba --bin evenfall-gba -- run --steps 100 path/to/homebrew.gba
@@ -66,7 +64,7 @@ a terminal compatibility fault prints `emulation fault cycle=... pc=...
 reason=...` and stops. A completed execution path prints
 `stop cycle=<cycle> next=<address> cpsr=<CPSR> r0=<R0>`, even if it faulted.
 `--frame-hash` adds `frame count=<frames> wyhash=<16 hex digits>`: seed-zero
-Zig-compatible Wyhash over the last completed 240×160 BGR555 image in
+Wyhash (the variant in Zig's standard library) over the last completed 240×160 BGR555 image in
 little-endian pixel order.
 
 Invalid command-line arguments print usage on stdout and exit with status 0.

@@ -7,8 +7,6 @@ turns such rows into colors for both text renderers: `text_row` in
 [`video/backgrounds.rs`](../../systems/gba/src/video/backgrounds.rs), which
 feeds the [layer-major compositor](layer-major-compositor.md), and
 `Bus::decode_text_row`, the tile-row path of the front-to-back reference.
-ZiGBA's [`performance.md`](../../refs/zigba/docs/performance.md) describes
-the content-keyed row cache this replaces.
 
 ## Design
 

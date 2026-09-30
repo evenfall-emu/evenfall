@@ -2,7 +2,7 @@
 
 Many visible GBA compatibility failures come from the bus rather than from
 the CPU or the video chip: bus widths, wait states, prefetch, mirrors, and
-what a read of nothing returns. Evenfall, like ZiGBA, models the bus as
+what a read of nothing returns. Evenfall models the bus as
 behavior, not as storage. `Bus` ([`bus/mod.rs`](../../../systems/gba/src/bus/mod.rs)) decodes every
 access, returns its value and its cost, applies its side effects, and advances
 every device to the cycle of the access. Each access carries an address, a
@@ -97,7 +97,7 @@ it before use ([`bios.md`](bios.md#fault-containment)).
 ## Open bus and unused I/O
 
 A read that reaches no device returns **open bus**: whatever value the bus
-last carried, not zero. ZiGBA keeps one `open_bus_value`, the value of the
+last carried, not zero. Evenfall keeps one `open_bus_value`, the value of the
 most recent bus read by any master: a CPU instruction fetch, a CPU data read,
 or a DMA read. Reads of unmapped regions return it, with the byte or halfword
 lane selected by the address, and cost one cycle. A Thumb fetch leaves only
@@ -118,7 +118,7 @@ I/O reads follow GBATEK's distinction between unused and write-only ports
 
 Pinned by "unmapped and unused MMIO reads distinguish open-bus words from
 paired zero halves" in
-[ZiGBA's `bus_test.zig`](../../../refs/zigba/test/bus_test.zig).
+[`tests/bus.rs`](../../../systems/gba/tests/bus.rs).
 
 ## I/O byte lanes
 
@@ -153,7 +153,7 @@ the BIOS, a latch that changes as the BIOS boots, runs services and
 dispatches interrupts ([GBATEK, Unpredictable Things: Reading from BIOS
 Memory][gbatek-unpredictable]).
 
-ZiGBA models this latch in HLE mode, where no BIOS bytes exist at all: every
+Evenfall models this latch in HLE mode, where no BIOS bytes exist at all: every
 read of `00000000h`–`00003FFFh` returns `Bus.bios_latch`, which the HLE BIOS
 sets at the points where the retail BIOS would have fetched those opcodes.
 
@@ -171,7 +171,7 @@ trampoline and passes under HLE boot.
 With an external BIOS image, the bus returns the image's bytes to every read,
 including reads by code running outside the BIOS; the protection latch is not
 applied on that path. The same jsmolka ROM therefore fails its first check
-under external boot ([ZiGBA compatibility](../../../refs/zigba/docs/compatibility.md)).
+under external boot ([compatibility](../../compatibility.md#known-divergences)).
 
 ## WAITCNT and Game Pak wait states
 
@@ -184,7 +184,7 @@ GBATEK's numbers are **waitstates**, not totals: every 16-bit Game Pak unit or
 GBATEK's `WAITCNT` notes state. Three sources agree once this is accounted
 for: GBATEK's memory map lists a default
 ROM access as 5/5/8 cycles; mGBA's waitstate tables hold waitstates and its
-ARM core adds one; NanoBoyAdvance's tables hold totals. ZiGBA's tables
+ARM core adds one; NanoBoyAdvance's tables hold totals. Evenfall's tables
 (`refresh_game_pak_timing`, `sram_cycles`) hold totals:
 
 | Bits  | Field                  | Setting → total cycles per unit    |
@@ -238,7 +238,7 @@ keeps reading sequential ROM while the CPU is busy elsewhere, so later opcode
 fetches can complete in one cycle
 ([GBATEK, GBA GamePak Prefetch][gbatek-prefetch]). It serves only opcodes
 fetched from Game Pak ROM.
-ZiGBA models it in `Bus.game_pak_prefetch` (`GamePakPrefetch`), cross-checked
+Evenfall models it in `Bus.game_pak_prefetch` (`GamePakPrefetch`), cross-checked
 against mGBA 0.10.5 and NanoBoyAdvance with GBATEK as the behavioral source:
 
 - **Start.** A Game Pak opcode fetch the buffer cannot serve discards the
@@ -260,12 +260,12 @@ against mGBA 0.10.5 and NanoBoyAdvance with GBATEK as the behavioral source:
   priced with the new settings.
 - **Disabled-prefetch quirk.** GBATEK's "prefetch disable bug": while the
   buffer is off, a Game Pak opcode with internal cycles that does not change
-  r15 has its opcode fetch time changed from 1S to 1N. ZiGBA makes the first
+  r15 has its opcode fetch time changed from 1S to 1N. Evenfall makes the first
   Game Pak opcode fetch after any internal cycle during Game Pak execution N.
   Turning the buffer off also forces the next Game Pak opcode fetch to N.
 
 Pinned by the prefetch tests in
-[ZiGBA's `bus_test.zig`](../../../refs/zigba/test/bus_test.zig),
+[`tests/bus.rs`](../../../systems/gba/tests/bus.rs),
 among them "Thumb Game Pak prefetch fills during internal cycles and serves
 buffered opcodes", "ARM Game Pak prefetch buffers complete words and
 completes an in-flight word", "Game Pak data reads and writes cancel
@@ -276,7 +276,7 @@ forces the next opcode fetch N". No reference source code was copied.
 ## mGBA suite timing tables
 
 The [mGBA test suite](https://github.com/mgba-emu/suite) records hardware
-cycle counts for short instruction sequences in `src/timing.c`. ZiGBA cannot
+cycle counts for short instruction sequences in `src/timing.c`. Evenfall cannot
 build the suite ROM on its development host (it needs the devkitARM
 toolchain), so
 [`tests/mgba_suite_timing.rs`](../../../systems/gba/tests/mgba_suite_timing.rs)
@@ -308,22 +308,22 @@ The DMA rules the last group pins are described in
 which reproduces the suite's DMA register-protocol table.
 
 Every row passes in every column except one DMA residual: the suite's
-IWRAM-to-ROM rows read one cycle more than ZiGBA with ROM code, prefetch on
-and `WAITCNT` `4000h` or `4004h`. The fixture asserts ZiGBA's value there so
-that any change is visible.
+IWRAM-to-ROM rows read one cycle more than Evenfall with ROM code, prefetch
+on and `WAITCNT` `4000h` or `4004h`. The fixture asserts Evenfall's value
+there so that any change is visible.
 
 ## Open questions
 
-- **External-BIOS read protection.** With a BIOS image, ZiGBA returns raw
+- **External-BIOS read protection.** With a BIOS image, Evenfall returns raw
   BIOS bytes to reads made from outside the BIOS; GBATEK's protection latch
   is modeled only in HLE mode.
-- **Open-bus composition.** ZiGBA returns the last value read, and a Thumb
+- **Open-bus composition.** Evenfall returns the last value read, and a Thumb
   fetch stores only its halfword. How the prefetched opcodes compose the
   open-bus word in Thumb state, per region (GBATEK, Unpredictable Things), is
   not modeled. Guest code that reads unmapped memory by mistake can depend
   on it: a runaway string copy may end only when open bus yields `FFh`.
 - **Video-memory contention.** GBATEK's memory map adds one cycle when the
-  CPU accesses video memory while the LCD does; ZiGBA charges palette, VRAM
+  CPU accesses video memory while the LCD does; Evenfall charges palette, VRAM
   and OAM accesses fixed cycles.
 - **Affine parameter reads.** `BG2PA`–`BG3PD` read back their written values,
   although GBATEK lists them as write-only; the other write-only video

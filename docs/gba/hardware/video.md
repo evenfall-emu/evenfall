@@ -3,7 +3,7 @@
 The GBA's LCD controller (PPU) draws a 240×160 image from up to four
 background layers, 128 objects, two rectangular windows and an object window,
 with alpha blending, brightness effects and mosaic. This page describes that
-hardware as far as the sources establish it, the model ZiGBA implements, and
+hardware as far as the sources establish it, the model Evenfall implements, and
 where the two may differ.
 
 Evenfall renders by scanline. [`video/timing.rs`](../../../systems/gba/src/video/timing.rs)
@@ -15,8 +15,8 @@ plus a bounded per-dot history of the mid-line writes described under
 [Raster effects](#raster-effects) in
 [`video/history.rs`](../../../systems/gba/src/video/history.rs). The result is a native BGR555 framebuffer;
 color correction is a separate host step ([Presentation](#presentation)).
-Rust's fixed-array lane loops replace Zig's `@Vector` operations; scalar
-reference renderers and differential tests remain in the tree. The
+The fast renderers work on several pixels at once, and scalar reference
+renderers and differential tests remain in the tree. The
 [`tile-row cache`](../../../systems/gba/src/video/tile_row_cache.rs) and
 [`scanline memo`](../../../systems/gba/src/video/scanline_memo.rs) do not change
 pixel output; see the [research notes](../../research/README.md).
@@ -33,7 +33,7 @@ One dot takes four master cycles. GBATEK gives the frame geometry
 | Line         | 1,232 cycles                                                               |
 | Frame        | 160 visible + 68 VBlank lines = 228 lines, 280,896 cycles (about 59.73 Hz) |
 
-ZiGBA delivers LCD events at these positions:
+Evenfall delivers LCD events at these positions:
 
 | Position                       | Effect                                                                                                                         |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
@@ -51,7 +51,7 @@ two frames. HBlank DMA fires only on visible lines
 `DISPSTAT` (`04000004h`) and `VCOUNT` (`04000006h`,
 [LCD I/O Interrupts and Status][gbatek-dispstat]):
 
-| Bits | Field                                       | ZiGBA                                       |
+| Bits | Field                                       | Evenfall                                    |
 | ---- | ------------------------------------------- | ------------------------------------------- |
 | 0    | VBlank flag, read-only                      | set on lines 160–227                        |
 | 1    | HBlank flag, read-only                      | set from cycle 960 to the end of every line |
@@ -62,10 +62,10 @@ two frames. HBlank DMA fires only on visible lines
 
 `VCOUNT` reads the current line, 0–227; writes are ignored.
 
-GBATEK adds two details ZiGBA does not model: the HBlank flag stays clear for
+GBATEK adds two details Evenfall does not model: the HBlank flag stays clear for
 1,006 cycles of each line although drawing takes 960, and the VBlank flag is
 clear again on line 227. Pinned mGBA 0.10.5 agrees in outline, using a
-1,008-cycle drawing period and clearing the VBlank flag at line 227. ZiGBA
+1,008-cycle drawing period and clearing the VBlank flag at line 227. Evenfall
 raises the flag, the IRQ and HBlank DMA together at cycle 960 and keeps the
 VBlank flag through line 227. No hardware test available to the project pins
 either edge (see [Open questions](#open-questions)).
@@ -85,7 +85,7 @@ the position from which `DISPSTAT` and `VCOUNT` reads are derived.
 | Bits  | Field                                                               |
 | ----- | ------------------------------------------------------------------- |
 | 0–2   | BG mode                                                             |
-| 3     | CGB mode; reserved on the GBA and ignored by ZiGBA                  |
+| 3     | CGB mode; reserved on the GBA and ignored by Evenfall               |
 | 4     | Bitmap frame select (Modes 4 and 5)                                 |
 | 5     | HBlank interval free; shortens the OBJ budget ([Objects](#objects)) |
 | 6     | OBJ character mapping: 0 = 2D, 1 = 1D                               |
@@ -94,7 +94,7 @@ the position from which `DISPSTAT` and `VCOUNT` reads are derived.
 | 13–15 | WIN0, WIN1 and OBJ-window enables                                   |
 
 The BIOS boot calls `RegisterRamReset`, which leaves `DISPCNT` at `0080h`
-(forced blank); ZiGBA's HLE boot starts in the same state. A forced-blank
+(forced blank); Evenfall's HLE boot starts in the same state. A forced-blank
 line is white (`7FFFh`), as pinned by `probe-forceblank`.
 
 | Mode | BG0  | BG1  | BG2                                       | BG3    |
@@ -106,7 +106,7 @@ line is white (`7FFFh`), as pinned by `probe-forceblank`.
 | 4    | –    | –    | 240×160 8-bit palette indices, two frames | –      |
 | 5    | –    | –    | 160×128 direct color, two frames          | –      |
 
-GBATEK lists Modes 6 and 7 as prohibited; ZiGBA draws only the backdrop in
+GBATEK lists Modes 6 and 7 as prohibited; Evenfall draws only the backdrop in
 them. The bitmap modes need the BG2 enable bit like any other layer. Their
 second frame starts at VRAM offset `A000h`.
 
@@ -133,7 +133,7 @@ mGBA tests the index before composition in
 transparent and show the backdrop. The tests "Mode 4 index zero lets a
 lower-priority OBJ show through but Mode 3 color zero is opaque" and
 "Mode 5 renders its 160-pixel bitmap and uses backdrop color outside it" in
-[ZiGBA's `bus_test.zig`](../../../refs/zigba/test/bus_test.zig) pin these rules; the
+[`tests/bus/video.rs`](../../../systems/gba/tests/bus/video.rs) pin these rules; the
 `probe-bitmap3`, `probe-bitmap4` and `probe-bitmap5` probes check whole
 frames.
 
@@ -177,7 +177,7 @@ transparent but still reads OBJ VRAM for partial 4-bit tiles and for map
 entries. NanoBoyAdvance returns a shared latch holding the last halfword the
 BG engine fetched.
 
-ZiGBA reads every BG fetch at or past the mode's OBJ boundary (`10000h`, or
+Evenfall reads every BG fetch at or past the mode's OBJ boundary (`10000h`, or
 `14000h` in the bitmap modes) as zero: transparent character data and map
 entry zero (`Bus::vram_byte_for`, `Bus::decode_text_row`). That is the NDS
 behavior. It is chosen over the GBA stripes because the multi-layer case is
@@ -260,7 +260,7 @@ object wrapped in from the left, processing starts at the screen edge.
 
 The constants and cost formulas are GBATEK's and match pinned mGBA's budget
 model; NanoBoyAdvance's cycle-level renderer corroborates the partial
-left-to-right processing and the left-edge clipping. ZiGBA computes the
+left-to-right processing and the left-edge clipping. Evenfall computes the
 admitted objects once per line in `Bus::build_object_line`. The test
 "HBlank-free OBJ budget partially draws the final evaluated object" pins both
 budgets.
@@ -279,7 +279,7 @@ ignore the low bit of the base tile.
 
 In the bitmap modes the framebuffer occupies the lower 16 KiB of OBJ VRAM, so
 GBATEK says tile numbers 0–511 are unavailable ([OAM attributes][gbatek-oam]).
-ZiGBA applies that to each resolved tile fetch (`Bus::object_tile_number` and
+Evenfall applies that to each resolved tile fetch (`Bus::object_tile_number` and
 the check after it): a tile below 512 is transparent, while the rest of the
 object still draws. NanoBoyAdvance's mode-dependent OBJ VRAM boundary
 ([`ppu.hh`][nba-ppu-hh]) and SkyEmu's per-tile guard ([`gba.h`][skyemu-obj])
@@ -352,7 +352,7 @@ WIN1 splits before overlaying WIN0 in the same way
 | `WINOUT`         | `0400004Ah`              | bits 0–5 outside control, bits 8–13 OBJ-window control                 |
 
 Each 6-bit control enables BG0–BG3 (bits 0–3), OBJ (bit 4) and color
-effects (bit 5). Bits 6–7 of each byte are unused; ZiGBA, like mGBA, masks
+effects (bit 5). Bits 6–7 of each byte are unused; Evenfall, like mGBA, masks
 `WININ` and `WINOUT` with `3F3Fh`. A layer is visible only when both its
 `DISPCNT` enable and the winning region's layer bit are set. The effects bit
 gates the effects `BLDCNT` selects; it does not choose targets or change
@@ -371,12 +371,12 @@ For ordinary ranges the rectangle is `[X1, X2) × [Y1, Y2)`. The sources
 disagree on the rest. GBATEK says X2 > 240 or X1 > X2 is treated as X2 = 240,
 and likewise Y2 > 160 or Y1 > Y2 as Y2 = 160. Pinned mGBA clamps off-screen
 edges but splits an in-range `X2 < X1` interval across both screen edges,
-`[X1, 240) ∪ [0, X2)`, and the same vertically. ZiGBA follows mGBA
+`[X1, 240) ∪ [0, X2)`, and the same vertically. Evenfall follows mGBA
 (`Bus::coordinate_in_window`): equal edges give an empty window, an edge past
 the screen clips, and a right edge left of the left edge wraps. The mGBA
 suite's visual case ["Window offscreen reset"][suite-window-reset] does not
 cover every inverted combination, so the test "clipped, equal and wrapped
-window bounds keep BG2 visible on every pixel" records ZiGBA's choice rather
+window bounds keep BG2 visible on every pixel" records Evenfall's choice rather
 than settling it.
 
 ## Color special effects
@@ -403,7 +403,7 @@ check the equations' results over full frames.
 A semi-transparent OBJ (mode 1) forces itself to be an alpha first target
 regardless of `BLDCNT`'s OBJ first-target bit and effect mode; only the
 top-most OBJ pixel takes part, so objects never blend with each other
-(`probe-objsemi`). When the surface beneath is not a second target, ZiGBA
+(`probe-objsemi`). When the surface beneath is not a second target, Evenfall
 shows the OBJ pixel unchanged and applies no brightness effect to it.
 
 ## Mosaic
@@ -445,7 +445,7 @@ rows but not horizontal mask samples" cover the ordering rules.
 ## Raster effects
 
 Games change video registers and memory while a line is being drawn: scroll
-splits, palette changes, window moves and HBlank DMA tables. ZiGBA renders a
+splits, palette changes, window moves and HBlank DMA tables. Evenfall renders a
 whole line at its HBlank, so every mid-line change it models is recorded
 with the dot at which it takes effect.
 
@@ -501,7 +501,7 @@ Details of the modeled cases:
   pixels"). Clearing it is not split: the line renders according to the
   value at its HBlank. GBATEK says the display resumes only after two
   vertical lines and marks that wording uncertain, and modeling the delay
-  would need display-pipeline state ZiGBA does not keep.
+  would need display-pipeline state Evenfall does not keep.
 - **BG priority.** A `BGxCNT` priority change reorders layers from its dot on
   (test "mid-scanline BGCNT priority write changes only later background
   pixels"). NanoBoyAdvance also synchronizes the PPU before an MMIO write and
@@ -514,7 +514,7 @@ Details of the modeled cases:
   internal-reference rule. The test "mid-scanline Mode 3 affine write
   preserves pixels rendered before completion" checks witnesses far from the
   split, which distinguish continuity from restarting the new matrix at
-  x = 0. It accepts both ZiGBA's split at source x = 100 and
+  x = 0. It accepts both Evenfall's split at source x = 100 and
   NanoBoyAdvance's fetch-phase result at x = 108, because no adjacent-pixel
   affine boundary has been measured.
 
@@ -536,26 +536,26 @@ example with color correction, without touching it.
 
 - **HBlank and VBlank flag edges.** GBATEK and mGBA put the HBlank flag about
   46–48 cycles after drawing ends and clear the VBlank flag on line 227;
-  ZiGBA uses cycle 960 and lines 160–227. A capture of `DISPSTAT` around both
+  Evenfall uses cycle 960 and lines 160–227. A capture of `DISPSTAT` around both
   edges, and of the HBlank IRQ and DMA timing, would settle it.
-- **OBJ-to-OBJ priority.** ZiGBA lets the lower OAM number win every OBJ
+- **OBJ-to-OBJ priority.** Evenfall lets the lower OAM number win every OBJ
   overlap (GBATEK); mGBA and NanoBoyAdvance resolve by priority field first.
-  ZiGBA also compares each OBJ only with the surface it lands on, so a
+  Evenfall also compares each OBJ only with the surface it lands on, so a
   lower-numbered OBJ whose priority loses to a BG still covers that BG when a
   higher-numbered OBJ covered it first. A hardware test with overlapping
   objects of different priorities over a BG would decide both.
 - **Semi-transparent OBJ without a second target.** GBATEK says `BLDCNT` may
   still apply a brightness effect to a semi-transparent OBJ pixel that does
-  not overlap a second target; ZiGBA leaves such a pixel unchanged.
-- **Invalid BG tiles on GBA.** ZiGBA reads fetches past the BG side of VRAM
+  not overlap a second target; Evenfall leaves such a pixel unchanged.
+- **Invalid BG tiles on GBA.** Evenfall reads fetches past the BG side of VRAM
   as zero (NDS behavior). The GBA's striped single-layer output and its
   multi-layer latch behavior are unmodeled, and map fetches there are
   undocumented.
-- **OBJ tile restriction in bitmap modes.** Per-fetch (ZiGBA, NanoBoyAdvance,
+- **OBJ tile restriction in bitmap modes.** Per-fetch (Evenfall, NanoBoyAdvance,
   SkyEmu) and whole-object (mGBA) rejection differ for an object starting at
   tile 511; a hardware boundary test would decide.
 - **Inverted window coordinates.** GBATEK's clamp and mGBA's split (which
-  ZiGBA follows) disagree for `X1 > X2`, `Y1 > Y2` and edges past the screen.
+  Evenfall follows) disagree for `X1 > X2`, `Y1 > Y2` and edges past the screen.
 - **Mid-line write phase.** The `c / 4` dot policy and the affine split point
   are unmeasured; NanoBoyAdvance's fetch-phase model lands affine splits
   8 dots later.
@@ -564,7 +564,7 @@ example with color correction, without touching it.
   release are not split mid-line; GBATEK's two-line delay after forced blank
   is not modeled.
 - **Video memory contention.** CPU accesses to video memory that collide
-  with LCD fetches cost no extra cycle in ZiGBA
+  with LCD fetches cost no extra cycle in Evenfall
   ([`memory.md`](memory.md) lists this with the other bus questions).
 - **Mosaic corners.** Hardware tests for rare OBJ-window and wrapped-coordinate
   mosaic combinations are missing.
