@@ -4,7 +4,7 @@
  * [40,120). The WIN0 field of WININ enables BG0 only and WINOUT enables
  * nothing, so the window interior renders red and everything outside shows
  * the black backdrop. After two frames the validator checks every pixel
- * analytically (see test/probe_cases.zig), pinning the
+ * analytically (see validator/probe_cases.rs), pinning the
  * inclusive/exclusive WIN0H/WIN0V edge semantics end to end.
  */
 

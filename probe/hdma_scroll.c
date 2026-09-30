@@ -6,7 +6,7 @@
  * destination. After two full frames it idles. Each table entry holds
  * ((i + 1) / 16) * 8, so every 16-line band shifts the stripe phase by two
  * pixels. The validator recomputes every pixel analytically (see
- * test/probe_cases.zig); the exact table-to-row mapping is
+ * validator/probe_cases.rs); the exact table-to-row mapping is
  * established in probe/README.md.
  */
 

@@ -3,8 +3,8 @@
  * Sends 0xA5 with the internal shift clock at 256 Kbit/s and polls the
  * start bit for completion, then reports the received byte (expected 0x5A
  * from link_child.c). Runs against link_child.c on a standard 2-player
- * cable via test/probe_cases.zig, which advances both machines on
- * one deterministic timeline with zigba.runLinkedUntil.
+ * cable via validator/probe_cases.rs, which advances both machines on
+ * one deterministic timeline with machine::run_linked_until.
  */
 
 #include "gba.h"

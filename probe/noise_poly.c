@@ -7,7 +7,7 @@
  * and master enable match the square probe, so HIGH steps surface as +240
  * and LOW steps as 0. The validator checks the stream against the GBATEK
  * polynomial-counter recurrence independently reimplemented from its
- * documented taps (see test/probe_cases.zig); sliding-window
+ * documented taps (see validator/probe_cases.rs); sliding-window
  * matching absorbs the trigger-phase difference between GBATEK's documented
  * reset states (0x40/0x4000) and any other reset on the same cycle, so the
  * taps are proven while the reset value stays a documented open question.

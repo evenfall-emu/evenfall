@@ -4,7 +4,7 @@
  * polling the RX-empty status bit (SIOCNT bit 5) clear before each SIODATA8
  * read. Packs them little-endian into r12 (expected 0x3C5AA5 for the
  * transmitter's 0xA5, 0x5A, 0x3C). See uart_tx.c and
- * test/probe_cases.zig.
+ * validator/probe_cases.rs.
  */
 
 #include "gba.h"

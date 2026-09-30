@@ -9,7 +9,7 @@
  * backdrop; with WRAP it is set, out-of-range coordinates (negative ones
  * included) wrap modulo 128, and the whole screen shows the rotated map
  * tiled. After two frames the validator recomputes every pixel
- * analytically (see test/probe_cases.zig). Exercises nonzero rotation
+ * analytically (see validator/probe_cases.rs). Exercises nonzero rotation
  * terms, reference-origin handling, per-line reference advance, and both
  * overflow modes end to end; the identity matrix is the mode1_mixed layer.
  */

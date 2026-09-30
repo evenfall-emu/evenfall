@@ -1,4 +1,4 @@
-/* Minimal GBA register map for zigba probe ROMs. Freestanding: no libgba. */
+/* Minimal GBA register map for the probe ROMs. Freestanding: no libgba. */
 
 #ifndef PROBE_GBA_H
 #define PROBE_GBA_H
