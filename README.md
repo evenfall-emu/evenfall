@@ -5,11 +5,11 @@
 A family of deterministic, cycle-aware emulators of classic consoles in one
 Rust codebase, native and in the browser.
 
-The first system is the Game Boy Advance, a port of
-[ZiGBA](https://github.com/evenfall-emu/zigba) that stays byte-identical to
-it: the same ROM and timestamped inputs give the same pixels, audio samples,
-battery saves and save states in both, and existing ZiGBA save states load
-here. Later systems (Nintendo DS, N64, GameCube, Wii) will share its crates
+The first system is the Game Boy Advance. It is deterministic: the same ROM
+and timestamped inputs always give the same pixels, audio samples, battery
+saves and save states, however the host slices execution. It draws every
+frame and emulates audio exactly, and still runs in about half of mGBA's
+time. Later systems (Nintendo DS, N64, GameCube, Wii) will share its crates
 as they are extracted from concrete uses.
 
 > Evenfall does not include BIOS images or games. Bring your own legally
@@ -22,7 +22,7 @@ as they are extracted from concrete uses.
 | `crates/`     | shared crates: the `System` interface, state codec, ARM7TDMI interpreter, audio, replay |
 | `systems/gba` | the Game Boy Advance core and its headless runner                                       |
 | `web/gba`     | the WebAssembly module and the `@evenfall/gba` JavaScript SDK                           |
-| `tools/`      | the ZiGBA parity harness and the benchmark runner                                       |
+| `tools/`      | test and benchmark tools                                                                |
 | `probe/`      | bare-metal probe ROM sources                                                            |
 | `docs/`       | [documentation](docs/README.md), starting with [status](docs/status.md)                 |
 
@@ -37,10 +37,9 @@ cargo run --release -p evenfall-gba -- run --steps 5000000 --frame-hash rom.gba
 npm ci && npm run build:wasm -w @evenfall/gba && npm test
 ```
 
-The ROM validators, the parity harness against ZiGBA (which needs Zig 0.16
-and `arm-none-eabi-gcc` for the probe ROMs) and the benchmarks are described
-in [`docs/testing.md`](docs/testing.md), [`docs/parity.md`](docs/parity.md)
-and [`docs/performance.md`](docs/performance.md).
+The ROM validators (which need `arm-none-eabi-gcc` for the probe ROMs) are
+described in [`docs/testing.md`](docs/testing.md), and the benchmarks in
+[`docs/performance.md`](docs/performance.md).
 
 ## License
 
