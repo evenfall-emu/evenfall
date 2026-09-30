@@ -167,7 +167,6 @@ impl PpuTiming {
 mod tests {
     use super::*;
 
-    /// Zig: an advance ending on a boundary still emits every event
     #[test]
     fn an_advance_ending_on_a_boundary_still_emits_every_event() {
         let mut timing = PpuTiming {
@@ -189,7 +188,6 @@ mod tests {
         assert_eq!(events.frames_completed, 0);
     }
 
-    /// Zig: one large advance preserves frame wrapping and later boundaries
     #[test]
     fn one_large_advance_preserves_frame_wrapping_and_later_boundaries() {
         let mut timing =
@@ -223,7 +221,6 @@ mod tests {
         (cycles, timing.line == 0 || timing.line == 160 || vcount)
     }
 
-    /// Zig: silent boundaries end exactly at the next boundary that delivers an event
     #[test]
     fn silent_boundaries_end_exactly_at_the_next_boundary_that_delivers_an_event() {
         for hblank_irq in [0, 1 << 4] {

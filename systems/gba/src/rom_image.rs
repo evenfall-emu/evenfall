@@ -396,7 +396,6 @@ mod tests {
         assert_eq!(save_prefix(Type::Flash64k, &vec![0x5a; 65537]).unwrap().len(), 65536);
     }
 
-    /// Zig host_save: pinned title save override precedes a stale ROM marker
     #[test]
     fn pinned_title_save_override_precedes_a_stale_rom_marker() {
         let mut top_gun = [0; 0xb0];
@@ -406,7 +405,6 @@ mod tests {
         assert_eq!(choose_save_type(&top_gun, Some(Type::Sram), None), Ok(Type::Sram));
     }
 
-    /// Zig host_save: save override CRC entries are exact and fall back only by game code
     #[test]
     fn save_override_crc_entries_are_exact_and_fall_back_only_by_game_code() {
         let mut rom = [0; 0xb0];

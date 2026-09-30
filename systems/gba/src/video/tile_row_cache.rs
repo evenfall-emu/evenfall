@@ -123,7 +123,6 @@ mod tests {
         pixels
     }
 
-    /// ZiGBA: "expanded rows validate palette bytes banks and source replacement"
     #[test]
     fn expanded_rows_validate_palette_bytes_banks_and_source_replacement() {
         let mut cache = Cache::default();

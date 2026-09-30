@@ -1211,7 +1211,6 @@ mod tests {
         );
     }
 
-    /// Zig: CPU state rejects misaligned instruction addresses.
     #[test]
     fn cpu_state_rejects_misaligned_instruction_addresses() {
         let mut arm = Cpu::init(0x0800_0000, 0x1f, true);
@@ -1222,7 +1221,6 @@ mod tests {
         expect_invalid_state(&thumb, 0);
     }
 
-    /// Zig: CPU state rejects HLE continuations under an external BIOS.
     #[test]
     fn cpu_state_rejects_hle_continuations_under_an_external_bios() {
         let mut irq = Cpu::init(0x0800_0000, 0x1f, false);
@@ -1277,7 +1275,6 @@ mod tests {
         }
     }
 
-    /// Zig: CPU state rejects impossible HLE callback continuations.
     #[test]
     fn cpu_state_rejects_impossible_hle_callback_continuations() {
         let channel = HleSoundChannelClearContinuation {
@@ -1321,7 +1318,6 @@ mod tests {
         }
     }
 
-    /// Zig: CPU state rejects impossible HLE IRQ frames.
     #[test]
     fn cpu_state_rejects_impossible_hle_irq_frames() {
         for frame in [
@@ -1335,7 +1331,6 @@ mod tests {
         }
     }
 
-    /// Zig: CPU state rejects impossible HLE MultiBoot progress.
     #[test]
     fn cpu_state_rejects_impossible_hle_multi_boot_progress() {
         let original = multi_boot_continuation();
@@ -1368,7 +1363,6 @@ mod tests {
         }
     }
 
-    /// Zig: CPU state accepts reachable HLE continuation boundaries.
     #[test]
     fn cpu_state_accepts_reachable_hle_continuation_boundaries() {
         let mut channel = Cpu::init(0x0800_0040, 0x1f, true);
@@ -1455,7 +1449,6 @@ mod tests {
         })
     }
 
-    /// Zig: CPU state accepts a bulk HLE service at its return point.
     #[test]
     fn cpu_state_accepts_a_bulk_hle_service_at_its_return_point() {
         let mut arm = Cpu::init(0x0800_0004, 0x1f, true);
@@ -1479,7 +1472,6 @@ mod tests {
         }
     }
 
-    /// Zig: CPU state rejects impossible bulk HLE service progress.
     #[test]
     fn cpu_state_rejects_impossible_bulk_hle_service_progress() {
         let mut external = Cpu::init(0x0800_0004, 0x1f, false);
@@ -1934,7 +1926,6 @@ mod tests {
         runner_bus.end_device_batch();
     }
 
-    /// Zig: unified kernel RAM transfers match reference at full and short horizons.
     #[test]
     fn unified_kernel_ram_transfers_match_reference_at_full_and_short_horizons() {
         for base in [0x0200_0103_u32, 0x03ff_8103] {
@@ -2013,7 +2004,6 @@ mod tests {
         }
     }
 
-    /// Zig: ARM kernel matches ordinary execution for random encodings and operands.
     #[test]
     fn arm_kernel_matches_ordinary_execution_for_random_encodings_and_operands() {
         let mut seed = 0x5eed_a4a1_u32;

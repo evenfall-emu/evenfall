@@ -449,7 +449,6 @@ mod tests {
         dir
     }
 
-    /// Zig: frontend options accept one ROM among host flags and reject ambiguity
     #[test]
     fn frontend_options_accept_one_rom_among_host_flags_and_reject_ambiguity() {
         let parsed = parse_options(&[
@@ -494,7 +493,6 @@ mod tests {
         ));
     }
 
-    /// Zig: input movies compile frame ranges onto the canonical cycle timeline
     #[test]
     fn input_movies_compile_frame_ranges_onto_the_canonical_cycle_timeline() {
         let movie = parse_input_movie("start:2-3,a:3-4").unwrap();
@@ -517,7 +515,6 @@ mod tests {
         );
     }
 
-    /// Zig: input movies reject malformed and descending ranges
     #[test]
     fn input_movies_reject_malformed_and_descending_ranges() {
         assert!(matches!(parse_input_movie("start:4-3"), Err(Error::InvalidArguments)));
@@ -525,7 +522,6 @@ mod tests {
         assert!(matches!(parse_input_movie("a:x-2"), Err(Error::InvalidCharacter)));
     }
 
-    /// Zig: host RTC time reaches only detected or explicitly configured cartridges
     #[test]
     fn host_rtc_time_reaches_only_detected_or_explicitly_configured_cartridges() {
         let mut ruby = [0; 0xb0];
@@ -538,7 +534,6 @@ mod tests {
         assert_eq!(resolve_rtc_epoch(&fire_red, RtcOption::Epoch(99), 1234), Some(99));
     }
 
-    /// Zig: save preparation detects markers and derives a sibling path
     #[test]
     fn save_preparation_detects_markers_and_derives_a_sibling_path() {
         let dir = test_dir();
@@ -555,7 +550,6 @@ mod tests {
         fs::remove_dir(dir).unwrap();
     }
 
-    /// Zig: existing save size restores unknown ROMs and atomic replacement round-trips
     #[test]
     fn existing_save_size_restores_unknown_roms_and_atomic_replacement_round_trips() {
         let dir = test_dir();
@@ -578,7 +572,6 @@ mod tests {
         fs::remove_dir(dir).unwrap();
     }
 
-    /// Zig: native save import strips a trailer before returning cartridge bytes
     #[test]
     fn native_save_import_strips_a_trailer_before_returning_cartridge_bytes() {
         let dir = test_dir();
@@ -600,7 +593,6 @@ mod tests {
         fs::remove_dir(dir).unwrap();
     }
 
-    /// Zig: EEPROM marker starts unresolved unless an override fixes its capacity
     #[test]
     fn eeprom_marker_starts_unresolved_unless_an_override_fixes_its_capacity() {
         let dir = test_dir();
@@ -616,7 +608,6 @@ mod tests {
         fs::remove_dir(dir).unwrap();
     }
 
-    /// Zig: existing file size must agree with explicit types and exact ROM markers
     #[test]
     fn existing_file_size_must_agree_with_explicit_types_and_exact_rom_markers() {
         let dir = test_dir();
@@ -652,7 +643,6 @@ mod tests {
         fs::remove_dir(dir).unwrap();
     }
 
-    /// Zig: ROM loading accepts exactly 32 MiB and rejects larger images
     #[test]
     fn rom_loading_accepts_exactly_32_mib_and_rejects_larger_images() {
         let dir = test_dir();

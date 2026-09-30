@@ -300,7 +300,6 @@ mod tests {
         None
     }
 
-    /// ZiGBA: "BgAffineSet analytic preflight matches the record-by-record loop".
     #[test]
     fn bg_affine_set_analytic_preflight_matches_the_record_by_record_loop() {
         let mut cpu = Cpu::init(0x0800_0000, 0x1F, true);
@@ -407,7 +406,6 @@ mod tests {
         }
     }
 
-    /// ZiGBA: "mGBA BIOS math table ArcTan cases preserve fixed-point BIOS intermediates".
     #[test]
     fn mgba_bios_math_table_arc_tan_cases_preserve_fixed_point_bios_intermediates() {
         let cases = [
@@ -437,7 +435,6 @@ mod tests {
         }
     }
 
-    /// ZiGBA: "mGBA BIOS math table ArcTan2 covers axes and every quadrant".
     #[test]
     fn mgba_bios_math_table_arc_tan2_covers_axes_and_every_quadrant() {
         let cases = [
@@ -470,7 +467,6 @@ mod tests {
         }
     }
 
-    /// ZiGBA machine_test: "HLE Div and DivArm return quotient remainder and absolute quotient including BIOS edges".
     #[test]
     fn hle_div_and_div_arm_return_quotient_remainder_and_absolute_quotient_including_bios_edges() {
         for (swap, r0, r1, quotient, remainder, absolute) in [

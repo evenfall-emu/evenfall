@@ -459,7 +459,6 @@ mod tests {
         }
     }
 
-    /// ZiGBA: "marked memory changes invalidate the lines that read them"
     #[test]
     fn marked_memory_changes_invalidate_the_lines_that_read_them() {
         let mut fixture = Fixture::new();
@@ -504,7 +503,6 @@ mod tests {
         assert_eq!(fixture.frame(registers, reads), [true; 4]);
     }
 
-    /// ZiGBA: "check mode finds video memory changed without a mark"
     #[test]
     fn check_mode_finds_video_memory_changed_without_a_mark() {
         let mut fixture = Fixture::new();
@@ -536,7 +534,6 @@ mod tests {
         assert_eq!(fixture.memo.unmarked_change(&fixture.memory()), None);
     }
 
-    /// ZiGBA: "check mode does not let marks made before its snapshot cover later changes"
     #[test]
     fn check_mode_does_not_let_marks_made_before_its_snapshot_cover_later_changes() {
         let mut fixture = Fixture::new();

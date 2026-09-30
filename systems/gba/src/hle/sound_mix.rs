@@ -274,7 +274,6 @@ impl Cpu {
 mod tests {
     use super::*;
 
-    /// ZiGBA machine_test: "HLE SoundDriverMain advances an attacking fixed-rate PCM channel".
     #[test]
     fn hle_sound_driver_main_advances_an_attacking_fixed_rate_pcm_channel() {
         let mut bus = Bus::init(&[]);
@@ -301,7 +300,6 @@ mod tests {
         assert_eq!(u32::from_le_bytes(bus.ewram[0x178..0x17C].try_into().unwrap()), wave + 0x14);
     }
 
-    /// ZiGBA machine_test: "HLE SoundDriverMain linearly interpolates a variable-rate PCM channel".
     #[test]
     fn hle_sound_driver_main_linearly_interpolates_a_variable_rate_pcm_channel() {
         let mut bus = Bus::init(&[]);

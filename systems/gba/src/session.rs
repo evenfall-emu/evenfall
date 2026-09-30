@@ -648,7 +648,6 @@ mod tests {
 
     const LOOP_ROM: &[u8] = &[0xfe, 0xff, 0xff, 0xea];
 
-    /// Zig: "owned sessions isolate state and preserve snapshot continuation"
     #[test]
     fn owned_sessions_isolate_state_and_preserve_snapshot_continuation() {
         let mut a = Session::create(Config { image: LOOP_ROM, ..Config::default() }).unwrap();
@@ -672,7 +671,6 @@ mod tests {
         assert_eq!(a.machine.inspect_cpu(), before);
     }
 
-    /// Zig: "session rejects invalid media and configuration before constructing a machine"
     #[test]
     fn session_rejects_invalid_media_and_configuration_before_constructing_a_machine() {
         assert!(matches!(Session::create(Config::default()), Err(Error::InvalidRomSize)));
@@ -802,7 +800,6 @@ mod tests {
         assert_eq!(foreign.write_state_alloc().unwrap(), before);
     }
 
-    /// Zig: "save restoration boots resident media and failure preserves the running session"
     #[test]
     fn save_restoration_boots_resident_media_and_failure_preserves_the_running_session() {
         let mut session = Session::create(Config {
@@ -857,7 +854,6 @@ mod tests {
         ));
     }
 
-    /// Zig: "rewind captures per-frame history and restores earlier frames"
     #[test]
     fn rewind_captures_per_frame_history_and_restores_earlier_frames() {
         let mut session = Session::create(Config {
@@ -887,7 +883,6 @@ mod tests {
         assert!(matches!(session.rewind(1), Err(Error::RewindEmpty)));
     }
 
-    /// Zig: "rewind escapes a faulted machine with the last good state"
     #[test]
     fn rewind_escapes_a_faulted_machine_with_the_last_good_state() {
         let rom = video_recovery_rom(true);
@@ -914,7 +909,6 @@ mod tests {
         assert!(session.machine.fault().is_none());
     }
 
-    /// Zig: "explicit loads and resets start a new rewind timeline"
     #[test]
     fn explicit_loads_and_resets_start_a_new_rewind_timeline() {
         let mut session = Session::create(Config {
@@ -983,7 +977,6 @@ mod tests {
         assert_eq!(session.rewind_depth(), 0);
     }
 
-    /// Zig: "rewind history compresses by default and honors explicit off"
     #[test]
     fn rewind_history_compresses_by_default_and_honors_explicit_off() {
         let mut session = Session::create(Config {
@@ -1018,7 +1011,6 @@ mod tests {
         assert_eq!(session.machine.completed_frames(), at_frame);
     }
 
-    /// Zig: "rewind framebuffer observation is exact and does not consume history"
     #[test]
     fn rewind_framebuffer_observation_is_exact_and_does_not_consume_history() {
         let rom = video_recovery_rom(false);
@@ -1052,7 +1044,6 @@ mod tests {
         ));
     }
 
-    /// Zig: "rewind bundles preserve live position, history and capture continuation"
     #[test]
     fn rewind_bundles_preserve_live_position_history_and_capture_continuation() {
         for compression in
@@ -1227,7 +1218,6 @@ mod tests {
         rom
     }
 
-    /// Zig: "selective Session restores exact arbitrary-cycle states and inputs across internal frame splits"
     #[test]
     fn selective_session_restores_exact_arbitrary_cycle_states_and_inputs_across_internal_frame_splits()
      {
@@ -1311,7 +1301,6 @@ mod tests {
         assert!(matches!(selective.write_state(), Err(Error::State(StateError::MachineFaulted))));
     }
 
-    /// Zig: "selective Session load and reset replace recovery anchors transactionally"
     #[test]
     fn selective_session_load_and_reset_replace_recovery_anchors_transactionally() {
         let rom = video_recovery_rom(false);

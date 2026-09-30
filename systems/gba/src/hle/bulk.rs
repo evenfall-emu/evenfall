@@ -836,7 +836,6 @@ mod tests {
         }
     }
 
-    /// ZiGBA machine_test: "HLE HuffUnComp traverses nested 8-bit nodes from the bitstream MSB".
     #[test]
     fn hle_huff_un_comp_traverses_nested_8_bit_nodes_from_the_bitstream_msb() {
         let rom =
@@ -855,7 +854,6 @@ mod tests {
         assert_eq!(cpu.registers[..4], [0x0800_0014, 0x0200_0004, 0xCAFE_BABE, 0xDEAD_BEEF]);
     }
 
-    /// ZiGBA machine_test: "HLE BitUnPack extracts low bits first and applies its conditional bias".
     #[test]
     fn hle_bit_un_pack_extracts_low_bits_first_and_applies_its_conditional_bias() {
         for (bias, expected) in [

@@ -4608,7 +4608,6 @@ mod tests {
         assert!(sender.uart_tx_completion_cycle.is_some());
     }
 
-    /// Zig: "BIOS hard reset preserves host audio suppression".
     #[test]
     fn bios_hard_reset_preserves_host_audio_suppression() {
         let mut bus = Bus::init(&[]);
@@ -4808,7 +4807,6 @@ mod tests {
         assert_eq!(vram_obj_boundary(4), 0x1_4000);
     }
 
-    /// Zig: "Game Pak prefetch batching matches single-cycle advancement through capacity".
     #[test]
     fn game_pak_prefetch_batching_matches_single_cycle_advancement_through_capacity() {
         let mut batched = Bus::init(&[0; 64]);
@@ -4909,7 +4907,6 @@ mod tests {
         bus.end_device_batch();
     }
 
-    /// Zig: "cached IRQ line follows IE IF IME writes and keypad edges".
     #[test]
     fn cached_irq_line_follows_ie_if_ime_writes_and_keypad_edges() {
         let mut bus = Bus::init(&[]);
@@ -4948,7 +4945,6 @@ mod tests {
         assert!(!bus.irq.irq_line);
     }
 
-    /// Zig: "stable bus state retains only strictly future explicit deadlines".
     #[test]
     fn stable_bus_state_retains_only_strictly_future_explicit_deadlines() {
         let mut bus = Bus::init(&[]);
@@ -4962,7 +4958,6 @@ mod tests {
         assert!(bus.validate_state().is_ok());
     }
 
-    /// Zig: "normal-mode internal-clock SIO transfers complete at their bit-clock deadline".
     #[test]
     fn normal_mode_internal_clock_sio_transfers_complete_at_bit_clock_deadline() {
         for (control, cycles, normal32) in [(0x4083, 8 * 8, false), (0x5081, 32 * 64, true)] {
@@ -5012,7 +5007,6 @@ mod tests {
         }
     }
 
-    /// Zig: "JoyBus status and reset commands return the GBA type and raise reset IRQ".
     #[test]
     fn joy_bus_status_and_reset_commands_return_gba_type_and_raise_reset_irq() {
         let mut bus = Bus::init(&[]);

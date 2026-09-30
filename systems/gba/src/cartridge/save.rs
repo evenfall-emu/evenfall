@@ -820,7 +820,6 @@ impl Eeprom {
 #[cfg(test)]
 mod tests {
     use super::*;
-    /// Zig: save-type detection preserves aligned signature validation and conflicts
     #[test]
     fn save_type_detection_preserves_aligned_signature_validation_and_conflicts() {
         for (rom, expected) in [
@@ -836,7 +835,6 @@ mod tests {
             assert_eq!(detect_type(rom), expected);
         }
     }
-    /// Zig: EEPROM byte-window traffic is open and leaves the serial protocol unchanged
     #[test]
     fn eeprom_byte_window_traffic_is_open_and_leaves_the_serial_protocol_unchanged() {
         for (configured, detection_bits, address_bits) in [
@@ -866,7 +864,6 @@ mod tests {
             assert_eq!(device.data()[0], 0xff);
         }
     }
-    /// Zig: Atmel Flash identifies itself and erase-writes one aligned 128-byte page
     #[test]
     fn atmel_flash_identifies_itself_and_erase_writes_one_aligned_128_byte_page() {
         let mut initial = vec![0xff; FLASH_BANK_SIZE];
@@ -910,7 +907,6 @@ mod tests {
         assert_eq!(device.read_byte(0x180, 0), 0xa5);
     }
 
-    /// Zig: Atmel Flash page progress survives a save-state round trip
     #[test]
     fn atmel_flash_page_progress_survives_a_save_state_round_trip() {
         let mut original = Device::init(Type::Flash64kAtmel);
@@ -944,7 +940,6 @@ mod tests {
         );
     }
 
-    /// Zig bus_test: runtime SRAM detection replays a broken Flash unlock prefix
     #[test]
     fn runtime_sram_detection_replays_a_broken_flash_unlock_prefix() {
         let mut device = Device::init(Type::Auto);
@@ -967,7 +962,6 @@ mod tests {
         assert_eq!(invalid_command.read_byte(0x2aaa, 0), 0x55);
     }
 
-    /// Zig bus_test: runtime save detection recognizes Flash commands and later bank promotion
     #[test]
     fn runtime_save_detection_recognizes_flash_commands_and_later_bank_promotion() {
         let mut device = Device::init(Type::Auto);

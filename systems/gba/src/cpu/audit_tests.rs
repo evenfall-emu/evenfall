@@ -41,7 +41,6 @@ fn equal_bus(reference: &mut Bus, actual: &mut Bus) {
     assert_eq!(expected, got);
 }
 
-/// Zig: ARM kernel Game Pak ROM loads match ordinary timing values and prefetch state.
 #[test]
 fn arm_kernel_game_pak_rom_loads_match_ordinary_timing_values_and_prefetch_state() {
     let mut rom = vec![0; 0x1_0000];
@@ -144,7 +143,6 @@ fn fill_thumb_adds(rom: &mut [u8]) {
     }
 }
 
-/// Zig: Thumb runner with prefetch runs sequentially across the GPIO view split.
 #[test]
 fn thumb_runner_with_prefetch_runs_sequentially_across_the_gpio_view_split() {
     let mut rom = vec![0; 0x800];
@@ -156,7 +154,6 @@ fn thumb_runner_with_prefetch_runs_sequentially_across_the_gpio_view_split() {
     }
 }
 
-/// Zig: Thumb runner with prefetch runs sequentially across a 32 MiB image's window seam.
 #[test]
 fn thumb_runner_with_prefetch_runs_sequentially_across_a_32_mib_images_window_seam() {
     let mut rom = vec![0; 32 * 1024 * 1024];
@@ -215,7 +212,6 @@ fn arm_kernel_stops_fall_through_before_the_supplied_word_leaves_iwram() {
     }
 }
 
-/// Zig: unified kernel failed conditions ignore invalid transfer and branch targets.
 #[test]
 fn unified_kernel_failed_conditions_ignore_invalid_transfer_and_branch_targets() {
     for opcode in [0x059f_f000, 0x081f_8000, 0x0aff_fffd] {
@@ -235,7 +231,6 @@ fn unified_kernel_failed_conditions_ignore_invalid_transfer_and_branch_targets()
     }
 }
 
-/// Zig: unified kernel rejects register lists crossing RAM domains before writes.
 #[test]
 fn unified_kernel_rejects_register_lists_crossing_ram_domains_before_writes() {
     for base in [0x02ff_fffc, 0x03ff_fffc, 0xffff_fffc] {
@@ -254,7 +249,6 @@ fn unified_kernel_rejects_register_lists_crossing_ram_domains_before_writes() {
     }
 }
 
-/// Zig: unified kernel retains context through backward branch and link refill.
 #[test]
 fn unified_kernel_retains_context_through_backward_branch_and_link_refill() {
     for link in [false, true] {
@@ -281,7 +275,6 @@ fn unified_kernel_retains_context_through_backward_branch_and_link_refill() {
     }
 }
 
-/// Zig: unified kernel stores retain latched opcodes but change later fetches.
 #[test]
 fn unified_kernel_stores_retain_latched_opcodes_but_change_later_fetches() {
     for offset in [4_u32, 8, 12] {
@@ -312,7 +305,6 @@ fn unified_kernel_stores_retain_latched_opcodes_but_change_later_fetches() {
     }
 }
 
-/// Zig: execution region signed loads preserve indexing sign and last bus access.
 #[test]
 fn execution_region_signed_loads_preserve_indexing_sign_and_last_bus_access() {
     let cases = [
@@ -384,7 +376,6 @@ fn execution_region_signed_loads_preserve_indexing_sign_and_last_bus_access() {
     }
 }
 
-/// Zig: execution region signed loads refuse short budgets devices and invalid registers.
 #[test]
 fn execution_region_signed_loads_refuse_short_budgets_devices_and_invalid_registers() {
     let cases = [
@@ -412,7 +403,6 @@ fn execution_region_signed_loads_refuse_short_budgets_devices_and_invalid_regist
     }
 }
 
-/// Zig: execution region multiply keeps original alias timing and conditional effects.
 #[test]
 fn execution_region_multiply_keeps_original_alias_timing_and_conditional_effects() {
     let cases = [
@@ -468,7 +458,6 @@ fn execution_region_multiply_keeps_original_alias_timing_and_conditional_effects
     }
 }
 
-/// Zig: execution region admission distinguishes eligible IRQ and masked IRQ and DMA ownership.
 #[test]
 fn execution_region_admission_distinguishes_eligible_irq_and_masked_irq_and_dma_ownership() {
     for case in 0..5 {

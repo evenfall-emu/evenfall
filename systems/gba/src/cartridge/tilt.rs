@@ -76,7 +76,6 @@ impl Tilt {
 mod tests {
     use super::*;
 
-    /// Zig bus_test: tilt cartridge latches two-axis samples through byte-wide SRAM registers
     #[test]
     fn tilt_cartridge_latches_two_axis_samples_through_byte_wide_sram_registers() {
         let mut tilt = Tilt::init(Sample { x: 0x392, y: 0x3a0 });
