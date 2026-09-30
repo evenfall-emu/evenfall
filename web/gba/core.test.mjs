@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { crc32 } from "node:zlib";
+import { afterAll, beforeAll, describe } from "vite-plus/test";
 import { WasmCore, CYCLES_PER_FRAME as F } from "./core.js";
 import { scalarWasm, wasm, wasmTest as test } from "./scripts/wasm-test.mjs";
 
@@ -506,35 +507,41 @@ test("a DMA burst that holds the bus reports dma_stall while video runs on", asy
 const extra = process.env.EVENFALL_TEST_ROMS
   ? JSON.parse(process.env.EVENFALL_TEST_ROMS)
   : [];
-test("native/WASM canonical state, pixels, audio, memory, and save parity", async (t) => {
-  const root = new URL("../..", import.meta.url);
-  execFileSync(
-    "cargo",
-    [
-      "build",
-      "--locked",
-      "--release",
-      "-p",
-      "evenfall-gba",
-      "--bin",
-      "session_probe",
-    ],
-    {
-      cwd: root,
-      timeout: 120000,
-    },
-  );
-  const directory = await mkdtemp(join(tmpdir(), "evenfall-web-test-"));
-  try {
-    const file = join(directory, "loop.gba");
-    await writeFile(file, loop);
+describe.skipIf(!wasm)(
+  "native/WASM canonical state, pixels, audio, memory, and save parity",
+  () => {
+    let directory, file;
+    beforeAll(async () => {
+      const root = new URL("../..", import.meta.url);
+      execFileSync(
+        "cargo",
+        [
+          "build",
+          "--locked",
+          "--release",
+          "-p",
+          "evenfall-gba",
+          "--bin",
+          "session_probe",
+        ],
+        {
+          cwd: root,
+          timeout: 120000,
+        },
+      );
+      directory = await mkdtemp(join(tmpdir(), "evenfall-web-test-"));
+      file = join(directory, "loop.gba");
+      await writeFile(file, loop);
+    });
+    afterAll(() => directory && rm(directory, { recursive: true }));
     // The SIMD module (the default) and the scalar fallback must both equal
     // the native core.
     const modules = [["simd128", wasm]];
     if (scalarWasm) modules.push(["scalar", scalarWasm]);
     for (const [variant, module] of modules)
-      for (const path of [file, ...extra])
-        await t.test(`${variant}: ${path}`, async () => {
+      for (const rom of [null, ...extra])
+        test(`${variant}: ${rom ?? "loop.gba"}`, async () => {
+          const path = rom ?? file;
           const core = await WasmCore.create(module);
           try {
             core.load(await readFile(path), {
@@ -575,10 +582,8 @@ test("native/WASM canonical state, pixels, audio, memory, and save parity", asyn
             core.dispose();
           }
         });
-  } finally {
-    await rm(directory, { recursive: true });
-  }
-});
+  },
+);
 
 test("resident save restoration matches a fresh boot and preserves state on failure", async () => {
   const a = await WasmCore.create(wasm),

@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { WasmCore } from "../core.js";
 import { runScenario, sha1, sha256, validateScenario } from "./scenario.js";

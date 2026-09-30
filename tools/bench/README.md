@@ -18,7 +18,7 @@ node tools/bench/run.mjs --boot hle --cpu 3
 node tools/bench/run.mjs --bios path/to/bios.bin --cpu 3
 node tools/bench/run.mjs --boot hle --cpu 3 --baseline vbam
 node tools/bench/run.mjs --emulators mgba --boot hle --workloads idle --frames 60 --rounds 1 --warmups 0
-node --test tools/bench/*.test.mjs
+vp test tools/bench
 ```
 
 The runner needs Linux, Node, `flock`, `taskset`, Rust (rustup's `~/.cargo/bin/cargo`), CMake, a C compiler, Clang, zlib, and `arm-none-eabi-gcc` with `arm-none-eabi-objcopy`.

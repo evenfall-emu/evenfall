@@ -5,16 +5,23 @@ import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+// The CLI paths below are relative to the package directory.
+const cwd = new URL("..", import.meta.url);
+
 test("CLI keeps exit codes distinct, never overwrites evidence, and replays failures against their identity", async () => {
   const directory = await mkdtemp(join(tmpdir(), "evenfall-devtools-cli-"));
   const run = (args) =>
-    spawnSync(process.execPath, args, { encoding: "utf8", timeout: 30000 });
+    spawnSync(process.execPath, args, {
+      cwd,
+      encoding: "utf8",
+      timeout: 30000,
+    });
   try {
     const fixture = join(directory, "fixture");
     execFileSync(
       process.execPath,
       ["scripts/run-scenario.mjs", "--example", fixture],
-      { timeout: 30000 },
+      { cwd, timeout: 30000 },
     );
     const manifestPath = join(fixture, "scenario.json");
     const success = run([

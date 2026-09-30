@@ -1,7 +1,8 @@
 {
-  // Compiles the TypeScript bridge (src/bridge) to bridge/*.js + .d.ts for
-  // the published package. Workspace consumers read the sources directly
-  // through the "evenfall-source" export condition; see docs/sdk.md.
+  // Type-checks the TypeScript bridge (src/bridge) for `vp check`, and sets
+  // the compiler options `vp pack` uses to emit its bridge/*.d.ts (see
+  // vite.config.ts). Workspace consumers read the sources directly through
+  // the "evenfall-source" export condition; see docs/sdk.md.
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022", "DOM"],

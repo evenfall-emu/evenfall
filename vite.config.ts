@@ -19,4 +19,10 @@ export default defineConfig({
     rules: { "vite-plus/prefer-vite-plus-imports": "error" },
     options: { typeAware: true, typeCheck: true },
   },
+  test: {
+    projects: [
+      "web/gba",
+      { test: { name: "bench", root: "tools/bench", include: ["*.test.mjs"] } },
+    ],
+  },
 });
