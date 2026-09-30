@@ -1,0 +1,64 @@
+name: Emulation bug
+description: A game, test ROM or homebrew behaves differently than on hardware.
+labels: ["bug", "emulation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never attach or link ROMs, BIOS images or copyrighted saves.** Identify
+        software by title and SHA-1 instead. Failure bundles exported by the
+        player contain machine state but no ROM or BIOS data.
+  - type: input
+    id: revision
+    attributes:
+      label: Evenfall revision
+      description: Commit SHA (`git rev-parse HEAD`) or SDK version.
+    validations:
+      required: true
+  - type: dropdown
+    id: frontend
+    attributes:
+      label: Frontend
+      options:
+        - Browser player
+        - Headless CLI (`evenfall-gba run`)
+        - JavaScript SDK in my own application
+        - Rust crate in my own application
+    validations:
+      required: true
+  - type: dropdown
+    id: boot
+    attributes:
+      label: Boot mode
+      options:
+        - Evenfall BIOS (default)
+        - Real BIOS image (`--bios`)
+    validations:
+      required: true
+  - type: input
+    id: software
+    attributes:
+      label: Software and ROM SHA-1
+      description: Title, region/revision, and `sha1sum` of the raw `.gba`.
+      placeholder: "Example Game (USA) — 3f2a…"
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happens, and what should happen
+      description: Say how you know the expected behavior (hardware, test ROM, GBATEK, another emulator).
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Inputs and approximate frame/time. A scenario manifest or failure bundle is ideal (see docs/devtools.md).
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Screenshots, audio captures, traces, or a player failure bundle.
