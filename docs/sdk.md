@@ -92,17 +92,17 @@ For other terms, contact [contact@evenfall-emu.org](mailto:contact@evenfall-emu.
 
 ### Entry points
 
-| Import                                   | Contents                                                                                           |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Import                                   | Contents                                                                                                            |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `@evenfall/gba`                          | `Emulator` (asynchronous, one Worker per session), `KEYS`, `CYCLES_PER_FRAME`, `SAVE_TYPES`, `CHEAT_FORMATS`, types |
-| `@evenfall/gba/core`                     | `WasmCore`, the synchronous adapter for Node and Workers                                           |
-| `@evenfall/gba/devtools/scenario`        | `runScenario`, `validateScenario`, `sha1`, `sha256`, `jsonSafe`                                    |
-| `@evenfall/gba/devtools/capture`         | `FailureRecorder`, `validateFailureBundle`, `replayFailureBundle`, `replayFailureBundleAsync`      |
-| `@evenfall/gba/bridge`                   | typed read-only views of game memory ([Game bridges](#game-bridges))                               |
-| `@evenfall/gba/bridge/react`             | `BridgeProvider`, `useViews`, `useBridge`, `useBridgeResources` (React 18+, optional)              |
-| `@evenfall/gba/audio-worklet`            | the `evenfall-audio` AudioWorklet processor, loaded by URL                                         |
-| `@evenfall/gba/evenfall-gba.wasm`        | the core, built with SIMD                                                                          |
-| `@evenfall/gba/evenfall-gba-scalar.wasm` | the core, built without SIMD                                                                       |
+| `@evenfall/gba/core`                     | `WasmCore`, the synchronous adapter for Node and Workers                                                            |
+| `@evenfall/gba/devtools/scenario`        | `runScenario`, `validateScenario`, `sha1`, `sha256`, `jsonSafe`                                                     |
+| `@evenfall/gba/devtools/capture`         | `FailureRecorder`, `validateFailureBundle`, `replayFailureBundle`, `replayFailureBundleAsync`                       |
+| `@evenfall/gba/bridge`                   | typed read-only views of game memory ([Game bridges](#game-bridges))                                                |
+| `@evenfall/gba/bridge/react`             | `BridgeProvider`, `useViews`, `useBridge`, `useBridgeResources` (React 18+, optional)                               |
+| `@evenfall/gba/audio-worklet`            | the `evenfall-audio` AudioWorklet processor, loaded by URL                                                          |
+| `@evenfall/gba/evenfall-gba.wasm`        | the core, built with SIMD                                                                                           |
+| `@evenfall/gba/evenfall-gba-scalar.wasm` | the core, built without SIMD                                                                                        |
 
 Every JavaScript entry point has type declarations.
 This page summarizes the interface, and [`emulator.d.ts`](../web/gba/emulator.d.ts), [`core.d.ts`](../web/gba/core.d.ts) and the [devtools declarations](../web/gba/devtools/) are the reference.
