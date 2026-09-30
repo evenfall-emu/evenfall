@@ -256,7 +256,7 @@ Its sources, and how interrupts wake the CPU from HALT, are described in [`timer
 With the HLE BIOS, `SWI` and interrupt entry run Evenfall's own BIOS code instead of the vectors ([`bios.md`](bios.md)).
 
 Booting with a real BIOS starts at the reset vector in Supervisor mode, with both interrupt masks set (CPSR `D3h`).
-The state after HLE boot is in [`bios.md`](bios.md#post-boot-state).
+The state after HLE boot is in [`bios.md`](bios.md#state-after-hle-boot).
 
 ## Undefined versus UNPREDICTABLE
 
