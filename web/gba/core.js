@@ -99,7 +99,9 @@ export class WasmCore {
     this.loaded = false;
     this.timeline = null;
     this.sampleSequence = 0;
-    if (exports.ef_version() !== 1) throw new Error("Unsupported WASM ABI");
+    // A module from another ABI (an older prefix) lacks `ef_version`.
+    if (typeof exports.ef_version !== "function" || exports.ef_version() !== 1)
+      throw new Error("Unsupported WASM ABI");
   }
   replaceTimeline() {
     this.timeline = crypto.randomUUID();
@@ -221,10 +223,7 @@ export class WasmCore {
       cpsr: cpu[16],
       nextInstructionAddress: cpu[17],
       romHash: hash,
-      rtcEnabled:
-        typeof w.ef_rtc_enabled === "function"
-          ? Boolean(w.ef_rtc_enabled())
-          : undefined,
+      rtcEnabled: Boolean(w.ef_rtc_enabled()),
       saveType: SAVE_TYPES[w.ef_save_type()],
       fault,
     };
@@ -301,8 +300,7 @@ export class WasmCore {
   frame(output) {
     this.requireLoaded();
     // Explicit observations retain their exact-cycle meaning during skips.
-    if (this.wasm.ef_canonical_frame)
-      this.check(this.wasm.ef_canonical_frame());
+    this.check(this.wasm.ef_canonical_frame());
     const frame = new Uint16Array(
       this.wasm.memory.buffer,
       this.wasm.ef_frame_ptr(),

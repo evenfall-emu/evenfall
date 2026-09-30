@@ -36,6 +36,11 @@ function zip(image) {
   return Buffer.concat([local, name, image, central, name, end]);
 }
 
+test("a module without the ef_ ABI is rejected by name", () => {
+  for (const exports of [{}, { zb_version: () => 1 }, { ef_version: () => 2 }])
+    assert.throws(() => new WasmCore(exports), /Unsupported WASM ABI/);
+});
+
 test("WASM ABI: bounded execution, zero-cycle inspection, input, and isolation", async () => {
   const a = await WasmCore.create(wasm),
     b = await WasmCore.create(wasm);

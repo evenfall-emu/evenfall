@@ -29,7 +29,7 @@ export interface Snapshot {
   nextInstructionAddress: number;
   /** Lowercase hexadecimal SHA-1 of the raw ROM, after ZIP extraction. */
   romHash: string;
-  rtcEnabled?: boolean;
+  rtcEnabled: boolean;
   saveType: SaveType;
   fault: string | null;
 }
