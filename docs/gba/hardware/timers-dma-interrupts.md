@@ -1,463 +1,322 @@
 # Timers, DMA and interrupts
 
-This page covers the four hardware timers, the four DMA channels, the
-interrupt controller and the HALT and STOP power states. All of them run on
-the master clock owned by `Bus` ([architecture](../../architecture.md#time-and-faults)).
-The per-device state lives in [`timer.rs`](../../../systems/gba/src/timer.rs) (`Timer`)
-and [`dma.rs`](../../../systems/gba/src/dma.rs) (`Channel`); scheduling, arbitration
-and interrupt delivery live in [`bus/mod.rs`](../../../systems/gba/src/bus/mod.rs).
+Three small pieces of hardware keep a GBA game on schedule.
 
-How the CPU enters an IRQ is described in [`cpu.md`](cpu.md). The BIOS wait
-services (`Halt`, `Stop`, `IntrWait`, `VBlankIntrWait`, `CustomHalt`) and the
-BIOS interrupt-flag mirror at `03007FF8h` are described in
-[`bios.md`](bios.md). Sound DMA is described in [`audio.md`](audio.md).
+- **Timers** count time.
+  Games use them to measure intervals, and above all to set the sample rate of digital sound: each time a timer overflows, the sound chip plays its next sample.
+- **DMA** copies memory without the CPU.
+  Games use it to move graphics into video memory, to change a display register on every scanline, and to keep the sound chip fed with samples.
+- **Interrupts** tell the CPU that something happened (a frame finished, a timer overflowed, a copy completed), so it can react instead of polling.
+
+A fourth piece, the **HALT and STOP** power states, lets the CPU sleep until an interrupt wakes it.
+Most games spend the end of every frame halted, waiting for the next one.
+
+All of these run on the master clock, which the bus owns ([architecture](../../architecture.md#time-and-faults)).
+Timer state is in [`timer.rs`](../../../systems/gba/src/timer.rs) (`Timer`) and DMA channel state in [`dma.rs`](../../../systems/gba/src/dma.rs) (`Channel`).
+Scheduling, arbitration between channels and interrupt delivery are in [`bus/mod.rs`](../../../systems/gba/src/bus/mod.rs).
+
+Related pages: how the CPU enters an interrupt is in [`cpu.md`](cpu.md).
+The BIOS wait services (`Halt`, `Stop`, `IntrWait`, `VBlankIntrWait`, `CustomHalt`) and the BIOS interrupt flags at `03007FF8h` are in [`bios.md`](bios.md).
+Sound DMA is in [`audio.md`](audio.md).
 
 ## Timers
 
-The GBA has four incrementing 16-bit timers
-([GBATEK, GBA Timers][gbatek-timers]).
+The GBA has four 16-bit timers that count up ([GBATEK, GBA Timers][gbatek-timers]).
 
 | Register   | Address          | Read            | Write        |
 | ---------- | ---------------- | --------------- | ------------ |
 | `TMxCNT_L` | `04000100h + 4x` | current counter | reload value |
 | `TMxCNT_H` | `04000102h + 4x` | control         | control      |
 
-| `TMxCNT_H` bits | Field                                         |
-| --------------- | --------------------------------------------- |
-| 0–1             | Prescaler: `/1`, `/64`, `/256`, `/1024`       |
-| 2               | Count-up (cascade) timing; unused for timer 0 |
-| 6               | IRQ on overflow                               |
-| 7               | Enable                                        |
+| `TMxCNT_H` bits | Field                                            |
+| --------------- | ------------------------------------------------ |
+| 0–1             | prescaler: count every 1, 64, 256 or 1024 cycles |
+| 2               | count-up (cascade), unused for timer 0           |
+| 6               | interrupt on overflow                            |
+| 7               | enable                                           |
 
-The other control bits are not writable (mask `00C7h`).
+The other control bits can't be written (mask `00C7h`).
 
-- **Enable.** Setting bit 7 on a disabled timer loads the counter from the
-  reload register. At `/1`, a timer enabled with reload `FFFEh` overflows two
-  cycles after the enabling write completes.
-- **Overflow.** The counter reloads from the reload register as it is at the
-  overflow, so writing the reload of a running timer affects only later
-  periods. An overflow sets IF bit 3 + x when bit 6 is set, clocks the next
-  timer if that one is in count-up mode, and for timers 0 and 1 may clock a
-  Direct Sound FIFO ([`audio.md`](audio.md)).
-- **Cascade.** Timers 1–3 in count-up mode advance once per overflow of the
-  preceding timer and ignore their prescaler; chains may span all four
-  timers. The `probe-timer` probe checks a chain of three timers.
-- **Timer 0 always counts the master clock.** GBATEK marks control bit 2 as
-  unused for timer 0, and pinned mGBA restricts cascade to timers 1–3
-  (`src/gba/timer.c`). Evenfall keeps the written bit in the register but never
-  lets it select the clock. Eager advancement, batched deadlines, HALT
-  advancement and state validation all apply that rule, including to state
-  restored without register writes (tests "timer zero unused count-up bit
-  preserves the exact batched IRQ deadline" and "timer zero unused count-up
-  bit cannot bypass state phase validation" in
-  [`tests/bus.rs`](../../../systems/gba/tests/bus.rs)).
+A timer runs like this:
 
-Evenfall does not tick timers every cycle.
-`Timer::cycles_until_overflow` gives the
-next master-clock overflow, which the bus treats as a device deadline;
-counters are materialized before any access to a timer register and at that
-deadline, so IRQs, cascades and FIFO consumption land on their exact cycle
-however the host slices time (test "no-event materialization preserves every
-prescaler and cascade until the exact overflow").
+- **Enable.** Turning a timer on loads the counter from the reload value.
+  At a prescaler of 1, a timer enabled with reload `FFFEh` overflows two cycles after the enabling write completes.
+- **Overflow.** When the counter passes `FFFFh`, it reloads from the reload value as it is at that moment, so changing the reload of a running timer only affects later periods.
+  The overflow requests an interrupt if bit 6 is set, clocks the next timer if that one is in count-up mode, and for timers 0 and 1 can advance a sound FIFO ([`audio.md`](audio.md)).
+- **Cascade.** Timers 1–3 in count-up mode ignore their prescaler and count one per overflow of the timer before them.
+  Chaining all four makes a 64-bit counter.
+- **Timer 0 always counts the clock.** GBATEK marks its count-up bit as unused, and mGBA only lets timers 1–3 cascade.
+  Evenfall stores the bit but never lets it change timer 0's clock, including in a restored save state.
 
-### The prescaler is a free-running counter
+Evenfall doesn't tick timers every cycle.
+`Timer::cycles_until_overflow` computes the cycle of the next overflow, and the bus treats it as a deadline.
+Counters are brought up to date only when a program reads a timer register or when that deadline arrives, so interrupts, cascades and sound samples land on their exact cycle however the host slices time.
 
-The `/64`, `/256` and `/1024` prescalers are taps of one free-running
-counter, not dividers restarted when a timer is enabled. GBATEK does not say
-so. The evidence is the hardware-recorded timer table of the
-[mGBA suite][suite-timers] (`src/timers.c`).
+### The prescaler is one free-running counter
 
-Its harness (`runTest`, lines 438–538, ARM code in IWRAM) synchronizes on a
-`/1024` overflow of timer 0 with reload `FFFEh` and an IRQ; the IRQ handler
-stops the timer. A delay loop of one, two or four iterations (3, 8 or 18
-cycles, so the later enables land 5 and 15 cycles after the first) precedes
-the enable of the tested configuration on timer 0, and a tight loop counts
-until the handler stops the timer after the last IRQ. The `/1` rows never
-depend on the delay; 64 of the 72 prescaled groups do. With reload `FFF0h`
-and one IRQ:
+A timer with a prescaler of 64 counts once every 64 cycles.
+The question is where those 64-cycle steps start.
+One possibility is that each timer restarts its own divider when it is enabled.
+The other is that all timers read one counter that never stops, and tick whenever it crosses a multiple of 64.
 
-| Divisor | Recorded count, delay 1/2/4 | Lines         | Prescaler restarted at enable | Free-running counter |
-| ------- | --------------------------- | ------------- | ----------------------------- | -------------------- |
-| `/64`   | `7B`, `7B`, `81`            | 242, 246, 250 | `82` each                     | `7B`, `7B`, `81`     |
-| `/256`  | `1EB`, `1EB`, `1E9`         | 302, 306, 310 | `202` each                    | `1EB`, `1EB`, `1E9`  |
-| `/1024` | `7EB`, `7EB`, `7E9`         | 362, 366, 370 | `802` each                    | `7EB`, `7EB`, `7E9`  |
+GBATEK doesn't say.
+The hardware results recorded by the [mGBA test suite][suite-timers] (`src/timers.c`) answer it: the GBA uses one free-running counter.
 
-A prescaler restarted at enable takes the same time to overflow whatever the
-delay, so no choice of harness overheads can produce these rows. With a
-free-running counter the first tick comes where the counter next crosses a
-multiple of the divisor: at `/64` the enable 15 cycles later misses that tick
-and overflows one period later; at `/256` and `/1024` the later enable simply
-leaves less time before the same tick.
+The suite's test synchronizes on a timer 0 overflow, waits a short delay (3, 8 or 18 cycles, so the later enables land 5 and 15 cycles after the first), enables the timer under test, and counts loop iterations until it overflows.
+With reload `FFF0h` and one interrupt:
 
-The fit is tight. Calibrating the loop and IRQ overheads on the `/1` rows
-alone (exactly one setting fits all 96 `/1` checks), one counter phase
-reproduces all 216 prescaled checks (12 rows × 3 delays × 3 IRQ counts × 2
-loops): 182 cycles, modulo 1024, from the synchronizing overflow to the
-first enable. The next-best phase fits 200 checks, and a restarted prescaler
-fits 9. The fit depends on the harness's exact ARM timing; any other
-delay-loop cost fits at most 215. The counter keeps running while timer 0 is
-stopped, and neither enable nor divisor writes reset it. A counter reset by
-the disable would fit only if about 182 cycles separated disable and enable;
-the `/1` counter columns put the disable inside the IRQ handler, roughly 90
-cycles before the enable. Without an official-BIOS run of the harness that
-variant is disfavored rather than excluded.
+| Prescaler | Recorded count, delay 1/2/4 | If the divider restarts at enable | If one counter runs freely |
+| --------- | --------------------------- | --------------------------------- | -------------------------- |
+| 64        | `7B`, `7B`, `81`            | `82` each                         | `7B`, `7B`, `81`           |
+| 256       | `1EB`, `1EB`, `1E9`         | `202` each                        | `1EB`, `1EB`, `1E9`        |
+| 1024      | `7EB`, `7EB`, `7E9`         | `802` each                        | `7EB`, `7EB`, `7E9`        |
 
-Evenfall implements the counter as `Bus::prescaler_counter`: the timer clock
-position minus `Bus.prescaler_origin`, modulo 1024. A prescaled timer ticks
-where the counter crosses a multiple of its divisor.
+A divider that restarts at enable takes the same time whatever the delay, so it can't produce these rows.
+With a free-running counter, the first tick comes where the counter next crosses a multiple of the prescaler.
+At 64, the enable 15 cycles later just misses a tick and overflows one period later.
+At 256 and 1024, a later enable just leaves less time before the same tick.
 
-- Every control write to an enabled timer takes the timer's phase from the
-  counter (`Timer::write_control`): an enable, a divisor change on a running
-  timer, and a return from count-up to the master clock. Growing or
-  shrinking, a divisor change puts the next tick at the new divisor's next
-  multiple.
-- Enable, disable and divisor writes never reset the counter, and neither do
-  the HLE `HardReset` and `SoftReset` services. Only STOP moves the origin
-  (see [HALT and STOP](#halt-and-stop)).
-- The per-timer phase (`Timer.prescaler_phase`) is a cache that the overflow
-  schedule reads. For a running master-clock timer it always equals the
-  counter modulo the divisor; loading a save state (format version 6, which
-  stores the origin) rejects a timer off that grid.
+The fit is tight.
+After calibrating the test's loop and interrupt overheads on the unscaled rows alone, one counter phase (182 cycles after the synchronizing overflow, modulo 1024) reproduces all 216 prescaled checks.
+The next-best phase fits 200, and a restarting divider fits 9.
+A counter that resets when a timer is disabled fits less well, but can't be ruled out without running the test on a console with the official BIOS.
 
-Tests "prescaled timers tick on one free-running prescaler grid", "a /64
-enable after a /1024 overflow follows the free-running prescaler" (enables
-182, 187 and 197 cycles after a `/1024` overflow reach a `/64`, `FFF0h`
-overflow 970, 965 and 1,019 cycles later), "a running timer's prescaler
-change ticks on the shared grid when batched and eager", "a count-up stage
-returns to the master clock on the shared prescaler grid" and "STOP freezes
-the prescaler counter with the timers" pin the model.
+Evenfall implements the counter as `Bus::prescaler_counter`: the timer clock position minus `Bus.prescaler_origin`, modulo 1024.
 
-Pinned mGBA aligns every prescaled tick to its global cycle count
-(`GBATimerUpdateRegister` and `GBATimerWriteTMCNT_HI` in
-[`timer.c`][mgba-timer]), and pinned NanoBoyAdvance takes the prescaler
-offset from its global timestamp (`OnControlWritten` in
-`src/nba/src/hw/timer/timer.cc`). Both are comparisons, not specifications;
-neither cites a hardware capture. The assumptions Evenfall makes where the
-suite is silent are listed under [Open questions](#open-questions).
+- Every control write to an enabled timer takes the timer's phase from the counter (`Timer::write_control`).
+  That covers enabling, changing the prescaler of a running timer, and leaving count-up mode.
+- Nothing resets the counter: not enabling, disabling or changing a prescaler, and not the HLE `HardReset` and `SoftReset` services.
+  Only STOP moves the origin ([below](#halt-and-stop)).
+- Each timer caches its phase (`Timer.prescaler_phase`) for the overflow schedule.
+  Loading a save state rejects a running timer whose phase is off the counter's grid.
+
+mGBA also aligns prescaled ticks to its global cycle count ([`timer.c`][mgba-timer]), and NanoBoyAdvance takes the prescaler offset from its global timestamp.
+Neither cites a hardware capture.
 
 ## DMA
 
-Four channels copy halfwords or words without the CPU
-([GBATEK, GBA DMA Transfers][gbatek-dma]). The CPU is stalled while a channel
-holds the bus.
+Four DMA channels copy halfwords or words from one address range to another ([GBATEK, GBA DMA Transfers][gbatek-dma]).
+The CPU stops while a channel has the bus.
 
-| Channel | Source address | Destination address | Count (0 means) | Special timing              |
-| ------- | -------------- | ------------------- | --------------- | --------------------------- |
-| DMA0    | 27-bit         | 27-bit              | `4000h`         | none                        |
-| DMA1    | 28-bit         | 27-bit              | `4000h`         | sound FIFO                  |
-| DMA2    | 28-bit         | 27-bit              | `4000h`         | sound FIFO                  |
-| DMA3    | 28-bit         | 28-bit              | `10000h`        | video capture (not modeled) |
+| Channel | Source address | Destination address | A count of 0 means | Special trigger             |
+| ------- | -------------- | ------------------- | ------------------ | --------------------------- |
+| DMA0    | 27-bit         | 27-bit              | `4000h`            | none                        |
+| DMA1    | 28-bit         | 27-bit              | `4000h`            | sound FIFO                  |
+| DMA2    | 28-bit         | 27-bit              | `4000h`            | sound FIFO                  |
+| DMA3    | 28-bit         | 28-bit              | `10000h`           | video capture (not modeled) |
 
-Each channel has `DMAxSAD`, `DMAxDAD` and `DMAxCNT_L` (write-only; reads
-return zero) and `DMAxCNT_H`, at `040000B0h + 12x` onwards.
+Each channel has a source (`DMAxSAD`), a destination (`DMAxDAD`), a count (`DMAxCNT_L`, write-only) and a control register (`DMAxCNT_H`), starting at `040000B0h + 12x`.
 
 | `DMAxCNT_H` bits | Field                                                              |
 | ---------------- | ------------------------------------------------------------------ |
-| 5–6              | Destination control: increment, decrement, fixed, increment/reload |
-| 7–8              | Source control: increment, decrement, fixed, prohibited            |
-| 9                | Repeat                                                             |
+| 5–6              | destination: increment, decrement, fixed, or increment then reload |
+| 7–8              | source: increment, decrement, fixed, or prohibited                 |
+| 9                | repeat                                                             |
 | 10               | 32-bit units                                                       |
-| 11               | Game Pak DRQ (DMA3); not modeled                                   |
-| 12–13            | Start timing: immediate, VBlank, HBlank, special                   |
-| 14               | IRQ at end of transfer                                             |
-| 15               | Enable                                                             |
+| 11               | cartridge DRQ (DMA3), not modeled                                  |
+| 12–13            | when to start: immediately, at VBlank, at HBlank, or special       |
+| 14               | interrupt when done                                                |
+| 15               | enable                                                             |
 
-Bits 0–4 are not writable (mask `FFE0h`). DMA3 transfers to the EEPROM port
-also inform save-type detection ([`cartridge.md`](cartridge.md)).
+Bits 0–4 can't be written (mask `FFE0h`).
+DMA3 transfers to the EEPROM port also help detect the save chip ([`cartridge.md`](cartridge.md)).
 
 ### Starting a transfer
 
-When the enable bit rises, the channel copies `SAD` and `DAD` into internal
-pointers ([Addresses](#addresses)). "Immediate" does not mean synchronous with
-that write. Evenfall keeps a per-channel start deadline (`dma_start_cycles`).
-Until then the CPU keeps running and the enable bit reads set; at the
-deadline, ready channels enter the arbiter and the first beat follows
-directly. Disabling a channel cancels its scheduled start.
+When a game sets the enable bit, the channel copies the source and destination into internal pointers ([Addresses](#addresses)).
+The copy doesn't start at once, even when "immediate".
+Evenfall keeps a start deadline per channel (`dma_start_cycles`).
+Until then the CPU keeps running and the enable bit reads set.
+At the deadline, the channel competes for the bus and its first beat follows directly.
+Disabling the channel cancels the start.
 
-An immediate transfer starts two cycles after the end of the enabling write.
-GBATEK says to wait two cycles after setting the enable bit before touching
-the DMA registers again. The mGBA suite's DMA rows (`src/tests/dma-timing.s`)
-bound the delay from both sides, because END reads timer 0 with `ldrh` before
-stopping it and a transfer that starts after that read is not counted:
+| When to start                           | What triggers it in Evenfall                                                             |
+| --------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Immediately                             | the enabling write, two cycles later                                                     |
+| VBlank                                  | the start of line 160, three cycles later                                                |
+| HBlank                                  | cycle 960 of lines 0–159, three cycles later                                             |
+| Special, DMA1 or DMA2                   | a sound FIFO asking for data at a timer overflow, with no delay ([`audio.md`](audio.md)) |
+| Special, other channels or destinations | nothing: the channel stays enabled and never starts                                      |
 
-- IWRAM code reads the timer one cycle after the trigger store, and the
-  suite's IWRAM columns read 2 for every row, so the transfer has not
-  started by then.
-- Thumb ROM code at `WAITCNT` `0014h` reads the timer two cycles after the
-  trigger store, and the suite counts the transfer there, so it has started.
+The two-cycle delay for immediate transfers is pinned down from both sides by the mGBA suite's DMA rows (`src/tests/dma-timing.s`).
+Code in IWRAM that reads a timer one cycle after the enabling write sees no transfer yet.
+Thumb code in ROM that reads it two cycles after sees the transfer counted.
+NanoBoyAdvance also uses two cycles.
+mGBA uses three, but it only runs DMA between instructions, so its constant doesn't carry over to Evenfall's per-access model.
+The three-cycle delay for VBlank and HBlank follows mGBA, and no suite row times it.
 
-NanoBoyAdvance also starts immediate DMA two cycles after the write. Pinned
-mGBA uses three, but mGBA's clock during a store still reads the start of the
-storing instruction and it runs DMA only between instructions, so its
-constant does not carry over to a per-access model. VBlank and HBlank
-requests start three cycles after their trigger, as in pinned mGBA.
+The delay matters to real games.
+Golden Sun: The Lost Age copies code with immediate DMA and jumps into the copy two Thumb instructions later.
 
-The test "DMA3 immediate starts two cycles after its enabling write, copies
-halfwords, clears enable, and requests IRQ" measures the whole sequence, and
-"code branched to after an immediate DMA copy runs the copied opcodes"
-([`tests/machine_a.rs`](../../../systems/gba/tests/machine_a.rs)) covers Golden Sun:
-The Lost Age's boot copy, where Thumb ROM code branches into the destination
-two instructions after the trigger.
+HBlank DMA doesn't run on the invisible lines 160–227.
+GBATEK doesn't say, but mGBA and NanoBoyAdvance agree.
 
-| Start timing                                         | Trigger in Evenfall                                                                                             |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Immediate                                            | the enabling write                                                                                              |
-| VBlank                                               | start of line 160                                                                                               |
-| HBlank                                               | cycle 960 of lines 0–159 only                                                                                   |
-| Special, DMA1/DMA2                                   | Direct Sound FIFO request ([`audio.md`](audio.md)); raised at the timer overflow, without the three-cycle delay |
-| Special, DMA0/DMA3, or DMA1/DMA2 not aimed at a FIFO | none; the channel stays enabled and never starts                                                                |
+### Priority
 
-GBATEK does not say whether HBlank DMA runs on VBlank lines. Two independent
-implementations agree that it does not: pinned mGBA gates `GBADMARunHblank`
-on `vcount < GBA_VIDEO_VERTICAL_PIXELS` in `_startHblank`, and
-NanoBoyAdvance requests HBlank DMA only in `BeginHBlankVDraw`. The
-`probe-hdma` probe drives a per-line scroll table this way, and the test
-"VBlank DMA starts after the access that crosses into line 160" pins the
-VBlank start.
-
-### Priority and arbitration
-
-GBATEK orders DMA0 above DMA1, DMA2 and DMA3 and says lower-priority channels
-pause until higher-priority ones complete. Pinned mGBA transfers one unit at a
-time, updates the channel's count and addresses, then arbitrates again.
-Evenfall uses the equivalent rule: a read/write beat is indivisible, but after
-each non-final beat a newly ready higher-priority channel runs before the
-suspended channel's next beat, which resumes from its preserved addresses and
-index (`Bus::service_higher_priority_dma`). A final beat completes its channel,
-including the completion cycles below, and raises its IRQ before another
-ready channel begins. The test "HBlank DMA0 preempts an active lower-priority
-DMA3 between beats" pins the order.
+DMA0 has the highest priority and DMA3 the lowest.
+A beat (one read and one write) can't be split, but between beats a higher-priority channel that has become ready runs first.
+The interrupted channel then resumes where it stopped (`Bus::service_higher_priority_dma`).
+A channel's last beat finishes the whole transfer, including its completion cycles and interrupt, before another channel starts.
+This matches GBATEK and mGBA, which also transfers one unit at a time and arbitrates again after each.
 
 ### Transfer timing
 
-GBATEK gives a transfer's cost as `2N + 2(n−1)S + xI`, with x = 2 normally or
-4 when source and destination are both in Game Pak memory. In Evenfall each
-beat is a read and a write that the bus prices by region, width and wait
-states like any other access:
+GBATEK gives a transfer's cost as `2N + 2(n−1)S + xI`, with x = 2, or 4 when both ends are in cartridge memory.
+In Evenfall each beat is a read and a write that the bus prices like any other access, by region, width and wait states:
 
 - There is no gap between beats.
-- Only the first Game Pak access of the whole transfer, source or
-  destination, is non-sequential; every other access is sequential. This is
-  NanoBoyAdvance's model; a non-sequential first destination write instead
-  overshoots the suite's ROM-destination rows by exactly N − S.
-- Completion costs two internal cycles for every transfer, and there is no
-  other per-transfer overhead. The suite's Game Pak-to-Game Pak rows fit two,
-  not GBATEK's four. Evenfall charges them after the final beat while the
-  channel is still active, then applies the destination reload, enable
-  clearing and the completion IRQ, so neither the CPU nor another channel
-  sees the channel finish early.
+- Only the first cartridge access of a transfer, source or destination, is non-sequential.
+  Every other access is sequential.
+  This is NanoBoyAdvance's model, and it fits the suite's rows exactly.
+- Every transfer ends with two internal cycles, and nothing else.
+  The suite's cartridge-to-cartridge rows fit two, not GBATEK's four.
+  Evenfall charges them while the channel is still active, then clears the enable bit and raises the interrupt, so nothing sees the channel finish early.
 
-The CPU also pays for a transfer that interrupts it. A DMA that takes the bus
-after a CPU sequential Game Pak access began, up to and including the cycle
-that access completes, turns the access non-sequential: it costs N − S more
-once the DMA returns (`Bus::reprice_interrupted_game_pak_access`). The suite's
-rows show this charge at every prefetch-off wait-state column, for ARM and
-Thumb code, and never for EWRAM code, where N and S are equal, or for opcodes
-served from the prefetch buffer.
-
-[`tests/mgba_suite_timing.rs`](../../../systems/gba/tests/mgba_suite_timing.rs)
-runs all sixteen of the suite's DMA rows (16- and 32-bit units, IWRAM or ROM
-source and destination, one and sixteen units) in ARM and Thumb, from ROM at
-all eight wait-state columns and from EWRAM and IWRAM, and reads the result
-through timer 0 as the suite does. Every value matches except the one residual
-listed under [Open questions](#open-questions).
+A transfer also slows the CPU access it interrupts.
+When a DMA takes the bus in the middle of a sequential cartridge access by the CPU, the CPU's access becomes non-sequential and costs N − S more once the DMA returns (`Bus::reprice_interrupted_game_pak_access`).
+The suite shows this charge for ARM and Thumb code at every wait-state setting with prefetch off.
+It doesn't show it for EWRAM code, where N and S cost the same, or for instructions the prefetch buffer already holds.
 
 ### Addresses
 
-GBATEK gives DMA0 a 27-bit source, DMA1–3 28-bit sources, DMA0–2 27-bit
-destinations and DMA3 a 28-bit destination. Evenfall applies these masks as the
-register halves are written (`Channel::write_source_high`,
-`Channel::write_destination_high`). When the enable bit rises it copies both
-registers into internal pointers and aligns only those copies down to the
-unit size, leaving the programmed registers intact, as pinned mGBA does and
-as the suite's unaligned-DMA expectations require. A source below
-`02000000h` becomes the internal pointer zero, regardless of the order in
-which the register halves were written, as in pinned mGBA; see
-[Shared data latch](#shared-data-latch-and-source-zero).
+The address widths in the table above are applied as each register half is written (`Channel::write_source_high`, `Channel::write_destination_high`).
+When the channel is enabled, it copies both addresses into internal pointers and aligns only those copies to the unit size, leaving the registers as programmed.
+mGBA does the same, and the suite's unaligned-DMA results require it.
 
-Two consequences of the 27-bit DMA0 source are pinned by
-[`tests/mgba_suite_source.rs`](../../../systems/gba/tests/mgba_suite_source.rs)
-against the suite's recorded results: a Game Pak ROM address masks to below
-`02000000h` and therefore takes the latch path, and an SRAM address
-`0E000000h` masks to `06000000h`, VRAM. (The `probe-dma` probe uses DMA3 for
-its ROM copy for this reason.)
+A source below `02000000h` (the BIOS and the unmapped space after it) becomes the internal pointer zero, which reads the shared data latch ([below](#shared-data-latch-and-source-zero)).
+Because DMA0's source is only 27 bits wide, two surprising things happen, and the suite's recorded results confirm both:
 
-A Game Pak source always steps forward, whatever the legal source-control
-value; decrement and fixed are not honored on the cartridge bus. This
-follows pinned mGBA; destination control stays ordinary (test "Game Pak DMA
-sources increment despite decrement or fixed control").
+- A cartridge ROM address loses its top bit and falls below `02000000h`, so DMA0 can't read the cartridge.
+- An SRAM address `0E000000h` becomes `06000000h`, which is VRAM.
+
+A cartridge source always steps forward, whatever the source control says.
+Decrement and fixed don't work on the cartridge bus.
+This follows mGBA.
 
 ### Repeat and reload
 
-Repeat (bit 9) applies to VBlank, HBlank and special timing; an immediate
-channel always clears its enable bit at completion. A repeating channel keeps
-its source pointer and reads its count from `DMAxCNT_L` again for each run.
+Repeat (bit 9) applies to VBlank, HBlank and special transfers.
+An immediate transfer always clears its enable bit when done.
+A repeating channel keeps its source pointer and reads its count again for each run.
 
-With destination control 3 (increment/reload), GBATEK copies `DAD` into the
-internal destination pointer again at each repeat; it does not mention the
-low address bits. The suite's unaligned DMA store rows (`memory.c`, "DMA0–3
-16 (unaligned)" and "32 (unaligned 1–3)") exercise only the copy at enable,
-where the unit lands on the rounded-down halfword or word. Evenfall treats the
-reload as the same copy and drops the same bits
-(`Channel::reload_latched_destination`), so every repeat writes the unit the
-first transfer wrote: a 32-bit HBlank repeat programmed with `BG0VOFS`
-(`04000012h`) writes the `BG0HOFS`/`BG0VOFS` word at `04000010h` on every
-visible line. Pinned mGBA reloads the raw `DAD` and lets its store handlers
-round the address, and NanoBoyAdvance masks the reloaded pointer; both
-produce the same writes. With any other destination control, the internal
-destination continues from where the previous run stopped.
+With destination control 3 (increment then reload), the destination pointer is copied from `DAD` again at each repeat.
+This is how a game rewrites one display register on every scanline.
+Evenfall aligns that copy the same way as the first one (`Channel::reload_latched_destination`), so every repeat writes where the first transfer wrote.
+For example, a 32-bit HBlank repeat aimed at `BG0VOFS` (`04000012h`) writes the whole word at `04000010h`, both scroll registers, on every visible line.
+mGBA and NanoBoyAdvance produce the same writes.
+With any other destination control, the destination continues from where the previous run stopped.
 
 ### Shared data latch and source zero
 
 The DMA controller has one internal 32-bit data latch shared by all channels.
-A word source read replaces it; a halfword source read copies the value into
-both halves. A channel whose internal source pointer is zero performs no BIOS
-read: every beat spends its source cycle, presents the latch, and leaves the
-source at zero. This matches pinned mGBA's `dmaTransferRegister` behavior and
-the suite's DMA0 source-zero cases, whose results otherwise depend on earlier
-transfers. Tests "DMA source zero reuses the shared transfer latch without
-advancing" and "DMA normalizes every source below EWRAM to the transfer-latch
-source" pin it.
+A word read replaces it, and a halfword read copies the value into both halves.
+
+A channel whose source pointer is zero doesn't read the BIOS.
+Every beat spends its source cycle, writes the latch's value, and leaves the source at zero.
+This matches mGBA and the suite's DMA0 source-zero cases, whose results depend on earlier transfers.
 
 ### Bursts that never release the bus
 
-DMA requests can return faster than transfers complete. Two Direct Sound
-channels whose timers overflow every cycle drain 32 bytes in the time their
-two four-word refills take, and a repeating channel whose trigger recurs
-within its own transfer is ready again as it completes. The arbiter then
-never releases the bus: on hardware the CPU stalls for good while video and
-audio keep running.
+Some DMA setups ask for more transfers than the bus can deliver.
+Two sound channels whose timers overflow every cycle drain their buffers as fast as the refills arrive.
+A repeating channel whose trigger fires again during its own transfer is ready as soon as it finishes.
+The CPU then never gets the bus back.
+On a GBA the CPU stalls for good while video and audio keep running.
 
-Evenfall services DMA inside the CPU access it follows, so such a burst would
-never return control to the host. A burst therefore ends after 2^24 cycles
-(`Bus.max_dma_burst_cycles`, about one second of guest time and many times
-the longest possible single transfer). Before its next transfer starts, the
-bus latches a `DmaLivelock` (channel and start cycle), drops pending requests
-and runs no further DMA; `Machine` reports a terminal `dma_livelock` fault at
-the next instruction boundary. Guest behavior is exact up to the limit, and
-the fault lands on the same cycle under any host slicing (test "a DMA
-livelock is a terminal fault at the same cycle under any host slicing" in
-[`tests/machine_b.rs`](../../../systems/gba/tests/machine_b.rs)). Unlike hardware,
-the stalled instruction then completes without DMA and the machine stops.
+Evenfall runs DMA inside the CPU access it follows, so such a burst would never return control to the host.
+A burst therefore ends after 2^24 cycles (`Bus.max_dma_burst_cycles`), about one second of guest time and far longer than any real transfer.
+Before the next transfer starts, the bus records a `DmaLivelock` with the channel and start cycle, drops pending requests and runs no more DMA.
+`Machine` then reports a terminal `dma_livelock` fault at the next instruction boundary, on the same cycle however the host slices time.
+Everything is exact up to that point.
+Unlike a GBA, the stalled instruction then completes and the machine stops.
 
 ## Interrupts
 
-| Register | Address     | Meaning                                |
-| -------- | ----------- | -------------------------------------- |
-| `IE`     | `04000200h` | enable mask, bits 0–13                 |
-| `IF`     | `04000202h` | request flags; writing 1 clears a flag |
-| `IME`    | `04000208h` | bit 0: master enable                   |
+| Register | Address     | Meaning                                   |
+| -------- | ----------- | ----------------------------------------- |
+| `IE`     | `04000200h` | which interrupts are enabled, bits 0–13   |
+| `IF`     | `04000202h` | which are pending; writing 1 clears a bit |
+| `IME`    | `04000208h` | bit 0: master enable                      |
 
-| Bit  | Source       | Requested when                                                                       |
-| ---- | ------------ | ------------------------------------------------------------------------------------ |
-| 0    | VBlank       | line 160 begins and `DISPSTAT` bit 3 is set                                          |
-| 1    | HBlank       | cycle 960 of any line with `DISPSTAT` bit 4 set                                      |
-| 2    | VCOUNT match | the line equal to LYC begins and `DISPSTAT` bit 5 is set                             |
-| 3–6  | Timers 0–3   | overflow with `TMxCNT_H` bit 6 set                                                   |
-| 7    | Serial       | serial completion or status event ([`serial.md`](serial.md))                         |
-| 8–11 | DMA 0–3      | transfer completes with `DMAxCNT_H` bit 14 set                                       |
-| 12   | Keypad       | the `KEYCNT` condition becomes true with bit 14 set                                  |
-| 13   | Game Pak     | an access to the cartridge RTC's interrupt register ([`cartridge.md`](cartridge.md)) |
+| Bit  | Source       | Requested when                                                                         |
+| ---- | ------------ | -------------------------------------------------------------------------------------- |
+| 0    | VBlank       | line 160 begins and `DISPSTAT` bit 3 is set                                            |
+| 1    | HBlank       | cycle 960 of any line, with `DISPSTAT` bit 4 set                                       |
+| 2    | VCOUNT match | the line equal to `DISPSTAT`'s target begins, with bit 5 set                           |
+| 3–6  | Timers 0–3   | the timer overflows, with `TMxCNT_H` bit 6 set                                         |
+| 7    | Serial       | a serial transfer completes or changes status ([`serial.md`](serial.md))               |
+| 8–11 | DMA 0–3      | a transfer completes, with `DMAxCNT_H` bit 14 set                                      |
+| 12   | Keypad       | the `KEYCNT` condition becomes true, with bit 14 set                                   |
+| 13   | Game Pak     | an access to the cartridge clock's interrupt register ([`cartridge.md`](cartridge.md)) |
 
-A source sets its `IF` bit whenever its own enable conditions hold,
-independently of `IE`, `IME` and the CPU's CPSR.I bit; those only decide
-whether the CPU reacts. `IF` writes clear only the bits written as one, per
-byte lane. After every change to the three registers, `Bus::update_irq_line`
-recomputes `IME && (IE & IF) != 0`, and the CPU takes the IRQ at the next
-instruction boundary where that line is set and CPSR.I is clear
-([`cpu.md`](cpu.md); [GBATEK, GBA Interrupt Control][gbatek-irq]).
+A source sets its `IF` bit whenever its own conditions hold, whatever `IE`, `IME` and the CPU's interrupt mask say.
+Those only decide whether the CPU reacts.
+Writing `IF` clears only the bits written as 1, byte by byte.
+After any change to the three registers, `Bus::update_irq_line` recomputes `IME && (IE & IF) != 0`.
+The CPU takes the interrupt at the next instruction boundary where that line is set and CPSR.I is clear ([`cpu.md`](cpu.md), [GBATEK, GBA Interrupt Control][gbatek-irq]).
 
-`KEYCNT` (`04000132h`) selects keys in bits 0–9, AND (bit 15 set) or OR
-condition, and the IRQ enable in bit 14. Evenfall requests the keypad IRQ when
-the condition turns from false to true; `probe-keypad` pins that edge model,
-which rejects IRQs on release. Whether hardware is edge- or level-triggered
-is unmeasured.
+`KEYCNT` (`04000132h`) selects keys in bits 0–9, chooses between "all of them" (bit 15 set) and "any of them", and enables the interrupt in bit 14.
+Evenfall requests the keypad interrupt when the condition turns from false to true, not while it stays true.
 
 ## HALT and STOP
 
-Writing `HALTCNT` (`04000301h`) with a byte enters Halt when bit 7 is clear
-and Stop when it is set ([GBATEK, GBA System Control][gbatek-system]). Evenfall
-also enters them on a halfword write to `04000300h` (`POSTFLG` and `HALTCNT`
-together), selecting by bit 15. The BIOS wait services write the same
-register ([`bios.md`](bios.md)). A multi-step HLE BIOS service defers Halt
-and Stop requests made by its own writes until it returns.
+Writing `HALTCNT` (`04000301h`) enters Halt when bit 7 is clear and Stop when it is set ([GBATEK, GBA System Control][gbatek-system]).
+A halfword write to `04000300h`, which covers `POSTFLG` and `HALTCNT` together, does the same and selects by bit 15.
+The BIOS wait services write the same register ([`bios.md`](bios.md)).
+A multi-step HLE BIOS service holds back a Halt or Stop from its own writes until it returns.
 
-**Halt.** The CPU stops until `IE & IF` is non-zero. `IME` and CPSR.I do not
-matter for waking: GBATEK says Halt "passes through even if either one has
-disabled interrupts" ([BIOS Halt Functions][gbatek-halt]). Everything else
-keeps running: the LCD, timers, DMA (including VBlank, HBlank and sound DMA),
-audio, serial and keypad. When the CPU wakes it enters the IRQ handler before
-the next instruction if `IME` and CPSR.I allow; otherwise it continues with
-the instruction after the one that halted. A halted bus advances from event
-to event (`Bus::idle_halt_until`), so the wake happens at the exact cycle of the
-waking event however the host slices time. Tests "Halt wake enters an enabled
-IRQ before executing the interrupted instruction", "direct step resumes a
-pending Halt wake independently of IME" and "HALTCNT byte writes select Halt
-or Stop and Halt resumes at the following instruction" pin these rules.
+**Halt** pauses only the CPU, until `IE & IF` is non-zero.
+`IME` and the CPU's interrupt mask don't matter for waking up: GBATEK says Halt "passes through even if either one has disabled interrupts" ([BIOS Halt Functions][gbatek-halt]).
+Everything else keeps running: the display, timers, DMA, sound, serial and keypad.
+On waking, the CPU enters the interrupt handler first if `IME` and its mask allow it, and otherwise continues after the instruction that halted.
+A halted machine jumps from event to event (`Bus::idle_halt_until`), so it wakes on the exact cycle of the waking event.
 
-**Stop.** GBATEK says most of the hardware, including sound and video, is
-paused. Evenfall wakes only on an enabled keypad (bit 12), Game Pak (bit 13) or
-serial (bit 7) request (`Bus::stop_wake_pending`), and freezes every device
-clocked by the system clock: timers and the prescaler counter, the LCD,
-audio, DMA and Game Pak prefetch. The serial peripherals are the exception.
-SIO, UART and JoyBus transfers are clocked from outside, so a stopped machine
-still advances through their armed deadlines, and a completion can wake it
-([`serial.md`](serial.md)). The master cycle count advances across those
-spans, so `Bus::idle_stop_until` moves `prescaler_origin` by each one to keep
-the prescaler counter frozen with the timers. `probe-halt-stop` wakes Halt
-with a timer IRQ and Stop with a key press; `probe-stop-sio` wakes Stop with
-a link transfer. The test "HLE Stop freezes system clocks and runUntil
-reports the stopped state" checks the frozen timer and LCD.
+**Stop** is deep sleep.
+GBATEK says most of the hardware, sound and video included, is paused.
+Evenfall wakes only on an enabled keypad (bit 12), Game Pak (bit 13) or serial (bit 7) request (`Bus::stop_wake_pending`).
+It freezes everything driven by the system clock: timers and the prescaler counter, the display, sound, DMA and cartridge prefetch.
+The serial port is the exception.
+Link transfers are clocked from outside the console, so a stopped machine still reaches their deadlines, and a finished transfer can wake it ([`serial.md`](serial.md)).
+The master cycle count keeps advancing across those spans, so `Bus::idle_stop_until` moves `prescaler_origin` by the same amount to keep the prescaler counter frozen.
 
-**Host view.** GBATEK notes that the GBA locks up if Halt's condition never
-becomes true. Evenfall never blocks the host: `Machine::step` returns a waiting
-outcome without advancing time while the CPU is halted or stopped, and
-`Machine::run_until` and `Machine::wait_until` advance a waiting machine only up
-to the caller's deadline, stopping at the first wake. A stopped machine with
-no armed serial event reports `power_stopped` without advancing its clock
-(see [`machine.rs`](../../../systems/gba/src/machine.rs)).
+**What the host sees.** GBATEK notes that a GBA locks up if nothing ever wakes it from Halt.
+Evenfall never blocks the host.
+`Machine::step` returns a "waiting" result without advancing time while the CPU sleeps.
+`Machine::run_until` and `Machine::wait_until` advance a sleeping machine only up to the caller's deadline, and stop at the first wake.
+A stopped machine with no pending serial event reports `power_stopped` without advancing its clock ([`machine.rs`](../../../systems/gba/src/machine.rs)).
+
+## How it is checked
+
+- [`tests/bus.rs`](../../../systems/gba/tests/bus.rs) covers timers (exact overflow cycles however time is sliced, the timer 0 count-up bit, the shared prescaler grid, prescaler changes on running timers), DMA start delays, priority between channels, cartridge source stepping and the shared latch.
+- [`tests/machine_a.rs`](../../../systems/gba/tests/machine_a.rs) and [`tests/machine_b.rs`](../../../systems/gba/tests/machine_b.rs) cover the Golden Sun copy-then-jump, Halt and Stop wake rules, and the DMA livelock fault landing on the same cycle under any slicing.
+- [`tests/mgba_suite_timing.rs`](../../../systems/gba/tests/mgba_suite_timing.rs) runs all sixteen of the mGBA suite's DMA rows in ARM and Thumb, from ROM at all eight wait-state settings and from EWRAM and IWRAM.
+  Every value matches except one, listed below.
+- [`tests/mgba_suite_source.rs`](../../../systems/gba/tests/mgba_suite_source.rs) reproduces the suite's DMA source and latch table.
+- Probe ROMs check whole-machine behavior: `probe-timer` (a three-timer chain), `probe-hdma` (a per-line scroll table), `probe-dma`, `probe-keypad` (the keypad interrupt edge), `probe-halt-stop` and `probe-stop-sio`.
 
 ## Open questions
 
-- **One shared prescaler counter.** Evenfall uses one counter for all four
-  timers. The suite tests only timer 0, and per-timer counters that are never
-  reset and start together cannot be told apart from one.
-- **Prescaler phase at power-on and after the BIOS boot.** Evenfall starts the
-  counter at cycle zero in every boot mode. The suite cannot see the absolute
-  phase, and HLE boot and `IntrWait` skip BIOS code, so HLE runs do not
-  reproduce the suite's absolute counts. alyosha's `gba-tests` timer notes
-  (second-hand) describe the post-power-on divider state as dependent on
-  exact power-on timing.
-- **Divisor changes.** Evenfall adds no extra tick when a running timer's
-  divisor changes and the selected tap switches.
-- **Prescaler during STOP.** Evenfall freezes the counter with the timers; no
-  hardware test covers it.
-- **Counter reset by disable.** Disfavored by the suite fit, not excluded
-  without an official-BIOS run of the harness.
-- **Timer enable edge.** Pinned NanoBoyAdvance applies a control write one
-  cycle late and the reload one cycle after that (its `CHANGELOG.md` credits
-  alyosha for the enable-delay overflow case). Evenfall keeps its own latency
-  until a focused hardware test decides.
-- **HBlank DMA on VBlank lines.** Three implementations agree it does not
-  run; a hardware capture across lines 160–227 would make it a measured
-  fact.
-- **Repeat reload of a misaligned `DAD`.** No hardware capture isolates the
-  reload path.
-- **IWRAM-to-ROM DMA under prefetch.** With ROM code, the prefetch buffer
-  enabled and `WAITCNT` `4000h` or `4004h`, the suite's IWRAM-to-ROM rows
-  read one cycle more than Evenfall, in ARM and Thumb.
-- **Interrupted Game Pak access.** The N − S charge for a CPU Game Pak access
-  that a DMA interrupts fits every prefetch-off suite column, but the bus
-  mechanism behind it, including why a transfer starting on the access's
-  final cycle still counts, is not established.
-- **VBlank and HBlank start delay.** The three-cycle delay follows pinned
-  mGBA; no suite row times it.
-- **Unmodeled DMA features.** DMA3 video capture, the Game Pak DRQ bit and
-  the special timing of DMA0 do nothing.
-- **Livelock after the limit.** Hardware stalls the CPU indefinitely while
-  video and audio continue; Evenfall stops with a fault instead.
-- **Keypad IRQ trigger.** Evenfall is edge-triggered; level behavior has not
-  been measured.
+- **One shared prescaler counter.** The suite tests only timer 0.
+  Per-timer counters that never reset and start together would behave the same.
+- **Prescaler phase at power-on.** Evenfall starts the counter at cycle zero in every boot mode.
+  The suite can't see the absolute phase, and alyosha's second-hand `gba-tests` notes say it depends on exact power-on timing.
+- **Changing a running timer's prescaler.** Evenfall adds no extra tick when the selected tap switches.
+- **The prescaler during STOP.** Evenfall freezes it with the timers.
+  No hardware test covers it.
+- **Counter reset on disable.** Less likely than a free-running counter, but not excluded without an official-BIOS run of the suite.
+- **Timer enable delay.** NanoBoyAdvance applies a control write one cycle late and the reload one cycle after that.
+  Evenfall keeps its own timing until a focused hardware test decides.
+- **HBlank DMA on invisible lines.** Three implementations agree it doesn't run.
+  A hardware capture would make it a measured fact.
+- **Repeat reload of a misaligned destination.** No hardware capture isolates it.
+- **IWRAM-to-ROM DMA with prefetch on.** With ROM code and `WAITCNT` `4000h` or `4004h`, the suite's rows read one cycle more than Evenfall, in ARM and Thumb.
+- **Why an interrupted cartridge access costs more.** The N − S charge fits every prefetch-off column, but the mechanism behind it isn't established.
+- **VBlank and HBlank start delay.** The three cycles follow mGBA, and no suite row times them.
+- **Features not modeled.** DMA3 video capture, the cartridge DRQ bit and DMA0's special trigger do nothing.
+- **After a DMA livelock.** A GBA stalls the CPU forever while video and audio continue.
+  Evenfall stops with a fault instead.
+- **Keypad interrupt trigger.** Evenfall triggers on the change to true.
+  Whether the hardware keeps triggering while the condition holds hasn't been measured.
 
 [gbatek-timers]: https://rust-console.github.io/gbatek-gbaonly/#gbatimers
 [gbatek-dma]: https://rust-console.github.io/gbatek-gbaonly/#gbadmatransfers
