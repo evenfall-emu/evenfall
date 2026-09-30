@@ -24,8 +24,7 @@ Other entry points: `@evenfall/gba/core`, `@evenfall/gba/devtools/scenario`, `@e
 
 ## What's in the package
 
-- `zigba.js` and `zigba.d.ts`: `Emulator` and the shared types.
-  The file names come from Evenfall's predecessor and are kept for compatibility, as is the `zigba-audio` worklet name.
+- `emulator.js` and `emulator.d.ts`: `Emulator` and the shared types.
 - `core.js`: `WasmCore`.
 - `worker.js` and `presentation.js`: the Worker and its buffer pool.
 - `devtools/`: scenarios, failure capture and replay.
@@ -54,7 +53,7 @@ Tests that need the binary are skipped with a message when it is missing, so a f
 Among them, the native-against-WebAssembly test builds the native `session_probe` and compares state, memory, frame, audio and save hashes after the same schedule.
 
 `npm run build -w @evenfall/gba` compiles the bridge sources into `web/gba/bridge/`, also kept out of Git.
-The `zigba-source` export condition lets code in this repository use the bridge's TypeScript sources without compiling first.
+The `evenfall-source` export condition lets code in this repository use the bridge's TypeScript sources without compiling first.
 `prepack` refuses a missing, debug or incompatible binary, although the package isn't published.
 
 The scenario and replay tools are `scripts/run-scenario.mjs` and `scripts/replay-capture.mjs` ([`docs/devtools.md`](../../docs/devtools.md)).

@@ -119,7 +119,7 @@ node tools/bench/inline-stability.mjs --targets native --filter 'thumb::run_loop
 [`wasm.mjs`](wasm.mjs) times WebAssembly modules that export the `@evenfall/gba` interface on the same ROMs and frame counts, in Node.
 Each measurement is a fresh Node process pinned with `taskset`, module order rotates per round and workload, and ratios are the geometric mean of matched-round loop-time ratios against the first module.
 
-A process loads the ROM with HLE boot, turns off audio output (emulation continues), runs `--warm` untimed frames (default 60, counted in the total), and times the rest one `zb_run_until` per frame.
+A process loads the ROM with HLE boot, turns off audio output (emulation continues), runs `--warm` untimed frames (default 60, counted in the total), and times the rest one `ef_run_until` per frame.
 The final frame hash is the native harnesses' FNV-1a, so WebAssembly and native pictures can be compared.
 
 ```sh
@@ -129,5 +129,4 @@ node tools/bench/wasm.mjs --module simd=web/gba/evenfall-gba.wasm \
 ```
 
 `--workloads`, `--frames`, `--rounds`, `--warmups`, `--warm` and `--cpu` shape the run, and results go to `target/bench/wasm-runs/<run>/result.json`.
-The predecessor's module can be compared too: it comes from `zig build web-sdk` in a copy of `refs/zigba`, since that step writes into its source tree.
 The driver doesn't handle STOP or linked sessions.
