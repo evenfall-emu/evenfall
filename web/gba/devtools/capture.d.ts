@@ -1,5 +1,7 @@
 import type { WasmCore } from "../core.js";
 import type {
+  Cheat,
+  CheatInput,
   FailureBundle,
   RunResult,
   Snapshot,
@@ -27,7 +29,7 @@ export interface RecorderOptions {
 
 /**
  * Bounded failure recording around an already loaded `WasmCore`. Route
- * `runUntil`, `step`, `setKeys` and `drainAudio` through the recorder; faults
+ * `runUntil`, `step`, `setKeys`, `setCheats` and `drainAudio` through the recorder; faults
  * and thrown execution errors capture automatically.
  */
 export class FailureRecorder {
@@ -44,6 +46,7 @@ export class FailureRecorder {
     inputDeadline?: bigint,
   ): RunResult;
   setKeys(mask: number): void;
+  setCheats(cheats: readonly CheatInput[]): Cheat[];
   step(): ReturnType<WasmCore["step"]>;
   drainAudio(output?: Int16Array): Int16Array;
   inspect(): Snapshot;

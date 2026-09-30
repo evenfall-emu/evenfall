@@ -1,4 +1,4 @@
-import { CYCLES_PER_FRAME, SAVE_TYPES } from "../core.js";
+import { CHEAT_FORMATS, CYCLES_PER_FRAME, SAVE_TYPES } from "../core.js";
 import { FailureRecorder } from "./capture.js";
 
 const U64 = 0xffffffffffffffffn;
@@ -52,7 +52,16 @@ export const sha1 = (bytes) => digest("SHA-1", bytes);
 export function validateScenario(m) {
   object(
     m,
-    ["version", "name", "assets", "config", "inputs", "checkpoints", "limits"],
+    [
+      "version",
+      "name",
+      "assets",
+      "config",
+      "inputs",
+      "cheats",
+      "checkpoints",
+      "limits",
+    ],
     "scenario",
   );
   if (m.version !== 2) throw new Error("Unsupported scenario version");
@@ -106,6 +115,32 @@ export function validateScenario(m) {
       throw new Error("Inputs must be ordered and within maxCycles");
     integer(e.keys, 1023, "keys");
     prev = at;
+  }
+  if (
+    m.cheats !== undefined &&
+    (!Array.isArray(m.cheats) || m.cheats.length > 1024)
+  )
+    throw new Error("At most 1024 cheat events");
+  prev = 0n;
+  for (const e of m.cheats ?? []) {
+    object(e, ["at", "cheats"], "cheat event");
+    const at = cycle(e.at, "cheat event at");
+    if (at < prev || at > end)
+      throw new Error("Cheat events must be ordered and within maxCycles");
+    prev = at;
+    if (!Array.isArray(e.cheats) || e.cheats.length > 256)
+      throw new Error("A cheat event holds at most 256 cheats");
+    for (const c of e.cheats) {
+      object(c, ["code", "format"], "cheat");
+      if (typeof c.code !== "string" || !c.code)
+        throw new Error("A cheat needs a code string");
+      if (
+        c.format !== undefined &&
+        c.format !== "auto" &&
+        !CHEAT_FORMATS.includes(c.format)
+      )
+        throw new Error("Invalid cheat format");
+    }
   }
   if (
     !Array.isArray(m.checkpoints) ||
@@ -178,6 +213,8 @@ export function validateScenario(m) {
   }
   if (m.inputs.some((e) => BigInt(e.at) > prev))
     throw new Error("Input after final checkpoint");
+  if ((m.cheats ?? []).some((e) => BigInt(e.at) > prev))
+    throw new Error("Cheat event after final checkpoint");
   return m;
 }
 function pcmBytes(samples) {
@@ -254,6 +291,7 @@ export async function runScenario(core, manifest, assets, options = {}) {
       throw new Error("Loaded ROM identity mismatch");
     if (
       m.inputs.some((e) => BigInt(e.at) < initial.cycle) ||
+      (m.cheats ?? []).some((e) => BigInt(e.at) < initial.cycle) ||
       m.checkpoints.some((p) => BigInt(p.at) < initial.cycle)
     )
       throw new Error("Scenario event predates initial state");
@@ -267,6 +305,20 @@ export async function runScenario(core, manifest, assets, options = {}) {
           });
     const execution = recorder ?? core;
     const inputs = m.inputs.map((e) => ({ at: BigInt(e.at), keys: e.keys }));
+    // A cheat event applies at the first stop at or after its cycle: runs
+    // end there, so a recorded event lands on the cycle it was made at.
+    const cheatEvents = (m.cheats ?? []).map((e) => ({
+      at: BigInt(e.at),
+      cheats: e.cheats,
+    }));
+    let cheatCursor = 0;
+    const applyDueCheats = () => {
+      while (
+        cheatCursor < cheatEvents.length &&
+        cheatEvents[cheatCursor].at <= core.inspect().cycle
+      )
+        execution.setCheats(cheatEvents[cheatCursor++].cheats);
+    };
     let cursor = 0,
       lastReason = "deadline";
     for (const checkpoint of m.checkpoints) {
@@ -282,6 +334,7 @@ export async function runScenario(core, manifest, assets, options = {}) {
           result.status = "cancelled";
           return result;
         }
+        applyDueCheats();
         const before = core.inspect().cycle;
         if (
           before >= target &&
@@ -290,10 +343,17 @@ export async function runScenario(core, manifest, assets, options = {}) {
           break;
         if (++result.runs > m.limits.maxRuns)
           throw new Error("Scenario run budget exceeded");
-        const deadline =
+        let deadline =
           before + BigInt(m.limits.chunkCycles) < target
             ? before + BigInt(m.limits.chunkCycles)
             : target;
+        const nextCheat = cheatEvents[cheatCursor]?.at;
+        if (
+          nextCheat !== undefined &&
+          nextCheat > before &&
+          nextCheat < deadline
+        )
+          deadline = nextCheat;
         const run = execution.runUntil(
           deadline,
           inputs.slice(cursor),
@@ -312,6 +372,7 @@ export async function runScenario(core, manifest, assets, options = {}) {
         if (run.cycle <= before && run.inputsConsumed === 0)
           throw new Error("Execution made no progress");
       } while (core.inspect().cycle < target);
+      if (lastReason !== "faulted") applyDueCheats();
       const state = core.inspect();
       const audio = concat(audioParts, audioLength);
       audioParts = [];

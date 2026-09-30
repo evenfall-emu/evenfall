@@ -331,6 +331,9 @@ export class FailureRecorder {
   setKeys(mask) {
     return this.invoke("setKeys", [mask]);
   }
+  setCheats(cheats) {
+    return this.invoke("setCheats", [cheats]);
+  }
   step() {
     return this.invoke("step", empty);
   }
@@ -527,7 +530,9 @@ function* replayOperations(core, bundle, { identity } = {}) {
             ? { ...event, at: BigInt(event.at) }
             : event,
         );
-    } else if (!["setKeys", "step", "drainAudio"].includes(operation.method))
+    } else if (
+      !["setKeys", "setCheats", "step", "drainAudio"].includes(operation.method)
+    )
       throw new Error("Unsupported replay operation");
     let result, caught;
     try {

@@ -106,6 +106,25 @@ export const KEYS: Readonly<
 >;
 export const CYCLES_PER_FRAME: bigint;
 export const SAVE_TYPES: readonly SaveType[];
+export type CheatFormat =
+  | "raw"
+  | "gameshark"
+  | "gameshark-decrypted"
+  | "action-replay"
+  | "action-replay-decrypted"
+  | "codebreaker";
+/** Explicit cheat formats; requests may also pass `"auto"`. */
+export const CHEAT_FORMATS: readonly CheatFormat[];
+/** A cheat to activate. `format` defaults to `"auto"`, which detects it. */
+export interface CheatInput {
+  code: string;
+  format?: CheatFormat | "auto";
+}
+/** An active cheat: its resolved format and canonical code text. */
+export interface Cheat {
+  format: CheatFormat;
+  code: string;
+}
 export interface EmulatorOptions {
   /** Minimum interval for frame-event CPU snapshots. Default 0 (every frame). */
   diagnosticsIntervalMs?: number;
@@ -142,6 +161,14 @@ export class Emulator extends EventTarget {
   /** Null when no ROM is loaded. Does not advance the machine or read MMIO. */
   captureMemory(): Promise<MemorySnapshot | null>;
   setKeys(mask: number): Promise<void>;
+  /** Replace the active cheats at the current cycle, effective from the next
+   * VBlank start; allowed while playing and recorded. An empty list removes
+   * them. Resolves to the canonical active list. */
+  setCheats(cheats: readonly CheatInput[]): Promise<Cheat[]>;
+  /** The active cheats; states, rewinds and resets can change them. */
+  cheats(): Promise<Cheat[]>;
+  /** Detect and normalize one code without changing the session. */
+  parseCheat(code: string, format?: CheatFormat | "auto"): Promise<Cheat>;
   runUntil(deadline: bigint, inputs?: TimedInput[]): Promise<RunResult>;
   step(): Promise<
     Snapshot & { reason: "executed" | "halted" | "power_stopped" | "faulted" }
@@ -192,6 +219,8 @@ export interface Scenario {
     sampleRate: number;
   };
   inputs: { at: string; keys: number }[];
+  /** Cheat-set changes, applied once execution reaches `at`. */
+  cheats?: { at: string; cheats: CheatInput[] }[];
   checkpoints: {
     name: string;
     at: string;

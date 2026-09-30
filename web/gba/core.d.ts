@@ -1,4 +1,7 @@
 import type {
+  Cheat,
+  CheatFormat,
+  CheatInput,
   LoadOptions,
   MemorySnapshot,
   RunResult,
@@ -6,8 +9,11 @@ import type {
   TimedInput,
 } from "./zigba.js";
 
-export { KEYS, CYCLES_PER_FRAME, SAVE_TYPES } from "./zigba.js";
+export { KEYS, CYCLES_PER_FRAME, SAVE_TYPES, CHEAT_FORMATS } from "./zigba.js";
 export type {
+  Cheat,
+  CheatFormat,
+  CheatInput,
   LoadOptions,
   MemorySnapshot,
   RunResult,
@@ -67,6 +73,16 @@ export class WasmCore {
     events?: readonly TimedInput[],
     inputDeadline?: bigint,
   ): RunResult;
+  /**
+   * Replace the active cheats at the current cycle; they apply at the first
+   * instruction boundary at or after each later VBlank start. An empty list
+   * removes them. Returns the canonical active list.
+   */
+  setCheats(cheats: readonly CheatInput[]): Cheat[];
+  /** The active cheats; `loadState`, `rewind` and bundles restore theirs. */
+  cheats(): Cheat[];
+  /** Detect and normalize one code; needs no loaded game. */
+  parseCheat(code: string, format?: CheatFormat | "auto"): Cheat;
   step(): Snapshot & { reason: StepReason };
   /** Bus-visible bytes; at most 1 MiB. Does not advance time. */
   readMemory(address: number, length: number): Uint8Array;
