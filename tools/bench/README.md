@@ -1,31 +1,66 @@
 # Evenfall GBA performance tools
 
-The runner ports ZiGBA's `tools/emu-bench` measurement method. It builds the
-purpose-built ROMs in a run-local directory, builds native harnesses before
-timing, selects one allowed idle/fast CPU, takes the host-wide `flock` lane,
-and pins fresh harness processes there with `taskset`. Emulator order rotates
-per round and workload. Its report records source/binary/ROM/BIOS hashes,
-cycles, images, observations and median frame rates. Time ratios are the
-geometric mean of **matched-round** loop-time ratios, then the geometric mean
-over workloads; values below 1 are faster than the baseline. Synthetic ROMs
-are a path comparison, not a game-wide performance or accuracy claim.
+[`run.mjs`](run.mjs) compares Evenfall with open GBA emulators on
+purpose-built ROMs. It builds the ROMs in a run-local directory, builds native
+harnesses before timing, selects one allowed idle/fast CPU, takes the
+host-wide `flock` lane, and pins fresh harness processes there with
+`taskset`. Emulator order rotates per round and workload. Its report records
+source/binary/ROM/BIOS hashes, cycles, images, observations and median frame
+rates. Time ratios are the geometric mean of **matched-round** loop-time
+ratios, then the geometric mean over workloads; values below 1 are faster than
+the baseline. Synthetic ROMs are a path comparison, not a game-wide
+performance or accuracy claim.
 
-Requires Linux, Node, `flock`, `taskset`, Zig 0.16, Rust and
+Requires Linux, Node, `flock`, `taskset`, Rust (rustup's
+`~/.cargo/bin/cargo`), CMake, a C compiler, Clang, zlib and
 `arm-none-eabi-gcc`/`arm-none-eabi-objcopy`. Keep BIOS images and ROMs
-user-supplied; no assets are downloaded or modified. The adapter compiles
-ZiGBA's pinned `refs/zigba/tools/emu-bench/harness/zigba-harness.zig` at
-`ReleaseFast` into `target/bench`, with both Zig caches there. Nothing is
-written into `refs/zigba`. The Rust adapter builds `evenfall-harness` with the
-`release-lto` profile (fat LTO, one codegen unit, abort on panic), the native
-equivalent of the shipped WebAssembly build and of Zig's whole-program
-ReleaseFast.
+user-supplied; no assets are downloaded or modified. Nothing is written into
+`refs/`; build caches live in `target/bench`. The default emulators, in
+baseline-first order, are:
+
+- `mgba`: mGBA 0.10.5 (`refs/mgba`) as its headless CMake `Release` library
+  in `target/bench/mgba-build`, with
+  [`harness/mgba-harness.c`](harness/mgba-harness.c) built `cc -O2`. Software
+  renderer; idle-loop detection stays at mGBA's default, `detect`.
+- `vbam`: the VBA-M core that Delta ships. `refs/delta` pins
+  `refs/gbadeltacore`, which pins `refs/vbam`.
+  [`harness/vbam/CMakeLists.txt`](harness/vbam/CMakeLists.txt) compiles
+  GBADeltaCore's `libVBA-M` source set (the portable `C_CORE` interpreter,
+  link code and bundled SFML included) with its definitions and
+  `-ffast-math`, by Clang at `-Os`: that Xcode target's Release build sets no
+  optimization level, so Xcode's default applies.
+  [`harness/vbam-harness.cpp`](harness/vbam-harness.cpp) sets the core up as
+  GBADeltaCore does.
+- `evenfall`: `evenfall-harness` ([`src/main.rs`](src/main.rs)) with the
+  `release-lto` profile (fat LTO, one codegen unit, abort on panic), the
+  native equivalent of the shipped WebAssembly build. It builds with rustup's
+  cargo without `RUSTC_WRAPPER`, since output-cache wrappers that compile LTO
+  profiles incrementally produce slower code.
+
+Two more adapters run only when listed in `--emulators`. `vbam-o3` is the
+`vbam` build at `-O3`, which shows how much of VBA-M's speed depends on
+Delta's optimization level. `zigba` builds Evenfall's predecessor ZiGBA from
+`refs/zigba` at `ReleaseFast`, for internal comparisons; its last measurement
+put Evenfall at 0.41× ZiGBA's loop time under both boots.
+
+The mGBA and VBA-M harnesses link their emulators (MPL-2.0 and GPL-2.0) into
+local binaries that are never distributed; no source from either is copied
+into Evenfall. VBA-M's `CPULoadRomData`, which GBADeltaCore calls, allocates a
+240×160 pixel buffer while the 32-bit renderer writes 241-pixel rows from the
+second row on, past the end of the buffer every frame. The harness reallocates
+it at the 241×162 size VBA-M's `CPULoadRom` uses, so the overrun cannot
+corrupt emulator state; the emulated work is unchanged. VBA-M has no global
+cycle counter, so its harness derives guest time from the VBlank count and the
+LCD position. It produces 32,768 Hz sound, as Delta does, into a driver that
+discards the samples.
 
 ```sh
 node --test tools/bench/*.test.mjs
 node tools/bench/run.mjs --list
-node tools/bench/run.mjs --emulators zigba --boot hle --workloads idle --frames 60 --rounds 1 --warmups 0
-node tools/bench/run.mjs --emulators zigba,evenfall --boot hle
-node tools/bench/run.mjs --emulators zigba,evenfall --bios path/to/bios.bin
+node tools/bench/run.mjs --emulators mgba --boot hle --workloads idle --frames 60 --rounds 1 --warmups 0
+node tools/bench/run.mjs --boot hle --cpu 3
+node tools/bench/run.mjs --bios path/to/bios.bin --cpu 3
+node tools/bench/run.mjs --boot hle --cpu 3 --baseline vbam
 ```
 
 Default boot is `skip-bios`, using a user-provided BIOS (`--bios`) or a local

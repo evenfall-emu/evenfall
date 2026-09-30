@@ -46,7 +46,7 @@ no cross-ISA CPU trait.
 
 - Implement original code. ZiGBA is this project's own predecessor and is
   ported directly; pinned third-party emulators (mGBA 0.10.5,
-  NanoBoyAdvance) are comparisons, never sources to copy.
+  NanoBoyAdvance, VBA-M) are comparisons, never sources to copy.
 - Keep ROMs, BIOS images, keys and saves user-supplied and gitignored. Never
   commit or download them.
 - Preserve exact guest behavior: timed fetches, event ordering, audio and

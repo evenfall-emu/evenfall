@@ -23,6 +23,9 @@ local changes or a directory that is not a Git checkout.
 | `suite/`         | <https://github.com/mgba-emu/suite>     | `e6942030d25ffe3ba76c72b73a86da073ec857cc`          | MIT            | Recorded hardware results behind the suite-table tests                            |
 | `mgba/`          | <https://github.com/mgba-emu/mgba>      | `26b7884bc25a5933960f3cdcd98bac1ae14d42e2` (0.10.5) | MPL-2.0        | Behavioral and performance comparison                                             |
 | `nanoboyadvance/`| <https://github.com/nba-emu/NanoBoyAdvance> | `55b5cf0ae3d929582ac5bfd486558173502b8354`      | GPL-3.0        | Behavioral comparison                                                             |
+| `delta/`         | <https://github.com/rileytestut/Delta>  | `c1d3d068e019e6493eed45654569db3cc5beb86a`          | AGPL-3.0       | Provenance of the VBA-M benchmark: Delta pins `gbadeltacore/` at this commit      |
+| `gbadeltacore/`  | <https://github.com/rileytestut/GBADeltaCore> | `869c34aeca9dd2b3fbd329092bb2743b0ae80c98`    | None stated   | Delta's VBA-M build (source set, flags, setup) and its bundled SFML subset (zlib) |
+| `vbam/`          | <https://github.com/visualboyadvance-m/visualboyadvance-m> | `453fa0decf179360926fb417725a794aa496d6e3` | GPL-2.0 | Performance comparison: the VBA-M core `gbadeltacore/` pins            |
 
 ## Rules
 
