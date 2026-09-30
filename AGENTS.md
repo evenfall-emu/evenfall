@@ -72,10 +72,11 @@ a hook the parity harness needs is a patch the harness applies.
   goes into [`internal-docs/roadmap.md`](internal-docs/roadmap.md) with its evidence. Change
   behavior only with a recorded decision, and never silently.
 - **Port tests with their oracles.** A ZiGBA test becomes a Rust test with
-  the same meaning, a `snake_case` name derived from the Zig name, and the
-  original name in its doc comment. Expected values are copied from the Zig
-  test or re-derived from the same outside source; never regenerate them from
-  the Rust code's output.
+  the same meaning and a `snake_case` name derived from the Zig name. A doc
+  comment, if any, says in plain words what the test checks beyond its name,
+  without citing ZiGBA. Expected values are copied from the Zig test or
+  re-derived from the same outside source; never regenerate them from the
+  Rust code's output.
 - **Integers.** A Zig `uN` or `iN` of a non-byte width is stored in the
   smallest Rust integer that holds it, and masked where Zig would truncate or
   wrap. `+%`, `-%` and `*%` become `wrapping_*`; plain Zig arithmetic stays
