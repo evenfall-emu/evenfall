@@ -19,7 +19,7 @@ import { sweepDeletedAccounts } from "../src/cloud-saves";
 const origin = "https://play.evenfall-emu.org";
 let miniflare: Miniflare;
 let database: D1Database;
-let saves: Awaited<ReturnType<Miniflare["getR2Bucket"]>>;
+let saves: R2Bucket;
 const messages: EmailMessageBuilder[] = [];
 
 function sweepBindings(bucket: typeof saves = saves) {
@@ -88,7 +88,7 @@ beforeAll(async () => {
     }),
   );
   database = await miniflare.getD1Database("DB");
-  saves = await miniflare.getR2Bucket("SAVES");
+  saves = (await miniflare.getR2Bucket("SAVES")) as unknown as R2Bucket;
   const directory = new URL("../migrations/", import.meta.url);
   for (const file of (await readdir(directory))
     .filter((name) => name.endsWith(".sql"))
@@ -1283,7 +1283,7 @@ describe("playthrough quota and account erasure", () => {
           return async (...args: Parameters<R2Bucket["put"]>) => {
             entered();
             await blocked;
-            await Reflect.apply(target.put, target, args);
+            await target.put(...args);
             throw new Error("simulated Worker loss after R2 commit");
           };
         const value = Reflect.get(target, property);
