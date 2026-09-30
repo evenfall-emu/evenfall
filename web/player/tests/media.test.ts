@@ -53,8 +53,11 @@ function output(audio = new AudioOutput()) {
 describe("bounded browser audio fallback", () => {
   it("applies a persisted volume to the shared output and saves live changes", () => {
     const storage = {
-      getItem: vi.fn(() => "0.37"),
+      getItem: vi.fn((key: string) =>
+        key === "evenfall-volume" ? "0.37" : null,
+      ),
       setItem: vi.fn(),
+      removeItem: vi.fn(),
     };
     vi.stubGlobal("localStorage", storage);
     try {
@@ -65,8 +68,24 @@ describe("bounded browser audio fallback", () => {
       expect(sources[0].connect).toHaveBeenCalledWith(gain);
       audio.setVolume(0.62);
       expect(gain.gain.value).toBe(0.62);
-      expect(storage.setItem).toHaveBeenCalledWith("zigba-volume", "0.62");
+      expect(storage.setItem).toHaveBeenCalledWith("evenfall-volume", "0.62");
       expect(new AudioOutput().volume).toBe(0.37);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+  /** The volume an earlier player stored under its own key moves once. */
+  it("moves a volume stored under the legacy key", () => {
+    const values = new Map([["zigba-volume", "0.25"]]);
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    });
+    try {
+      expect(new AudioOutput().volume).toBe(0.25);
+      expect([...values]).toEqual([["evenfall-volume", "0.25"]]);
+      expect(new AudioOutput().volume).toBe(0.25);
     } finally {
       vi.unstubAllGlobals();
     }

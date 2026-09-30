@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Plugin } from "vite-plus";
-import { OFFLINE_CACHE_PREFIX } from "./src/deployed-names";
+import { LEGACY, OFFLINE_CACHE_PREFIX } from "./src/storage-names";
 
 // Cache a complete, content-versioned player/SDK together. Never cache API
 // responses or user media. A new version installs next to the running one and
@@ -32,7 +32,7 @@ export function offlinePlayer(): Plugin {
         resolve(directory, "service-worker.js"),
         `
 const CACHE = ${JSON.stringify(cache)};
-const PREFIX = ${JSON.stringify(OFFLINE_CACHE_PREFIX)};
+const PREFIXES = ${JSON.stringify([OFFLINE_CACHE_PREFIX, LEGACY.offlineCachePrefix])};
 const FILES = ${JSON.stringify(files)};
 const urls = new Set(FILES.map(file => new URL(file, self.registration.scope).href));
 // The player's pages, relative to the scope; each one is index.html.
@@ -50,15 +50,16 @@ self.addEventListener('message', event => {
   // Sent by a page this version served, as it starts.
   else if (event.data?.type === 'prune') event.waitUntil(prune(event.source?.id));
 });
-// Deletes older versions' caches once no tab other than the given page (which
-// runs this version) is open. caches.keys() lists caches in creation order, so a
+// Deletes older versions' caches, including those an earlier player named with
+// the legacy prefix, once no tab other than the given page (which runs this
+// version) is open. caches.keys() lists caches in creation order, so a
 // newer version installing alongside keeps its cache.
 async function prune(page) {
   const tabs = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
   if (tabs.some(tab => tab.id !== page)) return;
   const names = await caches.keys();
   for (const name of names.slice(0, Math.max(names.indexOf(CACHE), 0))) {
-    if (name.startsWith(PREFIX)) await caches.delete(name);
+    if (PREFIXES.some(prefix => name.startsWith(prefix))) await caches.delete(name);
   }
 }
 self.addEventListener('fetch', event => {

@@ -11,7 +11,7 @@ import {
   type QuickSlot,
   type SaveKind,
 } from "./library";
-import { CLOUD_SYNC_LOCK, HEADER } from "./deployed-names";
+import { CLOUD_SYNC_LOCK, HEADER } from "./storage-names";
 import { isLegacyState, isState, LegacyStateError } from "./state-format";
 
 export type CloudResume = {

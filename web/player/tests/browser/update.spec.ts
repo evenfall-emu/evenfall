@@ -91,7 +91,7 @@ async function site(browser: Browser) {
         if (file === "service-worker.js")
           text = text.replace(
             /const CACHE = "[^"]+";/,
-            `const CACHE = "zigba-player-${label}";`,
+            `const CACHE = "evenfall-player-${label}";`,
           );
         await writeFile(path, text);
       }
@@ -139,11 +139,11 @@ const hide = (page: Page) =>
   });
 const playerCaches = (page: Page) =>
   page.evaluate(async () =>
-    (await caches.keys()).filter((name) => name.startsWith("zigba-player-")),
+    (await caches.keys()).filter((name) => name.startsWith("evenfall-player-")),
   );
 const storedCycle = (page: Page, hash: string) =>
   page.evaluate(async (hash) => {
-    const request = indexedDB.open("zigba-local");
+    const request = indexedDB.open("evenfall-local");
     const db = await new Promise<IDBDatabase>((resolve) => {
       request.onsuccess = () => resolve(request.result);
     });
@@ -215,12 +215,19 @@ test("an untouched player without a game reloads into a new version, at most onc
     page.on("load", () => loads++);
     await page.goto("/");
     await installed(page);
+    // An earlier player's cache, under the legacy prefix.
+    await page.evaluate(() => caches.open("zigba-player-0123456789"));
     await host.deploy("v2");
     await checkForUpdate(page);
     await expect(build(page)).toHaveAttribute("content", "v2");
     // Only that reload: the first installation claimed the page without one.
     await expect.poll(() => loads).toBe(2);
-    await expect.poll(() => playerCaches(page)).toEqual(["zigba-player-v2"]);
+    await expect.poll(() => playerCaches(page)).toEqual(["evenfall-player-v2"]);
+    expect(
+      await page.evaluate(async () =>
+        (await caches.keys()).filter((name) => name.startsWith("zigba-")),
+      ),
+    ).toEqual([]);
     await host.deploy("v3");
     await checkForUpdate(page);
     await expect(notice(page)).toContainText(
@@ -310,7 +317,7 @@ test("a running game keeps its version and assets until its player updates, and 
     expect(await playerCaches(game)).toHaveLength(2);
     await other.close();
     await game.reload();
-    await expect.poll(() => playerCaches(game)).toEqual(["zigba-player-v2"]);
+    await expect.poll(() => playerCaches(game)).toEqual(["evenfall-player-v2"]);
   } finally {
     await host.close();
   }

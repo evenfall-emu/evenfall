@@ -10,7 +10,7 @@ import {
 describe("library storage", () => {
   const ref = (hash: string) => ({ hash, playthroughId: "default" });
   it("deduplicates imports and keeps the previous save", async () => {
-    await deleteDB("zigba-local");
+    await deleteDB("evenfall-local");
     const lib = await openLibrary();
     await lib.put({
       hash: "abc",
@@ -44,7 +44,7 @@ describe("library storage", () => {
     lib.close();
   });
   it("stores ROMs apart from metadata and scenario assets apart from library ROMs", async () => {
-    await deleteDB("zigba-local");
+    await deleteDB("evenfall-local");
     const lib = await openLibrary();
     const first = new Uint8Array([1, 2, 3]);
     const second = new Uint8Array([4, 5]);
@@ -87,7 +87,8 @@ describe("library storage", () => {
     expect(await lib.db!.get("assets", "first")).toEqual(first);
     lib.close();
   });
-  it("starts a library keyed by ROM SHA-256 (version 6 and older) empty", async () => {
+  it("starts a legacy library keyed by ROM SHA-256 (version 6 and older) empty", async () => {
+    await deleteDB("evenfall-local");
     await deleteDB("zigba-local");
     const old = await openDB("zigba-local", 6, {
       upgrade(db) {
@@ -103,7 +104,7 @@ describe("library storage", () => {
     await old.put("scenarios", { name: "Old scenario" }, "scenario");
     old.close();
     const lib = await openLibrary();
-    expect(lib.db!.version).toBe(8);
+    expect(lib.db!.version).toBe(1);
     expect(await lib.list()).toEqual([]);
     expect(await lib.rom(hash)).toBeUndefined();
     expect(await lib.getSave(ref(hash))).toBeUndefined();
@@ -112,55 +113,40 @@ describe("library storage", () => {
     expect(await lib.cloudJobs("alice")).toEqual([]);
     lib.close();
   });
-  it("keeps a version 7 library and adds the recognized-build cache", async () => {
-    await deleteDB("zigba-local");
-    const first = await openLibrary();
-    await first.put({
-      hash: "abc",
-      title: "Kept",
-      rom: new Uint8Array([1]),
-      lastPlayed: 1,
-    });
-    await first.save(ref("abc"), new Uint8Array([42]));
-    first.close();
-    // Downgrade the schema to version 7: same stores, no build cache.
-    const raw = await openDB("zigba-local");
-    const stores = new Map<string, Map<IDBValidKey, unknown>>();
-    for (const name of raw.objectStoreNames) {
-      const entries = new Map<IDBValidKey, unknown>();
-      for (const key of await raw.getAllKeys(name))
-        entries.set(key, await raw.get(name, key));
-      stores.set(name, entries);
-    }
-    raw.close();
+  it("moves a legacy version 7 library, which had no recognized-build cache", async () => {
+    await deleteDB("evenfall-local");
     await deleteDB("zigba-local");
     const old = await openDB("zigba-local", 7, {
       upgrade(db) {
-        for (const name of stores.keys()) {
-          if (name === "builds") continue;
-          const store = db.createObjectStore(name);
-          if (name === "cloud") {
-            store.createIndex("accountId", "accountId");
-            store.createIndex("hash", "hash");
-          }
-          if (name === "playthroughs") store.createIndex("hash", "hash");
-        }
+        for (const name of ["games", "roms", "saves", "resumes", "assets"])
+          db.createObjectStore(name);
+        db.createObjectStore("playthroughs").createIndex("hash", "hash");
+        const cloud = db.createObjectStore("cloud");
+        cloud.createIndex("accountId", "accountId");
+        cloud.createIndex("hash", "hash");
       },
     });
-    for (const [name, entries] of stores)
-      if (name !== "builds")
-        for (const [key, value] of entries) await old.put(name, value, key);
+    await old.put(
+      "games",
+      { hash: "abc", title: "Kept", romSize: 1, lastPlayed: 1 },
+      "abc",
+    );
+    await old.put("roms", new Uint8Array([1]), "abc");
+    await old.put(
+      "playthroughs",
+      { hash: "abc", id: "default", name: "Run", createdAt: 1, lastPlayed: 1 },
+      ["abc", "default"],
+    );
+    await old.put("saves", { data: new Uint8Array([42]) }, ["abc", "default"]);
     old.close();
     const lib = await openLibrary();
-    expect(lib.db!.version).toBe(8);
+    expect(lib.db!.version).toBe(1);
     expect((await lib.list()).map((game) => game.title)).toEqual(["Kept"]);
     expect(await lib.rom("abc")).toEqual(new Uint8Array([1]));
     expect(await lib.getSave(ref("abc"))).toEqual(new Uint8Array([42]));
     expect(await lib.builds.get("game:abc:v1")).toBeUndefined();
     await lib.builds.set("game:abc:v1", { review: [] });
     expect(await lib.builds.get("game:abc:v1")).toEqual({ review: [] });
-    await lib.builds.delete("game:abc:v1");
-    expect(await lib.builds.get("game:abc:v1")).toBeUndefined();
     lib.close();
   });
   it("reports unavailable storage explicitly", async () => {
@@ -170,7 +156,7 @@ describe("library storage", () => {
     });
   });
   it("publishes resume bytes with metadata, retains one recovery generation, and keeps them separate from quick slots", async () => {
-    await deleteDB("zigba-local");
+    await deleteDB("evenfall-local");
     const lib = await openLibrary();
     await lib.put({
       hash: "game",
@@ -217,7 +203,7 @@ describe("library storage", () => {
    * never enters the cloud outbox's upload source.
    */
   it("keeps a previous-core resume point through later saves without uploading it", async () => {
-    await deleteDB("zigba-local");
+    await deleteDB("evenfall-local");
     const lib = await openLibrary();
     await lib.put({
       hash: "game",
@@ -251,7 +237,7 @@ describe("library storage", () => {
     lib.close();
   });
   it("does not publish resume metadata or bytes when their transaction fails", async () => {
-    await deleteDB("zigba-local");
+    await deleteDB("evenfall-local");
     const lib = await openLibrary();
     await lib.put({
       hash: "game",
@@ -279,7 +265,7 @@ describe("library storage", () => {
     lib.close();
   });
   it("rejects cloud restore persistence after account changes without replacing either local save", async () => {
-    await deleteDB("zigba-local");
+    await deleteDB("evenfall-local");
     const lib = await openLibrary();
     await lib.put({
       hash: "game",
@@ -305,7 +291,7 @@ describe("library storage", () => {
     lib.close();
   });
   it("isolates two runs of one ROM including history, jobs and acknowledgements", async () => {
-    await deleteDB("zigba-local");
+    await deleteDB("evenfall-local");
     const lib = await openLibrary();
     await lib.put({
       hash: "game",
@@ -368,7 +354,7 @@ describe("library storage", () => {
   });
 
   it("deletes one local playthrough and its slots without touching another run", async () => {
-    await deleteDB("zigba-local");
+    await deleteDB("evenfall-local");
     const lib = await openLibrary();
     await lib.put({
       hash: "game",
@@ -412,7 +398,7 @@ describe("library storage", () => {
   });
 
   it("replaces the last deleted playthrough with a fresh identity, not its old save", async () => {
-    await deleteDB("zigba-local");
+    await deleteDB("evenfall-local");
     const lib = await openLibrary();
     await lib.put({
       hash: "game",
@@ -436,7 +422,7 @@ describe("library storage", () => {
   });
 
   it("keeps the last playthrough and its save if deletion fails midway", async () => {
-    await deleteDB("zigba-local");
+    await deleteDB("evenfall-local");
     const lib = await openLibrary();
     await lib.put({
       hash: "game",
@@ -471,7 +457,7 @@ describe("library storage", () => {
   });
 
   it("defaults cloud on for accounts, retains explicit opt-out and forgets one account only", async () => {
-    await deleteDB("zigba-local");
+    await deleteDB("evenfall-local");
     const lib = await openLibrary();
     const ref = { hash: "orphan", playthroughId: "default" };
     await lib.ensurePlaythrough("orphan");

@@ -64,7 +64,7 @@ function stored(
 ): Promise<Record<string, unknown>[]> {
   return page.evaluate(
     async ({ store, key, prefix }) => {
-      const request = indexedDB.open("zigba-local");
+      const request = indexedDB.open("evenfall-local");
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
@@ -393,7 +393,7 @@ test("Update adds the latest ROM, then copies the in-game save to a new run", as
   const save = Array.from({ length: 32768 }, (_, index) => index & 0xff);
   await page.evaluate(
     async ({ hash, save }) => {
-      const request = indexedDB.open("zigba-local");
+      const request = indexedDB.open("evenfall-local");
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);

@@ -5,7 +5,7 @@
  * until it reloads. A tab reloads by itself only when that loses nothing the
  * user can see; otherwise it offers a reload, which saves the game first.
  */
-import { UPDATE_RELOAD_KEY } from "./deployed-names";
+import { UPDATE_RELOAD_KEY } from "./storage-names";
 
 export type UpdateStatus = "current" | "ready" | "reloading";
 

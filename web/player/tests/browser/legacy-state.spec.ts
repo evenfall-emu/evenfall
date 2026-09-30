@@ -29,7 +29,7 @@ type Records = {
 function storage(page: Page, hash: string, write?: Records) {
   return page.evaluate(
     async ({ hash, write }) => {
-      const request = indexedDB.open("zigba-local");
+      const request = indexedDB.open("evenfall-local");
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);

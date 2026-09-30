@@ -18,7 +18,7 @@ const listing = (hash: string, uploadedAt: string, capturedAt = 1) => ({
 });
 
 beforeEach(async () => {
-  await deleteDB("zigba-local");
+  await deleteDB("evenfall-local");
   library = await openLibrary();
   vi.stubGlobal("window", new EventTarget());
   cloud = new CloudSync(library, (value) => {

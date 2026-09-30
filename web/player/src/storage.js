@@ -1,9 +1,13 @@
-import { LOCAL_DATABASE, SAVE_LOCK_PREFIX } from "./deployed-names";
+import { SAVE_LOCK_PREFIX } from "./storage-names";
 
+/**
+ * A minimal save store for the SDK validation page. It keeps its own
+ * database, so the harness never touches the player's library.
+ */
 export class SaveStore {
   static async open() {
     const db = await new Promise((resolve, reject) => {
-      const request = indexedDB.open(LOCAL_DATABASE, 2);
+      const request = indexedDB.open("evenfall-validation", 1);
       request.onupgradeneeded = () => {
         for (const name of ["saves", "games", "assets", "scenarios", "reports"])
           if (!request.result.objectStoreNames.contains(name))

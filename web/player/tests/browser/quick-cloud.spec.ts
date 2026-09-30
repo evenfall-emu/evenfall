@@ -108,7 +108,7 @@ async function cloud(page: Page) {
 async function localSlot(page: Page, slot: number) {
   return page.evaluate(
     async ({ key }) => {
-      const request = indexedDB.open("zigba-local");
+      const request = indexedDB.open("evenfall-local");
       const db = await new Promise<IDBDatabase>((resolve) => {
         request.onsuccess = () => resolve(request.result);
       });

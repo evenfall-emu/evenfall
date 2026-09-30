@@ -17,7 +17,7 @@ const cachedBuilds = (page: Page) =>
   page.evaluate(
     () =>
       new Promise<string[]>((resolve, reject) => {
-        const request = indexedDB.open("zigba-local");
+        const request = indexedDB.open("evenfall-local");
         request.onerror = () => reject(request.error);
         request.onsuccess = () => {
           const keys = request.result

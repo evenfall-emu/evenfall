@@ -56,7 +56,7 @@ async function importAndCheckpoint(page: Page, marker: number, name: string) {
   await expect
     .poll(() =>
       page.evaluate(async (hash) => {
-        const request = indexedDB.open("zigba-local");
+        const request = indexedDB.open("evenfall-local");
         const db = await new Promise<IDBDatabase>((resolve, reject) => {
           request.onsuccess = () => resolve(request.result);
           request.onerror = () => reject(request.error);
@@ -75,7 +75,7 @@ async function importAndCheckpoint(page: Page, marker: number, name: string) {
     )
     .toBe(true);
   const state = await page.evaluate(async (hash) => {
-    const request = indexedDB.open("zigba-local");
+    const request = indexedDB.open("evenfall-local");
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
@@ -110,7 +110,7 @@ async function replaceResume(
 ) {
   await page.evaluate(
     async ({ hash, data, options }) => {
-      const request = indexedDB.open("zigba-local");
+      const request = indexedDB.open("evenfall-local");
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
@@ -147,7 +147,7 @@ async function replaceResume(
 
 async function storedResume(page: Page, hash: string) {
   return page.evaluate(async (key) => {
-    const request = indexedDB.open("zigba-local");
+    const request = indexedDB.open("evenfall-local");
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
@@ -281,7 +281,7 @@ test("a corrupt resume remains available for retry and cannot be replaced by the
   const corrupt = [1, 2, 3, 4];
   await page.evaluate(
     async ({ hash, corrupt }) => {
-      const request = indexedDB.open("zigba-local");
+      const request = indexedDB.open("evenfall-local");
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
@@ -318,7 +318,7 @@ test("a corrupt resume remains available for retry and cannot be replaced by the
   await advanceAutosave(page);
   expect(
     await page.evaluate(async (hash) => {
-      const request = indexedDB.open("zigba-local");
+      const request = indexedDB.open("evenfall-local");
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
@@ -349,7 +349,7 @@ test("missing resume data does not silently start from the battery save", async 
   await enterPlayer(page);
   const saved = await importAndCheckpoint(page, 44, "Missing");
   await page.evaluate(async (hash) => {
-    const request = indexedDB.open("zigba-local");
+    const request = indexedDB.open("evenfall-local");
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
@@ -374,7 +374,7 @@ test("missing resume data does not silently start from the battery save", async 
   await advanceAutosave(page);
   expect(
     await page.evaluate(async (hash) => {
-      const request = indexedDB.open("zigba-local");
+      const request = indexedDB.open("evenfall-local");
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
@@ -433,7 +433,7 @@ test("a read-only tab can resume but never overwrites the lock owner's checkpoin
   await advanceAutosave(second);
   expect(
     await second.evaluate(async (hash) => {
-      const request = indexedDB.open("zigba-local");
+      const request = indexedDB.open("evenfall-local");
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);

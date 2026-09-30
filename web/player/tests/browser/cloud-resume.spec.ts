@@ -130,7 +130,7 @@ async function recordRestores(page: Page) {
 async function localResume(page: Page, playthroughId = "default") {
   return page.evaluate(
     async ({ hash, playthroughId }) => {
-      const request = indexedDB.open("zigba-local");
+      const request = indexedDB.open("evenfall-local");
       const db = await new Promise<IDBDatabase>((resolve) => {
         request.onsuccess = () => resolve(request.result);
       });
@@ -162,7 +162,7 @@ async function installLocal(page: Page, backup: Backup) {
   const savedAt = Date.parse("2026-09-24T18:00:00Z");
   await page.evaluate(
     async ({ hash, rom, backup, savedAt }) => {
-      const request = indexedDB.open("zigba-local");
+      const request = indexedDB.open("evenfall-local");
       const db = await new Promise<IDBDatabase>((resolve) => {
         request.onsuccess = () => resolve(request.result);
       });
@@ -438,7 +438,7 @@ test("an unchanged known cloud version never interrupts local resume, even when 
   await installLocal(page, local);
   const control = await remote(page, await checkpoint(page, "1234567"));
   await page.evaluate(async (hash) => {
-    const request = indexedDB.open("zigba-local");
+    const request = indexedDB.open("evenfall-local");
     const db = await new Promise<IDBDatabase>((resolve) => {
       request.onsuccess = () => resolve(request.result);
     });
@@ -703,7 +703,7 @@ for (const failure of ["incompatible checkpoint", "local storage failure"])
     expect(await localResume(page)).toEqual(local);
     expect(
       await page.evaluate(async (hash) => {
-        const request = indexedDB.open("zigba-local");
+        const request = indexedDB.open("evenfall-local");
         const db = await new Promise<IDBDatabase>((resolve) => {
           request.onsuccess = () => resolve(request.result);
         });

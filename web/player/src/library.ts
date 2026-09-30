@@ -1,7 +1,8 @@
 import { Context, Data, Effect, Layer } from "effect";
 import { openDB, type IDBPDatabase, type IDBPTransaction } from "idb";
 import type { LoadOptions } from "@evenfall/gba";
-import { LOCAL_DATABASE } from "./deployed-names";
+import { LOCAL_DATABASE } from "./storage-names";
+import { migrateLegacyStorage } from "./storage-migration";
 import { isLegacyState } from "./state-format";
 export class StorageError extends Data.TaggedError("StorageError")<{
   cause: unknown;
@@ -973,37 +974,36 @@ export class Library {
     this.db?.close();
   }
 }
+/**
+ * Opens the current database, then moves in what an earlier player stored
+ * under the legacy name (storage-migration.ts). Version 1 of the current
+ * database has the schema of the legacy database's version 8.
+ */
 export async function openLibrary() {
   let blocked = false;
   let rejectBlocked: (error: Error) => void = () => {};
   const failure = new Promise<never>((_, reject) => {
     rejectBlocked = reject;
   });
-  const opened = openDB(LOCAL_DATABASE, 8, {
-    upgrade(db, oldVersion) {
-      if (oldVersion < 7) {
-        // Version 7 identifies games by the SHA-1 of the raw ROM instead of
-        // its SHA-256. Keys cannot be converted without rehashing every ROM,
-        // so an older database starts empty.
-        for (const name of [...db.objectStoreNames]) db.deleteObjectStore(name);
-        for (const name of [
-          "saves",
-          "games",
-          "roms",
-          "resumes",
-          "assets",
-          "scenarios",
-          "reports",
-        ])
-          db.createObjectStore(name);
-        const cloud = db.createObjectStore("cloud");
-        cloud.createIndex("accountId", "accountId");
-        cloud.createIndex("hash", "hash");
-        db.createObjectStore("playthroughs").createIndex("hash", "hash");
-      }
-      // Version 8: builds recognized from game locators, by game, ROM and
-      // locator version.
-      if (oldVersion < 8) db.createObjectStore("builds");
+  const opened = openDB(LOCAL_DATABASE, 1, {
+    upgrade(db) {
+      for (const name of [
+        "saves",
+        "games",
+        "roms",
+        "resumes",
+        "assets",
+        "scenarios",
+        "reports",
+        // Builds recognized from game locators, by game, ROM and locator
+        // version.
+        "builds",
+      ])
+        db.createObjectStore(name);
+      const cloud = db.createObjectStore("cloud");
+      cloud.createIndex("accountId", "accountId");
+      cloud.createIndex("hash", "hash");
+      db.createObjectStore("playthroughs").createIndex("hash", "hash");
     },
     blocked() {
       blocked = true;
@@ -1022,7 +1022,14 @@ export async function openLibrary() {
       if (blocked) db.close();
     })
     .catch(() => {});
-  return new Library(await Promise.race([opened, failure]));
+  const db = await Promise.race([opened, failure]);
+  try {
+    await migrateLegacyStorage(db);
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+  return new Library(db);
 }
 export class GameLibrary extends Context.Tag("GameLibrary")<
   GameLibrary,

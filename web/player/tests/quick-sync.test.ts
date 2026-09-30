@@ -151,7 +151,7 @@ let server: FakeCloud;
 const online = { value: true };
 
 beforeEach(async () => {
-  await deleteDB("zigba-local");
+  await deleteDB("evenfall-local");
   library = await openLibrary();
   server = new FakeCloud();
   online.value = true;

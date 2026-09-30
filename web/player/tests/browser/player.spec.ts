@@ -291,14 +291,16 @@ test("an older library is dropped; a new battery save survives gameplay, refresh
     .poll(() => page.evaluate(() => window.player?.state.ready))
     .toBe(true);
   await page.evaluate(async () => {
-    const req = indexedDB.deleteDatabase("zigba-local");
-    await new Promise<void>((resolve, reject) => {
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-    });
+    for (const name of ["evenfall-local", "zigba-local"]) {
+      const req = indexedDB.deleteDatabase(name);
+      await new Promise<void>((resolve, reject) => {
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+    }
   });
-  // Seed a version-1 save; libraries before version 7 are keyed by SHA-256
-  // and start empty.
+  // Seed a version-1 save under the legacy database name; libraries before
+  // version 7 are keyed by SHA-256, and the move drops them.
   await page.evaluate(async (hash) => {
     const req = indexedDB.open("zigba-local", 1);
     req.onupgradeneeded = () => req.result.createObjectStore("saves");
@@ -486,7 +488,7 @@ test("library lists metadata and reads only the selected ROM", async ({
     .toBe(true);
   // The page has opened the current library; write two games directly.
   await page.evaluate(async (games) => {
-    const request = indexedDB.open("zigba-local");
+    const request = indexedDB.open("evenfall-local");
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
@@ -531,7 +533,7 @@ test("library lists metadata and reads only the selected ROM", async ({
     page.evaluate(() => (window as unknown as { romReads: string[] }).romReads);
   expect(await reads()).toEqual([]);
   const metadata = await page.evaluate(async () => {
-    const request = indexedDB.open("zigba-local");
+    const request = indexedDB.open("evenfall-local");
     const db = await new Promise<IDBDatabase>((resolve) => {
       request.onsuccess = () => resolve(request.result);
     });

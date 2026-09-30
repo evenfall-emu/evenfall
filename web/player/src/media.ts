@@ -1,4 +1,4 @@
-import { VOLUME_KEY } from "./deployed-names";
+import { LEGACY, VOLUME_KEY } from "./storage-names";
 // Vite emits the SDK worklet as a separate static file and returns its URL.
 import audioWorkletUrl from "@evenfall/gba/audio-worklet?url&no-inline";
 // Build through Uint8ClampedArray to preserve the old conversion's exact
@@ -93,7 +93,14 @@ export class AudioOutput {
   private workletStarted = false;
   constructor() {
     try {
-      const stored = localStorage.getItem(VOLUME_KEY);
+      let stored = localStorage.getItem(VOLUME_KEY);
+      // Moved once from the name earlier players used.
+      const legacy = localStorage.getItem(LEGACY.volumeKey);
+      if (legacy !== null) {
+        if (stored === null)
+          localStorage.setItem(VOLUME_KEY, (stored = legacy));
+        localStorage.removeItem(LEGACY.volumeKey);
+      }
       if (stored !== null) {
         const volume = Number(stored);
         if (Number.isFinite(volume) && volume >= 0 && volume <= 1)

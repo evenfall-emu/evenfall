@@ -64,9 +64,9 @@ test("sound volume opens on hover or focus and persists independently of mute", 
   await slider.press("ArrowRight");
   await expect(slider).toHaveValue("1");
   await expect(page.locator(".volume-panel output")).toHaveText("1%");
-  expect(await page.evaluate(() => localStorage.getItem("zigba-volume"))).toBe(
-    "0.01",
-  );
+  expect(
+    await page.evaluate(() => localStorage.getItem("evenfall-volume")),
+  ).toBe("0.01");
   await sound.click();
   await expect(
     page.getByRole("button", { name: "Unmute sound" }),
