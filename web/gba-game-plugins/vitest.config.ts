@@ -7,7 +7,7 @@ export default defineConfig({
   resolve: { conditions: [...conditions, ...defaultClientConditions] },
   ssr: { resolve: { conditions: [...conditions, ...defaultServerConditions] } },
   test: {
-    name: "gba-pokemon",
+    name: "gba-game-plugins",
     // Vitest v4 compatibility: preserve mock call history.
     // Remove after tests no longer rely on calls from setup or earlier tests.
     // https://viteplus.dev/guide/vitest-v5#remove-unneeded-compatibility-settings

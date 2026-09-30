@@ -1,4 +1,4 @@
-// `@evenfall/gba-pokemon`: headless Gen III Pokémon decoders and exact-build game
+// `@evenfall/gba-game-plugins`: headless Gen III Pokémon decoders and exact-build game
 // definitions for `@evenfall/gba/bridge`. Unofficial; see ../README.md.
 export * from "./artwork";
 export * from "./bridges";

@@ -40,7 +40,7 @@ rustc --version
 npm ci --no-audit --no-fund
 npm run build:wasm -w @evenfall/gba
 npx vp check
-npx vp test --project player --project gba-pokemon --project server
+npx vp test --project player --project gba-game-plugins --project server
 
 # Instance settings for the official play.evenfall-emu.org deployment. These are
 # public values, not secrets. A self-hosted deployment exports its own values

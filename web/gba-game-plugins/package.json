@@ -1,5 +1,5 @@
 {
-  "name": "@evenfall/gba-pokemon",
+  "name": "@evenfall/gba-game-plugins",
   "version": "0.1.0",
   "private": true,
   "description": "Unofficial Pokémon party, storage and battle bridges plus player panels for the Evenfall player. Decodes the user's own ROM at runtime; bundles no game data beyond the standard type chart. Not affiliated with Nintendo, Creatures Inc., GAME FREAK inc. or The Pokémon Company.",

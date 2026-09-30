@@ -81,7 +81,7 @@ jobs:
       - run: npm run build -w @evenfall/player
       # Both suites serve web/player/dist on the same port, so run them in turn.
       - run: npm run test:browser -w @evenfall/player
-      - run: npm run test:browser -w @evenfall/gba-pokemon
+      - run: npm run test:browser -w @evenfall/gba-game-plugins
 
   cloudflare:
     name: Cloudflare build
