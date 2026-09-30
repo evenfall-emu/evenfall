@@ -8,13 +8,22 @@ export default defineConfig({
     sortPackageJson: false,
     ignorePatterns: [
       ".amp/**",
+      ".dist/**",
       "refs/**",
       "**/Cargo.toml",
       "web/gba/bridge/**",
+      "web/player/dist/**",
+      "web/server/migrations/**",
     ],
   },
   lint: {
-    ignorePatterns: [".amp/**", "refs/**", "web/gba/bridge/**"],
+    ignorePatterns: [
+      ".amp/**",
+      ".dist/**",
+      "refs/**",
+      "web/gba/bridge/**",
+      "web/player/dist/**",
+    ],
     jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
     rules: { "vite-plus/prefer-vite-plus-imports": "error" },
     options: { typeAware: true, typeCheck: true },
@@ -22,6 +31,15 @@ export default defineConfig({
   test: {
     projects: [
       "web/gba",
+      "web/player/vitest.config.ts",
+      "web/gba-game-plugins/vitest.config.ts",
+      {
+        test: {
+          name: "server",
+          root: "web/server",
+          include: ["test/*.test.ts", "scripts/catalog/*.test.mjs"],
+        },
+      },
       { test: { name: "bench", root: "tools/bench", include: ["*.test.mjs"] } },
     ],
   },

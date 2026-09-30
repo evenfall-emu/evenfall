@@ -1,0 +1,2754 @@
+{
+  "games": [
+    {
+      "id": "pokemon-unbound",
+      "internalName": "pokemon/unbound",
+      "displayName": "Pokémon Unbound",
+      "summary": "Explore Borrius in a story-rich adventure built for your own pace.",
+      "description": "A polished original adventure in Borrius with difficulty modes, missions, character customization, modern battle mechanics, extensive side content, and a large postgame.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-radical-red",
+      "internalName": "pokemon/radical-red",
+      "displayName": "Pokémon Radical Red",
+      "summary": "Take on Kanto's toughest bosses with modern Pokémon and team-building tools.",
+      "description": "A famous difficulty and enhancement hack with Pokémon and mechanics through Generation 9, strategic boss fights, extensive quality-of-life options, and configurable modes.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-gaia",
+      "internalName": "pokemon/gaia",
+      "displayName": "Pokémon Gaia",
+      "summary": "Uncover Orbtus's seismic mysteries in a polished new-region adventure.",
+      "description": "An original Orbtus-region adventure centered on seismic mysteries, featuring Pokémon through Generation 6, Mega Evolution, modern mechanics, new music, and polished maps.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-glazed",
+      "internalName": "pokemon/glazed",
+      "displayName": "Pokémon Glazed",
+      "summary": "Cross three regions and parallel worlds on one enormous Pokémon journey.",
+      "description": "A landmark multi-region adventure spanning Tunod, Johto, and Rankor, with five starters, a large cross-generation roster, legendary hunts, and parallel-world storytelling.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-firered-rocket-edition",
+      "internalName": "pokemon/firered-rocket-edition",
+      "displayName": "Pokémon FireRed: Rocket Edition",
+      "summary": "Steal Pokémon and rewrite Kanto's story from Team Rocket's side.",
+      "description": "Retells Kanto from a Team Rocket grunt's perspective, adding theft, morality, branching side quests, and a darker story interwoven with the original journey.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-emerald-rogue",
+      "internalName": "pokemon/emerald-rogue",
+      "displayName": "Pokémon Emerald Rogue",
+      "summary": "Turn Hoenn into a replayable roguelike, one unpredictable run at a time.",
+      "description": "Transforms Pokémon into a replayable roguelike with procedural routes, encounters, trainers, and items, plus a persistent hub, unlocks, difficulty settings, and modern mechanics.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-adventures-red-chapter",
+      "internalName": "pokemon/adventures-red-chapter",
+      "displayName": "Pokémon Adventures Red Chapter",
+      "summary": "Play through the Pokémon Adventures manga, from Kanto to the Orange Islands.",
+      "description": "Adapts the Pokémon Adventures manga through Kanto and the Orange Archipelago, with expanded events, character portraits, following Pokémon, modern mechanics, and extensive side content.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-clover",
+      "internalName": "pokemon/clover",
+      "displayName": "Pokémon Clover",
+      "summary": "Meet 386 original monsters in a sprawling, unapologetically adult parody.",
+      "description": "A large 4chan-originated parody with two regions, 386 original monsters, a custom soundtrack, competitive AI, extensive side quests, and intentionally offensive adult humor.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-ashgray",
+      "internalName": "pokemon/ashgray",
+      "displayName": "Pokémon AshGray",
+      "summary": "Relive Ash's first anime journey, or make his team your own.",
+      "description": "Recreates Ash Ketchum's early anime journey, rewarding anime-accurate choices while still allowing custom teams, and replaces field HMs with tools.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-liquid-crystal",
+      "internalName": "pokemon/liquid-crystal",
+      "displayName": "Pokémon Liquid Crystal",
+      "summary": "Rediscover Crystal's Johto and Kanto in a colorful GBA remake.",
+      "description": "A GBA remake of Crystal covering Johto, Kanto, and additional Orange Islands content, with updated audiovisuals, day and night, weather, and new events.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-emerald-kaizo",
+      "internalName": "pokemon/emerald-kaizo",
+      "displayName": "Pokémon Emerald Kaizo",
+      "summary": "Survive a ruthless Hoenn where every trainer makes you earn the win.",
+      "description": "A famously punishing Emerald difficulty hack with redesigned trainers and encounters, limited battle options, legendary events, and extra postgame content.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-inclement-emerald",
+      "internalName": "pokemon/inclement-emerald",
+      "displayName": "Pokémon Inclement Emerald",
+      "summary": "Build your dream Hoenn team with modern Pokémon and three difficulty modes.",
+      "description": "A Drayano-inspired Hoenn enhancement with three difficulty modes, Pokémon through Generation 7, Mega Evolution, reusable TMs, improved Pokédex data, and broad quality-of-life changes.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-gs-chronicles",
+      "internalName": "pokemon/gs-chronicles",
+      "displayName": "Pokémon GS Chronicles",
+      "summary": "Return to Johto in a modernized Gold and Silver reimagining.",
+      "description": "A modernized Gold and Silver reimagining with an altered Johto story, day and night, Mega Evolution, updated mechanics, more than 400 Pokémon, and a completed League path.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-flora-sky",
+      "internalName": "pokemon/flora-sky",
+      "displayName": "Pokémon Flora Sky",
+      "summary": "Follow the mystery of Giratina and Shaymin through a new Emerald adventure.",
+      "description": "A classic original-story Emerald hack about Giratina and Shaymin, with Pokémon through Generation 5, new locations, daily events, minigames, and a broad catchable roster.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-blazed-glazed",
+      "internalName": "pokemon/blazed-glazed",
+      "displayName": "Pokémon Blazed Glazed",
+      "summary": "Revisit Glazed's three-region adventure with a rebalanced roster.",
+      "description": "A popular rebalance of Glazed that retains its multi-region story while revising encounters, Pokémon stats, moves, typing, and overall progression.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-r-o-w-e",
+      "internalName": "pokemon/r-o-w-e",
+      "displayName": "Pokémon R.O.W.E.",
+      "summary": "Explore badge-scaled Hoenn in any order and build the team you want.",
+      "description": "Rebuilds Hoenn as an open world with badge-scaled gyms, extensive configuration and randomizer modes, modern Pokémon, following partners, and a strong team-building focus.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "elite-redux",
+      "internalName": "pokemon/elite-redux",
+      "displayName": "Pokémon Elite Redux",
+      "summary": "Build wild multi-ability teams and jump straight into tactical battles.",
+      "description": "A battle-focused difficulty hack where Pokémon can combine multiple abilities and innates, backed by extensive rebalancing, rapid team building, minimal grinding, and competitive options.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon", "Difficulty Hack"]
+    },
+    {
+      "id": "pokemon-emerald-crest",
+      "internalName": "pokemon/emerald-crest",
+      "displayName": "Pokémon Emerald Crest",
+      "summary": "Roam an expanded Hoenn full of quests, new forms and flexible options.",
+      "description": "An Emerald enhancement with open-world options, many starters, later-generation Pokémon and forms, Mega Evolution, Z-Moves, DexNav, randomizer modes, quests, and broad convenience features.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-the-last-fire-red",
+      "internalName": "pokemon/the-last-fire-red",
+      "displayName": "Pokémon The Last Fire Red",
+      "summary": "Rediscover FireRed with a huge modern roster and battles that scale with you.",
+      "description": "A feature-heavy FireRed enhancement with later-generation Pokémon, Mega Evolution, Z-Moves, Dynamax, level scaling, DexNav, seasons, expanded storage, and updated visuals.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-ultra-shiny-gold-sigma",
+      "internalName": "pokemon/ultra-shiny-gold-sigma",
+      "displayName": "Pokémon Ultra Shiny Gold Sigma",
+      "summary": "Journey across an ambitious, multi-region Gold and Silver remake.",
+      "description": "An ambitious Gold, Silver, and Crystal remake spanning multiple regions, with more than 800 Pokémon, modern forms and evolutions, Mega Evolution, rematches, and many side systems.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-dark-rising",
+      "internalName": "pokemon/dark-rising",
+      "displayName": "Pokémon Dark Rising",
+      "summary": "Answer Arceus's call in a dark, demanding original-region saga.",
+      "description": "A famously difficult, dark original-region adventure in which Arceus recruits the player against an ancient evil, with a large cross-generation roster and sequel-spanning story.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-mega-power",
+      "internalName": "pokemon/mega-power",
+      "displayName": "Pokémon Mega Power",
+      "summary": "Fund the ultimate Mewtwo experiment in a sprawling original adventure.",
+      "description": "An original multi-region story starring a scientist seeking funds to perfect Mewtwo, with Mega Evolutions, later-generation Pokémon, custom tiles, and connections to Wind1158's series.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-vega",
+      "internalName": "pokemon/vega",
+      "displayName": "Pokémon Vega",
+      "summary": "Discover Tohoak, its original Pokédex and a challenging new campaign.",
+      "description": "A highly regarded English translation of a Japanese hack set in Tohoak, with a substantial original Pokédex, many new moves, custom music, demanding battles, and postgame facilities.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-saiph",
+      "internalName": "pokemon/saiph",
+      "displayName": "Pokémon Saiph",
+      "summary": "Uncover a new story in Colen, inspired by Pokémon Ranger.",
+      "description": "An original Colen-region story loosely continuing Pokémon Ranger: Shadows of Almia, with DS-inspired presentation, Pokémon through Generation 6, reusable TMs, and day-night gameplay.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-sors",
+      "internalName": "pokemon/sors",
+      "displayName": "Pokémon SORS",
+      "summary": "Hunt eclipse-altered Pokémon across Hupest in a story-driven journey.",
+      "description": "A story-driven Hupest-region hack about eclipse-altered Pokémon, featuring roughly 700 Pokémon, a custom Eclipse type, DS-inspired sprites, modern mechanics, and a day-night cycle.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-nameless",
+      "internalName": "pokemon/nameless",
+      "displayName": "Pokémon Nameless",
+      "summary": "Follow Chronya across Cyenn in an arena-based, story-heavy adventure.",
+      "description": "A story-heavy Wind1158 adventure following Chronya across Cyenn, replacing gyms with arenas and HMs with skills while connecting Resolute and Mega Power.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-fire-red-extended",
+      "internalName": "pokemon/fire-red-extended",
+      "displayName": "Pokémon Fire Red Extended",
+      "summary": "See Kanto remade with new maps, events and Pokémon through Generation 8.",
+      "description": "A broad FireRed expansion with Pokémon through Generation 8, revamped maps and graphics, field moves, new events, modern interfaces, nature editing, and an extended League.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-orange-islands",
+      "internalName": "pokemon/orange-islands",
+      "displayName": "Pokémon Orange Islands",
+      "summary": "Follow Ash and Pikachu through the Orange Archipelago's four gyms.",
+      "description": "Recreates Ash's Orange Archipelago anime journey with Pikachu as starter, four gyms, altered sprites and maps, a physical-special split, and primarily Generation 1 Pokémon.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-altered-emerald",
+      "internalName": "pokemon/altered-emerald",
+      "displayName": "Pokémon Altered Emerald",
+      "summary": "Rediscover familiar Hoenn through reworked maps and 386 catchable Pokémon.",
+      "description": "Reworks Emerald's maps, encounters, learnsets, abilities, typings, difficulty, and battle engine while keeping Hoenn recognizable and making 386 Pokémon obtainable.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-fused-dimensions",
+      "internalName": "pokemon/fused-dimensions",
+      "displayName": "Pokémon Fused Dimensions",
+      "summary": "Catch hundreds of Pokémon fusions in a transformed FireRed.",
+      "description": "Replaces FireRed's Pokédex with hundreds of obtainable Pokémon fusions, supported by custom entries, balancing, Mega Evolution, modern typing, reusable TMs, and changed encounters.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-too-many-types",
+      "internalName": "pokemon/too-many-types",
+      "displayName": "Pokémon Too Many Types",
+      "summary": "Try to master 62 types and triple-typed Pokémon in a gleefully absurd Emerald.",
+      "description": "A comedic Emerald overhaul adding 62 types, triple-typed Pokémon, more than 100 new moves, unusual matchup rules, story edits, special forms, and quality-of-life changes.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-emerald-seaglass",
+      "internalName": "pokemon/emerald-seaglass",
+      "displayName": "Pokémon Emerald Seaglass",
+      "summary": "Explore cozy, GBC-styled Hoenn with following partners and modern battles.",
+      "description": "A cozy GBC-styled visual overhaul of Hoenn with all Generation 1–3 Pokémon, cross-generation evolutions, following partners, modern combat rules, minigames, difficulty options, and cheats.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-odyssey",
+      "internalName": "pokemon/odyssey",
+      "displayName": "Pokémon Odyssey",
+      "summary": "Descend into the Yggdrasil Labyrinth in an exploration-first Pokémon RPG.",
+      "description": "Blends Pokémon with Etrian Odyssey in an exploration-first, double-battle-focused journey through the Yggdrasil Labyrinth, with no gyms, multiple difficulties, and three endings.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-victory-fire",
+      "internalName": "pokemon/victory-fire",
+      "displayName": "Pokémon Victory Fire",
+      "summary": "Face a new villain team in the opening chapter of Wind1158's saga.",
+      "description": "A classic Wind1158 original-region adventure with a new story, rivals and villain team, later-generation Pokémon, Mega Evolution, reusable TMs, and links to Resolute and Nameless.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-resolute",
+      "internalName": "pokemon/resolute",
+      "displayName": "Pokémon Resolute",
+      "summary": "Continue the Victory Fire story across Sylon, Tyron and Johto.",
+      "description": "A Wind1158 sequel to Victory Fire spanning Sylon, Tyron, and Johto, with later-generation Pokémon, Mega Evolution, custom regions, and a connected story continued by Nameless.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-dark-violet",
+      "internalName": "pokemon/dark-violet",
+      "displayName": "Pokémon Dark Violet",
+      "summary": "Revisit Kanto with a deeper Team Rocket story and remade locations.",
+      "description": "A ground-up Kanto retelling with rewritten scripts, remapped areas, DS-style sprites, new music and moves, expanded characterization, and a more involved Team Rocket plot.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-sweet-version",
+      "internalName": "pokemon/sweet-version",
+      "displayName": "Pokémon Sweet Version",
+      "summary": "Explore a dessert-filled Kanto with 151 candified PokéSweets.",
+      "description": "A dessert-themed total conversion with 151 candified PokéSweets, a new flavor-based type chart, heavily altered Kanto-like maps, exploration rewards, and abundant food puns.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-theta-emerald-ex",
+      "internalName": "pokemon/theta-emerald-ex",
+      "displayName": "Pokémon Theta Emerald EX",
+      "summary": "Fill an enormous 721-Pokémon Pokédex in an expanded Emerald.",
+      "description": "An expansive Emerald enhancement known for packing in 721 Pokémon, hundreds of moves, Mega Evolution, Primal Reversion, the physical-special split, Fairy type, and reusable TMs.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-crystaldust",
+      "internalName": "pokemon/crystaldust",
+      "displayName": "Pokémon CrystalDust",
+      "summary": "Return to classic Johto in a faithful, polished GBA remake of Crystal.",
+      "description": "A highly polished Crystal remake in the Emerald engine, preserving Johto's original feel while upgrading graphics, sound, mechanics, and presentation for the GBA.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-cloud-white",
+      "internalName": "pokemon/cloud-white",
+      "displayName": "Pokémon Cloud White",
+      "summary": "Start in Kanto, then keep going on a long multi-region journey.",
+      "description": "Begins with FireRed's story and expands into a long multi-region journey, adding later-generation Pokémon, new characters, modern mechanics, and sequels that continue the adventure.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-ultra-violet",
+      "internalName": "pokemon/ultra-violet",
+      "displayName": "Pokémon Ultra Violet",
+      "summary": "Complete FireRed's Pokédex solo, with new choices and capture areas.",
+      "description": "A classic FireRed expansion designed for single-player completion, making all Pokémon obtainable while adding starter choice, new capture areas, events, and quality-of-life adjustments.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-outlaw",
+      "internalName": "pokemon/outlaw",
+      "displayName": "Pokémon Outlaw",
+      "summary": "See a rougher, satirical Kanto through an outsider's eyes.",
+      "description": "A mature parody following a homeless teenager through a heavily rewritten Kanto, with new dialogue, urban slums, romance, political satire, and a drastically altered League story.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-quetzal-emerald-multiplayer",
+      "internalName": "pokemon/quetzal-emerald-multiplayer",
+      "displayName": "Pokémon Quetzal (Emerald Multiplayer)",
+      "summary": "Explore Emerald together with cooperative, online and local multiplayer.",
+      "description": "Adds local and online multiplayer to Emerald, including cooperative exploration, battles, trades, spectators, following parties, many playable characters, broad starter choice, and customizable rules.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-dark-worship",
+      "internalName": "pokemon/dark-worship",
+      "displayName": "Pokémon Dark Worship",
+      "summary": "Stop a sinister sect in the original Seafood region.",
+      "description": "An original Seafood-region adventure about stopping an evil sect from capturing a holy Pokémon, with familiar guest characters, modern mechanics, and a completed English translation.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-elysium",
+      "internalName": "pokemon/elysium",
+      "displayName": "Pokémon Elysium",
+      "summary": "Chase a championship and an ancient conspiracy across an epic two-part story.",
+      "description": "A long, lore-focused two-part story following a 16-year-old trainer from Crysta through side quests, championship trials, and an ancient conspiracy, aimed at casual players.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "pokemon-hyper-emerald-lost-artifacts",
+      "internalName": "pokemon/hyper-emerald-lost-artifacts",
+      "displayName": "Pokémon Hyper Emerald: Lost Artifacts",
+      "summary": "Take on an expanded Emerald with modern battle forms and fresh quests.",
+      "description": "A feature-dense Emerald overhaul with Mega Evolution, Z-Moves, Gigantamax, content through Generation 8, hard mode, expanded side quests, and a translated extended narrative.",
+      "imageUrl": null,
+      "franchise": "Pokémon",
+      "tags": ["Pokémon"]
+    },
+    {
+      "id": "golden-sun-golden-sun-reloaded-gs1",
+      "internalName": "golden-sun/golden-sun-reloaded-gs1",
+      "displayName": "Golden Sun Reloaded (Golden Sun)",
+      "summary": "Make every class and Psynergy count in a rebalanced first adventure.",
+      "description": "A linked pair of gameplay overhaul patches for both GBA games, aimed at widening the viable options rather than the story. Classes, Psynergy, equipment, unleashes, enemies, bosses and drops are reworked, summon rushing is removed, and characters' stat growth is fixed so luck rises with levels. Data transfer between the two patched games works.",
+      "imageUrl": null,
+      "franchise": "Golden Sun",
+      "tags": ["Golden Sun"]
+    },
+    {
+      "id": "golden-sun-golden-sun-reloaded-tla",
+      "internalName": "golden-sun/golden-sun-reloaded-tla",
+      "displayName": "Golden Sun Reloaded (The Lost Age)",
+      "summary": "Carry the Reloaded overhaul into The Lost Age, with save transfer intact.",
+      "description": "A linked pair of gameplay overhaul patches for both GBA games, aimed at widening the viable options rather than the story. Classes, Psynergy, equipment, unleashes, enemies, bosses and drops are reworked, summon rushing is removed, and characters' stat growth is fixed so luck rises with levels. Data transfer between the two patched games works.",
+      "imageUrl": null,
+      "franchise": "Golden Sun",
+      "tags": ["Golden Sun"]
+    },
+    {
+      "id": "golden-sun-golden-sun-dawn-of-djinn",
+      "internalName": "golden-sun/golden-sun-dawn-of-djinn",
+      "displayName": "Golden Sun: Dawn of Djinn",
+      "summary": "Face a tougher first adventure with new classes, Djinn and battle tactics.",
+      "description": "A remix of the first game with reworked battles: new classes, Psynergy, weapons, Djinn and Djinni Charms, stronger enemies and bosses, and quality-of-life travel changes. It ships as a veteran patch and an easier casual patch, plus optional add-on patches. Save transfer to The Lost Age is not supported.",
+      "imageUrl": null,
+      "franchise": "Golden Sun",
+      "tags": ["Golden Sun"]
+    },
+    {
+      "id": "golden-sun-golden-sun-qol",
+      "internalName": "golden-sun/golden-sun-qol",
+      "displayName": "Golden Sun QOL",
+      "summary": "Travel faster through the original Golden Sun without changing its battles.",
+      "description": "Adds Dawn of Djinn's convenience features to an otherwise near-original first game: world-map fast travel, an encounter toggle, key-item buyback and optional autorun or cutscene-shortening add-ons. Two patch variants are included, one that keeps the prologue and one that skips it.",
+      "imageUrl": null,
+      "franchise": "Golden Sun",
+      "tags": ["Golden Sun"]
+    },
+    {
+      "id": "golden-sun-golden-sun-jenna-edition",
+      "internalName": "golden-sun/golden-sun-jenna-edition",
+      "displayName": "Golden Sun: Jenna Edition",
+      "summary": "Keep Jenna in your party throughout the first Golden Sun.",
+      "description": "Swaps Jenna and Garet's story roles so Jenna stays playable through the whole first game with her Lost Age classes and Psynergy. The released Modern version also skips the prologue and adds fast travel and an encounter toggle. Save transfer to The Lost Age is only semi-compatible.",
+      "imageUrl": null,
+      "franchise": "Golden Sun",
+      "tags": ["Golden Sun"]
+    },
+    {
+      "id": "golden-sun-golden-retriever-a-golden-sun-dog-mod",
+      "internalName": "golden-sun/golden-retriever-a-golden-sun-dog-mod",
+      "displayName": "Golden Retriever: A Golden Sun Dog Mod",
+      "summary": "What if everyone in Vale became a dog? Find out in this comic remix.",
+      "description": "An April Fools adventure in which Vale's people turn into dogs and the dialogue and mind reads change to match. Its altered campaign ends after Vault; later areas play close to the original game.",
+      "imageUrl": null,
+      "franchise": "Golden Sun",
+      "tags": ["Golden Sun"]
+    },
+    {
+      "id": "golden-sun-golden-sun-fallen-star",
+      "internalName": "golden-sun/golden-sun-fallen-star",
+      "displayName": "Golden Sun: Fallen Star",
+      "summary": "Rethink your tactics in a harder, rebalanced first Golden Sun.",
+      "description": "A difficulty and rebalance mod that reworks Psynergy, enemy toolkits, equipment and encounters to demand broader tactics than the original. It is the first half of Vanish Mantle's paired Fallen Star/Risen Star project, and it soft-caps levels around 35.",
+      "imageUrl": null,
+      "franchise": "Golden Sun",
+      "tags": ["Golden Sun"]
+    },
+    {
+      "id": "golden-sun-golden-sun-book-2-risen-star",
+      "internalName": "golden-sun/golden-sun-book-2-risen-star",
+      "displayName": "Golden Sun Book 2: Risen Star",
+      "summary": "Take on The Lost Age with tougher fights and no experience grinding.",
+      "description": "The Lost Age half of the Fallen Star project, rebuilding difficulty and balance through revised Psynergy, equipment, enemies and encounters. Enemies give no experience; they drop stat items instead, so progression comes from fighting rather than grinding.",
+      "imageUrl": null,
+      "franchise": "Golden Sun",
+      "tags": ["Golden Sun"]
+    },
+    {
+      "id": "golden-sun-golden-sun-the-lost-age-anniversary-mod",
+      "internalName": "golden-sun/golden-sun-the-lost-age-anniversary-mod",
+      "displayName": "Golden Sun The Lost Age: Anniversary Mod",
+      "summary": "Revisit The Lost Age with smoother travel and the original battles.",
+      "description": "A replay-oriented quality-of-life mod that keeps the original battles while easing travel, puzzles and inventory management. It ships as a normal patch and a no-summon challenge patch, plus an optional patch that changes the battle theme with the party leader.",
+      "imageUrl": null,
+      "franchise": "Golden Sun",
+      "tags": ["Golden Sun"]
+    },
+    {
+      "id": "golden-sun-golden-sun-tla-convenience-and-inspiration",
+      "internalName": "golden-sun/golden-sun-tla-convenience-and-inspiration",
+      "displayName": "Golden Sun TLA: Convenience and Inspiration",
+      "summary": "Open up new builds and skip the slog in The Lost Age.",
+      "description": "A sandbox-leaning mod that speeds up The Lost Age and opens up character builds: earlier third-tier Psynergy, stronger attack Psynergy, higher unleash rates, larger Djinn stat bonuses and equipment that grants elemental power so different party builds stay viable.",
+      "imageUrl": null,
+      "franchise": "Golden Sun",
+      "tags": ["Golden Sun"]
+    },
+    {
+      "id": "golden-sun-golden-sun-class-transmutation-hack-gs1",
+      "internalName": "golden-sun/golden-sun-class-transmutation-hack-gs1",
+      "displayName": "Golden Sun Class Transmutation Hack (Golden Sun)",
+      "summary": "Unlock a new class for every element combination in Golden Sun.",
+      "description": "A class-system overhaul for both games: the class-type table is rewritten so every element combination has its own classes, three-element classes are doubled and expanded, and item classes are removed. Psynergy is rebalanced and extended to give each new class something unique.",
+      "imageUrl": null,
+      "franchise": "Golden Sun",
+      "tags": ["Golden Sun"]
+    },
+    {
+      "id": "golden-sun-golden-sun-class-transmutation-hack-tla",
+      "internalName": "golden-sun/golden-sun-class-transmutation-hack-tla",
+      "displayName": "Golden Sun Class Transmutation Hack (The Lost Age)",
+      "summary": "Rebuild every elemental class in The Lost Age with fresh Psynergy.",
+      "description": "A class-system overhaul for both games: the class-type table is rewritten so every element combination has its own classes, three-element classes are doubled and expanded, and item classes are removed. Psynergy is rebalanced and extended to give each new class something unique.",
+      "imageUrl": null,
+      "franchise": "Golden Sun",
+      "tags": ["Golden Sun"]
+    },
+    {
+      "id": "golden-sun-tla-style-hard-mode-for-gs1",
+      "internalName": "golden-sun/tla-style-hard-mode-for-gs1",
+      "displayName": "TLA-style Hard Mode for GS1",
+      "summary": "Bring The Lost Age's hard-mode enemy stats to the first game.",
+      "description": "A small patch that applies The Lost Age's hard-mode enemy multipliers to the first game: enemy HP up 50%, attack and defence up 25%. It changes enemy data only, so it can be combined with hacks that leave enemy stats alone.",
+      "imageUrl": null,
+      "franchise": "Golden Sun",
+      "tags": ["Golden Sun"]
+    },
+    {
+      "id": "golden-sun-golden-sun-1-challenge-pack",
+      "internalName": "golden-sun/golden-sun-1-challenge-pack",
+      "displayName": "Golden Sun 1 Challenge Pack",
+      "summary": "Give the first game's bosses and encounters a fresh tactical twist.",
+      "description": "An add-on pack that revisits the first game (and Dawn of Djinn) with twist battles: bosses and encounters are given new rules and restrictions to make fights more interesting. It is meant to be layered on top of an existing playthrough's patch.",
+      "imageUrl": null,
+      "franchise": "Golden Sun",
+      "tags": ["Golden Sun"]
+    },
+    {
+      "id": "golden-sun-golden-sun-the-lost-age-color-correction",
+      "internalName": "golden-sun/golden-sun-the-lost-age-color-correction",
+      "displayName": "Golden Sun The Lost Age Color Correction",
+      "summary": "Restore richer colors to The Lost Age without changing its gameplay.",
+      "description": "A palette-only hack that corrects the washed-out colours of The Lost Age on backlit screens and accurate emulators, covering town and dungeon maps, battle backgrounds and the overworld. It changes no gameplay, text or maps.",
+      "imageUrl": null,
+      "franchise": "Golden Sun",
+      "tags": ["Golden Sun"]
+    },
+    {
+      "id": "fire-emblem-the-last-promise",
+      "internalName": "fire-emblem/the-last-promise",
+      "displayName": "Fire Emblem: The Last Promise",
+      "summary": "Join Anakin's rebellion in the landmark fan-made Fire Emblem campaign.",
+      "description": "The west's first widely played complete campaign and still the most cited entry point to Fire Emblem hacking. Follows Anakin and a band of misfits rebelling against the empire of Magnus on the continent of Solum, with an original cast, maps, soundtrack and a post-game. Built to feel like an expanded Blazing Blade, it is rough in places but historically the hack that made the scene visible.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-elibean-nights",
+      "internalName": "fire-emblem/elibean-nights",
+      "displayName": "Elibean Nights",
+      "summary": "Return to Elibe through self-contained tales of familiar heroes.",
+      "description": "An anthology sequel to Blazing Blade: each tale is a self-contained chapter about Elibe's surviving cast in the years before Binding Blade, chosen from a hub with achievements, bonus scenes and a support matchmaker. Arch's long-running project trades a single campaign for vignettes, and the Director's Cut reworks the scripts and maps. The thread's final release is a public playtest build rather than a signed-off version.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-the-road-to-ruin",
+      "internalName": "fire-emblem/the-road-to-ruin",
+      "displayName": "Fire Emblem: The Road to Ruin",
+      "summary": "Lead a small cast through a polished, classic-style campaign.",
+      "description": "Primefusion's early complete campaign, still recommended for its polished presentation and tight cast. It follows a small group caught in a war across a custom continent, with clean map design, custom portraits and music and a difficulty curve close to vanilla Blazing Blade. One of the hacks that set the standard for what a fan campaign could look like.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-order-of-the-crimson-arm",
+      "internalName": "fire-emblem/order-of-the-crimson-arm",
+      "displayName": "Fire Emblem: Order of the Crimson Arm",
+      "summary": "Command mercenaries through a succession war full of varied objectives.",
+      "description": "TactHack's 30-chapter campaign about a mercenary company hired into a succession war, one of the more experimental early hacks: defence, escape and timed objectives appear throughout, and the army grows around a named core. Its late game is uneven, and the curated lists say so, but its variety and ambition made it a standard recommendation for players who had finished the classics.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-dark-lord-and-the-maiden-of-light",
+      "internalName": "fire-emblem/dark-lord-and-the-maiden-of-light",
+      "displayName": "Fire Emblem: Dark Lord and the Maiden of Light",
+      "summary": "Play a new campaign with the familiar feel of classic GBA Fire Emblem.",
+      "description": "A 27-chapter original story about a young lord of Vanheim caught between the empire of Deimos and Enterre. Widely described as the hack that feels most like an official GBA Fire Emblem game: familiar structure, strong unit balance, music drawn from across the series, and no gimmicks. Long a first recommendation for players who want more Blazing Blade rather than a deconstruction of it.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-requiem",
+      "internalName": "fire-emblem/requiem",
+      "displayName": "Fire Emblem: Requiem",
+      "summary": "Follow two siblings into a slow-burning house war across 26 chapters.",
+      "description": "Sacred Blaze's story-driven campaign about the noble house of Olva and the two siblings who inherit its war with house Egarde. It keeps vanilla Blazing Blade mechanics and concentrates on events, maps and a complete support web across 26 chapters. Recommended for players who value a traditional campaign and a plot with a slower burn.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-sword-of-heaven-and-earth",
+      "internalName": "fire-emblem/sword-of-heaven-and-earth",
+      "displayName": "Fire Emblem: Sword of Heaven and Earth",
+      "summary": "Continue Blazing Blade's story with a new cast and campaign.",
+      "description": "Japan's first complete GBA campaign, a sequel to Blazing Blade set in the years after its ending, later translated by Nasaelo. It keeps FE7's systems and adds a new cast, new maps and a full scenario across roughly 20 chapters. Notable both for its quality and for showing that the Japanese scene had produced a finished campaign long before the west did.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-project-ember",
+      "internalName": "fire-emblem/project-ember",
+      "displayName": "FE6: Project Ember",
+      "summary": "Rediscover Binding Blade with rebuilt maps, units and balance.",
+      "description": "A full reimagining of Binding Blade that keeps the story and rebuilds everything around it: rebalanced units and weapons, additional playable characters, new classes, reworked maps and quality-of-life fixes for a game famous for being hostile to its player. The most recommended way to play FE6 without playing FE6, and the reference point for FE6 hacking.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-eckesachs",
+      "internalName": "fire-emblem/eckesachs",
+      "displayName": "Fire Emblem: Eckesachs",
+      "summary": "Play Binding Blade from the villains' side as Zephiel and his generals.",
+      "description": "Saint Rubenio's FE6 rewrite in which you play the villains: the Bern campaign of Zephiel and his generals, retold from their side with new dialogue, events and recruitments on top of Binding Blade's maps. Part overhaul, part commentary on the original, and the best known of the 'play as the bad guys' projects.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-the-second-scouring",
+      "internalName": "fire-emblem/the-second-scouring",
+      "displayName": "Fire Emblem: The Second Scouring",
+      "summary": "Defend Elibe's next generation in a complete Binding Blade sequel.",
+      "description": "A 24-chapter sequel campaign set after Binding Blade, following a new generation of lords as Elibe faces a second Scouring. It keeps FE6's engine and mechanics, with custom maps, characters and a complete script, and is one of the few finished full-length FE6 campaigns.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-the-binding-blade-revamp-project-sienna",
+      "internalName": "fire-emblem/the-binding-blade-revamp-project-sienna",
+      "displayName": "The Binding Blade Revamp: Project Sienna",
+      "summary": "Revisit Roy's story with smoother maps and a rebalanced cast.",
+      "description": "A full-length FE6 revamp by Deviation that rebalances the cast, rewrites dialogue, adds new items and classes and smooths the original's rougher maps while keeping Roy's story. Recommended as a lighter-touch alternative to Project Ember for players who want Binding Blade's campaign with modern balance rather than a reimagining.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-vision-quest",
+      "internalName": "fire-emblem/vision-quest",
+      "displayName": "Fire Emblem: Vision Quest",
+      "summary": "Follow a farmer turned bandit through a sprawling, tactical new campaign.",
+      "description": "Pandan's 43-chapter campaign about Storch, a farmer turned bandit in the failing state of Belaro, on the continent of Yaska. It is the modern benchmark for GBA hacking: vanilla-feeling systems with light skills, a large replaceable cast built for ironman play, many side objectives, multiple difficulties and consistently strong map design. Krash's compendium names it one of the three starting points for new players.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-the-four-kings",
+      "internalName": "fire-emblem/the-four-kings",
+      "displayName": "Fire Emblem: The Four Kings",
+      "summary": "Divide your army in two and master each hero's personal weapon.",
+      "description": "KrashBoomBang's campaign about three royal brothers whose envoy goes wrong, with every playable character carrying a personal weapon and a mid-game army split that alternates between two parties. Harder than vanilla and closer to Binding Blade's pressure, it is the third of the 'Oifeybot trilogy' that the community treats as the standard first three hacks.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-sacred-echoes",
+      "internalName": "fire-emblem/sacred-echoes",
+      "displayName": "Fire Emblem: Sacred Echoes",
+      "summary": "Experience all five acts of Shadows of Valentia in GBA form.",
+      "description": "HyperGammaSpaces' demake of Shadows of Valentia in the Sacred Stones engine: all five acts, roughly 46 maps, Gaiden-style dungeon and magic systems rebuilt with GBA technology, and custom art throughout. The most technically admired hack in the scene and a complete, playable alternative to the 3DS game.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-dream-of-five-definitive-edition",
+      "internalName": "fire-emblem/dream-of-five-definitive-edition",
+      "displayName": "FE: Dream of Five - Definitive Edition",
+      "summary": "Choose your route in a long campaign with two lords and custom art.",
+      "description": "The finished version of one of the oldest surviving projects: a long campaign with a ten-map route split, two lords' paths, roughly 41 chapters and a fully custom visual identity. Rebuilt for the Sacred Stones engine after beginning life as an FE7 hack, it is regularly called the best all-round hack of its year.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-the-sun-god-s-wrath",
+      "internalName": "fire-emblem/the-sun-god-s-wrath",
+      "displayName": "The Sun God's Wrath",
+      "summary": "Take on a maximalist campaign of skills, classes and wild map twists.",
+      "description": "Blademaster's maximalist campaign, a sequel to the same author's Corrupt Theocracy, following Astrea and the mercenary group Propater against the sun god Pyron. It piles on skills, classes, map gimmicks and a famously hard-to-follow plot, and offers a 100% growth mode. Recommended precisely because nothing else in the scene plays like it.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-justice-pride",
+      "internalName": "fire-emblem/justice-pride",
+      "displayName": "Fire Emblem: Justice & Pride",
+      "summary": "Build an overpowered army and blaze through a long original campaign.",
+      "description": "DrGreen3339's 30-chapter campaign set on the continent of Irona, among the first hacks built on SkillSystems. It leans into powerful player units, magic fliers and juggernaut tactics, with eight post-game maps, difficulty modes and unusual quality-of-life rules such as free trading. A long-standing recommendation for players who want to steamroll rather than struggle.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-shackled-power",
+      "internalName": "fire-emblem/shackled-power",
+      "displayName": "Fire Emblem: Shackled Power",
+      "summary": "Join a rebellion with hand-drawn art and explosive new weapons.",
+      "description": "Sphealnuke's 33-chapter campaign with entirely hand-drawn portraits and battle animations, a bomb weapon type locked to two range, and a story about a rebellion against a magically enforced order. It plays close to vanilla Sacred Stones and has an easy mode, which makes it one of the more approachable modern recommendations.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-souls-of-the-forest",
+      "internalName": "fire-emblem/souls-of-the-forest",
+      "displayName": "Fire Emblem: Souls of the Forest",
+      "summary": "Master tight maps, fragile units and powerful class-specific tools.",
+      "description": "Scraiza's gameplay-first campaign, built like New Mystery: high offences, low defences, tight maps and powerful class-specific tools such as Galeforce swords for swordmasters. It has three difficulties, 24 chapters and four sidequests. The community consistently cites it for the precision of its design rather than its story.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-iron-emblem",
+      "internalName": "fire-emblem/iron-emblem",
+      "displayName": "Iron Emblem",
+      "summary": "Lead nameless soldiers through a no-reset ironman challenge.",
+      "description": "Mournful Relic's 21-chapter hack built around ironman play: no resetting, no named lords, just a squad of generic soldiers and anti-turtling pressure on nearly every map. Its plain presentation hides careful design, and it is the hack most often recommended to players who want a pure tactical challenge.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-code-of-the-black-knights",
+      "internalName": "fire-emblem/code-of-the-black-knights",
+      "displayName": "Fire Emblem: Code of the Black Knights",
+      "summary": "Choose your path through two protagonists and ten possible endings.",
+      "description": "Mycahel's 30-chapter campaign with two protagonists, branching choices and ten endings, built on SkillSystems and styled after 2000s anime. It offers 45 playable maps and a large cast, with difficulty that rewards using the tools it hands out. One of the most replayed hacks in the scene because of its routes.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-bells-of-byelen",
+      "internalName": "fire-emblem/bells-of-byelen",
+      "displayName": "Fire Emblem: Bells of Byelen",
+      "summary": "Fight an empire with fatigue, capture and stolen gear in play.",
+      "description": "A 24-chapter 'telephone' hack built by a relay of authors around a Thracia 776 framework: fatigue, capture, twenty stat caps and stolen equipment. The story of two officers in the Decian Liberators fighting the Cythean Empire is unusually strong for a collaborative project, and the whole is held together by a shared commitment to FE5 mechanics.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-call-of-the-armor",
+      "internalName": "fire-emblem/call-of-the-armor",
+      "displayName": "Call of the Armor",
+      "summary": "Discover a collaborative campaign stitched together chapter by chapter.",
+      "description": "The first 'telephone' hack: a large team each contributed one or two chapters, passing the ROM around like a game of telephone. It stays mechanically close to Sacred Stones, with three character selection interludes and a run of inventive maps. Its sequel, Tales of Kotor, uses the same format.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-storge",
+      "internalName": "fire-emblem/storge",
+      "displayName": "Fire Emblem: Storge",
+      "summary": "Hire your own army, then make it through five replayable maps.",
+      "description": "A short, replayable campaign built like an arcade game: you begin with a purse of gold, hire a party from a large pool and spend the rest on weapons, then play five maps with what you chose. The father-and-daughter story is told economically, and unlockables reward repeat runs. Frequently recommended as a first hack because it can be finished in an evening.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-myrm-emblem",
+      "internalName": "fire-emblem/myrm-emblem",
+      "displayName": "Myrm Emblem",
+      "summary": "Can a whole army of swordmasters conquer 25 chapters? Try it.",
+      "description": "A full-length conceit hack whose entire playable cast is made of swordmasters and myrmidons from across the series, plus Kaga's Saga games. There is almost no story; the interest is in seeing how far one class can be stretched across 25 chapters. Krash's compendium recommends it for the joke and the surprisingly solid play.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-void-s-blitzarre-adventure",
+      "internalName": "fire-emblem/void-s-blitzarre-adventure",
+      "displayName": "Void's Blitzarre Adventure",
+      "summary": "Play a comic, skill-driven campaign built in just one week.",
+      "description": "A 31-chapter campaign assembled by the Fire Emblem Universe community in a single week, with each contributor taking a chapter. It pioneered the SkillSystems patch, so the gameplay is skill-driven and experimental, and the tone is comic. Its release set the template for the telephone hacks that followed.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-the-dark-amulet",
+      "internalName": "fire-emblem/the-dark-amulet",
+      "displayName": "The Dark Amulet",
+      "summary": "Follow a new cast through a story-first, mainline-style campaign.",
+      "description": "Vorgus' 30-chapter campaign deliberately built to feel like a mainline Fire Emblem: a new continent, a new cast of thirty, shifting party composition reminiscent of Radiant Dawn, and a story that is often praised as the hack's strongest element. Its sequel, The Shadow of Dawn, continues the setting.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-drums-of-war",
+      "internalName": "fire-emblem/drums-of-war",
+      "displayName": "Fire Emblem: Drums of War",
+      "summary": "Recruit the bosses you defeat in a grounded, political campaign.",
+      "description": "Parrhesia's 22-chapter, story-focused campaign in which defeated bosses can be recruited, filling out an army of unusual characters. It is grounded and political rather than heroic, with custom art and a soundtrack drawn from outside the series, and it keeps Sacred Stones systems so the writing carries the weight.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-the-morrow-s-golden-country",
+      "internalName": "fire-emblem/the-morrow-s-golden-country",
+      "displayName": "Fire Emblem: The Morrow's Golden Country",
+      "summary": "Rebuild a war-torn country through party splits and unusual unit growth.",
+      "description": "Retina's long campaign with party splits, interludes and unusual ways of building powerful units, set in a country rebuilding after war. It is known for its writing, its varied chapter structure and a difficulty that can be pushed high on request, and it is one of the hacks most often named as a favourite by players who have tried everything else.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-curse-of-lagdou",
+      "internalName": "fire-emblem/curse-of-lagdou",
+      "displayName": "Fire Emblem: Curse of Lagdou",
+      "summary": "Return to Magvel's past with sharper weapons and dangerous critical hits.",
+      "description": "A 24-chapter what-if set in Magvel during Sacred Stones' backstory, with overhauled weapons and critical hits that make every combat decision sharper. DoinThangs' campaign reuses the vanilla setting rather than inventing a continent, and the second version rebuilds the maps and script around that premise.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-cerulean-crescent",
+      "internalName": "fire-emblem/cerulean-crescent",
+      "displayName": "Cerulean Crescent",
+      "summary": "Turn an exile's adventure into a showcase for inventive unit abilities.",
+      "description": "Rivian's 31-chapter campaign about an exiled noble turned adventurer, with highly creative unit tools and a dramedy tone that the curated lists single out. Its maps are built around the specific, unusual things each unit can do, and the 2.0 update expanded the cast and reworked late chapters.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    },
+    {
+      "id": "fire-emblem-the-hag-in-white",
+      "internalName": "fire-emblem/the-hag-in-white",
+      "displayName": "The Hag in White",
+      "summary": "Protect a wanted bishop in a world where healing magic is outlawed.",
+      "description": "Saint Rubenio's 2025 campaign in which healing magic is outlawed and the player's bishop is the most wanted person in the setting. It pairs SkillSystems depth with tight, low-unit maps and a consistently praised script, and was added to the vetted campaign list within months of release.",
+      "imageUrl": null,
+      "franchise": "Fire Emblem",
+      "tags": ["Fire Emblem"]
+    }
+  ],
+  "bases": [
+    {
+      "id": "golden-sun-usa-europe",
+      "internalName": "Golden Sun (USA, Europe)",
+      "displayName": "Golden Sun (USA, Europe)",
+      "sha1": "5c4695205413df7db52b9a184815a07783999971",
+      "crc32": "e1fb68e8"
+    },
+    {
+      "id": "golden-sun-the-lost-age-usa-europe",
+      "internalName": "Golden Sun - The Lost Age (USA, Europe)",
+      "displayName": "Golden Sun - The Lost Age (USA, Europe)",
+      "sha1": "b500663220cb9bf56b9f8e8c0c544f1d6fa3a824",
+      "crc32": "606a1c4d"
+    },
+    {
+      "id": "pokemon-emerald-us",
+      "internalName": "Pokemon - Emerald Version (USA, Europe)",
+      "displayName": "Pokemon - Emerald Version (USA, Europe)",
+      "sha1": "f3ae088181bf583e55daf962a92bb46f4f1d07b7",
+      "crc32": "1f1c08fb"
+    },
+    {
+      "id": "fire-emblem-fuuin-no-tsurugi-japan",
+      "internalName": "Fire Emblem - Fuuin no Tsurugi (Japan)",
+      "displayName": "Fire Emblem - Fuuin no Tsurugi (Japan)",
+      "sha1": "a57095da867de4d585c33d4394712986245fe6ca",
+      "crc32": "d38763e1"
+    },
+    {
+      "id": "fire-emblem-usa-australia",
+      "internalName": "Fire Emblem (USA, Australia)",
+      "displayName": "Fire Emblem (USA, Australia)",
+      "sha1": "c735fdbb9e8abe19e0c6a44708df19acc962e204",
+      "crc32": "2a524221"
+    },
+    {
+      "id": "fire-emblem-the-sacred-stones-usa-australia",
+      "internalName": "Fire Emblem - The Sacred Stones (USA, Australia)",
+      "displayName": "Fire Emblem - The Sacred Stones (USA, Australia)",
+      "sha1": "c25b145e37456171ada4b0d440bf88a19f4d509f",
+      "crc32": "a47246ae"
+    },
+    {
+      "id": "pokemon-firered-version-usa-europe",
+      "internalName": "Pokemon - FireRed Version (USA, Europe)",
+      "displayName": "Pokemon - FireRed Version (USA, Europe)",
+      "sha1": "41cb23d8dccc8ebd7c649cd8fbb58eeace6e2fdc",
+      "crc32": "dd88761c"
+    }
+  ],
+  "versions": [
+    {
+      "id": "pokemon-unbound-b4776b82a4c7",
+      "gameId": "pokemon-unbound",
+      "internalName": "2.1.1.1",
+      "displayName": "2.1.1.1",
+      "outputSha1": "b4776b82a4c7915d0fadeaa27e013523f99dfd94",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/e48b5d5b30c41522b78641e64e0f5a92d859d4f9.ups",
+        "format": "ups",
+        "size": 26489729
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-radical-red-964f951a0fda",
+      "gameId": "pokemon-radical-red",
+      "internalName": "4.1",
+      "displayName": "4.1",
+      "outputSha1": "964f951a0fdaf209e4ea1344883ef0d557bb3a80",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/58c3b534d0dd8ad664315b8edfa42f0ee9bca7ab.ups",
+        "format": "ups",
+        "size": 18629021
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-gaia-d5b1e77975fc",
+      "gameId": "pokemon-gaia",
+      "internalName": "Beta 3.2",
+      "displayName": "Beta 3.2",
+      "outputSha1": "d5b1e77975fcda831e0e9a7b527906bf3f40ecd0",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/b61b60dc64a32ae7b4c3f1d4888ef856b3f97465.ups",
+        "format": "ups",
+        "size": 25656435
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-glazed-cab1cb353dee",
+      "gameId": "pokemon-glazed",
+      "internalName": "Unnumbered build",
+      "displayName": "Unnumbered build",
+      "outputSha1": "cab1cb353deefc15498e7b37160aafe772d62776",
+      "requiredBaseId": "pokemon-emerald-us",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/bbc40c0cd8b18071f9d6f2f4375c77659116c352.ups",
+        "format": "ups",
+        "size": 20414120
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-firered-rocket-edition-033d05374ae3",
+      "gameId": "pokemon-firered-rocket-edition",
+      "internalName": "Final 1.0.2",
+      "displayName": "Final 1.0.2",
+      "outputSha1": "033d05374ae34eb84fae62c693ca8f3da23dd1bd",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/bcd73073aaf3ce88f29d42ba36925e91d3ea4735.ups",
+        "format": "ups",
+        "size": 3184374
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-emerald-rogue-d3101097a73b",
+      "gameId": "pokemon-emerald-rogue",
+      "internalName": "2.1.1-EX",
+      "displayName": "2.1.1-EX",
+      "outputSha1": "d3101097a73be2aeadb0086fad13df40710d4fb7",
+      "requiredBaseId": "pokemon-emerald-us",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/b5da978533959548143684a5d4e1315d1b13325b.ups",
+        "format": "ups",
+        "size": 32538084
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-adventures-red-chapter-37cf17143b1e",
+      "gameId": "pokemon-adventures-red-chapter",
+      "internalName": "Beta 15 + Expansion Pass Fix C",
+      "displayName": "Beta 15 + Expansion Pass Fix C",
+      "outputSha1": "37cf17143b1ea4f6428d42c895c5acd394121504",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/9c3f7ba24121595b8d049d299eff380aec6948da.ups",
+        "format": "ups",
+        "size": 22170806
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-clover-7eca3ef1580e",
+      "gameId": "pokemon-clover",
+      "internalName": "1.3.3",
+      "displayName": "1.3.3",
+      "outputSha1": "7eca3ef1580e21b96027b721ecd3ba1aa36a6ea2",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/40931ddb4567bb8d77d2e54e4267305d91f26bd5.ups",
+        "format": "ups",
+        "size": 12595069
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-ashgray-6303e09ed3ad",
+      "gameId": "pokemon-ashgray",
+      "internalName": "Beta 4.5.3",
+      "displayName": "Beta 4.5.3",
+      "outputSha1": "6303e09ed3ad9ae3deb5116274896b87fc1d4bdd",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/6c10211fd74374319a55872128eb019a5f7e0089.ups",
+        "format": "ups",
+        "size": 4018544
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-liquid-crystal-7acf9d4c14b5",
+      "gameId": "pokemon-liquid-crystal",
+      "internalName": "Live Beta 3.3.00512",
+      "displayName": "Live Beta 3.3.00512",
+      "outputSha1": "7acf9d4c14b570a375402cb4dd2619f910a8a45b",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/34c45c2c3accfa60fb9ff3fb1960a2b1d7ee707c.ups",
+        "format": "ups",
+        "size": 5886488
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-emerald-kaizo-a7c4e34fafb5",
+      "gameId": "pokemon-emerald-kaizo",
+      "internalName": "2.0",
+      "displayName": "2.0",
+      "outputSha1": "a7c4e34fafb53f2d5283eb6d43dad285c0dd40a8",
+      "requiredBaseId": "pokemon-emerald-us",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/8b8c372b55500ce4374f96ddfca36bbe195d4e9d.ups",
+        "format": "ups",
+        "size": 112420
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-inclement-emerald-ef575893a9a5",
+      "gameId": "pokemon-inclement-emerald",
+      "internalName": "1.13 (Custom UI 1.5)",
+      "displayName": "1.13 (Custom UI 1.5)",
+      "outputSha1": "ef575893a9a516fcc710370dbc384b381879d034",
+      "requiredBaseId": "pokemon-emerald-us",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/557a5e373115aa61ae2d59d41af30cb256eee133.ups",
+        "format": "ups",
+        "size": 33361511
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-gs-chronicles-25f8840ecb58",
+      "gameId": "pokemon-gs-chronicles",
+      "internalName": "Beta 2.7.6",
+      "displayName": "Beta 2.7.6",
+      "outputSha1": "25f8840ecb58e584edf18ffde35f845e94f3f17c",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/b5343bbd5c1f3524ee514f7b08092f1346870dd3.ups",
+        "format": "ups",
+        "size": 21034649
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-flora-sky-9f1d9a93af19",
+      "gameId": "pokemon-flora-sky",
+      "internalName": "Final Version",
+      "displayName": "Final Version",
+      "outputSha1": "9f1d9a93af198ce32e0e182b5e77d4d0467be640",
+      "requiredBaseId": "pokemon-emerald-us",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/ae2cee537a1832cc724501598f09be0ce93a3e6c.ups",
+        "format": "ups",
+        "size": 21149653
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-blazed-glazed-8e1a3a9c3a72",
+      "gameId": "pokemon-blazed-glazed",
+      "internalName": "1.3",
+      "displayName": "1.3",
+      "outputSha1": "8e1a3a9c3a72472913b67cd4d9bcefe23b3e48d4",
+      "requiredBaseId": "pokemon-emerald-us",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/18562a13bbc0de9efae0c643a27bc720771be155.ups",
+        "format": "ups",
+        "size": 19778369
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-r-o-w-e-89f6bb0c639b",
+      "gameId": "pokemon-r-o-w-e",
+      "internalName": "2.1b",
+      "displayName": "2.1b",
+      "outputSha1": "89f6bb0c639bfedbce25663621a51813cddbbff5",
+      "requiredBaseId": "pokemon-emerald-us",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/36971c30bb3840b33ca4da4068672e9808e543d7.ups",
+        "format": "ups",
+        "size": 30600237
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "elite-redux-2.65-beta2",
+      "gameId": "elite-redux",
+      "internalName": "v2.65-beta2-1048",
+      "displayName": "2.65 Beta2 (1048)",
+      "outputSha1": "f1323126bc043f3ce931bcc670957930559eb515",
+      "requiredBaseId": "pokemon-emerald-us",
+      "sourceRepositoryUrl": "https://github.com/Elite-Redux/eliteredux-source",
+      "sourceRevision": "06da575972cfed20d471f8bb5b90ea9e4736b16a",
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/380faf18d54d2dff000219297adee05394879bdd.ups",
+        "format": "ups",
+        "size": 32816048
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-emerald-crest-e892062af4a7",
+      "gameId": "pokemon-emerald-crest",
+      "internalName": "1.0.F",
+      "displayName": "1.0.F",
+      "outputSha1": "e892062af4a74e9dafdba45a64f4f644da558de4",
+      "requiredBaseId": "pokemon-emerald-us",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/bd77bf967ccd70b82d18fffda61e2465ca4688be.ups",
+        "format": "ups",
+        "size": 30909352
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-the-last-fire-red-d7a9626c5c62",
+      "gameId": "pokemon-the-last-fire-red",
+      "internalName": "4.0.3",
+      "displayName": "4.0.3",
+      "outputSha1": "d7a9626c5c6255b445976a376646bc6f200f61d1",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/902e31900af7887e4151931f38f7fa2d8e198505.ups",
+        "format": "ups",
+        "size": 21200165
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-ultra-shiny-gold-sigma-9fe8414372ef",
+      "gameId": "pokemon-ultra-shiny-gold-sigma",
+      "internalName": "Unnumbered build",
+      "displayName": "Unnumbered build",
+      "outputSha1": "9fe8414372efce498b6fecdd672710d7a978db88",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/493218e330cbbbbc3702e8aed173369942d07c8a.ups",
+        "format": "ups",
+        "size": 9833377
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-dark-rising-0b79e05e63b5",
+      "gameId": "pokemon-dark-rising",
+      "internalName": "Final",
+      "displayName": "Final",
+      "outputSha1": "0b79e05e63b5f31a9260f903f498755a55b4379e",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/4353cea393f56b37ec5eee3aa4055d2e36a14dbc.ups",
+        "format": "ups",
+        "size": 3035435
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-mega-power-08ac71f205e7",
+      "gameId": "pokemon-mega-power",
+      "internalName": "5.71",
+      "displayName": "5.71",
+      "outputSha1": "08ac71f205e7cbafd48f91cf25127f1b1e6716b4",
+      "requiredBaseId": "pokemon-emerald-us",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/8db21e2838e71e4f8bbf421c05d7aae42699f449.ups",
+        "format": "ups",
+        "size": 11925293
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-vega-88f2d7dff7e7",
+      "gameId": "pokemon-vega",
+      "internalName": "Build 2020-08-23",
+      "displayName": "Build 2020-08-23",
+      "outputSha1": "88f2d7dff7e7962a7fd056842889d83f9ac67b7d",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/2223c9ddc28685b5cf0a1957ec3e6376ae71e1b5.ups",
+        "format": "ups",
+        "size": 6860684
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-saiph-4778d1ac3f3a",
+      "gameId": "pokemon-saiph",
+      "internalName": "Full Game 2020 Patch",
+      "displayName": "Full Game 2020 Patch",
+      "outputSha1": "4778d1ac3f3a95922b4e0b0645a2f4c8ad03a146",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/db1d73a9d209f77ee523dc3e0980d526fcf96637.ups",
+        "format": "ups",
+        "size": 25662451
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-sors-97b17945d877",
+      "gameId": "pokemon-sors",
+      "internalName": "Full Release 1.3",
+      "displayName": "Full Release 1.3",
+      "outputSha1": "97b17945d87715a603848963c0f31b46b85d2a1c",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/783fc459e0f14cae1c9795f2f8099793b153d5d4.ups",
+        "format": "ups",
+        "size": 23370791
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-nameless-022e7d74ba92",
+      "gameId": "pokemon-nameless",
+      "internalName": "5.45",
+      "displayName": "5.45",
+      "outputSha1": "022e7d74ba922c7edf586280e0d41945d2adcfd1",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/e83a5e57dcb64e26d0e31099437dabc970167b1b.ups",
+        "format": "ups",
+        "size": 8991101
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-fire-red-extended-4e7d7f825444",
+      "gameId": "pokemon-fire-red-extended",
+      "internalName": "3.5.6",
+      "displayName": "3.5.6",
+      "outputSha1": "4e7d7f825444d38682f2c9c9c551673dfaf6a305",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/9f1312ff9bdce28781887b542a0f3ee7a2323999.ups",
+        "format": "ups",
+        "size": 25859042
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-orange-islands-d2e3800e69e4",
+      "gameId": "pokemon-orange-islands",
+      "internalName": "Beta 5.7 (complete)",
+      "displayName": "Beta 5.7 (complete)",
+      "outputSha1": "d2e3800e69e44c9649c3d9a15dc1cd12c1d90501",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/5eda1a3105c72dc2a06c1f0f21862f198bab8f0a.ups",
+        "format": "ups",
+        "size": 4938621
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-altered-emerald-8cd317c36e2f",
+      "gameId": "pokemon-altered-emerald",
+      "internalName": "4.15c",
+      "displayName": "4.15c",
+      "outputSha1": "8cd317c36e2fa904bc9b11c5eb034af8673d9bce",
+      "requiredBaseId": "pokemon-emerald-us",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/ff1c2561407ba80d80da7c505dd9f698a9415a9d.ups",
+        "format": "ups",
+        "size": 2820314
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-fused-dimensions-06a79f952a6a",
+      "gameId": "pokemon-fused-dimensions",
+      "internalName": "2.3",
+      "displayName": "2.3",
+      "outputSha1": "06a79f952a6a6fb8e199a2856433cd5565e945e8",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/d5a8dbddc80caf70ca0220dcdb967201e15ae452.ups",
+        "format": "ups",
+        "size": 4602811
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-too-many-types-e634cdcada0d",
+      "gameId": "pokemon-too-many-types",
+      "internalName": "1.6",
+      "displayName": "1.6",
+      "outputSha1": "e634cdcada0d589918da658307eddb1db0eb2752",
+      "requiredBaseId": "pokemon-emerald-us",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/3d604bb35da7e8617953148ee5973b39306c94a4.ups",
+        "format": "ups",
+        "size": 33245576
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-emerald-seaglass-b9f4d332d30f",
+      "gameId": "pokemon-emerald-seaglass",
+      "internalName": "3.0",
+      "displayName": "3.0",
+      "outputSha1": "b9f4d332d30fc88c379f9e037f9eae3b2755ead4",
+      "requiredBaseId": "pokemon-emerald-us",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/d03887126f5a00924599424f51c00a9c5483914a.ups",
+        "format": "ups",
+        "size": 15354604
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-odyssey-22b15310616c",
+      "gameId": "pokemon-odyssey",
+      "internalName": "4.1",
+      "displayName": "4.1",
+      "outputSha1": "22b15310616c36af5d7fff11198d2abe4759151d",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/47690f122d7f4651011c47b7d4df02e93a4b2faa.ups",
+        "format": "ups",
+        "size": 22085639
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-victory-fire-e17969cb9c6e",
+      "gameId": "pokemon-victory-fire",
+      "internalName": "2.7 (Fixed)",
+      "displayName": "2.7 (Fixed)",
+      "outputSha1": "e17969cb9c6e813b51cdee0aba797fc90c5eb64c",
+      "requiredBaseId": "pokemon-emerald-us",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/06a8f789c151375b7cd90bb9c0369bf16a9add6b.ups",
+        "format": "ups",
+        "size": 4388850
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-resolute-a71905dfbd18",
+      "gameId": "pokemon-resolute",
+      "internalName": "2.91 (Fixed)",
+      "displayName": "2.91 (Fixed)",
+      "outputSha1": "a71905dfbd18d16c2f26df00ed229c2b8ad4d427",
+      "requiredBaseId": "pokemon-emerald-us",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/c7124c1a143d8c2e74b8e845cd588f50db752580.ups",
+        "format": "ups",
+        "size": 8624276
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-dark-violet-a16d394f59ae",
+      "gameId": "pokemon-dark-violet",
+      "internalName": "Final 2022 Update (Verloren 5)",
+      "displayName": "Final 2022 Update (Verloren 5)",
+      "outputSha1": "a16d394f59ae58d59ac1362f3d7e166418a6fc97",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/918358c3e72b979a1373fd4adc168b6f4dcb6358.ups",
+        "format": "ups",
+        "size": 3623641
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-sweet-version-484335f798f1",
+      "gameId": "pokemon-sweet-version",
+      "internalName": "1.0 (completed)",
+      "displayName": "1.0 (completed)",
+      "outputSha1": "484335f798f12c73a1d8dce68bcf6495151fac0e",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/52077dac887187d8a6c6acdb79bc13a6ea9c3782.ups",
+        "format": "ups",
+        "size": 1587450
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-theta-emerald-ex-b51181fa92ba",
+      "gameId": "pokemon-theta-emerald-ex",
+      "internalName": "February 27, 2017 update",
+      "displayName": "February 27, 2017 update",
+      "outputSha1": "b51181fa92ba6e0d02ceae9db638c342cbac319a",
+      "requiredBaseId": "pokemon-emerald-us",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/9b615dc3aa4a63dcf3a6ebfad88c156dac081ea5.ups",
+        "format": "ups",
+        "size": 21567387
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-crystaldust-0a4ee720dbb0",
+      "gameId": "pokemon-crystaldust",
+      "internalName": "3.0.0-alpha.0.1",
+      "displayName": "3.0.0-alpha.0.1",
+      "outputSha1": "0a4ee720dbb0d42fab8290a18ae3a512a8b0b975",
+      "requiredBaseId": "pokemon-emerald-us",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/9f2a8bf0bce5e7a23d897a6da071bd28b0abef5f.ups",
+        "format": "ups",
+        "size": 14970756
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-cloud-white-414c837f97df",
+      "gameId": "pokemon-cloud-white",
+      "internalName": "523d",
+      "displayName": "523d",
+      "outputSha1": "414c837f97df054a4853fa7db493772cbcb7667d",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/bb63a590e691bddd2d7e12c238c88285ecb0170b.ups",
+        "format": "ups",
+        "size": 20695504
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-ultra-violet-3b6c51d8fb6b",
+      "gameId": "pokemon-ultra-violet",
+      "internalName": "1.22",
+      "displayName": "1.22",
+      "outputSha1": "3b6c51d8fb6b513bdd01b7bda3ed8965bc985d58",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/1b98e4a17e9fb07e3393c294d9083e50a54eded0.ups",
+        "format": "ups",
+        "size": 206874
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-outlaw-36793dac77f2",
+      "gameId": "pokemon-outlaw",
+      "internalName": "Build 2015-09-05",
+      "displayName": "Build 2015-09-05",
+      "outputSha1": "36793dac77f2ebbe22c2366312a4cabc3901ba3e",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/cf6434d3e84afe498adb9ca6d50bec7e3b851fc1.ups",
+        "format": "ups",
+        "size": 191189
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-quetzal-emerald-multiplayer-6806c7146aff",
+      "gameId": "pokemon-quetzal-emerald-multiplayer",
+      "internalName": "Alpha 0.8.4",
+      "displayName": "Alpha 0.8.4",
+      "outputSha1": "6806c7146aff457a4be85ef2030e9ddcdb17b665",
+      "requiredBaseId": "pokemon-emerald-us",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/3ca5281349a723f41409e73368d5e3eb027e7842.ups",
+        "format": "ups",
+        "size": 30971329
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-dark-worship-bc964cf0fb43",
+      "gameId": "pokemon-dark-worship",
+      "internalName": "English release",
+      "displayName": "English release",
+      "outputSha1": "bc964cf0fb43e37ff88d98b494c4b34f483429ae",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/b5e38b1ea2ac8d9c9145f80712cbeb117a7e9d9c.ups",
+        "format": "ups",
+        "size": 20288584
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-elysium-d2440fd6bae5",
+      "gameId": "pokemon-elysium",
+      "internalName": "2.5.0 (Part A)",
+      "displayName": "2.5.0 (Part A)",
+      "outputSha1": "d2440fd6bae5a12dfc3cecc129b9bbff22d74b2e",
+      "requiredBaseId": "pokemon-firered-version-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/7c7c9fc5550569c47c14ac28bbf39057037bcb18.ups",
+        "format": "ups",
+        "size": 5681251
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "pokemon-hyper-emerald-lost-artifacts-f785bed9d9e8",
+      "gameId": "pokemon-hyper-emerald-lost-artifacts",
+      "internalName": "5.7",
+      "displayName": "5.7",
+      "outputSha1": "f785bed9d9e82e8da13ea4a5ad747e3ea4ec7ba9",
+      "requiredBaseId": "pokemon-emerald-us",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/5c6dc410d94a8aeb9059344668bd29cada94c193.ups",
+        "format": "ups",
+        "size": 13868788
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "golden-sun-golden-sun-reloaded-gs1-448e73f56667",
+      "gameId": "golden-sun-golden-sun-reloaded-gs1",
+      "internalName": "1.83",
+      "displayName": "1.83",
+      "outputSha1": "448e73f566679fa87980d0eb46b32f395fbc231d",
+      "requiredBaseId": "golden-sun-usa-europe",
+      "sourceRepositoryUrl": "http://forum.goldensunhacking.net/index.php?topic=2779.0",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/cf859540265e23459d26e2dd13894fac0e1674bf.ips",
+        "format": "ips",
+        "size": 58352
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "golden-sun-golden-sun-reloaded-tla-e045d22fabbe",
+      "gameId": "golden-sun-golden-sun-reloaded-tla",
+      "internalName": "1.83",
+      "displayName": "1.83",
+      "outputSha1": "e045d22fabbed374dd0e1a73f7a1f8d2c5cdba40",
+      "requiredBaseId": "golden-sun-the-lost-age-usa-europe",
+      "sourceRepositoryUrl": "http://forum.goldensunhacking.net/index.php?topic=2779.0",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/d0bc26b18d48a36f0c7cc8c27603f0e3f990de09.ips",
+        "format": "ips",
+        "size": 207091
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "golden-sun-golden-sun-dawn-of-djinn-c88300c6e881",
+      "gameId": "golden-sun-golden-sun-dawn-of-djinn",
+      "internalName": "2.0.5 (veteran)",
+      "displayName": "2.0.5 (veteran)",
+      "outputSha1": "c88300c6e88167fc73ca182b5ffb80cfa5077a34",
+      "requiredBaseId": "golden-sun-usa-europe",
+      "sourceRepositoryUrl": "https://github.com/JackitK/goldensun-dawn-of-djinn",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/60926170f5187bd8efc4857c33c04ca68d302f87.ips",
+        "format": "ips",
+        "size": 999705
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "golden-sun-golden-sun-qol-72c23c56bb6e",
+      "gameId": "golden-sun-golden-sun-qol",
+      "internalName": "1.0.2 (noprologue)",
+      "displayName": "1.0.2 (noprologue)",
+      "outputSha1": "72c23c56bb6eda1f0ca773538edacba44829e03f",
+      "requiredBaseId": "golden-sun-usa-europe",
+      "sourceRepositoryUrl": "https://github.com/JackitK/Golden-Sun_DoD_Minus",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/f06892883e422c28974b1200ea26926e6ee96e98.ips",
+        "format": "ips",
+        "size": 557865
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "golden-sun-golden-sun-jenna-edition-1ad46b64768c",
+      "gameId": "golden-sun-golden-sun-jenna-edition",
+      "internalName": "1.0",
+      "displayName": "1.0",
+      "outputSha1": "1ad46b64768c3d14eb5871512af1b4f10636af29",
+      "requiredBaseId": "golden-sun-usa-europe",
+      "sourceRepositoryUrl": "https://github.com/JackitK/GoldenSun-JennaEdition",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/01845619ef44e51bf5f704a60412cd1fb7654bac.ips",
+        "format": "ips",
+        "size": 622697
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "golden-sun-golden-retriever-a-golden-sun-dog-mod-d0153e4a999d",
+      "gameId": "golden-sun-golden-retriever-a-golden-sun-dog-mod",
+      "internalName": "1.0",
+      "displayName": "1.0",
+      "outputSha1": "d0153e4a999d03bb7e9f581313e64985ae33008e",
+      "requiredBaseId": "golden-sun-usa-europe",
+      "sourceRepositoryUrl": "https://github.com/JackitK/Golden-Retriever",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/a213d51ac1c1dd51c81ac0e6b3e130772be895c3.ips",
+        "format": "ips",
+        "size": 211889
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "golden-sun-golden-sun-fallen-star-bc99db2f5a43",
+      "gameId": "golden-sun-golden-sun-fallen-star",
+      "internalName": "1.0.1.S",
+      "displayName": "1.0.1.S",
+      "outputSha1": "bc99db2f5a430643f716d68634c188103d38af29",
+      "requiredBaseId": "golden-sun-usa-europe",
+      "sourceRepositoryUrl": "https://ngplus.net/mods/fallen-star/releases/1-0-1-s/",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/5205ec8244da9bb13b803e5e123bdb96291e1008.ips",
+        "format": "ips",
+        "size": 228132
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "golden-sun-golden-sun-book-2-risen-star-a3a5cda6c0bb",
+      "gameId": "golden-sun-golden-sun-book-2-risen-star",
+      "internalName": "1.0009",
+      "displayName": "1.0009",
+      "outputSha1": "a3a5cda6c0bbc06c82a1760ed79a6443394b03bb",
+      "requiredBaseId": "golden-sun-the-lost-age-usa-europe",
+      "sourceRepositoryUrl": "http://ngplus.net/index.php?/files/file/31-golden-sun-book-2-risen-star/",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/aac9723cf45ff97fde84a89c6979d5b2a39d460d.ips",
+        "format": "ips",
+        "size": 293676
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "golden-sun-golden-sun-the-lost-age-anniversary-mod-c4ee5099c4c7",
+      "gameId": "golden-sun-golden-sun-the-lost-age-anniversary-mod",
+      "internalName": "1.2",
+      "displayName": "1.2",
+      "outputSha1": "c4ee5099c4c7d3f142962356f0a079c4797db9c2",
+      "requiredBaseId": "golden-sun-the-lost-age-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/6fe8172c30c5244b0282169e29aa6ab691c43c6b.ips",
+        "format": "ips",
+        "size": 28069
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "golden-sun-golden-sun-tla-convenience-and-inspiration-94170854e3b9",
+      "gameId": "golden-sun-golden-sun-tla-convenience-and-inspiration",
+      "internalName": "0.7.5",
+      "displayName": "0.7.5",
+      "outputSha1": "94170854e3b9cae3de5de0e8fcd944b665034a09",
+      "requiredBaseId": "golden-sun-the-lost-age-usa-europe",
+      "sourceRepositoryUrl": "http://forum.goldensunhacking.net/index.php?topic=2786.0",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/51eb7762728ea7cf8ffbcc289ba4d5edcec611a6.ips",
+        "format": "ips",
+        "size": 39993
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "golden-sun-golden-sun-class-transmutation-hack-gs1-d6e8faa78193",
+      "gameId": "golden-sun-golden-sun-class-transmutation-hack-gs1",
+      "internalName": "1.5",
+      "displayName": "1.5",
+      "outputSha1": "d6e8faa781938fea2dce61a4198946d155f45841",
+      "requiredBaseId": "golden-sun-usa-europe",
+      "sourceRepositoryUrl": "http://forum.goldensunhacking.net/index.php?topic=3172.0",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/21972eb3236575bad1863e3e082e3d09330d06ce.ips",
+        "format": "ips",
+        "size": 112804
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "golden-sun-golden-sun-class-transmutation-hack-tla-100fad736c53",
+      "gameId": "golden-sun-golden-sun-class-transmutation-hack-tla",
+      "internalName": "1.5",
+      "displayName": "1.5",
+      "outputSha1": "100fad736c537b111ed8fa5b08c2400523bb9227",
+      "requiredBaseId": "golden-sun-the-lost-age-usa-europe",
+      "sourceRepositoryUrl": "http://forum.goldensunhacking.net/index.php?topic=3172.0",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/e28cf544ee40305c05e2632eb33cc71094383820.ips",
+        "format": "ips",
+        "size": 3944477
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "golden-sun-tla-style-hard-mode-for-gs1-d2b763189c6f",
+      "gameId": "golden-sun-tla-style-hard-mode-for-gs1",
+      "internalName": "1.0",
+      "displayName": "1.0",
+      "outputSha1": "d2b763189c6fdf04f45523df98e9537510626abb",
+      "requiredBaseId": "golden-sun-usa-europe",
+      "sourceRepositoryUrl": "http://forum.goldensunhacking.net/index.php?topic=3183.0",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/95d53a1596d96b69417b9f61e6be62567e1ed18c.ips",
+        "format": "ips",
+        "size": 1940
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "golden-sun-golden-sun-1-challenge-pack-c223055ec4b6",
+      "gameId": "golden-sun-golden-sun-1-challenge-pack",
+      "internalName": "1.2.1 (mono-fire)",
+      "displayName": "1.2.1 (mono-fire)",
+      "outputSha1": "c223055ec4b6367aa31fee320ebc299c253e1d53",
+      "requiredBaseId": "golden-sun-usa-europe",
+      "sourceRepositoryUrl": "https://github.com/JackitK/GS-Challenge-Pack",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/4feabe8fff1434fb4df232ffda92408e9c82752b.ips",
+        "format": "ips",
+        "size": 563670
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "golden-sun-golden-sun-the-lost-age-color-correction-e937d6d4581e",
+      "gameId": "golden-sun-golden-sun-the-lost-age-color-correction",
+      "internalName": "1.1",
+      "displayName": "1.1",
+      "outputSha1": "e937d6d4581e2c640b1e71ece6f3bd3ef530cc05",
+      "requiredBaseId": "golden-sun-the-lost-age-usa-europe",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/d5c68c6dfa2510051214fc3ae491ccd2c480c7a8.ips",
+        "format": "ips",
+        "size": 6846320
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-the-last-promise-1c09cbe7f5d2",
+      "gameId": "fire-emblem-the-last-promise",
+      "internalName": "2.1",
+      "displayName": "2.1",
+      "outputSha1": "1c09cbe7f5d23a37ad2404efb4f2b536943f8cd5",
+      "requiredBaseId": "fire-emblem-usa-australia",
+      "sourceRepositoryUrl": "https://www.feshrine.net/thelastpromise/download/",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/bbfbbed836fdaa37f07feba9ac85e6a81e582b13.ups",
+        "format": "ups",
+        "size": 15218488
+      },
+      "visibility": "normal",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-elibean-nights-041254a01a30",
+      "gameId": "fire-emblem-elibean-nights",
+      "internalName": "Director's Cut playtest",
+      "displayName": "Director's Cut playtest",
+      "outputSha1": "041254a01a3096bfea45d7efca7f35ce829ab8cd",
+      "requiredBaseId": "fire-emblem-usa-australia",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/d3b0ff27fb69fb261bd342e79ef8145864e36831.ups",
+        "format": "ups",
+        "size": 13109861
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-the-road-to-ruin-bbbce7bb4693",
+      "gameId": "fire-emblem-the-road-to-ruin",
+      "internalName": "v3.0.3",
+      "displayName": "v3.0.3",
+      "outputSha1": "bbbce7bb4693d2ade65cc8ba70d2b10205dd9320",
+      "requiredBaseId": "fire-emblem-usa-australia",
+      "sourceRepositoryUrl": "https://feuniverse.us/t/the-road-to-ruin/276/1",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/1a9a30a4ab400bf67d7e9eb096bcff6a5c19fa53.ups",
+        "format": "ups",
+        "size": 7871715
+      },
+      "visibility": "normal",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-order-of-the-crimson-arm-4329fb8c5a4a",
+      "gameId": "fire-emblem-order-of-the-crimson-arm",
+      "internalName": "Final 1.0",
+      "displayName": "Final 1.0",
+      "outputSha1": "4329fb8c5a4a3a9c1c868243eecea6a0d39ab551",
+      "requiredBaseId": "fire-emblem-usa-australia",
+      "sourceRepositoryUrl": "https://feuniverse.us/t/fire-emblem-order-of-the-crimson-arm-ver1-0-final-out/1836/1",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/85dcbfdb4133a0882bac5813d30728693815e2a2.ups",
+        "format": "ups",
+        "size": 3013797
+      },
+      "visibility": "normal",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-dark-lord-and-the-maiden-of-light-f4aaf9cfae72",
+      "gameId": "fire-emblem-dark-lord-and-the-maiden-of-light",
+      "internalName": "v1.6.1",
+      "displayName": "v1.6.1",
+      "outputSha1": "f4aaf9cfae7274ea5409d6f8d97a81ec382bbd51",
+      "requiredBaseId": "fire-emblem-usa-australia",
+      "sourceRepositoryUrl": "https://feuniverse.us/t/fire-emblem-dark-lord-and-the-maiden-of-light/6463/1",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/e699c6bebad21bfcc335f0ca8918a1046965f591.ups",
+        "format": "ups",
+        "size": 9026825
+      },
+      "visibility": "normal",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-requiem-66bea1fad370",
+      "gameId": "fire-emblem-requiem",
+      "internalName": "Unnumbered build",
+      "displayName": "Unnumbered build",
+      "outputSha1": "66bea1fad37017d8d4883016292f9f006162e589",
+      "requiredBaseId": "fire-emblem-usa-australia",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/fd7d1bf57514e1b63cf05752888c89e1f7def964.ups",
+        "format": "ups",
+        "size": 3275782
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-sword-of-heaven-and-earth-1c97303374d8",
+      "gameId": "fire-emblem-sword-of-heaven-and-earth",
+      "internalName": "English 1.2",
+      "displayName": "English 1.2",
+      "outputSha1": "1c97303374d80c39ab0c1ca240b77ce8c040f008",
+      "requiredBaseId": "fire-emblem-usa-australia",
+      "sourceRepositoryUrl": "https://feuniverse.us/t/fe7-fire-emblem-sword-of-heaven-and-earth-translation-complete-v1-2/12812/1",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/71a2c1066aee4668d0b22c9cae0007ecf2cbd440.ups",
+        "format": "ups",
+        "size": 25157548
+      },
+      "visibility": "normal",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-project-ember-6f2ca015fa35",
+      "gameId": "fire-emblem-project-ember",
+      "internalName": "Hard Mode build",
+      "displayName": "Hard Mode build",
+      "outputSha1": "6f2ca015fa35c54b3ec67265e487b58711e426b3",
+      "requiredBaseId": "fire-emblem-fuuin-no-tsurugi-japan",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/00835760b9966b3a70e78e7116fd997785fb8885.ups",
+        "format": "ups",
+        "size": 12864469
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-eckesachs-93fe4b6f9164",
+      "gameId": "fire-emblem-eckesachs",
+      "internalName": "1.20",
+      "displayName": "1.20",
+      "outputSha1": "93fe4b6f9164a987f66892e11ff6e5cadfa9d074",
+      "requiredBaseId": "fire-emblem-fuuin-no-tsurugi-japan",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/5a0cfc5421b873d10cfa40ea66240e1114cbcfd1.ups",
+        "format": "ups",
+        "size": 4001601
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-the-second-scouring-7f6bd0ce4aa5",
+      "gameId": "fire-emblem-the-second-scouring",
+      "internalName": "Unnumbered build",
+      "displayName": "Unnumbered build",
+      "outputSha1": "7f6bd0ce4aa5a067bca2ddd2ca9665538a21cac8",
+      "requiredBaseId": "fire-emblem-fuuin-no-tsurugi-japan",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/51312cfc28075b253cee10c3d7bc94ccf57cfb44.ups",
+        "format": "ups",
+        "size": 2115063
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-the-binding-blade-revamp-project-sienna-bfde02e95853",
+      "gameId": "fire-emblem-the-binding-blade-revamp-project-sienna",
+      "internalName": "v1.34",
+      "displayName": "v1.34",
+      "outputSha1": "bfde02e95853a1b9fdcd792225017669d84c644c",
+      "requiredBaseId": "fire-emblem-fuuin-no-tsurugi-japan",
+      "sourceRepositoryUrl": "https://feuniverse.us/t/the-binding-blade-revamp-project-sienna-v1-34-full-release-is-out/19689/1",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/49f4a17c1efd30d1ace42ab3fbaef0b48bd92f96.ups",
+        "format": "ups",
+        "size": 3071588
+      },
+      "visibility": "normal",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-vision-quest-16d772195bd3",
+      "gameId": "fire-emblem-vision-quest",
+      "internalName": "3",
+      "displayName": "3",
+      "outputSha1": "16d772195bd3b6a561595ecb71be7bef1185e7ea",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": "https://feuniverse.us/t/fe8-complete-fire-emblem-vision-quest-v3-by-pushwall-1-oct-22/3815/1",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/0136736fbbc63fa028c5bb12c443229055e0625e.ups",
+        "format": "ups",
+        "size": 12198726
+      },
+      "visibility": "normal",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-the-four-kings-11ebd6ed3c3e",
+      "gameId": "fire-emblem-the-four-kings",
+      "internalName": "Vanilla patch (2021-11-04)",
+      "displayName": "Vanilla patch (2021-11-04)",
+      "outputSha1": "11ebd6ed3c3edd1348afcc7d0ba388d89fdd300c",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": "https://feuniverse.us/t/fe8-complete-fire-emblem-the-four-kings-4-11-24-update-now-with-weapon-reversal/7030/1",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/677dde4f90f2221a1772c9b31dac7674d32ce627.ups",
+        "format": "ups",
+        "size": 14895705
+      },
+      "visibility": "normal",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-sacred-echoes-57b8adbdeae1",
+      "gameId": "fire-emblem-sacred-echoes",
+      "internalName": "1.1.2",
+      "displayName": "1.1.2",
+      "outputSha1": "57b8adbdeae1eeef61d54c6715a55182d50d8a1b",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/a9339635c871f7ee09f06bf07f5a67e0a6fe1f05.ups",
+        "format": "ups",
+        "size": 9232522
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-dream-of-five-definitive-edition-8214b01e9cde",
+      "gameId": "fire-emblem-dream-of-five-definitive-edition",
+      "internalName": "Definitive Edition 1.76",
+      "displayName": "Definitive Edition 1.76",
+      "outputSha1": "8214b01e9cdec96e17e63a1692fcdcdac78d2a65",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/8b071a1db8ff20b599312dfd2f87931fce3b0c13.ups",
+        "format": "ups",
+        "size": 15706039
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-the-sun-god-s-wrath-e11a979d08ed",
+      "gameId": "fire-emblem-the-sun-god-s-wrath",
+      "internalName": "Final",
+      "displayName": "Final",
+      "outputSha1": "e11a979d08ed990eada48bd9473cc4bd7616a503",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": "https://feuniverse.us/t/fe8-complete-the-sun-gods-wrath-final-release-27-chapters-no-fatigue-100-growth-now-added-5-22-2022/6207/1",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/bae902f5f98dc0e9797539c0d1fb2c10b2d81b37.ups",
+        "format": "ups",
+        "size": 20500472
+      },
+      "visibility": "normal",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-justice-pride-a43ae744a4c3",
+      "gameId": "fire-emblem-justice-pride",
+      "internalName": "Final Update",
+      "displayName": "Final Update",
+      "outputSha1": "a43ae744a4c3ad58c268c85fa4252b775fe43ecb",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/fd427a52854755a462e8fccd924007470f90f939.ups",
+        "format": "ups",
+        "size": 11438717
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-shackled-power-3ce71b95b387",
+      "gameId": "fire-emblem-shackled-power",
+      "internalName": "v1.334",
+      "displayName": "v1.334",
+      "outputSha1": "3ce71b95b387de35b9f765d2da6cf8808a9a5d3d",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": "https://feuniverse.us/t/complete-fe8u-fire-emblem-shackled-power-33-chapters-version-1-334-easy-mode-available/9254/1",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/29ac5fa167d8fa9e0200ad7b59b9a454e8d21e00.ups",
+        "format": "ups",
+        "size": 11128320
+      },
+      "visibility": "normal",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-souls-of-the-forest-2869502c2459",
+      "gameId": "fire-emblem-souls-of-the-forest",
+      "internalName": "V9 Hotfix 3.2",
+      "displayName": "V9 Hotfix 3.2",
+      "outputSha1": "2869502c24599f468349f9a1bcc071f89529cb3d",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": "https://feuniverse.us/t/fe8-fire-emblem-souls-of-the-forest/4300/1",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/4257b96aff97c8d05f62eb4cdb8661e622dfd02f.ups",
+        "format": "ups",
+        "size": 16825900
+      },
+      "visibility": "normal",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-iron-emblem-35fb1afc96d5",
+      "gameId": "fire-emblem-iron-emblem",
+      "internalName": "v1.3.1.1",
+      "displayName": "v1.3.1.1",
+      "outputSha1": "35fb1afc96d57679fd6792defbaffba6952df06f",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": "https://feuniverse.us/t/fe8-complete-iron-emblem-v1-3-1-1-full-length-rr-out/12539/1",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/9d7c2dcf33081e9817586a38cbe9fa51fcd36215.ups",
+        "format": "ups",
+        "size": 1891521
+      },
+      "visibility": "normal",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-code-of-the-black-knights-34b4f6ce8fcd",
+      "gameId": "fire-emblem-code-of-the-black-knights",
+      "internalName": "Decisive Edition",
+      "displayName": "Decisive Edition",
+      "outputSha1": "34b4f6ce8fcd718cdb63e2a9253b1acdc22c52de",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": "https://feuniverse.us/t/fire-emblem-code-of-the-black-knights-decisive-edition-30-chapters/6949/1",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/d949d3067b2ab87b964cbf540011175016a7f090.ups",
+        "format": "ups",
+        "size": 17586203
+      },
+      "visibility": "normal",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-bells-of-byelen-d04f9b451f4f",
+      "gameId": "fire-emblem-bells-of-byelen",
+      "internalName": "1.4",
+      "displayName": "1.4",
+      "outputSha1": "d04f9b451f4f576ecc3485f8d1fbfc44f5e53ac4",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/c2745145b8f0d25c1f354534c0b5bcb29196c1bf.ups",
+        "format": "ups",
+        "size": 8668399
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-call-of-the-armor-a66755a860f6",
+      "gameId": "fire-emblem-call-of-the-armor",
+      "internalName": "v1 (13-Apr-22 reverse-recruitment patch)",
+      "displayName": "v1 (13-Apr-22 reverse-recruitment patch)",
+      "outputSha1": "a66755a860f6ec11ac0c7a94ffe7f16a6ce01b3b",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": "https://feuniverse.us/t/fe8-complete-call-of-the-armor-v1-20-chapters-3-character-selection-interludes-reverse-recruitment-patch-13-apr-22/12698/1",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/16fc92bdb414e811d3e7cfdc6ce0264cd3d39086.ups",
+        "format": "ups",
+        "size": 3418394
+      },
+      "visibility": "normal",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-storge-f59cb07de986",
+      "gameId": "fire-emblem-storge",
+      "internalName": "Definitive Edition",
+      "displayName": "Definitive Edition",
+      "outputSha1": "f59cb07de98627d96ac2c50d3a126dc694487d42",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/311ba9e4f68c6d9e045cdaa8d64493a5d0dfad01.ups",
+        "format": "ups",
+        "size": 4238717
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-myrm-emblem-54581ca9b472",
+      "gameId": "fire-emblem-myrm-emblem",
+      "internalName": "v2.1",
+      "displayName": "v2.1",
+      "outputSha1": "54581ca9b4725abecd9e2e86ba89295362e0b484",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": "https://feuniverse.us/t/fe8-complete-myrm-emblem-v2-1/11213/1",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/2fa97052eaa54fa086aae35ab460e4f6a480dc31.ups",
+        "format": "ups",
+        "size": 7295615
+      },
+      "visibility": "normal",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-void-s-blitzarre-adventure-8ae8ff3045f5",
+      "gameId": "fire-emblem-void-s-blitzarre-adventure",
+      "internalName": "v1 (community blitz)",
+      "displayName": "v1 (community blitz)",
+      "outputSha1": "8ae8ff3045f5815a9ed973121767b6b2f1462b86",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/d9d4bf3418ff2fe3c06e2b17f736e105c2162c6a.ups",
+        "format": "ups",
+        "size": 2573684
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-the-dark-amulet-636a0c36b921",
+      "gameId": "fire-emblem-the-dark-amulet",
+      "internalName": "v1.6",
+      "displayName": "v1.6",
+      "outputSha1": "636a0c36b9218f3ca4a00aff378bcae2393898f1",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": "https://feuniverse.us/t/fe8-complete-the-dark-amulet-v1-6-08-08-2024/24299/1",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/c373195b49a65bb2f592a6e14eb1239ccccff766.ups",
+        "format": "ups",
+        "size": 5306598
+      },
+      "visibility": "normal",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-drums-of-war-f2983aeac59a",
+      "gameId": "fire-emblem-drums-of-war",
+      "internalName": "2.85",
+      "displayName": "2.85",
+      "outputSha1": "f2983aeac59a0b746fa294182cf99165e4c6f509",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/b16ea6f049e9ac1f62d119f63f33311b979b8a16.ups",
+        "format": "ups",
+        "size": 14890601
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-the-morrow-s-golden-country-54e1e624ff53",
+      "gameId": "fire-emblem-the-morrow-s-golden-country",
+      "internalName": "Complete (2022)",
+      "displayName": "Complete (2022)",
+      "outputSha1": "54e1e624ff5309e6976a09c92867c4066c76479f",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": "https://feuniverse.us/t/fe8-fire-emblem-the-morrows-golden-country-complete/16284/1",
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/46964792f43f8b3521e206d339c8d8bd14e9745b.ups",
+        "format": "ups",
+        "size": 17260280
+      },
+      "visibility": "normal",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-curse-of-lagdou-7e7959376533",
+      "gameId": "fire-emblem-curse-of-lagdou",
+      "internalName": "2.0.2",
+      "displayName": "2.0.2",
+      "outputSha1": "7e79593765338b41332165ba6a2ab58fd8839970",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/db24b7863ad5aed31e3a245f65bb94acc4bbff34.ups",
+        "format": "ups",
+        "size": 11372877
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-cerulean-crescent-557a16735eaa",
+      "gameId": "fire-emblem-cerulean-crescent",
+      "internalName": "2.12",
+      "displayName": "2.12",
+      "outputSha1": "557a16735eaabbf86df553dcb3186f4c5cb3c9f3",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/d8cfbc627cc17906774f6d94b96ed219d6f21a6a.ups",
+        "format": "ups",
+        "size": 17819622
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    },
+    {
+      "id": "fire-emblem-the-hag-in-white-9b1a8810ce65",
+      "gameId": "fire-emblem-the-hag-in-white",
+      "internalName": "2.5",
+      "displayName": "2.5",
+      "outputSha1": "9b1a8810ce655c4a8b0dabfe4a1b6967ae0ecb69",
+      "requiredBaseId": "fire-emblem-the-sacred-stones-usa-australia",
+      "sourceRepositoryUrl": null,
+      "sourceRevision": null,
+      "releasedAt": null,
+      "releaseNotes": null,
+      "patch": {
+        "url": "https://patches.evenfall-emu.org/849057699b2b2f2d0f2dcf6d0e968293f3f8429c.ups",
+        "format": "ups",
+        "size": 10589905
+      },
+      "visibility": "experimental",
+      "saveCompatibleFrom": []
+    }
+  ]
+}

@@ -7,6 +7,8 @@ Then pick what you came for.
 
 - [`cli.md`](cli.md): the headless GBA runner and its GDB remote stub.
 - [`sdk.md`](sdk.md): the `@evenfall/gba` JavaScript and TypeScript SDK.
+- [`player.md`](player.md): the web player, its library and its saves.
+- [`server.md`](server.md): the Cloudflare Worker behind the hosted player, and its deployment.
 - [`devtools.md`](devtools.md): deterministic scenarios, checkpoint assertions and failure replay.
 - [`game-bridges.md`](game-bridges.md): typed, read-only views of game memory.
 - [`compatibility.md`](compatibility.md): what is tested, and how to reproduce it.

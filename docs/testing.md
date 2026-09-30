@@ -114,10 +114,27 @@ vp check
 vp test
 ```
 
-`vp test` runs the SDK's tests against the real WebAssembly build, and the benchmark runner's tests, with Vitest.
+`vp test` runs, with Vitest, the SDK's tests against the real WebAssembly build, the tests of the [player](player.md#tests), the Pokémon plugin and the [server](server.md#tests), and the benchmark runner's tests.
+`vp test --project <name>` runs one of them: `@evenfall/gba`, `player`, `gba-game-plugins`, `server` or `bench`.
 Among them, [`core.test.mjs`](../web/gba/core.test.mjs) builds the native [`session_probe`](../systems/gba/src/bin/session_probe.rs) and checks that the SIMD and scalar WebAssembly builds match it exactly after 120 frames: cycle, program counter, CPSR, save state, EWRAM, frame, audio and battery save.
 Set `EVENFALL_TEST_ROMS` to a JSON list of paths to add your own ROMs to that comparison.
 Without the WebAssembly binary, the tests that need it are skipped.
+
+The player and the plugin also have Playwright suites that run the built player in Chromium.
+Both serve `web/player/dist` on one port, so run them in turn:
+
+```sh
+npm run build -w @evenfall/player
+npm run test:browser -w @evenfall/player
+npm run test:browser -w @evenfall/gba-game-plugins
+```
+
+The Cloudflare build ([`server.md`](server.md#deployment)) runs the site's checks again before it publishes anything:
+
+```sh
+bash web/cloudflare/build.sh
+npx wrangler deploy --dry-run --config web/cloudflare/wrangler.jsonc
+```
 
 `vp fmt` applies the formatter, Markdown included.
 A documentation-only change needs only the formatting and whitespace checks, not a rebuild:

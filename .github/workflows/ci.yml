@@ -63,6 +63,42 @@ jobs:
       - run: npm run build:wasm -w @evenfall/gba
       - run: vp test
 
+  browser:
+    name: Player in Chromium
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.0
+          cache: npm
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm32
+      - run: npm ci --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build:wasm -w @evenfall/gba
+      - run: npm run build -w @evenfall/player
+      # Both suites serve web/player/dist on the same port, so run them in turn.
+      - run: npm run test:browser -w @evenfall/player
+      - run: npm run test:browser -w @evenfall/gba-game-plugins
+
+  cloudflare:
+    name: Cloudflare build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm32
+      # The same script and dry runs as the Workers Builds projects.
+      - run: bash web/cloudflare/build.sh
+      - run: npx wrangler deploy --dry-run --config web/cloudflare/wrangler.jsonc
+
   validators:
     runs-on: ubuntu-latest
     steps:

@@ -1,0 +1,117 @@
+# Catalog tools
+
+## No-Intro GBA DAT
+
+[`no-intro.mjs`](no-intro.mjs) resolves a Game Boy Advance ROM's CRC32 or
+SHA-1 to its No-Intro dump. Romhack patches in BPS or UPS name their source ROM
+by CRC32 only; the DAT turns that CRC32 into the dump's name, serial, size and
+SHA-1, from which a catalog base for the patch can be recorded.
+
+```sh
+node web/server/scripts/catalog/no-intro.mjs lookup --crc32 1f1c08fb
+node web/server/scripts/catalog/no-intro.mjs lookup --sha1 <40 hex digits>
+node web/server/scripts/catalog/no-intro.mjs lookup --name emerald  # substring, any case
+node web/server/scripts/catalog/no-intro.mjs latest                 # newest upstream DAT
+node web/server/scripts/catalog/no-intro.mjs names                  # the player's name table
+```
+
+`lookup` prints JSON `{ commit, version, matches }` and exits 0 when something
+matches, 1 when nothing does, and 2 on a usage, download or verification
+error. A CRC32 can match several dumps; a SHA-1 matches at most one.
+
+The module also exports the pieces for other tools: `loadIndex()` downloads
+and indexes the pinned DAT, `parseDat()` parses clrmamepro text into
+`{ name, region, serial, size, crc32, md5, sha1 }` records with lowercase
+hashes, `findByCrc32()`, `findBySha1()` and `findByName()` query the index,
+and `toBaseRow()` gives the `{ sha1, crc32, displayName, serial }` fields of a
+catalog base. The parser rejects a malformed entry instead of skipping it.
+
+### Source and pinning
+
+The DAT is libretro-database's copy of the No-Intro GBA DAT, fetched from
+`raw.githubusercontent.com` at the commit in `DAT_COMMIT` and checked against
+the SHA-256 of the file bytes in `DAT_SHA256`. A mismatch is an error; bytes
+that fail verification are never cached. The verified file is cached at
+`artifacts/no-intro/<commit>.dat` and reused while its digest matches. The DAT
+itself is never committed.
+
+`names` writes the pinned DAT's SHA-1 to dump-name table to the player's
+[`no-intro-gba.json`](../../../player/src/pages/library/no-intro-gba.json)
+(or to `--out FILE`), which is committed. The Library titles ROMs the catalog
+does not list with it. The file records the DAT's source URL, version and
+license, and lists one dump per line in SHA-1 order.
+
+To move the pin:
+
+1. Run `node web/server/scripts/catalog/no-intro.mjs latest`. It prints the newest
+   upstream commit that touched the DAT, the file's SHA-256, its header
+   version and entry count, and whether that matches the current pin.
+2. Try the candidate with `lookup ... --commit <sha> --sha256 <digest>`.
+3. Update `DAT_COMMIT` and `DAT_SHA256` together, and run
+   `vp test --project server`.
+4. Run `node web/server/scripts/catalog/no-intro.mjs names` and commit the table.
+
+The tests use a handwritten fixture and need no network.
+
+## Romhack releases and patch hosting
+
+[`romhacks.mjs`](romhacks.mjs) normalizes the local Pokémon, Golden Sun and
+Fire Emblem collections under `.amp/in/` to one release shape. It validates
+the recorded base identity and each patch's SHA-1, then writes the
+metadata-only [`romhacks.json`](../../src/romhacks.json) seed and an
+ignored `normalized.json` beside each collection. No base, patched ROM, save,
+or patch bytes enter the repository. A release needs a verified patch and a
+playable output hash to enter the seed; patchless collected ROMs remain local
+media, not catalog games. Because the Library installs only a game's latest
+release, a hack with patches for Golden Sun and for its sequel The Lost Age
+has two catalog games, each with its own base.
+
+[`hooks.json`](hooks.json) contains the short, game-specific hooks shown in
+the Library; the collections' complete blurbs remain in `description` for
+Show more. The builder requires a distinct concise hook for every game. A
+version uses the collection's release label unless
+[`version-labels.json`](version-labels.json) supplies a concise label for a
+selected archive or patch. Research notes and conflicting page claims are not
+version numbers; an unnumbered build remains unnumbered rather than acquiring
+an unsupported numeric release. These labels identify the selected files, not
+an author-confirmed release unless the attribution evidence says so. A
+version's project-page link is populated only from an author-controlled
+release thread, page or repository backed by the collection's evidence. For
+Fire Emblem the selected patch/version must also have `confirmed` attribution
+in the local collection; ambiguous pairings remain unlinked. Mirror and
+aggregator URLs are not presented as official attribution. The Pokémon
+collection has no verified author-post links apart from the Elite Redux
+project repository, so the other project links remain unset.
+
+Confirmed selected Fire Emblem patch/author pairings enter as `normal`;
+other patch-backed imports enter as `experimental` until reviewed. The seed
+does not assign `featured` or `hidden`. Visibility is per release, and a
+management write can set any of the four levels without changing the patch.
+
+```sh
+node web/server/scripts/catalog/romhacks.mjs build   # regenerate the metadata and local test inventories
+node web/server/scripts/catalog/romhacks.mjs check   # fail if the seed no longer matches the collections
+```
+
+Patch object keys are the patch SHA-1 plus its format extension. The EU
+`evenfall-patches` R2 bucket serves them directly on its custom domain,
+`patches.evenfall-emu.org`, with the metadata stored on each object: every
+upload sets `Cache-Control: public, max-age=31536000, immutable`, since a key
+names its bytes. The bucket is separate from the private `zigba-saves`. Its
+CORS policy must let the player read patches (see
+[`docs/server.md`](../../../../docs/server.md#patch-hosting)).
+
+After authenticating Wrangler to the account owning the EU bucket:
+
+```sh
+node web/server/scripts/catalog/romhacks.mjs upload
+node web/server/scripts/catalog/romhacks.mjs verify
+```
+
+Wrangler must be authenticated to the account that owns the bucket. `upload`
+is resumable: it only puts missing content-addressed objects, then downloads
+each object and verifies its SHA-1, size and browser CORS header. `verify`
+does the same readback without uploading. Do not seed the public catalog or
+deploy the player/account Worker with these URLs until the whole upload and
+readback succeeds. The catalog seed is explicit; it is not applied on startup
+or by a build.

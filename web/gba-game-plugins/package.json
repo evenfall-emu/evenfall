@@ -1,0 +1,36 @@
+{
+  "name": "@evenfall/gba-game-plugins",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Unofficial Pokémon party, storage and battle bridges plus player panels for the Evenfall player. Decodes the user's own ROM at runtime; bundles no game data beyond the standard type chart. Not affiliated with Nintendo, Creatures Inc., GAME FREAK inc. or The Pokémon Company.",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./ui": "./ui/index.ts",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "vp test",
+    "test:browser": "playwright test"
+  },
+  "dependencies": {
+    "@base-ui/react": "1.8.0",
+    "@evenfall/gba": "^0.1.1"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "24.3.0",
+    "@types/react": "19.1.12",
+    "@types/react-dom": "19.1.9",
+    "@vitejs/plugin-react": "6.1.1",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "typescript": "7.0.2",
+    "vite": "npm:@voidzero-dev/vite-plus-core@1.0.0",
+    "vite-plus": "1.0.0"
+  }
+}
