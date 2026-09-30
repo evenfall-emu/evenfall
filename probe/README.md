@@ -100,7 +100,7 @@ Toolchain details that trip up new probes:
 - `dma_stall.c`: Direct Sound DMA that never releases the bus, until a repeating VBlank DMA0 stops the timers that request it after 64 frames.
   The CPU must stay stalled throughout: the ROM reports 1 when its poll count stays small and the VBlank and DMA0 interrupt flags, raised only during the stall, are both set.
   It has no validator case.
-  The [`probe-dma_stall`](../tools/parity/scenarios/probe-dma_stall.json) parity scenario checks the final PC and `r12`.
+  The [`probe-dma_stall`](../tools/scenarios/manifests/probe-dma_stall.json) scenario checks the final PC and `r12`.
 
 ## Cartridge devices
 

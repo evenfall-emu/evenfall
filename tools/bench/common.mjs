@@ -1,4 +1,4 @@
-// CPU selection shared with ZiGBA's benchmark method: choose an allowed,
+// CPU selection for benchmarks: choose an allowed,
 // idle, fast core before building, then pin every observation to it.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";

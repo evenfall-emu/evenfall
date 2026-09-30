@@ -57,7 +57,7 @@ The defaults, in order:
 Two more run only when named in `--emulators`:
 
 - **`vbam-o3`** is the `vbam` build at `-O3`, to show how much of VBA-M's speed depends on Delta's optimization level.
-- **`zigba`** builds Evenfall's predecessor from `refs/zigba`, for internal comparisons.
+- **`zigba`** builds Evenfall's predecessor from `refs/zigba`, for internal comparisons, and needs `tools/setup-refs.sh zigba` first.
   Its last measurement put Evenfall at 0.41x its loop time under both boots.
 
 The mGBA and VBA-M harnesses link those emulators (MPL-2.0 and GPL-2.0) into local binaries that are never distributed, and no code from either is copied into Evenfall.
