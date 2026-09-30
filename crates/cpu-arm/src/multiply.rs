@@ -31,108 +31,169 @@ const LOW_34: u64 = (1 << 34) - 1;
 /// C after a flag-setting multiply of `multiplicand` (Rm) by `multiplier`
 /// (Rs, the operand Booth-recoded and early-terminated, which also sets the
 /// cycle count) plus `accumulator` (Rn, or RdHi:RdLo; zero without one).
+///
+/// Each multiplier cycle runs four carry-save stages, one per Booth digit.
+/// Every stage settles the two low bits of its sum and carry vectors into
+/// a shift register and passes the rest on, 33 bits wide, with the sign
+/// extension of the carry vector and of the addend, and the next
+/// accumulator bits, folded into their top. The adder that resolves the
+/// vectors realigns the shift register through the barrel shifter, and C is
+/// the bit that rotation takes out last (`tests::multiply_carry_reference`
+/// models all of it).
+///
+/// Most multiplies need none of it, and this inlined part answers them:
+///
+/// - A four-cycle `MUL` or `MLA` takes C from the bits its last stage
+///   settles, which only record whether that stage's addend was negated.
+///   Its Booth window is multiplier bits 30, 31 and the sign again, so C is
+///   set exactly when bits 31:30 are `10`.
+/// - Otherwise C is a bit the last cycle leaves in its carry vector: bit 22
+///   after one cycle, 14 after two. Each stage reads its inputs two bits
+///   above the bit it writes, so without an accumulator that bit depends
+///   only on the multiplier and on multiplicand bits 22 to 30 after one
+///   cycle, 14 to 30 after two. A `MUL` whose multiplicand has only copies
+///   of the multiplier's sign there has the C of the multiplier times 0 or
+///   -1, which is clear
+///   (`short_multiplies_of_sign_filled_multiplicands_clear_carry`).
+#[inline(always)]
 pub fn multiply_carry(
     kind: MultiplyKind,
     multiplicand: u32,
     multiplier: u32,
     accumulator: u64,
 ) -> bool {
+    if kind == MultiplyKind::Short {
+        let sign = (multiplier as i32 >> 31) as u32;
+        let magnitude = multiplier ^ sign;
+        if magnitude > 0xff_ffff {
+            return multiplier >> 30 == 0b10;
+        }
+        if accumulator == 0
+            && (magnitude <= 0xff && (multiplicand ^ sign) >> 22 == 0
+                || magnitude <= 0xffff && (multiplicand ^ sign) >> 14 == 0)
+        {
+            return false;
+        }
+    }
+    carry_vector_bit(kind, multiplicand, multiplier, accumulator)
+}
+
+/// C from the carry vector the last multiplier cycle leaves, for every
+/// multiply but a four-cycle `MUL` or `MLA`. The stages run back to back
+/// without the shift register.
+///
+/// Out of line: the execution engine's loops call it, and a body this size
+/// inlined into them would move their code.
+#[inline(never)]
+fn carry_vector_bit(
+    kind: MultiplyKind,
+    multiplicand: u32,
+    multiplier: u32,
+    accumulator: u64,
+) -> bool {
     let signed = kind != MultiplyKind::LongUnsigned;
+    let magnitude = if signed && multiplier & 0x8000_0000 != 0 { !multiplier } else { multiplier };
+    let cycles = 1
+        + usize::from(magnitude > 0xff)
+        + usize::from(magnitude > 0xffff)
+        + usize::from(magnitude > 0xff_ffff);
+    debug_assert!(kind != MultiplyKind::Short || cycles < 4);
     let widen = |value: u32| {
         if signed { (value as i32 as i64 as u64) & LOW_34 } else { u64::from(value) }
     };
     let multiplicand = widen(multiplicand);
-    let mut booth = widen(multiplier);
-    // Multiplier bit 0 forms a digit of its own before the first cycle: it
-    // seeds the carry vector with the inverted multiplicand, whose +1 the
-    // final adder's carry-in supplies. The sum vector starts as the
-    // accumulator; the accumulator bits it cannot hold enter two per stage.
-    let mut sum = accumulator;
-    let mut carry = if multiplier & 1 != 0 { !multiplicand } else { 0 };
+    let booth = widen(multiplier);
+    // Each three-bit Booth window of the multiplier selects its addend: 0,
+    // +1, +1, +2, -2, -1, -1 or 0 times the multiplicand. A negated addend's
+    // +1 enters as the carry vector's low bit.
+    let doubled = (multiplicand << 1) & LOW_34;
+    let addends = [
+        0,
+        multiplicand,
+        multiplicand,
+        doubled,
+        !doubled & LOW_34,
+        !multiplicand & LOW_34,
+        !multiplicand & LOW_34,
+        0,
+    ];
+    // Multiplier bit 0 seeds the carry vector with the inverted
+    // multiplicand, and the sum vector starts as the accumulator. Their low
+    // bits settle before the first stage, where C never comes from.
+    let mut sum = accumulator >> 1 & LOW_33;
+    let mut carry = if multiplier & 1 != 0 { !multiplicand >> 1 & LOW_33 } else { 0 };
     let mut accumulator_high = accumulator >> 34;
-    // The bits each cycle settles rotate into a 128-bit shift register.
-    let mut settled = u128::from(carry & 1).rotate_right(1);
-    sum >>= 1;
-    carry >>= 1;
-    let mut cycles = 0;
-    loop {
-        let (cycle_sum, cycle_carry) =
-            compress(sum, carry, multiplicand, booth, &mut accumulator_high);
-        settled = (settled | u128::from(cycle_carry & 0xff)).rotate_right(8);
-        sum = cycle_sum >> 8;
-        carry = cycle_carry >> 8;
-        booth = arithmetic_shift_33(booth, 8);
-        cycles += 1;
-        // Early termination: the remaining multiplier bits only extend its
-        // sign.
-        if booth == 0 || (signed && booth == LOW_33) {
-            break;
-        }
-    }
-    settled |= u128::from(carry);
-    // The adder realigns the vectors through the barrel shifter; C is the
-    // bit the rotation takes out last.
-    let realigned = settled.rotate_right([23, 15, 7, 31][cycles - 1]);
-    let bit = if kind == MultiplyKind::Short && cycles == 4 { 95 } else { 127 };
-    realigned >> bit & 1 != 0
-}
-
-/// One multiplier cycle: four Booth addends from the low bits of `booth`
-/// through four carry-save stages. Each stage settles its two low sum and
-/// carry bits; the vectors it passes on are 33 bits wide, with the sign
-/// extension of the carry vector and of the addend, and the next
-/// accumulator bits, folded into their top.
-fn compress(
-    mut sum: u64,
-    mut carry: u64,
-    multiplicand: u64,
-    booth: u64,
-    accumulator_high: &mut u64,
-) -> (u64, u64) {
-    let (mut settled_sum, mut settled_carry) = (0, 0);
-    for stage in 0..4 {
-        sum &= LOW_33;
-        carry &= LOW_33;
-        let (addend, negated) = booth_addend(multiplicand, (booth >> (2 * stage)) & 7);
+    for stage in 0..4 * cycles {
+        let window = (booth >> (2 * stage) & 7) as usize;
+        let addend = addends[window];
         let low = addend & LOW_33;
         let stage_sum = sum ^ low ^ carry;
-        let stage_carry = ((sum & low) | (low & carry) | (carry & sum)) << 1 | u64::from(negated);
-        settled_sum |= (stage_sum & 3) << (2 * stage);
-        settled_carry |= (stage_carry & 3) << (2 * stage);
-        let top = (*accumulator_high & 1)
-            + u64::from(carry >> 32 & 1 == 0)
-            + u64::from(addend >> 33 & 1 == 0);
+        let stage_carry = ((sum & low) | (low & carry) | (carry & sum)) << 1 | (0x70 >> window & 1);
+        let top = (accumulator_high & 1) + (!carry >> 32 & 1) + (!addend >> 33 & 1);
         sum = stage_sum >> 2 | top << 31;
-        carry = stage_carry >> 2 | u64::from(*accumulator_high >> 1 & 1 == 0) << 32;
-        *accumulator_high >>= 2;
+        carry = stage_carry >> 2 | (!accumulator_high >> 1 & 1) << 32;
+        accumulator_high >>= 2;
     }
-    (settled_sum | sum << 8, settled_carry | carry << 8)
-}
-
-/// Each three-bit Booth window's digit as a nibble: bit 0 set for a nonzero
-/// digit, bit 1 for a doubled one, bit 2 for a negative one. Windows 1 and 2
-/// are +1, 3 is +2, 4 is −2, 5 and 6 are −1, 0 and 7 are 0.
-const BOOTH_DIGITS: u32 = 0x0557_3110;
-
-/// The 34-bit addend for a three-bit Booth window of the multiplier, and
-/// whether it is a negation, whose +1 enters as a carry. It selects without
-/// branches: the window varies from stage to stage and call to call.
-fn booth_addend(multiplicand: u64, window: u64) -> (u64, bool) {
-    let digit = BOOTH_DIGITS >> (4 * window) & 0xf;
-    let nonzero = 0_u64.wrapping_sub(u64::from(digit & 1));
-    let negated = digit >> 2;
-    let addend = (multiplicand << (digit >> 1 & 1)) & nonzero;
-    ((addend ^ 0_u64.wrapping_sub(u64::from(negated))) & LOW_34, negated != 0)
-}
-
-/// `value` as a 33-bit signed number, shifted right arithmetically.
-fn arithmetic_shift_33(value: u64, shift: u32) -> u64 {
-    ((((value << 31) as i64) >> 31) >> shift) as u64 & LOW_33
+    carry >> [22, 14, 6, 30][cycles - 1] & 1 != 0
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One multiplier cycle: four Booth addends from the low bits of `booth`
+    /// through four carry-save stages. Each stage settles its two low sum and
+    /// carry bits; the vectors it passes on are 33 bits wide, with the sign
+    /// extension of the carry vector and of the addend, and the next
+    /// accumulator bits, folded into their top.
+    fn compress(
+        mut sum: u64,
+        mut carry: u64,
+        multiplicand: u64,
+        booth: u64,
+        accumulator_high: &mut u64,
+    ) -> (u64, u64) {
+        let (mut settled_sum, mut settled_carry) = (0, 0);
+        for stage in 0..4 {
+            sum &= LOW_33;
+            carry &= LOW_33;
+            let (addend, negated) = booth_addend(multiplicand, (booth >> (2 * stage)) & 7);
+            let low = addend & LOW_33;
+            let stage_sum = sum ^ low ^ carry;
+            let stage_carry =
+                ((sum & low) | (low & carry) | (carry & sum)) << 1 | u64::from(negated);
+            settled_sum |= (stage_sum & 3) << (2 * stage);
+            settled_carry |= (stage_carry & 3) << (2 * stage);
+            let top = (*accumulator_high & 1)
+                + u64::from(carry >> 32 & 1 == 0)
+                + u64::from(addend >> 33 & 1 == 0);
+            sum = stage_sum >> 2 | top << 31;
+            carry = stage_carry >> 2 | u64::from(*accumulator_high >> 1 & 1 == 0) << 32;
+            *accumulator_high >>= 2;
+        }
+        (settled_sum | sum << 8, settled_carry | carry << 8)
+    }
+
+    /// Each three-bit Booth window's digit as a nibble: bit 0 set for a nonzero
+    /// digit, bit 1 for a doubled one, bit 2 for a negative one. Windows 1 and 2
+    /// are +1, 3 is +2, 4 is −2, 5 and 6 are −1, 0 and 7 are 0.
+    const BOOTH_DIGITS: u32 = 0x0557_3110;
+
+    /// The 34-bit addend for a three-bit Booth window of the multiplier, and
+    /// whether it is a negation, whose +1 enters as a carry. It selects without
+    /// branches: the window varies from stage to stage and call to call.
+    fn booth_addend(multiplicand: u64, window: u64) -> (u64, bool) {
+        let digit = BOOTH_DIGITS >> (4 * window) & 0xf;
+        let nonzero = 0_u64.wrapping_sub(u64::from(digit & 1));
+        let negated = digit >> 2;
+        let addend = (multiplicand << (digit >> 1 & 1)) & nonzero;
+        ((addend ^ 0_u64.wrapping_sub(u64::from(negated))) & LOW_34, negated != 0)
+    }
+
+    /// `value` as a 33-bit signed number, shifted right arithmetically.
+    fn arithmetic_shift_33(value: u64, shift: u32) -> u64 {
+        ((((value << 31) as i64) >> 31) >> shift) as u64 & LOW_33
+    }
 
     /// The Booth addend by cases: the reference form of [`booth_addend`],
     /// whose branch-free selection must agree with it.
@@ -145,6 +206,133 @@ mod tests {
             _ => (0, false),
         };
         (addend & LOW_34, negated)
+    }
+
+    /// The multiplier as the datapath runs it: every bit each cycle
+    /// settles rotates into a 128-bit shift register, the multiplier's own
+    /// early termination sets the cycle count, and the adder's realignment
+    /// picks C out of the register. The reference form of
+    /// [`multiply_carry`].
+    fn multiply_carry_reference(
+        kind: MultiplyKind,
+        multiplicand: u32,
+        multiplier: u32,
+        accumulator: u64,
+    ) -> bool {
+        let signed = kind != MultiplyKind::LongUnsigned;
+        let widen = |value: u32| {
+            if signed { (value as i32 as i64 as u64) & LOW_34 } else { u64::from(value) }
+        };
+        let multiplicand = widen(multiplicand);
+        let mut booth = widen(multiplier);
+        // Multiplier bit 0 forms a digit of its own before the first cycle:
+        // it seeds the carry vector with the inverted multiplicand, whose +1
+        // the final adder's carry-in supplies. The sum vector starts as the
+        // accumulator; the accumulator bits it cannot hold enter two per
+        // stage.
+        let mut sum = accumulator;
+        let mut carry = if multiplier & 1 != 0 { !multiplicand } else { 0 };
+        let mut accumulator_high = accumulator >> 34;
+        let mut settled = u128::from(carry & 1).rotate_right(1);
+        sum >>= 1;
+        carry >>= 1;
+        let mut cycles = 0;
+        loop {
+            let (cycle_sum, cycle_carry) =
+                compress(sum, carry, multiplicand, booth, &mut accumulator_high);
+            settled = (settled | u128::from(cycle_carry & 0xff)).rotate_right(8);
+            sum = cycle_sum >> 8;
+            carry = cycle_carry >> 8;
+            booth = arithmetic_shift_33(booth, 8);
+            cycles += 1;
+            // Early termination: the remaining multiplier bits only extend
+            // its sign.
+            if booth == 0 || (signed && booth == LOW_33) {
+                break;
+            }
+        }
+        settled |= u128::from(carry);
+        // The adder realigns the vectors through the barrel shifter; C is
+        // the bit the rotation takes out last.
+        let realigned = settled.rotate_right([23, 15, 7, 31][cycles - 1]);
+        let bit = if kind == MultiplyKind::Short && cycles == 4 { 95 } else { 127 };
+        realigned >> bit & 1 != 0
+    }
+
+    /// Every kind, cycle count and sign of multiplier, with multiplicands of
+    /// every width and sign, random accumulators, and the multipliers at
+    /// each early-termination boundary.
+    #[test]
+    fn multiply_carry_matches_the_shift_register_reference() {
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let edges = [
+            0,
+            1,
+            2,
+            0x7f,
+            0x80,
+            0xff,
+            0x100,
+            0xffff,
+            0x1_0000,
+            0xff_ffff,
+            0x100_0000,
+            0x3fff_ffff,
+            0x4000_0000,
+            0x7fff_ffff,
+        ];
+        let kinds = [MultiplyKind::Short, MultiplyKind::LongUnsigned, MultiplyKind::LongSigned];
+        for trial in 0..200_000 {
+            let random = next();
+            let multiplier = match trial % 4 {
+                0 => random as u32,
+                // A random byte count, so every cycle count is common.
+                1 => (random as u32) >> (8 * (random >> 32 & 3)),
+                2 => !((random as u32) >> (8 * (random >> 32 & 3))),
+                _ => {
+                    let edge = edges[(random % edges.len() as u64) as usize];
+                    if random >> 40 & 1 != 0 { !edge } else { edge }
+                }
+            };
+            // As many significant bits as chance gives, of either sign, so
+            // that small operands are common.
+            let random = next();
+            let multiplicand = (random as u32) >> (random >> 32 & 31);
+            let multiplicand = if random >> 40 & 1 != 0 { !multiplicand } else { multiplicand };
+            let kind = kinds[trial % 3];
+            let accumulator = match (next() % 3, kind) {
+                (0, _) => 0,
+                (_, MultiplyKind::Short) => u64::from(next() as u32),
+                _ => next(),
+            };
+            assert_eq!(
+                multiply_carry(kind, multiplicand, multiplier, accumulator),
+                multiply_carry_reference(kind, multiplicand, multiplier, accumulator),
+                "{kind:?} {multiplicand:08x} * {multiplier:08x} + {accumulator:016x}"
+            );
+        }
+    }
+
+    /// Every one- and two-cycle `MUL` multiplier, times the multiplicand
+    /// that fills the bits C depends on with its sign (0 for a positive
+    /// multiplier, -1 for a negative one), leaves C clear.
+    #[test]
+    fn short_multiplies_of_sign_filled_multiplicands_clear_carry() {
+        for magnitude in 0..=0xffff_u32 {
+            for multiplier in [magnitude, !magnitude] {
+                let fill = (multiplier as i32 >> 31) as u32;
+                assert!(
+                    !multiply_carry_reference(MultiplyKind::Short, fill, multiplier, 0),
+                    "{multiplier:08x}"
+                );
+            }
+        }
     }
 
     #[test]
