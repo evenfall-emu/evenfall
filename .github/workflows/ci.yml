@@ -56,10 +56,12 @@ jobs:
         with:
           key: wasm32
       - run: npm ci --no-audit --no-fund
-      - run: npm run fmt:check
-      - run: npm run check
+      # The pinned local Vite+ CLI, so the steps below match the documented commands.
+      - run: echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
+      - run: vp fmt --check
+      - run: vp check
       - run: npm run build:wasm -w @evenfall/gba
-      - run: npm run test
+      - run: vp test
 
   validators:
     runs-on: ubuntu-latest

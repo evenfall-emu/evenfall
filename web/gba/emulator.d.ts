@@ -207,6 +207,38 @@ export class Emulator extends EventTarget {
   dispose(): Promise<void>;
   /** Immediately abort even an unresponsive worker; unsaved progress is lost. */
   terminate(message?: string): void;
+  recording(enabled?: boolean): Promise<RecordingStatus>;
+  newSegment(): Promise<RecordingStatus>;
+  checkpoint(name: string): Promise<RecordingStatus>;
+  capture(note?: string): Promise<FailureBundle>;
+  exportScenario(name?: string): Promise<ScenarioExport>;
+  runScenario(
+    manifest: Scenario,
+    assets: Record<string, Uint8Array>,
+  ): Promise<LabReport>;
+  replay(bundle: FailureBundle): Promise<LabReport>;
+  cancel(): Promise<void>;
+  exportRom(): Promise<Uint8Array>;
+  addEventListener<K extends keyof EmulatorEventMap>(
+    type: K,
+    listener: (event: EmulatorEventMap[K]) => void,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject | null,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  removeEventListener<K extends keyof EmulatorEventMap>(
+    type: K,
+    listener: (event: EmulatorEventMap[K]) => void,
+    options?: boolean | EventListenerOptions,
+  ): void;
+  removeEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject | null,
+    options?: boolean | EventListenerOptions,
+  ): void;
 }
 export interface Scenario {
   version: 2;
@@ -283,20 +315,6 @@ export interface LabReport {
   capture?: FailureBundle;
   [key: string]: unknown;
 }
-export interface Emulator {
-  recording(enabled?: boolean): Promise<RecordingStatus>;
-  newSegment(): Promise<RecordingStatus>;
-  checkpoint(name: string): Promise<RecordingStatus>;
-  capture(note?: string): Promise<FailureBundle>;
-  exportScenario(name?: string): Promise<ScenarioExport>;
-  runScenario(
-    manifest: Scenario,
-    assets: Record<string, Uint8Array>,
-  ): Promise<LabReport>;
-  replay(bundle: FailureBundle): Promise<LabReport>;
-  cancel(): Promise<void>;
-  exportRom(): Promise<Uint8Array>;
-}
 
 export interface EmulatorEventMap {
   frame: CustomEvent<FrameEvent>;
@@ -318,26 +336,4 @@ export interface EmulatorEventMap {
     reason: StopReason;
     state: Snapshot;
   }>;
-}
-export interface Emulator {
-  addEventListener<K extends keyof EmulatorEventMap>(
-    type: K,
-    listener: (event: EmulatorEventMap[K]) => void,
-    options?: boolean | AddEventListenerOptions,
-  ): void;
-  addEventListener(
-    type: string,
-    listener: EventListenerOrEventListenerObject | null,
-    options?: boolean | AddEventListenerOptions,
-  ): void;
-  removeEventListener<K extends keyof EmulatorEventMap>(
-    type: K,
-    listener: (event: EmulatorEventMap[K]) => void,
-    options?: boolean | EventListenerOptions,
-  ): void;
-  removeEventListener(
-    type: string,
-    listener: EventListenerOrEventListenerObject | null,
-    options?: boolean | EventListenerOptions,
-  ): void;
 }
