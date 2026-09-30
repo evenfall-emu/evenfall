@@ -178,7 +178,6 @@ fn run_to(cpu: &mut Cpu, bus: &mut Bus, deadline: u64) {
     }
 }
 
-/// Zig: ARM kernel stops fall-through before the supplied word leaves IWRAM.
 /// The engine never runs in the last IWRAM mirror, so the ordinary runner
 /// takes these instructions; it must still match single stepping.
 #[test]

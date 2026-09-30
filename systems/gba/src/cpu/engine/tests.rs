@@ -620,12 +620,11 @@ fn thumb_cpu(random: &mut Random, pc: u32) -> Cpu {
     cpu
 }
 
-/// Zig: "Thumb ROM kernel matches ordinary stepping for random code, queues
-/// and horizons", its closed-form half. From every prefetch buffer state
-/// at entry (stopped, filling at each depth, full), an instruction with no,
-/// one or several internal cycles or a ROM data load, then a branch to each
-/// distance from the buffer head, near block and image ends and on short
-/// horizons, runs as single stepping does. Code the buffer cannot run from
+/// The closed-form counterpart of the random-code engine test. From every
+/// prefetch buffer state at entry (stopped, filling at each depth, full), an
+/// instruction with no, one or several internal cycles or a ROM data load,
+/// then a branch to each distance from the buffer head, near block and image
+/// ends and on short horizons, runs as single stepping does. Code the buffer cannot run from
 /// is refused without a trace.
 #[test]
 fn thumb_rom_engine_matches_stepping_from_every_buffer_state() {
