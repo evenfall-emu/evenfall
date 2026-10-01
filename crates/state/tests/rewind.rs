@@ -1,7 +1,8 @@
 use evenfall_state::{
     Error,
-    rewind::{self, Compression, RewindBuffer, RewindConfig},
+    rewind::{self, Compression, PayloadKey, RewindBuffer, RewindConfig},
 };
+use std::collections::HashMap;
 
 #[test]
 fn copy_diff_round_trips_shifted_moved_and_resized_targets_and_rejects_malformed_deltas() {
@@ -197,6 +198,108 @@ fn bundle_round_trip_and_corrupt_history_rejection() {
                 Some(Error::UnsupportedRewindBundleVersion)
             );
         }
+    }
+}
+
+/// A host that stores the index each time and each payload once, under its
+/// key, rebuilds the exact bundle at every point of a history that evicts,
+/// opens anchors and folds them. Keys never change while a payload is kept,
+/// also after an import, and assembly rejects missing, altered or foreign parts.
+#[test]
+fn index_and_keyed_payloads_rebuild_the_exact_bundle() {
+    let state = |frame: u64| {
+        // A new scene every 30 captures opens an anchor.
+        let mut seed = (frame / 30) as u32 + 1;
+        let mut state: Vec<u8> = (0..8192)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                seed as u8
+            })
+            .collect();
+        let at = (frame as usize * 977) % 7000;
+        state[at..at + 600].fill(frame as u8);
+        state[..8].copy_from_slice(&frame.to_le_bytes());
+        state
+    };
+    for compression in [Compression::Off, Compression::Fast, Compression::Delta] {
+        let mut history = RewindBuffer::new(RewindConfig {
+            compression,
+            budget_bytes: 16 * 1024,
+            ..RewindConfig::default()
+        })
+        .unwrap();
+        let mut store: HashMap<PayloadKey, Vec<u8>> = HashMap::new();
+        let mut folded = false;
+        for frame in 1u64..=245 {
+            history.push(frame, frame * 10, &state(frame)).unwrap();
+            if frame % 7 != 0 {
+                continue;
+            }
+            let mut referenced = Vec::new();
+            let mut written = 0;
+            for (key, bytes) in history.payloads() {
+                referenced.push(*key);
+                if let Some(stored) = store.get(key) {
+                    assert_eq!(stored, bytes, "a key kept its content");
+                } else {
+                    written += 1;
+                    store.insert(*key, bytes.to_vec());
+                }
+            }
+            // Seven captures, plus anchors and folded entries.
+            assert!(written <= 14 || frame == 7, "{compression:?}: {written} new payloads");
+            store.retain(|key, _| referenced.contains(key));
+            folded |= compression == Compression::Delta
+                && (0..history.depth())
+                    .any(|i| history.info(i).unwrap().encoding == rewind::Encoding::Deflate);
+            let live = state(frame + 1);
+            let index = history.write_index().unwrap();
+            let bundle = RewindBuffer::assemble_bundle(&live, &index, |key| {
+                store.get(key).map(Vec::as_slice)
+            })
+            .unwrap();
+            assert_eq!(bundle, history.write_bundle(&live).unwrap(), "frame {frame}");
+        }
+        assert!(history.depth() < 100, "{compression:?}: {} entries", history.depth());
+        assert_eq!(folded, compression == Compression::Delta, "an anchor was folded");
+
+        let live = state(246);
+        let index = history.write_index().unwrap();
+        let lookup = |key: &PayloadKey| store.get(key).map(Vec::as_slice);
+        let validate = |bytes: &[u8]| {
+            let frame = u64::from_le_bytes(bytes[..8].try_into().unwrap());
+            Ok((frame, frame * 10))
+        };
+        let bundle = RewindBuffer::assemble_bundle(&live, &index, lookup).unwrap();
+        let (_, loaded) = RewindBuffer::read_bundle_owned(bundle, validate).unwrap();
+        assert!(loaded.payloads().map(|(key, _)| key).eq(history.payloads().map(|(key, _)| key)));
+
+        let (first, _) = history.payloads().next().unwrap();
+        let missing = RewindBuffer::assemble_bundle(&live, &index, |key| {
+            if key == first { None } else { lookup(key) }
+        });
+        assert_eq!(missing.err(), Some(Error::InvalidRewindBundle));
+        let mut altered = store.clone();
+        altered.get_mut(first).unwrap()[9] ^= 1;
+        let altered =
+            RewindBuffer::assemble_bundle(&live, &index, |key| altered.get(key).map(Vec::as_slice));
+        assert_eq!(altered.err(), Some(Error::InvalidRewindBundle));
+        for at in [0, 12, index.len() - 1] {
+            let mut corrupt = index.clone();
+            corrupt[at] ^= 1;
+            assert_eq!(
+                RewindBuffer::assemble_bundle(&live, &corrupt, lookup).err(),
+                Some(Error::InvalidRewindBundle)
+            );
+        }
+        let bundle = history.write_bundle(&live).unwrap();
+        assert_eq!(
+            RewindBuffer::assemble_bundle(&live, &bundle, lookup).err(),
+            Some(Error::InvalidRewindBundle),
+            "a bundle is not an index"
+        );
     }
 }
 

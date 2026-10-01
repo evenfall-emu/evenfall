@@ -472,9 +472,13 @@ async function command(method, args) {
         sendFrame();
         return result;
       }
-    case "loadRewindBundle": {
+    case "loadRewindBundle":
+    case "loadRewindParts": {
       if (playing) throw new Error("PauseBeforeLoadingRewindBundle");
-      const result = core.loadRewindBundle(args[0]);
+      const result =
+        method === "loadRewindBundle"
+          ? core.loadRewindBundle(args[0])
+          : core.loadRewindParts(args[0], args[1], args[2]);
       // Drop the old input/operation journal; replay starts from this live
       // position, not from a cold boot or the newest periodic checkpoint.
       if (recording) recording.start();
@@ -501,6 +505,8 @@ async function command(method, args) {
       return core.saveState();
     case "saveRewindBundle":
       return core.saveRewindBundle();
+    case "saveRewindParts":
+      return core.saveRewindParts(args[0]);
     case "exportSave":
       return core.exportSave();
     case "frame":
@@ -531,7 +537,11 @@ self.onmessage = async ({ data }) => {
       ? [result.buffer]
       : data.method === "captureMemory" && result
         ? result.regions.map((region) => region.bytes.buffer)
-        : [];
+        : data.method === "saveRewindParts"
+          ? [result.state, result.index, ...result.payloads.values()].map(
+              (part) => part.buffer,
+            )
+          : [];
     postMessage({ id: data.id, result }, transfer);
   } catch (error) {
     postMessage({ id: data.id, error: error.message });

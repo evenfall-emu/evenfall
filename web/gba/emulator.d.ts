@@ -61,6 +61,17 @@ export interface RewindTimeline {
   /** Oldest to newest; only checkpoints strictly older than liveFrame. */
   readonly checkpoints: readonly RewindCheckpoint[];
 }
+/** A rewind bundle split so a host can store each payload once. */
+export interface RewindParts {
+  /** The exact live state, the same bytes as `saveState()`. */
+  state: Uint8Array;
+  /** The retention settings and checkpoint list, naming payloads by key. */
+  index: Uint8Array;
+  /** Every payload key the index names. */
+  keys: string[];
+  /** The payloads whose keys were not `known`, each in its own buffer. */
+  payloads: Map<string, Uint8Array>;
+}
 export interface TimedInput {
   at: bigint;
   keys: number;
@@ -186,6 +197,17 @@ export class Emulator extends EventTarget {
    * clears host presentation. Unlike loadState(), keeps imported checkpoints.
    * Playback speed/output preferences stay local; input bytes are not detached. */
   loadRewindBundle(bytes: Uint8Array): Promise<Snapshot>;
+  /** The content of `saveRewindBundle()`, split into the live state, an index
+   * and payloads named by content keys (32 hex digits). A key never changes
+   * its content, so pass the keys you already store and only new payloads are
+   * copied out. */
+  saveRewindParts(known?: Iterable<string>): Promise<RewindParts>;
+  /** `loadRewindBundle()` for parts: needs every payload the index names. */
+  loadRewindParts(
+    state: Uint8Array,
+    index: Uint8Array,
+    payloads: ReadonlyMap<string, Uint8Array>,
+  ): Promise<Snapshot>;
   /** Enable byte-budgeted checkpoint history (disabled at load). Older history
    * thins out as the budget fills. Reconfiguring clears history. Defaults:
    * 15 MiB, a capture every 60 frames at 1x, delta compression. */

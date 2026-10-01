@@ -223,6 +223,17 @@ pub const SPEED_SCALE_ONE: u16 = 256;
 const BUNDLE_MAGIC: &[u8; 8] = b"EFREWIND";
 /// Bundles embed save states, so a new state version needs a new bundle version.
 const BUNDLE_VERSION: u32 = 3;
+const INDEX_MAGIC: &[u8; 8] = b"EFRWINDX";
+/// Policy fields between a bundle's live state and its anchor count.
+const POLICY_BYTES: usize = 4 + 2 + 1 + 8 + 2 + 8 + 1 + 8 + 1 + 4 + 4;
+
+/// Names a stored payload by its content: the first 16 bytes of its BLAKE3.
+pub type PayloadKey = [u8; 16];
+pub fn payload_key(bytes: &[u8]) -> PayloadKey {
+    let mut key = [0; 16];
+    key.copy_from_slice(&blake3::hash(bytes).as_bytes()[..16]);
+    key
+}
 
 // Exact 192-bit product for p=0 and p=1 eviction comparisons.
 fn product3(a: u64, b: u64, c: u64) -> (u64, u64, u64) {
@@ -311,6 +322,7 @@ struct Entry {
     pub cycle: u64,
     pub sequence: u64,
     state: Stored,
+    key: PayloadKey,
     pub encoding: Encoding,
     pub anchor: u32,
 }
@@ -325,6 +337,7 @@ pub struct Info {
 struct Anchor {
     id: u32,
     stored: Stored,
+    key: PayloadKey,
     refs: u32,
 }
 
@@ -445,6 +458,7 @@ impl RewindBuffer {
         self.stored_bytes += anchor_stored.len();
         self.anchors.push(Anchor {
             id: self.current_anchor,
+            key: payload_key(&anchor_stored),
             stored: Stored::Owned(anchor_stored),
             refs: 0,
         });
@@ -476,6 +490,7 @@ impl RewindBuffer {
             frame,
             cycle,
             sequence: self.next_sequence,
+            key: payload_key(&state),
             state: Stored::Owned(state),
             encoding,
             anchor,
@@ -609,6 +624,7 @@ impl RewindBuffer {
         {
             let stored = deflate(&raw, 1);
             self.stored_bytes -= self.entries[i].state.len();
+            self.entries[i].key = payload_key(&stored);
             self.entries[i].state = Stored::Owned(stored);
             self.entries[i].encoding = Encoding::Deflate;
             self.stored_bytes += self.entries[i].state.len();
@@ -679,7 +695,7 @@ impl RewindBuffer {
             return Err(INVALID);
         }
         let mut count = Sink::new(None, None);
-        self.write_history(&mut count)?;
+        self.write_history(&mut count, false)?;
         let history_len = usize::try_from(count.count).map_err(|_| INVALID)?;
         let len = 16usize
             .checked_add(live.len())
@@ -694,14 +710,112 @@ impl RewindBuffer {
             BUNDLE_VERSION.encode(&mut sink)?;
             (live.len() as u32).encode(&mut sink)?;
             sink.write_all(live)?;
-            self.write_history(&mut sink)?;
+            self.write_history(&mut sink, false)?;
         }
         let hash = blake3::hash(&out);
         out.extend_from_slice(hash.as_bytes());
         debug_assert_eq!(out.len(), len);
         Ok(out)
     }
-    fn write_history(&self, sink: &mut Sink<'_>) -> Result<()> {
+
+    /// A bundle without its live state, with each payload replaced by its key.
+    /// Together with the live state and `payloads()`, it rebuilds the bundle
+    /// through `assemble_bundle`, so a host can store payloads once each.
+    pub fn write_index(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        {
+            let mut sink = Sink::new(Some(&mut out), None);
+            sink.write_all(INDEX_MAGIC)?;
+            BUNDLE_VERSION.encode(&mut sink)?;
+            self.write_history(&mut sink, true)?;
+        }
+        let hash = blake3::hash(&out);
+        out.extend_from_slice(hash.as_bytes());
+        Ok(out)
+    }
+
+    /// Every stored payload in index order (anchors, then entries oldest
+    /// first), with the key the index names it by.
+    pub fn payloads(&self) -> impl Iterator<Item = (&PayloadKey, &[u8])> {
+        let bundle = self.bundle.as_deref().unwrap_or(&[]);
+        self.anchors
+            .iter()
+            .map(move |anchor| (&anchor.key, anchor.stored.bytes(bundle)))
+            .chain(self.entries.iter().map(move |entry| (&entry.key, entry.state.bytes(bundle))))
+    }
+
+    /// Rebuilds the bundle that `write_index` describes. Every payload must
+    /// match its key; `read_bundle` then validates the result as any upload.
+    pub fn assemble_bundle<'a>(
+        live: &[u8],
+        index: &[u8],
+        payload: impl Fn(&PayloadKey) -> Option<&'a [u8]>,
+    ) -> Result<Vec<u8>> {
+        const BAD: Error = Error::InvalidRewindBundle;
+        fn take<'b>(input: &mut &'b [u8], len: usize) -> Result<&'b [u8]> {
+            if input.len() < len {
+                return Err(BAD);
+            }
+            let (head, tail) = input.split_at(len);
+            *input = tail;
+            Ok(head)
+        }
+        fn u32_at(bytes: &[u8]) -> u32 {
+            u32::from_le_bytes(bytes.try_into().unwrap())
+        }
+        if live.len() > MAX_DECODED_BYTES {
+            return Err(INVALID);
+        }
+        if index.len() < 8 + 4 + POLICY_BYTES + 8 + 32 {
+            return Err(BAD);
+        }
+        let (mut body, digest) = index.split_at(index.len() - 32);
+        if digest != blake3::hash(body).as_bytes() {
+            return Err(BAD);
+        }
+        if take(&mut body, 8)? != INDEX_MAGIC {
+            return Err(BAD);
+        }
+        if u32_at(take(&mut body, 4)?) != BUNDLE_VERSION {
+            return Err(Error::UnsupportedRewindBundleVersion);
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(BUNDLE_MAGIC);
+        out.extend_from_slice(&BUNDLE_VERSION.to_le_bytes());
+        out.extend_from_slice(&(live.len() as u32).to_le_bytes());
+        out.extend_from_slice(live);
+        out.extend_from_slice(take(&mut body, POLICY_BYTES)?);
+        let counts = take(&mut body, 8)?;
+        let (anchors, entries) = (u32_at(&counts[..4]), u32_at(&counts[4..]));
+        if entries as usize > MAX_ENTRIES || anchors > entries {
+            return Err(BAD);
+        }
+        out.extend_from_slice(counts);
+        for i in 0..anchors + entries {
+            // Anchor id, or entry frame, cycle, sequence, encoding and anchor id.
+            out.extend_from_slice(take(&mut body, if i < anchors { 4 } else { 29 })?);
+            let len = take(&mut body, 4)?;
+            let key: &PayloadKey = take(&mut body, 16)?.try_into().unwrap();
+            let bytes = payload(key).ok_or(BAD)?;
+            if bytes.len() != u32_at(len) as usize
+                || out.len() + bytes.len() > MAX_BUNDLE_BYTES
+                || payload_key(bytes) != *key
+            {
+                return Err(BAD);
+            }
+            out.extend_from_slice(len);
+            out.extend_from_slice(bytes);
+        }
+        if !body.is_empty() {
+            return Err(BAD);
+        }
+        let hash = blake3::hash(&out);
+        out.extend_from_slice(hash.as_bytes());
+        Ok(out)
+    }
+
+    /// With `keys`, each payload is written as its key instead of its bytes.
+    fn write_history(&self, sink: &mut Sink<'_>, keys: bool) -> Result<()> {
         self.config.budget_bytes.encode(sink)?;
         self.config.interval_frames.encode(sink)?;
         (self.config.compression as u8).encode(sink)?;
@@ -718,7 +832,11 @@ impl RewindBuffer {
         for anchor in &self.anchors {
             anchor.id.encode(sink)?;
             (anchor.stored.len() as u32).encode(sink)?;
-            sink.write_all(anchor.stored.bytes(self.bundle.as_deref().unwrap_or(&[])))?;
+            if keys {
+                sink.write_all(&anchor.key)?;
+            } else {
+                sink.write_all(anchor.stored.bytes(self.bundle.as_deref().unwrap_or(&[])))?;
+            }
         }
         for entry in &self.entries {
             entry.frame.encode(sink)?;
@@ -727,7 +845,11 @@ impl RewindBuffer {
             (entry.encoding as u8).encode(sink)?;
             entry.anchor.encode(sink)?;
             (entry.state.len() as u32).encode(sink)?;
-            sink.write_all(entry.state.bytes(self.bundle.as_deref().unwrap_or(&[])))?;
+            if keys {
+                sink.write_all(&entry.key)?;
+            } else {
+                sink.write_all(entry.state.bytes(self.bundle.as_deref().unwrap_or(&[])))?;
+            }
         }
         Ok(())
     }
@@ -826,7 +948,8 @@ impl RewindBuffer {
                 copy_payloads,
             )?;
             history.stored_bytes += stored.len();
-            history.anchors.push(Anchor { id, stored, refs: 0 });
+            let key = payload_key(stored.bytes(body));
+            history.anchors.push(Anchor { id, stored, key, refs: 0 });
         }
         for _ in 0..entry_count {
             let frame: u64 = read_value(&mut source)?;
@@ -864,7 +987,16 @@ impl RewindBuffer {
                 history.anchors[i].refs += 1;
             }
             history.stored_bytes += stored.len() + ENTRY_OVERHEAD_BYTES;
-            history.entries.push(Entry { frame, cycle, sequence, encoding, anchor, state: stored });
+            let key = payload_key(stored.bytes(body));
+            history.entries.push(Entry {
+                frame,
+                cycle,
+                sequence,
+                key,
+                encoding,
+                anchor,
+                state: stored,
+            });
         }
         if !source.input.is_empty()
             || (entry_count > 1 && history.stored_bytes > config.budget_bytes as usize)

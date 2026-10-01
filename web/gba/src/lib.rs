@@ -525,6 +525,89 @@ pub extern "C" fn ef_load_rewind_bundle() -> i32 {
     })
 }
 
+/// Input: the payload keys the host holds, 16 bytes each. Output: the live
+/// state and the index (each a `u32` length and bytes), a `u32` count and the
+/// keys the index names, then a `u32` count of `(key, u32 length, bytes)`
+/// payloads the host lacks.
+#[unsafe(no_mangle)]
+pub extern "C" fn ef_write_rewind_parts() -> i32 {
+    call(|state| {
+        state.clear_output();
+        let State { session, input, .. } = state;
+        let (keys, rest) = input.as_chunks::<16>();
+        if !rest.is_empty() {
+            return Err("InvalidRewindBundle".into());
+        }
+        let mut known = keys.to_vec();
+        known.sort_unstable();
+        let parts = session
+            .as_mut()
+            .ok_or("NoSession")?
+            .write_rewind_parts(|key| known.binary_search(key).is_ok())
+            .map_err(session_error)?;
+        *input = Vec::new();
+        let len = 16
+            + parts.state.len()
+            + parts.index.len()
+            + parts.keys.len() * 16
+            + parts.payloads.iter().map(|(_, bytes)| 20 + bytes.len()).sum::<usize>();
+        let mut out = Vec::new();
+        out.try_reserve_exact(len).map_err(|_| "OutOfMemory")?;
+        for bytes in [&parts.state, &parts.index] {
+            out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            out.extend_from_slice(bytes);
+        }
+        out.extend_from_slice(&(parts.keys.len() as u32).to_le_bytes());
+        out.extend_from_slice(parts.keys.as_flattened());
+        out.extend_from_slice(&(parts.payloads.len() as u32).to_le_bytes());
+        for (key, bytes) in &parts.payloads {
+            out.extend_from_slice(key);
+            out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            out.extend_from_slice(bytes);
+        }
+        state.replace_output(out);
+        Ok(0)
+    })
+}
+
+/// Input: the live state and the index (each a `u32` length and bytes), then
+/// `(key, u32 length, bytes)` payloads to the end.
+#[unsafe(no_mangle)]
+pub extern "C" fn ef_load_rewind_parts() -> i32 {
+    fn take<'a>(input: &mut &'a [u8], len: usize) -> Result<&'a [u8], String> {
+        if input.len() < len {
+            return Err("InvalidRewindBundle".into());
+        }
+        let (head, tail) = input.split_at(len);
+        *input = tail;
+        Ok(head)
+    }
+    fn sized<'a>(input: &mut &'a [u8]) -> Result<&'a [u8], String> {
+        let len = u32::from_le_bytes(take(input, 4)?.try_into().unwrap());
+        take(input, len as usize)
+    }
+    call(|state| {
+        state.clear_output();
+        let upload = std::mem::take(&mut state.input);
+        let mut rest = &upload[..];
+        let live = sized(&mut rest)?;
+        let index = sized(&mut rest)?;
+        let mut payloads = Vec::new();
+        while !rest.is_empty() {
+            let key: [u8; 16] = take(&mut rest, 16)?.try_into().unwrap();
+            payloads.push((key, sized(&mut rest)?));
+        }
+        payloads.sort_unstable_by_key(|(key, _)| *key);
+        active(state)?
+            .load_rewind_parts(live, index, |key| {
+                let i = payloads.binary_search_by_key(key, |(key, _)| *key).ok()?;
+                Some(payloads[i].1)
+            })
+            .map_err(session_error)?;
+        Ok(0)
+    })
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn ef_reset_save() -> i32 {
     call(|state| {

@@ -13,7 +13,22 @@ use evenfall_audio::{Resampler, StereoSample};
 use evenfall_state::rewind::{self, RewindBuffer};
 use sha1::{Digest, Sha1};
 
-pub use rewind::{Compression as RewindCompression, Info as RewindInfo, RewindConfig};
+pub use rewind::{
+    Compression as RewindCompression, Info as RewindInfo, PayloadKey as RewindPayloadKey,
+    RewindConfig,
+};
+
+/// A rewind bundle split for incremental storage ([`Session::write_rewind_parts`]).
+pub struct RewindParts {
+    /// The exact live state, as [`Session::write_state`] writes it.
+    pub state: Vec<u8>,
+    /// The retention settings and checkpoint list, naming payloads by key.
+    pub index: Vec<u8>,
+    /// Every key the index names, in index order.
+    pub keys: Vec<RewindPayloadKey>,
+    /// The payloads whose keys the caller did not know, once each.
+    pub payloads: Vec<(RewindPayloadKey, Vec<u8>)>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RewindPosition {
@@ -520,6 +535,38 @@ impl Session {
     pub fn write_rewind_bundle_fallible(&mut self) -> Result<Vec<u8>, Error> {
         let live = self.write_state_fallible()?;
         Ok(self.rewind_history.write_bundle(&live)?)
+    }
+
+    /// The same content as [`Self::write_rewind_bundle_fallible`], split so
+    /// that a host storing history incrementally copies out only the payloads
+    /// it doesn't hold. Payloads are named by content and never change.
+    pub fn write_rewind_parts(
+        &mut self,
+        known: impl Fn(&RewindPayloadKey) -> bool,
+    ) -> Result<RewindParts, Error> {
+        let state = self.write_state_fallible()?;
+        let index = self.rewind_history.write_index()?;
+        let mut keys = Vec::with_capacity(self.rewind_history.depth());
+        let mut payloads: Vec<(RewindPayloadKey, Vec<u8>)> = Vec::new();
+        for (key, bytes) in self.rewind_history.payloads() {
+            keys.push(*key);
+            if !known(key) && !payloads.iter().any(|(k, _)| k == key) {
+                payloads.push((*key, bytes.to_vec()));
+            }
+        }
+        Ok(RewindParts { state, index, keys, payloads })
+    }
+
+    /// Loads what [`Self::write_rewind_parts`] wrote, with the same checks and
+    /// atomicity as [`Self::load_rewind_bundle_owned`].
+    pub fn load_rewind_parts<'a>(
+        &mut self,
+        live: &[u8],
+        index: &[u8],
+        payload: impl Fn(&RewindPayloadKey) -> Option<&'a [u8]>,
+    ) -> Result<(), Error> {
+        let bundle = RewindBuffer::assemble_bundle(live, index, payload)?;
+        self.load_rewind_bundle_owned(bundle)
     }
 
     pub fn load_rewind_bundle(&mut self, bytes: &[u8]) -> Result<(), Error> {
@@ -1058,6 +1105,53 @@ mod tests {
             session.rewind_framebuffer(depth, &mut pixels),
             Err(Error::Rewind(evenfall_state::Error::InvalidRewindSteps))
         ));
+    }
+
+    /// Split parts carry the same live state and history as a bundle. A later
+    /// export copies only payloads the host lacks, and a load missing one
+    /// leaves the session untouched.
+    #[test]
+    fn rewind_parts_round_trip_and_export_only_unknown_payloads() {
+        let mut a = Session::create(Config {
+            image: LOOP_ROM,
+            rewind: RewindConfig { interval_frames: 1, ..RewindConfig::default() },
+            ..Config::default()
+        })
+        .unwrap();
+        for _ in 0..5 {
+            a.advance(a.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        }
+        let first = a.write_rewind_parts(|_| false).unwrap();
+        assert_eq!(first.state, a.write_state().unwrap());
+        assert_eq!(first.payloads.iter().map(|(key, _)| *key).collect::<Vec<_>>(), first.keys);
+        let mut store = first.payloads;
+        let find = |store: &[(RewindPayloadKey, Vec<u8>)], key: &RewindPayloadKey| {
+            store.iter().find(|(k, _)| k == key).map(|(_, bytes)| bytes.clone())
+        };
+
+        let mut b = Session::create(Config { image: LOOP_ROM, ..Config::default() }).unwrap();
+        let before = b.write_rewind_bundle().unwrap();
+        let partial = &store[1..];
+        let owned: Vec<_> = first.keys.iter().map(|key| find(partial, key)).collect();
+        let result = b.load_rewind_parts(&first.state, &first.index, |key| {
+            first.keys.iter().position(|k| k == key).and_then(|i| owned[i].as_deref())
+        });
+        assert!(result.is_err());
+        assert_eq!(b.write_rewind_bundle().unwrap(), before);
+
+        for _ in 0..2 {
+            a.advance(a.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
+        }
+        let next = a.write_rewind_parts(|key| store.iter().any(|(k, _)| k == key)).unwrap();
+        assert_eq!(next.payloads.len(), 2, "two new captures, no anchor");
+        store.extend(next.payloads);
+        let owned: Vec<_> = next.keys.iter().map(|key| find(&store, key)).collect();
+        b.load_rewind_parts(&next.state, &next.index, |key| {
+            next.keys.iter().position(|k| k == key).and_then(|i| owned[i].as_deref())
+        })
+        .unwrap();
+        assert_eq!(b.rewind_depth(), 7);
+        assert_eq!(b.write_rewind_bundle().unwrap(), a.write_rewind_bundle().unwrap());
     }
 
     #[test]

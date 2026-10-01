@@ -94,6 +94,19 @@ function bytes(value, label) {
     throw new TypeError(`${label} must be Uint8Array`);
   return value;
 }
+// Rewind payload keys travel as 16 bytes in the ABI and as hex in JS.
+function keyBytes(key) {
+  if (typeof key !== "string" || !/^[0-9a-f]{32}$/.test(key))
+    throw new TypeError("Rewind payload key must be 32 lowercase hex digits");
+  return Uint8Array.from({ length: 16 }, (_, i) =>
+    parseInt(key.slice(i * 2, i * 2 + 2), 16),
+  );
+}
+function keyHex(bytes) {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(
+    "",
+  );
+}
 
 // Node's fetch has no file: support, so packaged binaries are read from disk
 // there. process.getBuiltinModule is a runtime lookup, invisible to bundlers.
@@ -481,6 +494,64 @@ export class WasmCore {
     this.requireLoaded();
     this.upload(bytes(bundle, "rewind bundle"));
     this.check(this.wasm.ef_load_rewind_bundle());
+    this.replaceTimeline();
+    return this.inspect();
+  }
+  saveRewindParts(known = []) {
+    this.requireLoaded();
+    const held = [...known];
+    const packed = new Uint8Array(held.length * 16);
+    held.forEach((key, i) => packed.set(keyBytes(key), i * 16));
+    this.upload(packed);
+    this.check(this.wasm.ef_write_rewind_parts());
+    const out = this.output();
+    const view = new DataView(out.buffer);
+    let at = 0;
+    const take = (length) => out.slice(at, (at += length));
+    const u32 = () => view.getUint32((at += 4) - 4, true);
+    const state = take(u32());
+    const index = take(u32());
+    const keys = Array.from({ length: u32() }, () =>
+      keyHex(out.subarray(at, (at += 16))),
+    );
+    const payloads = new Map();
+    for (let count = u32(); count > 0; count--) {
+      const key = keyHex(out.subarray(at, (at += 16)));
+      payloads.set(key, take(u32()));
+    }
+    return { state, index, keys, payloads };
+  }
+  loadRewindParts(state, index, payloads) {
+    this.requireLoaded();
+    bytes(state, "state");
+    bytes(index, "rewind index");
+    const entries = [...payloads].map(([key, value]) => [
+      keyBytes(key),
+      bytes(value, "rewind payload"),
+    ]);
+    const packed = new Uint8Array(
+      8 +
+        state.length +
+        index.length +
+        entries.reduce((sum, [, value]) => sum + 20 + value.length, 0),
+    );
+    const view = new DataView(packed.buffer);
+    let at = 0;
+    const put = (value) =>
+      packed.set(value, (at += value.length) - value.length);
+    const sized = (value) => {
+      view.setUint32(at, value.length, true);
+      at += 4;
+      put(value);
+    };
+    sized(state);
+    sized(index);
+    for (const [key, value] of entries) {
+      put(key);
+      sized(value);
+    }
+    this.upload(packed);
+    this.check(this.wasm.ef_load_rewind_parts());
     this.replaceTimeline();
     return this.inspect();
   }

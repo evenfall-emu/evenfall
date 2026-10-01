@@ -4,6 +4,7 @@ import type {
   CheatInput,
   LoadOptions,
   MemorySnapshot,
+  RewindParts,
   RunResult,
   Snapshot,
   TimedInput,
@@ -125,6 +126,13 @@ export class WasmCore {
   /** Live state plus retained rewind history and policy. */
   saveRewindBundle(): Uint8Array;
   loadRewindBundle(bundle: Uint8Array): Snapshot;
+  /** A bundle split for incremental storage; copies only unknown payloads. */
+  saveRewindParts(known?: Iterable<string>): RewindParts;
+  loadRewindParts(
+    state: Uint8Array,
+    index: Uint8Array,
+    payloads: ReadonlyMap<string, Uint8Array>,
+  ): Snapshot;
   /** Enable budgeted rewind (defaults 15 MiB, 60 frames, "delta"). */
   setRewindConfig(
     budgetBytes?: number,

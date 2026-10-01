@@ -185,6 +185,29 @@ The policy section holds, in order, the budget `u32`, interval `u16`, compressio
 
 Each entry holds its frame, cycle and sequence (`u64` each), its encoding `u8` (0 raw, 1 deflate, 3 copy delta), its anchor id `u32`, its stored length `u32` and the stored bytes.
 
+### Split bundles
+
+A host that keeps history on disk would rewrite the whole bundle at every save, although only the newest checkpoints changed.
+`RewindBuffer::write_index` and `payloads` split a bundle so that the host writes each stored payload once.
+
+The index is the bundle without its live state, with every payload's bytes replaced by a 16-byte key.
+The key is the first 16 bytes of the payload's BLAKE3 hash, so a key always names the same bytes.
+The buffer computes it once, when a payload is stored, folded into a stand-alone entry, or imported.
+A save therefore only hashes and copies new payloads, and the rest of the history costs one index entry each.
+
+`RewindBuffer::assemble_bundle` rebuilds the exact bundle from the live state, the index and a lookup by key.
+It checks every payload against its key and length, then the bundle loads through the ordinary checks above.
+`Session::write_rewind_parts` and `load_rewind_parts` wrap the two, and take the live state from the same call, so state and history always match.
+
+| Section               | Contents                                                          |
+| --------------------- | ----------------------------------------------------------------- |
+| Header                | magic `EFRWINDX` (8 bytes), the bundle version `u32` = 3          |
+| Policy                | as in a bundle                                                    |
+| Anchors, then entries | as in a bundle, with the 16-byte key in place of the stored bytes |
+| Digest                | BLAKE3 of all preceding bytes (32 bytes)                          |
+
+The index carries the bundle version, so a new bundle version also retires stored indexes.
+
 ## How it is checked
 
 The buffer's tests live in [`crates/state/tests/rewind.rs`](../../crates/state/tests/rewind.rs), with checks of private storage in [`crates/state/src/rewind.rs`](../../crates/state/src/rewind.rs).
@@ -192,6 +215,7 @@ The session's tests live in [`systems/gba/src/session.rs`](../../systems/gba/src
 No test yet covers rewind under allocation failure, or a full rewind session in a browser.
 
 `bundle_round_trip_and_corrupt_history_rejection` writes and reloads bundles, and checks that corrupt ones are rejected with the live state and history untouched.
+`index_and_keyed_payloads_rebuild_the_exact_bundle` stores payloads by key through eviction, new anchors and folding, and checks that every key keeps its bytes and that the parts rebuild the exact bundle.
 
 ## Known limits
 

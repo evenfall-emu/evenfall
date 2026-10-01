@@ -263,6 +263,47 @@ test("rewind bundles restore a branch with its history and replace observations 
   }
 });
 
+test("rewind parts restore a bundle's history and copy out only unknown payloads", async () => {
+  const core = await WasmCore.create(wasm);
+  try {
+    core.load(loop);
+    core.setRewindConfig(undefined, 2);
+    const run = (frames) => {
+      for (let i = 0; i < frames; i++) {
+        core.runUntil(core.currentCycle() + F);
+        core.drainAudio();
+      }
+    };
+    run(7);
+    const first = core.saveRewindParts();
+    assert.deepEqual(first.state, core.saveState());
+    assert.deepEqual([...first.payloads.keys()], first.keys);
+    const store = new Map(first.payloads);
+    run(4);
+    const next = core.saveRewindParts(store.keys());
+    // Checkpoints at frames 8 and 10 against the same anchor.
+    assert.equal(next.payloads.size, 2);
+    for (const [key, value] of next.payloads) store.set(key, value);
+    const bundle = core.saveRewindBundle();
+    core.loadState(first.state);
+    const partial = new Map(store);
+    partial.delete(next.keys[0]);
+    assert.throws(
+      () => core.loadRewindParts(next.state, next.index, partial),
+      /InvalidRewindBundle/,
+    );
+    assert.equal(core.rewindDepth(), 0);
+    assert.equal(
+      core.loadRewindParts(next.state, next.index, store).frames,
+      11n,
+    );
+    assert.deepEqual(core.saveRewindBundle(), bundle);
+    assert.throws(() => core.saveRewindParts(["not-a-key"]), /hex/);
+  } finally {
+    core.dispose();
+  }
+});
+
 test("maximum-budget bundle can replace resident history with a 32 MiB ROM", async () => {
   const core = await WasmCore.create(wasm);
   try {
