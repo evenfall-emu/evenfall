@@ -148,13 +148,19 @@ test("a resume point from the previous core starts from the battery save and is 
     await instance.runUntil((await instance.inspect()).cycle + 1000n);
   });
   await advanceAutosave(page);
-  const stored = await storage(page, hash);
-  expect((stored.resume!.data as number[]).slice(0, 8)).toEqual([
-    ...Buffer.from("EVENFALL"),
-  ]);
-  expect((stored.resume!.legacy as { data: number[] }).data).toEqual(
-    legacyState,
-  );
+  // The library decodes the compressed state and finds the legacy record.
+  const stored = await page.evaluate(async (hash) => {
+    const resume = await window.player.library.getResume({
+      hash,
+      playthroughId: "default",
+    });
+    return {
+      magic: Array.from(resume!.data.slice(0, 8)),
+      legacy: Array.from(resume!.legacy!.data),
+    };
+  }, hash);
+  expect(stored.magic).toEqual([...Buffer.from("EVENFALL")]);
+  expect(stored.legacy).toEqual(legacyState);
 });
 
 test("a quick slot from the previous core is refused with an explanation and kept", async ({

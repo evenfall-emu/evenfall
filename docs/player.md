@@ -107,7 +107,7 @@ Moving into a field or losing window focus releases the buttons, and hiding the 
 - **Rewind.** Each tap of R skips the checkpoints newer than one emulated second, so repeated taps keep moving back.
   Shift+R opens the timeline, which previews any checkpoint with exact pixels.
   Cancel keeps the live state, and commit restores the checkpoint and persists it.
-  History resets on load, reset or a rewind reconfiguration ([`design/rewind.md`](design/rewind.md)).
+  History resets on load, reset or a rewind reconfiguration ([`design/rewind.md`](design/rewind.md)), and is [stored](#rewind-history) with the resume checkpoint, so it survives a reload.
 - **Quick slots** belong to one playthrough, persist across reloads, never replace battery saves, and [sync](#quick-slot-sync) when cloud backups are on.
   The More menu shows each slot's save time and sync state.
 - **Imports.** Dropping a `.state` file, or **More → Import state**, restores an Evenfall save state and stays paused for inspection.
@@ -184,20 +184,22 @@ Each game can have several independent playthroughs.
 The Player's **Playthrough** selector creates and switches them, the pencil renames one, and the trash icon deletes one after confirmation.
 New playthroughs get UUIDs and can be created offline.
 
-Deleting a playthrough removes its local saves, checkpoints, quick slots and pending uploads.
+Deleting a playthrough removes its local saves, checkpoints, rewind history, quick slots and pending uploads.
 When online and signed in, it also deletes the account's cloud copy, and that deletion must succeed before local progress goes.
 Deleting the last local playthrough starts a fresh empty one.
 
 ## Local saves and resume
 
-All progress lives in one IndexedDB database on the device, `evenfall-local`, at version 1.
+All progress lives in one IndexedDB database on the device, `evenfall-local`, at version 2.
 Every key starts with the game's raw-ROM SHA-1, and each save, checkpoint, quick slot, lock and outbox job also names the playthrough.
 ROM bytes are stored once per exact hash.
 
 - **Autosave** runs every five seconds and on pause.
   It stores the battery save and a resume checkpoint: a save state with the boot options needed to restore it.
   Unchanged battery bytes are not rewritten.
-- **Resume checkpoints** keep the latest and previous generation per playthrough.
+- **Resume checkpoints** keep the latest and a previous generation per playthrough, each a record of its own with its state gzip-compressed.
+  Every autosave replaces the latest generation, and the one it replaces becomes the previous generation once the previous one is a minute old, so the previous generation is 5 to 65 seconds older than the latest.
+  That way an autosave writes one compressed state, not two raw ones.
   If the latest is corrupt, resume tries the previous one.
   If neither restores, progress is kept, and autosave stays blocked until a retry succeeds or the player chooses **Start from in-game save**.
 - **Quick slots** are stored as `quick-state:["<ROM SHA-1>","<playthrough ID>",<1-10>]` in the `assets` store.
@@ -205,8 +207,27 @@ ROM bytes are stored once per exact hash.
   Other tabs may resume it but cannot persist.
 - **Recognized builds** cache a located manifest per game, ROM and locator version in the `builds` store ([Game plugins](#game-plugins)).
 
-Rewind history lives in the Worker's memory and is not stored.
 A save state belongs to one exact ROM.
+
+### Rewind history
+
+Each autosave also stores the rewind history that matches its resume checkpoint, so resuming after a reload, an update or a switch of playthrough brings back every checkpoint.
+Writing the whole history every five seconds would rewrite up to its 15 MiB budget each time, so the player stores it in parts ([`sdk.md`](sdk.md#storing-history-as-it-grows)):
+
+- The resume checkpoint's latest generation carries the history's index, a few dozen bytes per checkpoint.
+- Each compressed checkpoint and anchor is a record of its own in the `rewind` store, keyed by playthrough and content.
+  An autosave writes only the records that are new and deletes those the history dropped, in the resume checkpoint's transaction.
+
+During play the history grows by about 5 to 20 KiB a second, so the autosave writes about that much more, beside a compressed resume checkpoint of 3 to 10 KiB a second.
+Only the latest generation has a history: a resume that falls back to the previous generation, or a history that fails to load, starts without one.
+Each playthrough keeps its own history, up to the budget, until it is deleted.
+
+### Write statistics
+
+The player counts what each autosave writes, in memory only.
+In the browser console, `await evenfallWrites.report()` prints the totals and rates per part (state, previous generation, battery save, rewind index and payloads), what the earlier layout of two raw states per save would have written, and an estimate of an input log at 10 bytes per button change.
+`evenfallWrites.samples` holds one entry per autosave, and `evenfallWrites.reset()` starts over.
+The counts are the bytes handed to IndexedDB, before the browser's own encoding and storage overhead.
 
 ### States from the previous core
 
@@ -216,7 +237,7 @@ Battery saves are raw cartridge memory and carry over unchanged.
 The player recognizes an old state by its first eight bytes ([`src/state-format.ts`](../web/player/src/state-format.ts)), says it came from an older version, and never deletes it:
 
 - **A resume checkpoint** starts the playthrough from its battery save.
-  The old state moves to the checkpoint record's `legacy` field and stays there through later autosaves, until the playthrough is deleted.
+  The old state moves to a `legacy` record of its own, written once, and stays there until the playthrough is deleted.
   It is never uploaded.
 - **A quick slot or state file** is refused with an explanation, and the slot keeps its bytes.
   An old cloud quick slot still downloads and stays like any other.
@@ -387,3 +408,4 @@ No user asset is committed.
 - Whether cloud states restore on a device with a different external BIOS is untested.
 - Battery saves have no compatibility policy between releases of the same game, beyond what the catalog declares.
 - States from the previous core stay unloadable: the player keeps them but cannot convert them.
+- Rewind history stays on the device: cloud backups and shared states carry none, so a playthrough restored from them starts without history.

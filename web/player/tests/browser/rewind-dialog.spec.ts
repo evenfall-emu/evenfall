@@ -219,3 +219,67 @@ test("one checkpoint remains selectable and commits its exact cycle", async ({
     )
     .toBe(cycle);
 });
+
+/**
+ * The autosave stores the history with the resume point, so a reload resumes
+ * with every checkpoint, and rewinding still restores their exact states.
+ */
+test("rewind history survives a page reload", async ({ page }) => {
+  await prepare(page);
+  const timeline = () =>
+    page.evaluate(async () => {
+      const { emulator } = (window as unknown as { player: Player }).player;
+      const { checkpoints } = await emulator.rewindCheckpoints();
+      return checkpoints.map(({ frame, cycle }) => `${frame}:${cycle}`);
+    });
+  const before = await timeline();
+  expect(before).toHaveLength(5);
+  const states = await page.evaluate(async () => {
+    const player = (window as unknown as { player: Player }).player;
+    await player.checkpointState();
+    const { summary, table } = await (
+      window as unknown as { evenfallWrites: Player["writeStats"] }
+    ).evenfallWrites.report();
+    const live = Array.from(await player.emulator.saveState());
+    await player.emulator.rewind(2);
+    return {
+      live: JSON.stringify(live),
+      rewound: JSON.stringify(Array.from(await player.emulator.saveState())),
+      saves: summary.saves,
+      ratio: summary["compression ratio"],
+      payloads: table["rewind payloads"]["total KiB"],
+    };
+  });
+  // The console statistics saw the save, its compressed state and history.
+  expect(states.saves).toBeGreaterThan(0);
+  expect(states.ratio).toBeLessThan(0.5);
+  expect(states.payloads).toBeGreaterThan(0);
+
+  // A fresh load of /player opens the Library; Home offers the resume.
+  await page.goto("/");
+  await expect(
+    page.getByRole("button", { name: "Resume adventure" }),
+  ).toBeEnabled();
+  await page.evaluate(() => {
+    (window as unknown as { player: Player }).player.emulator.play =
+      async () => {};
+  });
+  await page.getByRole("button", { name: "Resume adventure" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const { player } = window as unknown as { player: Player };
+        if (player.state.changing || !player.state.game) return null;
+        return JSON.stringify(Array.from(await player.emulator.saveState()));
+      }),
+    )
+    .toBe(states.live);
+  expect(await timeline()).toEqual(before);
+  expect(
+    await page.evaluate(async () => {
+      const { emulator } = (window as unknown as { player: Player }).player;
+      await emulator.rewind(2);
+      return JSON.stringify(Array.from(await emulator.saveState()));
+    }),
+  ).toBe(states.rewound);
+});

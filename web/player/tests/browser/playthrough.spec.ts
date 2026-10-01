@@ -540,14 +540,18 @@ test("deleting a playthrough requires confirmation and keeps the other adventure
   );
   await page.evaluate(() => {
     const emulator = window.player.emulator;
+    // A local resume loads its rewind history with the state.
     const load = emulator.loadState.bind(emulator);
-    emulator.loadState = async (bytes) => {
-      const cpu = await load(bytes);
+    const loadParts = emulator.loadRewindParts.bind(emulator);
+    const record = <T extends { cycle: bigint }>(cpu: T) => {
       (window as unknown as { restoredCycle: number }).restoredCycle = Number(
         cpu.cycle,
       );
       return cpu;
     };
+    emulator.loadState = async (bytes) => record(await load(bytes));
+    emulator.loadRewindParts = async (...args) =>
+      record(await loadParts(...args));
     const boot = emulator.load.bind(emulator);
     emulator.load = async (...args) => {
       const cpu = await boot(...args);

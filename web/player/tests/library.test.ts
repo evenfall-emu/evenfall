@@ -104,7 +104,7 @@ describe("library storage", () => {
     await old.put("scenarios", { name: "Old scenario" }, "scenario");
     old.close();
     const lib = await openLibrary();
-    expect(lib.db!.version).toBe(1);
+    expect(lib.db!.version).toBe(2);
     expect(await lib.list()).toEqual([]);
     expect(await lib.rom(hash)).toBeUndefined();
     expect(await lib.getSave(ref(hash))).toBeUndefined();
@@ -140,7 +140,7 @@ describe("library storage", () => {
     await old.put("saves", { data: new Uint8Array([42]) }, ["abc", "default"]);
     old.close();
     const lib = await openLibrary();
-    expect(lib.db!.version).toBe(1);
+    expect(lib.db!.version).toBe(2);
     expect((await lib.list()).map((game) => game.title)).toEqual(["Kept"]);
     expect(await lib.rom("abc")).toEqual(new Uint8Array([1]));
     expect(await lib.getSave(ref("abc"))).toEqual(new Uint8Array([42]));
@@ -198,6 +198,73 @@ describe("library storage", () => {
     lib.close();
   });
   /**
+   * Each autosave writes one compressed state. The previous generation is a
+   * record of its own, replaced only once it is a minute old, and an earlier
+   * player's record with an inline previous generation still reads and moves
+   * it out on the next save.
+   */
+  it("stores the latest state compressed and replaces the previous generation at most once a minute", async () => {
+    await deleteDB("evenfall-local");
+    const lib = await openLibrary();
+    await lib.put({
+      hash: "game",
+      title: "Game",
+      rom: new Uint8Array([1]),
+      lastPlayed: 1,
+    });
+    const state = (marker: number) => {
+      const bytes = new Uint8Array(64 * 1024);
+      bytes.set(new TextEncoder().encode("EVENFALL"));
+      bytes[100] = marker;
+      return bytes;
+    };
+    await lib.db!.put(
+      "resumes",
+      {
+        data: state(1),
+        options: {},
+        cycle: "1",
+        savedAt: 0,
+        previous: { data: state(0), options: {}, cycle: "0", savedAt: 0 },
+      },
+      ["game", "default"],
+    );
+    expect((await lib.getResume(ref("game")))?.previous?.data).toEqual(
+      state(0),
+    );
+    const now = vi.spyOn(Date, "now");
+    const save = async (at: number, marker: number) => {
+      now.mockReturnValue(at);
+      return (
+        await lib.saveResume(ref("game"), state(marker), {}, BigInt(marker))
+      ).written;
+    };
+    // The earlier record moves its latest generation out as the previous one.
+    expect((await save(5_000, 2)).previous).toBe(64 * 1024);
+    const third = await save(10_000, 3);
+    expect(third.state).toBeLessThan(1024);
+    expect(third.previous).toBe(0);
+    const stored = await lib.db!.get("resumes", ["game", "default"]);
+    expect(stored.data).toBeUndefined();
+    expect(stored.previous).toBeUndefined();
+    let checkpoint = await lib.getResume(ref("game"));
+    expect(checkpoint?.data).toEqual(state(3));
+    expect(checkpoint?.previous?.data).toEqual(state(1));
+    // The previous generation keeps its own save time, 0.
+    expect((await save(59_000, 4)).previous).toBe(0);
+    // A minute after it, the save being replaced becomes the previous one,
+    // already compressed.
+    const rotated = (await save(60_000, 5)).previous;
+    expect(rotated).toBeGreaterThan(0);
+    expect(rotated).toBeLessThan(1024);
+    now.mockRestore();
+    checkpoint = await lib.getResume(ref("game"));
+    expect(checkpoint?.previous?.data).toEqual(state(4));
+    await lib.deletePlaythrough(ref("game"));
+    expect(await lib.db!.count("resumes")).toBe(0);
+    lib.close();
+  });
+  /**
    * A resume point from the previous core (ZIGBAST1) survives any number of
    * later autosaves in `legacy`, never becomes the recovery generation, and
    * never enters the cloud outbox's upload source.
@@ -215,7 +282,25 @@ describe("library storage", () => {
     const old = new Uint8Array([...new TextEncoder().encode("ZIGBAST1"), 7]);
     const current = (marker: number) =>
       new Uint8Array([...new TextEncoder().encode("EVENFALL"), marker]);
-    await lib.saveResume(ref("game"), old, { saveType: "sram" }, 5n, 1);
+    // Earlier players stored raw states, and kept older generations inline.
+    await lib.db!.put(
+      "resumes",
+      { data: old, options: { saveType: "sram" }, cycle: "5", savedAt: 1 },
+      ["game", "default"],
+    );
+    await lib.db!.put(
+      "cloud",
+      {
+        accountId: "alice",
+        hash: "game",
+        playthroughId: "default",
+        kind: "resume",
+        revision: "r",
+        capturedAt: 1,
+        lastInputAt: 1,
+      },
+      ["alice", "game", "default", "resume"],
+    );
     const pending = (await lib.cloudJobs("alice")).find(
       (job) => job.kind === "resume",
     )!;
@@ -224,7 +309,8 @@ describe("library storage", () => {
       await lib.saveResume(ref("game"), current(marker), {}, BigInt(marker), 1);
     const checkpoint = await lib.getResume(ref("game"));
     expect(checkpoint?.data).toEqual(current(3));
-    expect(checkpoint?.previous?.data).toEqual(current(2));
+    // Saves less than a minute apart keep the first previous generation.
+    expect(checkpoint?.previous?.data).toEqual(current(1));
     expect(checkpoint?.legacy).toMatchObject({
       data: old,
       options: { saveType: "sram" },
@@ -353,6 +439,138 @@ describe("library storage", () => {
     lib.close();
   });
 
+  /**
+   * Each autosave writes only the payloads it adds and deletes those its
+   * index drops, in the resume point's transaction. An index naming a payload
+   * that is neither stored nor supplied stores the state without history.
+   */
+  it("stores rewind payloads once beside the resume point and prunes dropped ones", async () => {
+    await deleteDB("evenfall-local");
+    const lib = await openLibrary();
+    await lib.put({
+      hash: "game",
+      title: "Game",
+      rom: new Uint8Array([1]),
+      lastPlayed: 1,
+    });
+    const other = { hash: "game", playthroughId: "other" };
+    await lib.createPlaythrough("game", "Other", "other");
+    const bytes = (n: number) => new Uint8Array([n]);
+    const history = (index: number, keys: string[], fresh: string[]) => ({
+      index: bytes(index),
+      keys,
+      payloads: new Map(fresh.map((key) => [key, bytes(key.length)])),
+    });
+    const put = vi.spyOn(IDBObjectStore.prototype, "put");
+    const first = await lib.saveResume(
+      ref("game"),
+      bytes(1),
+      {},
+      1n,
+      0,
+      undefined,
+      history(1, ["a", "bb"], ["a", "bb"]),
+    );
+    expect([...first.rewindKeys]).toEqual(["a", "bb"]);
+    await lib.saveResume(
+      other,
+      bytes(9),
+      {},
+      1n,
+      0,
+      undefined,
+      history(9, ["a"], ["a"]),
+    );
+    put.mockClear();
+    const second = await lib.saveResume(
+      ref("game"),
+      bytes(2),
+      {},
+      2n,
+      0,
+      undefined,
+      history(2, ["bb", "ccc"], ["ccc"]),
+    );
+    expect([...second.rewindKeys].sort()).toEqual(["bb", "ccc"]);
+    // The new payload, not the one already stored.
+    expect(
+      put.mock.calls.filter(
+        (_, i) => (put.mock.contexts[i] as IDBObjectStore).name === "rewind",
+      ),
+    ).toEqual([[bytes(3), ["game", "default", "ccc"]]]);
+    expect(second.written).toMatchObject({
+      index: 1,
+      payloads: 1,
+      payloadCount: 1,
+      deleted: 1,
+    });
+    put.mockRestore();
+    const resume = await lib.getResume(ref("game"));
+    expect(resume?.rewind).toEqual(bytes(2));
+    expect(resume?.previous?.rewind).toBeUndefined();
+    expect(await lib.rewindPayloads(ref("game"))).toEqual(
+      new Map([
+        ["bb", bytes(2)],
+        ["ccc", bytes(3)],
+      ]),
+    );
+
+    const missing = await lib.saveResume(
+      ref("game"),
+      bytes(3),
+      {},
+      3n,
+      0,
+      undefined,
+      history(3, ["ccc", "dddd"], []),
+    );
+    expect(missing.rewindKeys.size).toBe(0);
+    expect((await lib.getResume(ref("game")))?.rewind).toBeUndefined();
+    expect(await lib.rewindKeys(ref("game"))).toEqual(new Set());
+
+    await lib.saveResume(
+      ref("game"),
+      bytes(4),
+      {},
+      4n,
+      0,
+      undefined,
+      history(4, ["a"], ["a"]),
+    );
+    await lib.deletePlaythrough(ref("game"));
+    expect(await lib.rewindKeys(ref("game"))).toEqual(new Set());
+    expect(await lib.rewindPayloads(other)).toEqual(new Map([["a", bytes(1)]]));
+    lib.close();
+  });
+  it("adds the rewind store to a version 1 database and keeps its data", async () => {
+    await deleteDB("evenfall-local");
+    const v1 = await openDB("evenfall-local", 1, {
+      upgrade(db) {
+        for (const name of [
+          "saves",
+          "games",
+          "roms",
+          "resumes",
+          "assets",
+          "scenarios",
+          "reports",
+          "builds",
+        ])
+          db.createObjectStore(name);
+        const cloud = db.createObjectStore("cloud");
+        cloud.createIndex("accountId", "accountId");
+        cloud.createIndex("hash", "hash");
+        db.createObjectStore("playthroughs").createIndex("hash", "hash");
+      },
+    });
+    await v1.put("roms", new Uint8Array([5]), "kept");
+    v1.close();
+    const lib = await openLibrary();
+    expect(lib.db!.version).toBe(2);
+    expect(lib.db!.objectStoreNames.contains("rewind")).toBe(true);
+    expect(await lib.rom("kept")).toEqual(new Uint8Array([5]));
+    lib.close();
+  });
   it("deletes one local playthrough and its slots without touching another run", async () => {
     await deleteDB("evenfall-local");
     const lib = await openLibrary();

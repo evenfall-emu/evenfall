@@ -118,9 +118,16 @@ async function recordRestores(page: Page) {
       loadedCycles: string[];
     };
     host.loadedCycles = [];
+    // A local resume loads its rewind history with the state.
     const load = host.emulator.loadState.bind(host.emulator);
+    const loadParts = host.emulator.loadRewindParts.bind(host.emulator);
     host.emulator.loadState = async (data) => {
       const cpu = await load(data);
+      host.loadedCycles.push(cpu.cycle.toString());
+      return cpu;
+    };
+    host.emulator.loadRewindParts = async (...args) => {
+      const cpu = await loadParts(...args);
       host.loadedCycles.push(cpu.cycle.toString());
       return cpu;
     };
@@ -128,31 +135,19 @@ async function recordRestores(page: Page) {
 }
 
 async function localResume(page: Page, playthroughId = "default") {
+  // The library decodes the stored, compressed state.
   return page.evaluate(
     async ({ hash, playthroughId }) => {
-      const request = indexedDB.open("evenfall-local");
-      const db = await new Promise<IDBDatabase>((resolve) => {
-        request.onsuccess = () => resolve(request.result);
+      const resume = await window.player.library.getResume({
+        hash,
+        playthroughId,
       });
-      try {
-        const read = db
-          .transaction("resumes")
-          .objectStore("resumes")
-          .get([hash, playthroughId]);
-        return await new Promise<Backup | null>((resolve) => {
-          read.onsuccess = () =>
-            resolve(
-              read.result
-                ? {
-                    data: JSON.stringify(Array.from(read.result.data)),
-                    cycle: read.result.cycle,
-                  }
-                : null,
-            );
-        });
-      } finally {
-        db.close();
-      }
+      return resume
+        ? {
+            data: JSON.stringify(Array.from(resume.data)),
+            cycle: resume.cycle,
+          }
+        : null;
     },
     { hash, playthroughId },
   );
@@ -412,11 +407,14 @@ test("Home resumes the last local run, while Player resolves the selected other 
   expect(
     await page.evaluate(() => window.player.activeRef!.playthroughId),
   ).toBe("default");
-  expect(
-    await page.evaluate(
-      () => (window as unknown as { loadedCycles: string[] }).loadedCycles,
-    ),
-  ).toEqual([b.cycle, a.cycle]);
+  // The selector shows the run before its resume point has loaded.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { loadedCycles: string[] }).loadedCycles,
+      ),
+    )
+    .toEqual([b.cycle, a.cycle]);
   expect(control.downloads).toBe(0);
 
   await page.getByRole("combobox", { name: "Playthrough" }).click();

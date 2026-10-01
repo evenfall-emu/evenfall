@@ -74,24 +74,19 @@ async function importAndCheckpoint(page: Page, marker: number, name: string) {
       }, identity.hash),
     )
     .toBe(true);
-  const state = await page.evaluate(async (hash) => {
-    const request = indexedDB.open("evenfall-local");
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    const result = await new Promise<string>((resolve, reject) => {
-      const get = db
-        .transaction("resumes")
-        .objectStore("resumes")
-        .get([hash, "default"]);
-      get.onsuccess = () =>
-        resolve(JSON.stringify(Array.from(get.result.data)));
-      get.onerror = () => reject(get.error);
-    });
-    db.close();
-    return result;
-  }, identity.hash);
+  // The library decodes the stored, compressed state.
+  const state = await page.evaluate(
+    async (hash) =>
+      JSON.stringify(
+        Array.from(
+          (await window.player.library.getResume({
+            hash,
+            playthroughId: "default",
+          }))!.data,
+        ),
+      ),
+    identity.hash,
+  );
   return { ...identity, state };
 }
 
@@ -146,25 +141,12 @@ async function replaceResume(
 }
 
 async function storedResume(page: Page, hash: string) {
-  return page.evaluate(async (key) => {
-    const request = indexedDB.open("evenfall-local");
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+  return page.evaluate(async (hash) => {
+    const resume = await window.player.library.getResume({
+      hash,
+      playthroughId: "default",
     });
-    const result = await new Promise<string | undefined>((resolve, reject) => {
-      const get = db
-        .transaction("resumes")
-        .objectStore("resumes")
-        .get([key, "default"]);
-      get.onsuccess = () =>
-        resolve(
-          get.result ? JSON.stringify(Array.from(get.result.data)) : undefined,
-        );
-      get.onerror = () => reject(get.error);
-    });
-    db.close();
-    return result;
+    return resume ? JSON.stringify(Array.from(resume.data)) : undefined;
   }, hash);
 }
 
@@ -188,15 +170,22 @@ test("resumes the most recent game at its exact durable state without requiring 
       releaseResumeLoad: () => void;
     };
     const loadState = host.emulator.loadState.bind(host.emulator);
+    const loadParts = host.emulator.loadRewindParts.bind(host.emulator);
     let release = () => {};
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
     host.releaseResumeLoad = release;
+    // A local resume loads its rewind history with the state.
     host.emulator.loadState = async (bytes) => {
       host.resumeLoadEntered = true;
       await gate;
       return loadState(bytes);
+    };
+    host.emulator.loadRewindParts = async (...args) => {
+      host.resumeLoadEntered = true;
+      await gate;
+      return loadParts(...args);
     };
   });
   await page.getByRole("button", { name: "Resume adventure" }).click();
@@ -433,22 +422,11 @@ test("a read-only tab can resume but never overwrites the lock owner's checkpoin
   await advanceAutosave(second);
   expect(
     await second.evaluate(async (hash) => {
-      const request = indexedDB.open("evenfall-local");
-      const db = await new Promise<IDBDatabase>((resolve, reject) => {
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
+      const resume = await window.player.library.getResume({
+        hash,
+        playthroughId: "default",
       });
-      const result = await new Promise<string>((resolve, reject) => {
-        const get = db
-          .transaction("resumes")
-          .objectStore("resumes")
-          .get([hash, "default"]);
-        get.onsuccess = () =>
-          resolve(JSON.stringify(Array.from(get.result.data)));
-        get.onerror = () => reject(get.error);
-      });
-      db.close();
-      return result;
+      return JSON.stringify(Array.from(resume!.data));
     }, owner.hash),
   ).toEqual(owner.state);
   await second.close();

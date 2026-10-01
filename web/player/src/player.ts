@@ -27,6 +27,7 @@ import { acquireSaveLock } from "./storage.js";
 import { type Emulator, type Snapshot, type LoadOptions } from "@evenfall/gba";
 import { AudioOutput, VideoOutput } from "./media";
 import { previousRewindCheckpoint } from "./rewind-model";
+import { WriteStats } from "./write-stats";
 import { isLegacyState, LegacyStateError } from "./state-format";
 
 /** Shown when a resume point from the previous core falls back to the battery save. */
@@ -49,7 +50,15 @@ export class Player {
   private lastResumeCycle?: bigint;
   private persistenceError?: unknown;
   private persistenceEpoch = 0;
+  /** Rewind payload keys stored for `ref`, valid while `epoch` holds. */
+  private storedRewind?: {
+    ref: PlaythroughRef;
+    epoch: number;
+    keys: ReadonlySet<string>;
+  };
   private resumeBlockedRef?: PlaythroughRef;
+  /** Autosave write statistics, for the console: `evenfallWrites.report()`. */
+  readonly writeStats = new WriteStats();
   private activeOptions: LoadOptions = {};
   options: LoadOptions = { saveType: "auto" };
   private video = new VideoOutput((pixels) =>
@@ -125,6 +134,8 @@ export class Player {
     this.session.onClose(() => this.invalidateRewindTimeline());
     (window as unknown as { emulator: Emulator }).emulator = this.emulator;
     (window as unknown as { player: Player }).player = this;
+    (window as unknown as { evenfallWrites: WriteStats }).evenfallWrites =
+      this.writeStats;
     this.library = await runtime.runPromise(GameLibrary);
     this.cloud = new CloudSync(this.library, (cloud) => this.update({ cloud }));
     this.cloud.activeRun = () => this.activeRef;
@@ -252,6 +263,8 @@ export class Player {
         )
           return;
         this.persistenceError = undefined;
+        const started = performance.now();
+        const playing = this.state.playing;
         const cpu = await this.emulator.inspect();
         if (
           cpu.romHash !== game.hash ||
@@ -259,7 +272,14 @@ export class Player {
         )
           return;
         const data = await this.emulator.exportSave();
-        const state = await this.emulator.saveState();
+        const known =
+          this.storedRewind?.epoch === epoch &&
+          this.matches(this.storedRewind.ref)
+            ? this.storedRewind.keys
+            : await this.library.rewindKeys(ref);
+        // One call returns the state and the history that matches it, copying
+        // out only payloads that aren't stored yet.
+        const rewind = await this.emulator.saveRewindParts(known);
         if (
           !this.matches(ref) ||
           this.releaseLock !== lock ||
@@ -282,14 +302,28 @@ export class Player {
             this.lastInputAt,
             expectedAccountId,
           );
-        const savedAt = await this.library.saveResume(
+        const { savedAt, rewindKeys, written } = await this.library.saveResume(
           ref,
-          state,
+          rewind.state,
           this.activeOptions,
           cpu.cycle,
           this.lastInputAt,
           expectedAccountId,
+          rewind,
         );
+        this.storedRewind = { ref, epoch, keys: rewindKeys };
+        this.writeStats.record({
+          ...written,
+          playing,
+          ms: performance.now() - started,
+          stateRaw: rewind.state.byteLength,
+          battery: batteryChanged ? data.byteLength : 0,
+          largestPayload: Math.max(
+            0,
+            ...[...rewind.payloads.values()].map((bytes) => bytes.byteLength),
+          ),
+          historyItems: rewind.keys.length,
+        });
         this.lastSaved = data;
         this.lastResumeCycle = cpu.cycle;
         const stored = { ...game, resumeSavedAt: savedAt };
@@ -315,6 +349,7 @@ export class Player {
         });
       })
       .catch((e) => {
+        this.storedRewind = undefined;
         this.persistenceError = e;
         this.update({
           saveMessage: `Progress save failed: ${String(e)}. Export save to keep progress.`,
@@ -849,6 +884,31 @@ export class Player {
       candidate.terminate();
     }
   }
+  /**
+   * Loads a resume generation into the paused emulator, with the rewind
+   * history stored beside it when that history loads. Returns whether it did.
+   */
+  private async loadGeneration(
+    ref: PlaythroughRef,
+    generation: ResumeGeneration,
+  ) {
+    let history = false;
+    if (generation.rewind)
+      try {
+        this.latest = await this.emulator.loadRewindParts(
+          generation.data,
+          generation.rewind,
+          await this.library.rewindPayloads(ref),
+        );
+        history = true;
+      } catch {
+        // History that doesn't load (a payload lost, a newer state format)
+        // only costs the history: the state alone was validated already.
+      }
+    if (!history) this.latest = await this.emulator.loadState(generation.data);
+    this.lastResumeCycle = this.latest!.cycle;
+    return history;
+  }
   async resume(game: Game, autoplay = true) {
     if (!this.state.ready) throw new Error("Player is still starting.");
     if (this.state.changing) return;
@@ -876,10 +936,8 @@ export class Player {
         false,
         true,
       );
-      if (generation) {
-        this.latest = await this.emulator.loadState(generation.data);
-        this.lastResumeCycle = this.latest.cycle;
-      }
+      const history =
+        generation && (await this.loadGeneration(ref, generation));
       this.update({
         resumeFailed: false,
         message: !generation
@@ -891,7 +949,7 @@ export class Player {
           ? "Autosave active."
           : "Another tab owns this save, or locking is unavailable. Export save manually.",
       });
-      await this.emulator.setRewindConfig();
+      if (!history) await this.emulator.setRewindConfig();
       if (autoplay) await this.play(true);
       this.resumeBlockedRef = undefined;
     } catch (error) {
@@ -931,6 +989,7 @@ export class Player {
       if (this.matches(ref)) return;
       const checkpoint = await this.library.getResume(ref);
       let legacy = false;
+      let history = false;
       if (checkpoint) {
         const generation = await this.validatedResume(game, checkpoint);
         legacy = !generation;
@@ -943,10 +1002,7 @@ export class Player {
           false,
           true,
         );
-        if (generation) {
-          this.latest = await this.emulator.loadState(generation.data);
-          this.lastResumeCycle = this.latest.cycle;
-        }
+        if (generation) history = await this.loadGeneration(ref, generation);
         this.update({ resumeFailed: false });
       } else {
         await this.openInternal(
@@ -967,7 +1023,7 @@ export class Player {
             ? "Playthrough selected."
             : "New playthrough started.",
       });
-      await this.emulator.setRewindConfig();
+      if (!history) await this.emulator.setRewindConfig();
       if (wasPlaying) await this.play(true);
     } catch (error) {
       // Creation selects immediately. If the machine never adopted the new
@@ -1047,6 +1103,7 @@ export class Player {
       this.persistenceEpoch++;
       this.session.ownSaveLock();
       const target = { hash: ref.hash, playthroughId: next.id };
+      let history = false;
       if (generation && survivor?.id === next.id) {
         this.resumeBlockedRef = target;
         await this.openInternal(
@@ -1057,8 +1114,7 @@ export class Player {
           false,
           true,
         );
-        this.latest = await this.emulator.loadState(generation.data);
-        this.lastResumeCycle = this.latest.cycle;
+        history = await this.loadGeneration(target, generation);
       } else {
         await this.openInternal(
           game,
@@ -1077,7 +1133,7 @@ export class Player {
             ? `Playthrough deleted. ${LEGACY_RESUME_MESSAGE}`
             : "Playthrough deleted.",
       });
-      await this.emulator.setRewindConfig();
+      if (!history) await this.emulator.setRewindConfig();
       if (wasPlaying) await this.play(true);
     } catch (error) {
       if (deleted) {
@@ -1315,6 +1371,7 @@ export class Player {
     if (keys && this.state.playing) this.lastInputAt = Date.now();
     if (keys !== this.sent) {
       this.sent = keys;
+      this.writeStats.inputs++;
       void this.emulator.setKeys(keys).catch(this.error);
     }
   }

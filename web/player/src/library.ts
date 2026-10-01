@@ -31,6 +31,19 @@ export type Playthrough = {
   resumeSavedAt?: number;
 };
 const runKey = (ref: PlaythroughRef) => [ref.hash, ref.playthroughId];
+// Every key that starts with a playthrough's: rewind payloads, keyed
+// [hash, playthrough ID, payload key], and its resume generations.
+const runRange = (ref: PlaythroughRef) =>
+  IDBKeyRange.bound(runKey(ref), [...runKey(ref), []]);
+// The `resumes` store keeps the latest generation under the run key, and
+// the older ones it keeps under these.
+const previousKey = (ref: PlaythroughRef) => [...runKey(ref), "previous"];
+const legacyKey = (ref: PlaythroughRef) => [...runKey(ref), "legacy"];
+/**
+ * The shortest time between two replacements of the previous generation. Each
+ * replacement writes a state, so the latest one alone is written every save.
+ */
+export const PREVIOUS_INTERVAL_MS = 60_000;
 export const playthroughLockKey = (ref: PlaythroughRef) =>
   `playthrough:${JSON.stringify(runKey(ref))}`;
 export const quickStateKey = (ref: PlaythroughRef, slot: number) =>
@@ -68,6 +81,76 @@ export type ResumeGeneration = {
   cycle: string;
   options: LoadOptions;
   cloudRevision?: string;
+  /**
+   * The rewind index written with `data` (SDK `saveRewindParts`). Its
+   * payloads live in the `rewind` store. Only the latest generation has one.
+   */
+  rewind?: Uint8Array;
+};
+/**
+ * A generation as stored: the state gzip-compressed, or raw in records of
+ * earlier players and in legacy generations. Earlier players also kept the
+ * previous and legacy generations inline in the latest one's record.
+ */
+type StoredGeneration = Omit<ResumeGeneration, "data"> & {
+  data?: Uint8Array;
+  gzip?: Uint8Array;
+  previous?: StoredGeneration;
+  legacy?: StoredGeneration;
+};
+export async function gzip(bytes: Uint8Array) {
+  return new Uint8Array(
+    await new Response(
+      new Blob([new Uint8Array(bytes)])
+        .stream()
+        .pipeThrough(new CompressionStream("gzip")),
+    ).arrayBuffer(),
+  );
+}
+/** A state that fails to inflate decodes as empty, which no loader accepts. */
+async function decodeGeneration({
+  data,
+  gzip: packed,
+  previous: _previous,
+  legacy: _legacy,
+  ...rest
+}: StoredGeneration): Promise<ResumeGeneration> {
+  if (data) return { ...rest, data };
+  try {
+    return {
+      ...rest,
+      data: new Uint8Array(
+        await new Response(
+          new Blob([new Uint8Array(packed!)])
+            .stream()
+            .pipeThrough(new DecompressionStream("gzip")),
+        ).arrayBuffer(),
+      ),
+    };
+  } catch {
+    return { ...rest, data: new Uint8Array() };
+  }
+}
+/** The logical bytes one `saveResume` wrote, by part. */
+export type ResumeWrite = {
+  /** The latest generation's compressed state. */
+  state: number;
+  /** A previous generation, when this save replaced it. */
+  previous: number;
+  /** A legacy generation, moved out of an earlier player's record once. */
+  legacy: number;
+  index: number;
+  payloads: number;
+  payloadCount: number;
+  deleted: number;
+};
+/** What `saveResume` stores of the rewind history beside the state. */
+export type RewindHistory = {
+  index: Uint8Array;
+  /** Every payload key the index names. */
+  keys: readonly string[];
+  /** The payloads not already stored. */
+  payloads: ReadonlyMap<string, Uint8Array>;
 };
 export type ResumeCheckpoint = ResumeGeneration & {
   previous?: ResumeGeneration;
@@ -454,8 +537,47 @@ export class Library {
     return (await this.db?.get("saves", runKey(ref)))?.data;
   }
   async getResume(ref: PlaythroughRef): Promise<ResumeCheckpoint | undefined> {
-    return this.db?.get("resumes", runKey(ref));
+    if (!this.db) return undefined;
+    const tx = this.db.transaction("resumes");
+    const [latest, previous, legacy] = (await Promise.all([
+      tx.store.get(runKey(ref)),
+      tx.store.get(previousKey(ref)),
+      tx.store.get(legacyKey(ref)),
+    ])) as (StoredGeneration | undefined)[];
+    if (!latest) return undefined;
+    // An earlier player's record carries its older generations inline.
+    const older = latest.previous ?? previous;
+    const kept = latest.legacy ?? legacy;
+    return {
+      ...(await decodeGeneration(latest)),
+      ...(older ? { previous: await decodeGeneration(older) } : {}),
+      ...(kept ? { legacy: await decodeGeneration(kept) } : {}),
+    };
   }
+  /** The keys of the rewind payloads stored for a playthrough. */
+  async rewindKeys(ref: PlaythroughRef): Promise<Set<string>> {
+    const keys = (await this.db?.getAllKeys("rewind", runRange(ref))) ?? [];
+    return new Set(keys.map((key) => (key as string[])[2]));
+  }
+  /** Every rewind payload stored for a playthrough, by key. */
+  async rewindPayloads(ref: PlaythroughRef): Promise<Map<string, Uint8Array>> {
+    if (!this.db) return new Map();
+    const tx = this.db.transaction("rewind");
+    const [keys, values] = await Promise.all([
+      tx.store.getAllKeys(runRange(ref)),
+      tx.store.getAll(runRange(ref)),
+    ]);
+    return new Map(keys.map((key, i) => [(key as string[])[2], values[i]]));
+  }
+  /**
+   * Stores a resume point, and with `rewind` its history: the index goes in
+   * the resume record, new payloads go in the `rewind` store, and payloads the
+   * index no longer names are deleted. When a named payload is neither stored
+   * nor supplied, the resume point is stored without history. The state is
+   * stored compressed, and the generation it replaces becomes the previous
+   * one only when that is `PREVIOUS_INTERVAL_MS` older. Returns the payload
+   * keys stored afterwards and the bytes written.
+   */
   async saveResume(
     ref: PlaythroughRef,
     data: Uint8Array,
@@ -463,10 +585,13 @@ export class Library {
     cycle: bigint,
     lastInputAt = 0,
     expectedAccountId?: string,
+    rewind?: RewindHistory,
   ) {
     if (!this.db) throw new StorageError({ cause: this.error });
+    // Compression is asynchronous, so it can't run inside the transaction.
+    const packed = await gzip(data);
     const tx = this.db.transaction(
-      ["games", "resumes", "cloud", "playthroughs"],
+      ["games", "resumes", "cloud", "playthroughs", "rewind"],
       "readwrite",
     );
     return finishWrite(tx, async () => {
@@ -475,14 +600,52 @@ export class Library {
       const game: Game | undefined = await games.get(ref.hash);
       const resumes = tx.objectStore("resumes");
       const old = (await resumes.get(runKey(ref))) as
-        | ResumeCheckpoint
+        | StoredGeneration
+        | undefined;
+      const previous = (await resumes.get(previousKey(ref))) as
+        | StoredGeneration
         | undefined;
       const savedAt = Date.now();
-      const current: ResumeGeneration = {
-        data,
+      const written: ResumeWrite = {
+        state: packed.byteLength,
+        previous: 0,
+        legacy: 0,
+        index: 0,
+        payloads: 0,
+        payloadCount: 0,
+        deleted: 0,
+      };
+      const payloads = tx.objectStore("rewind");
+      const stored = new Set(
+        (await payloads.getAllKeys(runRange(ref))).map(
+          (key) => (key as string[])[2],
+        ),
+      );
+      const history =
+        rewind &&
+        rewind.keys.every((key) => stored.has(key) || rewind.payloads.has(key))
+          ? rewind
+          : undefined;
+      const keep = new Set(history?.keys);
+      for (const key of stored)
+        if (!keep.has(key)) {
+          await payloads.delete([...runKey(ref), key]);
+          written.deleted++;
+        }
+      for (const key of keep)
+        if (!stored.has(key)) {
+          const bytes = history!.payloads.get(key)!;
+          await payloads.put(bytes, [...runKey(ref), key]);
+          written.payloads += bytes.byteLength;
+          written.payloadCount++;
+        }
+      written.index = history?.index.byteLength ?? 0;
+      const current: StoredGeneration = {
+        gzip: packed,
         options,
         cycle: cycle.toString(),
         savedAt,
+        ...(history ? { rewind: history.index } : {}),
         ...(await queueCloud(
           tx,
           ref,
@@ -492,30 +655,37 @@ export class Library {
           expectedAccountId,
         )),
       };
-      const generation = (resume: ResumeGeneration): ResumeGeneration => ({
-        data: resume.data,
+      const generation = (resume: StoredGeneration): StoredGeneration => ({
+        ...(resume.data ? { data: resume.data } : { gzip: resume.gzip }),
         options: resume.options,
         cycle: resume.cycle,
         savedAt: resume.savedAt,
       });
+      const size = (resume: StoredGeneration) =>
+        (resume.data ?? resume.gzip)!.byteLength;
+      // Only raw states can come from the previous core.
+      const isLegacy = (resume?: StoredGeneration) =>
+        !!resume?.data && isLegacyState(resume.data);
       // Resume points from the previous core never rotate out: the newest
-      // one moves to `legacy` and stays there.
+      // one moves to `legacy` and stays there, written once.
       const legacy =
-        old?.legacy ??
-        [old, old?.previous].find(
-          (resume): resume is ResumeGeneration =>
-            resume !== undefined && isLegacyState(resume.data),
-        );
-      await resumes.put(
-        {
-          ...current,
-          ...(old && !isLegacyState(old.data)
-            ? { previous: generation(old) }
-            : {}),
-          ...(legacy ? { legacy: generation(legacy) } : {}),
-        },
-        runKey(ref),
-      );
+        old?.legacy ?? [old, old?.previous].find((resume) => isLegacy(resume));
+      if (legacy && !(await resumes.count(legacyKey(ref)))) {
+        await resumes.put(generation(legacy), legacyKey(ref));
+        written.legacy = size(legacy);
+      }
+      // An earlier player's record moves its previous generation out once.
+      if (
+        old &&
+        !isLegacy(old) &&
+        (!previous ||
+          old.previous ||
+          savedAt - previous.savedAt >= PREVIOUS_INTERVAL_MS)
+      ) {
+        await resumes.put(generation(old), previousKey(ref));
+        written.previous = size(old);
+      }
+      await resumes.put(current, runKey(ref));
       await tx
         .objectStore("playthroughs")
         .put(
@@ -524,13 +694,21 @@ export class Library {
         );
       if (game?.activePlaythroughId === ref.playthroughId)
         await games.put({ ...game, resumeSavedAt: savedAt }, ref.hash);
-      return savedAt;
+      return { savedAt, rewindKeys: keep, written };
     });
   }
   async deletePlaythrough(ref: PlaythroughRef) {
     if (!this.db) throw new StorageError({ cause: this.error });
     const tx = this.db.transaction(
-      ["games", "playthroughs", "saves", "resumes", "cloud", "assets"],
+      [
+        "games",
+        "playthroughs",
+        "saves",
+        "resumes",
+        "cloud",
+        "assets",
+        "rewind",
+      ],
       "readwrite",
     );
     return finishWrite(tx, async () => {
@@ -554,7 +732,8 @@ export class Library {
         );
       await runs.delete(runKey(ref));
       await tx.objectStore("saves").delete(runKey(ref));
-      await tx.objectStore("resumes").delete(runKey(ref));
+      await tx.objectStore("resumes").delete(runRange(ref));
+      await tx.objectStore("rewind").delete(runRange(ref));
       for (const job of await tx
         .objectStore("cloud")
         .index("hash")
@@ -642,7 +821,11 @@ export class Library {
         job.kind === "resume" ? "resumes" : "saves",
         runKey(job),
       );
-      if (source?.cloudRevision === job.revision) data = source.data;
+      if (source?.cloudRevision === job.revision)
+        data =
+          job.kind === "resume"
+            ? (await decodeGeneration(source)).data
+            : source.data;
     }
     return data && job.kind !== "battery" && isLegacyState(data)
       ? undefined
@@ -977,7 +1160,8 @@ export class Library {
 /**
  * Opens the current database, then moves in what an earlier player stored
  * under the legacy name (storage-migration.ts). Version 1 of the current
- * database has the schema of the legacy database's version 8.
+ * database has the schema of the legacy database's version 8, and version 2
+ * adds the `rewind` store.
  */
 export async function openLibrary() {
   let blocked = false;
@@ -985,8 +1169,11 @@ export async function openLibrary() {
   const failure = new Promise<never>((_, reject) => {
     rejectBlocked = reject;
   });
-  const opened = openDB(LOCAL_DATABASE, 1, {
-    upgrade(db) {
+  const opened = openDB(LOCAL_DATABASE, 2, {
+    upgrade(db, oldVersion) {
+      // Rewind payloads of each playthrough's latest resume point.
+      if (oldVersion < 2) db.createObjectStore("rewind");
+      if (oldVersion >= 1) return;
       for (const name of [
         "saves",
         "games",

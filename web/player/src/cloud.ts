@@ -1,5 +1,6 @@
 import {
   cloudEligible,
+  gzip,
   QUICK_SLOTS,
   quickKind,
   quickSlotOf,
@@ -1125,15 +1126,6 @@ function privateLabel(value: string) {
     .join("");
 }
 
-async function gzip(bytes: Uint8Array) {
-  return new Uint8Array(
-    await new Response(
-      new Blob([new Uint8Array(bytes)])
-        .stream()
-        .pipeThrough(new CompressionStream("gzip")),
-    ).arrayBuffer(),
-  );
-}
 async function sha256(bytes: Uint8Array<ArrayBuffer>) {
   return Array.from(
     new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
