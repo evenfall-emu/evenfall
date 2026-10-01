@@ -1,0 +1,22 @@
+[package]
+name = "evenfall-gba-desktop"
+description = "Desktop GBA player: a window, keyboard, sound and the shared presenter around the GBA core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+cpal = "0.18.2"
+evenfall-audio.workspace = true
+evenfall-gba.workspace = true
+evenfall-host.workspace = true
+evenfall-present.workspace = true
+pollster = "0.4"
+wgpu = { workspace = true, features = ["vulkan", "metal", "dx12", "gles"] }
+winit = "0.30.13"
+
+[lints]
+workspace = true

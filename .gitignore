@@ -22,6 +22,7 @@ node_modules/
 *.tgz
 /web/gba/pkg/
 /web/gba/*.wasm
+/web/present/pkg/
 
 .agents/
 /.amp/in/

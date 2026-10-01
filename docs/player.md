@@ -24,6 +24,7 @@ From the repository root, with Node.js 24.11 or later and the Rust toolchain tha
 ```sh
 npm ci
 npm run build:wasm -w @evenfall/gba     # the two WebAssembly cores
+npm run build:wasm -w @evenfall/present # the WebGPU presenter
 npm run dev -w @evenfall/player         # http://127.0.0.1:5173, with hot reload
 ```
 
@@ -99,6 +100,10 @@ Game keys work without canvas focus, but fields, open dialogs and widgets that h
 Moving into a field or losing window focus releases the buttons, and hiding the page pauses.
 **How to play**, from the toolbar's gamepad button or the screen's `?`, shows the keys and toggles the touch controls.
 
+- **Screen.** The More menu chooses how the picture is scaled: **Pixel** (nearest neighbour, the default), **Vanilla+** (sharp bilinear, which keeps every game pixel the same size) and **Whole-number scaling**.
+  The choices are stored on the device.
+  They need WebGPU, through which the screen draws at the canvas's full device resolution.
+  Without it the screen draws through Canvas 2D at 240x160, scaled by the browser as plain pixels, and the choices are disabled ([`design/presentation.md`](design/presentation.md#in-the-browser)).
 - **Toolbar.** [Share state](#sharing-a-state), **Back up now** (with cloud backups on), fullscreen, sound and speed.
   Volume is stored on the device, and mute does not reset it.
   Speed changes wall-clock pacing, not guest cycles, and the audio follows with a matching pitch.
@@ -368,7 +373,7 @@ Accounts, ROMs, gameplay, clicks, errors and share-link pages are never tracked,
 
 ## Storage names and the move from an earlier player
 
-[`src/storage-names.ts`](../web/player/src/storage-names.ts) names everything the player keeps in the browser: the IndexedDB database, the volume and update-reload storage keys, the offline cache prefix, and the save, cloud-sync and migration Web Locks.
+[`src/storage-names.ts`](../web/player/src/storage-names.ts) names everything the player keeps in the browser: the IndexedDB database, the volume, screen and update-reload storage keys, the offline cache prefix, and the save, cloud-sync and migration Web Locks.
 Earlier players used other names for the same things, listed there as `LEGACY`.
 The first load of a current player moves what an earlier one stored ([`src/storage-migration.ts`](../web/player/src/storage-migration.ts)), and nothing is lost on the way:
 
@@ -398,6 +403,7 @@ npm run test:browser -w @evenfall/player
 The browser suite serves `web/player/dist` on `EVENFALL_TEST_PORT` (default 8765).
 It covers the player and the `/validation.html` harness, whose `window.evenfallValidation` hooks also serve the SDK and save-lock tests.
 It uses `PLAYWRIGHT_CHROMIUM_EXECUTABLE` or `/usr/bin/chromium` when present, and otherwise Playwright's own Chromium (`npx playwright install chromium`).
+The screen tests start Chromium with its software WebGPU, SwiftShader, and skip without it unless `EVENFALL_REQUIRE_GPU=1`, as CI sets.
 Setting `EVENFALL_TEST_URL` points the suite at a running deployment instead.
 
 Some tests skip unless `EVENFALL_*` variables point at ROMs and states you supply, and they check the fixtures' hashes first.

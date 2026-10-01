@@ -8,6 +8,9 @@ export const LOCAL_DATABASE = "evenfall-local";
 /** The localStorage key of the volume preference. */
 export const VOLUME_KEY = "evenfall-volume";
 
+/** The localStorage key of the screen preferences (preset, integer scaling). */
+export const SCREEN_KEY = "evenfall-screen";
+
 /** The sessionStorage key that limits automatic update reloads. */
 export const UPDATE_RELOAD_KEY = "evenfall-update-reloaded-at";
 

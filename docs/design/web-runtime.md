@@ -132,8 +132,8 @@ The [presentation pool](../../web/gba/presentation.js) reuses buffers the page g
 Other outputs belong to the caller.
 A `clear` event with a new generation number tells the page to drop frames and audio still queued from before a pause, a speed change or a jump in the timeline.
 
-Drawing at the screen's refresh rate, converting colors for the canvas and dropping frames that arrive too late are the page's job.
-A shared presentation layer with scaling and shader presets for Evenfall's frontends is planned ([#1](https://github.com/evenfall-emu/evenfall/issues/1)).
+Drawing at the screen's refresh rate, scaling and dropping frames that arrive too late are the page's job.
+The player draws through the WebGPU [presenter](presentation.md#in-the-browser) when the browser offers WebGPU, and through Canvas 2D otherwise.
 
 ## Audio
 

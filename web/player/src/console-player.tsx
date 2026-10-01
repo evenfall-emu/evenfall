@@ -10,7 +10,6 @@ import type { RewindTimeline as Timeline } from "@evenfall/gba";
 import { gameInputBlocked, player } from "./player";
 import { QUICK_SLOTS, quickSlotForKey } from "./library";
 import { EmptyScreen } from "./empty-screen";
-import { draw } from "./media";
 import { RewindTimeline } from "./rewind-timeline";
 import { requireCurrentState } from "./state-format";
 
@@ -119,12 +118,16 @@ export function ConsolePlayer({
     close: closeTimeline,
   } = rewind;
   const displayRef = useRef<HTMLDivElement>(null);
+  // A new key mounts a fresh canvas, which a failed WebGPU context can't reuse.
+  const [canvasKey, setCanvasKey] = useState(0);
   const screenRef = useCallback((canvas: HTMLCanvasElement | null) => {
-    player.canvas = canvas ?? undefined;
-    if (canvas && player.state.game)
+    const screen = player.attachScreen(canvas, () =>
+      setCanvasKey((key) => key + 1),
+    );
+    if (screen && player.state.game)
       void player.emulator
         .frame()
-        .then((pixels) => draw(canvas, pixels))
+        .then((pixels) => screen.show(pixels))
         .catch(player.error);
   }, []);
   // Attached during the commit that shows the Player, so a key pressed as the
@@ -187,6 +190,7 @@ export function ConsolePlayer({
       <div className="game-viewport">
         <div className="game-display" id="game-display" ref={displayRef}>
           <canvas
+            key={canvasKey}
             width="240"
             height="160"
             ref={screenRef}

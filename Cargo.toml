@@ -4,10 +4,12 @@ resolver = "3"
 # explicitly as they are added.
 members = [
     "crates/*",
+    "desktop/gba",
     "systems/gba",
     "tools/bench",
     "tools/scenarios",
     "web/gba",
+    "web/present",
 ]
 
 [workspace.package]
@@ -22,6 +24,7 @@ publish = false
 evenfall-audio = { path = "crates/audio" }
 evenfall-cpu-arm = { path = "crates/cpu-arm" }
 evenfall-host = { path = "crates/host" }
+evenfall-present = { path = "crates/present" }
 evenfall-replay = { path = "crates/replay" }
 evenfall-state = { path = "crates/state" }
 evenfall-state-derive = { path = "crates/state-derive" }
@@ -33,6 +36,9 @@ miniz_oxide = "0.8"
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "3", features = ["full"] }
+# Each host build enables the backends it ships (`webgpu` in a browser,
+# Vulkan, Metal, DX12 or GLES natively); shared crates enable none.
+wgpu = { version = "30.0.1", default-features = false }
 wide = { version = "1.7", default-features = false }
 
 [workspace.lints.rust]

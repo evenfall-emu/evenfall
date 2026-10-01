@@ -1582,6 +1582,48 @@ function App() {
                     </div>
                   );
                 })}
+                <hr />
+                <h2>Screen</h2>
+                {(
+                  [
+                    ["pixel", "Pixel"],
+                    ["vanilla-plus", "Vanilla+"],
+                  ] as const
+                ).map(([preset, label]) => (
+                  <button
+                    key={preset}
+                    aria-pressed={state.screen.settings.preset === preset}
+                    disabled={state.screen.renderer !== "webgpu"}
+                    onClick={() =>
+                      player.setScreenSettings({
+                        ...state.screen.settings,
+                        preset,
+                      })
+                    }
+                  >
+                    {label} {state.screen.settings.preset === preset ? "✓" : ""}
+                  </button>
+                ))}
+                <button
+                  aria-pressed={state.screen.settings.integerScale}
+                  disabled={state.screen.renderer !== "webgpu"}
+                  onClick={() =>
+                    player.setScreenSettings({
+                      ...state.screen.settings,
+                      integerScale: !state.screen.settings.integerScale,
+                    })
+                  }
+                >
+                  Whole-number scaling{" "}
+                  {state.screen.settings.integerScale ? "✓" : ""}
+                </button>
+                <p className="menu-note">
+                  {state.screen.renderer === "webgpu"
+                    ? "Vanilla+ keeps every game pixel the same size when the screen isn't a whole multiple of 240×160."
+                    : state.screen.renderer === "canvas"
+                      ? "Screen filters need WebGPU, which this browser doesn't offer, so the game shows plain pixels."
+                      : "Checking for WebGPU…"}
+                </p>
               </Popover.Popup>
             </Popover.Positioner>
           </Popover.Portal>

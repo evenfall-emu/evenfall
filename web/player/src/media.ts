@@ -33,25 +33,30 @@ export function draw(canvas: HTMLCanvasElement, pixels: ArrayLike<number>) {
   surface.ctx.putImageData(surface.image, 0, 0);
 }
 
+/** Where frames are shown. `show` must not keep `pixels` after it returns. */
+export interface FrameTarget {
+  show(pixels: Uint16Array): void;
+}
+
 /** Keep only the newest frame until the display can present it. */
 export class VideoOutput {
-  private canvas?: HTMLCanvasElement;
+  private target?: FrameTarget;
   private pixels?: Uint16Array;
   private animation?: number;
   constructor(private readonly recycle: (pixels: Uint16Array) => void) {}
-  send(canvas: HTMLCanvasElement, pixels: Uint16Array) {
+  send(target: FrameTarget, pixels: Uint16Array) {
     if (this.pixels) this.recycle(this.pixels);
-    this.canvas = canvas;
+    this.target = target;
     this.pixels = pixels;
     this.animation ??= requestAnimationFrame(this.present);
   }
   private present = () => {
     this.animation = undefined;
     const pixels = this.pixels!,
-      canvas = this.canvas!;
-    this.pixels = this.canvas = undefined;
+      target = this.target!;
+    this.pixels = this.target = undefined;
     try {
-      draw(canvas, pixels);
+      target.show(pixels);
     } finally {
       this.recycle(pixels);
     }
@@ -65,7 +70,7 @@ export class VideoOutput {
     if (this.animation !== undefined) cancelAnimationFrame(this.animation);
     this.animation = undefined;
     if (this.pixels) this.recycle(this.pixels);
-    this.pixels = this.canvas = undefined;
+    this.pixels = this.target = undefined;
   }
 }
 export function download(data: BlobPart | Uint8Array, name: string) {

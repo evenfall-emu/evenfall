@@ -7,9 +7,10 @@ It passes the public and in-house test ROMs, but evidence across real games is s
 ## What works
 
 - **GBA core** (`systems/gba`): timed ARM and Thumb execution through a pre-decoded execution engine, with the interpreter as its reference; bus timing with wait states, open bus and Game Pak prefetch; video modes 0 to 5 with raster effects; PSG and Direct Sound audio; timers, DMA, interrupts, HALT and STOP; every save chip family, with autodetection; RTC, solar, gyro, tilt and rumble cartridges; serial link modes including MultiBoot; HLE, skip-BIOS and external BIOS boot; save states and rewind.
-- **Shared crates**: the `System` interface every system implements (`crates/host`), the state codec and envelope (`crates/state`), the ARM7TDMI interpreter (`crates/cpu-arm`), the resampler (`crates/audio`), and scenarios and traces (`crates/replay`).
-- **Hosts**: the headless runner, which also serves GDB clients ([`cli.md`](cli.md)), and a WebAssembly module with the `@evenfall/gba` JavaScript and TypeScript SDK ([`sdk.md`](sdk.md)).
+- **Shared crates**: the `System` interface every system implements (`crates/host`), the state codec and envelope (`crates/state`), the ARM7TDMI interpreter (`crates/cpu-arm`), the resampler (`crates/audio`), scenarios and traces (`crates/replay`), and the GPU presenter that scales frames for graphical hosts (`crates/present`, [`design/presentation.md`](design/presentation.md)).
+- **Hosts**: the headless runner, which also serves GDB clients ([`cli.md`](cli.md)), a WebAssembly module with the `@evenfall/gba` JavaScript and TypeScript SDK ([`sdk.md`](sdk.md)), and a minimal desktop player ([`desktop.md`](desktop.md)).
 - **Web player**: a game library and player in the browser, with playthroughs, autosave, quick slots, rewind, offline use and optional cloud backups ([`player.md`](player.md)), and the Cloudflare Worker behind the hosted instance ([`server.md`](server.md)).
+  It draws through the WebGPU presenter, with Pixel and Vanilla+ scaling, where the browser offers WebGPU.
 
 ## How it is checked
 
@@ -46,4 +47,4 @@ Each [hardware page](gba/hardware/README.md) ends with its open questions.
 ## What's next
 
 Broader compatibility evidence (representative games, hardware captures), fixes for the issues above, and then the next systems.
-Graphical frontends will also share an optional presentation layer with shader presets, outside the deterministic core ([#1](https://github.com/evenfall-emu/evenfall/issues/1)).
+The presenter will gain smooth presets, colour correction and LCD effects, and serve native hosts ([#1](https://github.com/evenfall-emu/evenfall/issues/1)).

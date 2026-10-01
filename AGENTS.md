@@ -9,16 +9,16 @@ Public documentation lives in `docs/`, internal notes in `internal-docs/`.
 
 ## Read before acting
 
-| Task                             | Read                                                                                                    |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Anything                         | [`docs/status.md`](docs/status.md), and the index [`docs/README.md`](docs/README.md)                    |
-| How work is checked              | [`docs/testing.md`](docs/testing.md) and [`internal-docs/methodology.md`](internal-docs/methodology.md) |
-| GBA behavior                     | [`docs/architecture.md`](docs/architecture.md), then [`docs/gba/hardware/`](docs/gba/hardware/)         |
-| Changing emulated behavior       | [Changing emulated behavior](#changing-emulated-behavior), then the hardware page that owns it          |
-| Performance work or benchmarking | [`docs/performance.md`](docs/performance.md) and [`tools/bench/README.md`](tools/bench/README.md)       |
-| Save states, rewind, cheats, web | [`docs/design/`](docs/design/)                                                                          |
-| Web player or its server         | [`docs/player.md`](docs/player.md) and [`docs/server.md`](docs/server.md)                               |
-| Plans and known follow-ups       | [`internal-docs/roadmap.md`](internal-docs/roadmap.md)                                                  |
+| Task                                           | Read                                                                                                    |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Anything                                       | [`docs/status.md`](docs/status.md), and the index [`docs/README.md`](docs/README.md)                    |
+| How work is checked                            | [`docs/testing.md`](docs/testing.md) and [`internal-docs/methodology.md`](internal-docs/methodology.md) |
+| GBA behavior                                   | [`docs/architecture.md`](docs/architecture.md), then [`docs/gba/hardware/`](docs/gba/hardware/)         |
+| Changing emulated behavior                     | [Changing emulated behavior](#changing-emulated-behavior), then the hardware page that owns it          |
+| Performance work or benchmarking               | [`docs/performance.md`](docs/performance.md) and [`tools/bench/README.md`](tools/bench/README.md)       |
+| Save states, rewind, cheats, web, presentation | [`docs/design/`](docs/design/)                                                                          |
+| Web player or its server                       | [`docs/player.md`](docs/player.md) and [`docs/server.md`](docs/server.md)                               |
+| Plans and known follow-ups                     | [`internal-docs/roadmap.md`](internal-docs/roadmap.md)                                                  |
 
 `internal-docs/` is a separate private repository holding the methodology, the roadmap, measurement logs and investigations.
 Clone it in place with `git clone git@github.com:evenfall-emu/internal-docs.git internal-docs`.
@@ -29,9 +29,12 @@ In a Git worktree, symlink `internal-docs` to the main checkout's clone, as for 
 ## Layout
 
 - `crates/`: code shared across systems, split by concern.
-  `host` defines the `System` trait every system implements, `state` and `state-derive` the save-state codec and envelope, `audio` the sample types and resampler, `cpu-arm` the ARM7TDMI interpreter, and `replay` timestamped input logs and scenarios.
+  `host` defines the `System` trait every system implements, `state` and `state-derive` the save-state codec and envelope, `audio` the sample types and resampler, `cpu-arm` the ARM7TDMI interpreter, `replay` timestamped input logs and scenarios, and `present` the wgpu presenter that scales frames for graphical hosts.
 - `systems/gba/`: the Game Boy Advance core, `evenfall-gba`, with its command-line runner and GDB stub (`evenfall-gba gdb`).
+- `desktop/gba/`: `evenfall-gba-desktop`, the desktop player (winit, cpal and the presenter).
+  Building it on Linux needs `libasound2-dev` and `pkg-config`.
 - `web/gba/`: the GBA WebAssembly crate and the `@evenfall/gba` JavaScript SDK.
+- `web/present/`: `@evenfall/present`, the browser's WebGPU host of `crates/present`, a wasm-bindgen module separate from the core's.
 - `web/player/`: the web player, `@evenfall/player` (React and Vite on the SDK).
 - `web/gba-game-plugins/`: `@evenfall/gba-game-plugins`, the player's game plugins (Pokémon panels so far).
 - `web/server/`: `@evenfall/server`, the Cloudflare Worker behind the hosted player (catalog, accounts, cloud saves, shares, patch uploads), with its D1 migrations.
@@ -132,6 +135,9 @@ cargo test --workspace
 cargo test --workspace --release        # some bugs only show when optimized
 ```
 
+The presenter's GPU tests skip without an adapter, and Mesa's lavapipe is enough for them.
+Set `EVENFALL_REQUIRE_GPU=1` after changing `crates/present`, so a missing adapter fails instead.
+
 Test ROMs and slice independence, which need `arm-none-eabi-gcc`:
 
 ```sh
@@ -153,6 +159,7 @@ npm ci
 vp fmt --check                          # vp fmt fixes formatting
 vp check                                # format, Oxlint and TypeScript
 npm run build:wasm -w @evenfall/gba
+npm run build:wasm -w @evenfall/present # needs wasm-bindgen; builds the pinned one once
 vp test                                 # Vitest: web/gba, the player, plugin and server, tools/bench
 ```
 

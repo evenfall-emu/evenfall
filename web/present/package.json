@@ -1,0 +1,29 @@
+{
+  "name": "@evenfall/present",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Draws Evenfall's emulated frames into a canvas through WebGPU, with aspect-correct scaling presets",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "./present.js",
+  "types": "./present.d.ts",
+  "exports": {
+    ".": {
+      "types": "./present.d.ts",
+      "default": "./present.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "present.js",
+    "present.d.ts",
+    "pkg/evenfall_present_web.js",
+    "pkg/evenfall_present_web_bg.wasm"
+  ],
+  "scripts": {
+    "build:wasm": "bash scripts/build-wasm.sh"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

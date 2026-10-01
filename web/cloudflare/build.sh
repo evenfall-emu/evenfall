@@ -5,7 +5,8 @@ set -euo pipefail
 # assets of the `zigba` Worker (web/cloudflare/wrangler.jsonc). It needs only
 # Node.js, npm, curl and a C toolchain for build scripts: when rustup is
 # missing, it installs a pinned, checksummed rustup, and rust-toolchain.toml
-# chooses the compiler. It never migrates or seeds a database.
+# chooses the compiler. The presenter's build compiles the wasm-bindgen
+# version Cargo.lock pins. It never migrates or seeds a database.
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$root"
 
@@ -39,6 +40,7 @@ rustc --version
 # server). Workers Builds' own install is skipped (SKIP_DEPENDENCY_INSTALL).
 npm ci --no-audit --no-fund
 npm run build:wasm -w @evenfall/gba
+npm run build:wasm -w @evenfall/present
 npx vp check
 npx vp test --project player --project gba-game-plugins --project server
 
@@ -71,6 +73,8 @@ test -s "$output/service-worker.js"
 ls "$output/assets" | grep -Eq '^worker-[A-Za-z0-9_-]{8}\.js$'
 ls "$output/assets" | grep -Eq '^evenfall-gba-[A-Za-z0-9_-]{8}\.wasm$'
 ls "$output/assets" | grep -Eq '^evenfall-gba-scalar-[A-Za-z0-9_-]{8}\.wasm$'
+# The WebGPU presenter, loaded only by browsers that offer WebGPU.
+ls "$output/assets" | grep -Eq '^evenfall_present_web_bg-[A-Za-z0-9_-]{8}\.wasm$'
 cp web/cloudflare/headers "$output/_headers"
 mkdir -p "$output/licenses"
 cp LICENSE "$output/licenses/Evenfall.txt"

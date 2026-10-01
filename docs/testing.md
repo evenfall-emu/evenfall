@@ -8,6 +8,7 @@ An emulator can pass its own unit tests and still get a game wrong, so Evenfall 
 - **Recorded hardware results** from the mGBA test suite check timing against numbers measured on a real console.
 - **Slice independence.** The same ROMs run again under several host slice sizes, and every checkpoint must match exactly.
 - **Native against WebAssembly.** The browser build must produce exactly the same state, pixels, audio, memory and save as the native build.
+- **Presentation against a reference.** The presenter's shaders run on a GPU adapter and must match an f64 definition of each preset ([`design/presentation.md`](design/presentation.md#how-it-is-checked)).
 - **Scenarios** replay recorded input and compare hashes, for regressions and bug reports ([`devtools.md`](devtools.md)).
 
 [`compatibility.md`](compatibility.md) lists what the test ROMs and hardware tables cover, and what still fails.
@@ -24,6 +25,7 @@ cargo test --workspace --release
 ```
 
 Run the tests in both debug and release: some bugs only show up in optimized code.
+The presenter's GPU tests pass with a note when the machine has no adapter, and `EVENFALL_REQUIRE_GPU=1` makes that a failure ([details](design/presentation.md#how-it-is-checked)).
 Unit tests sit next to their modules and cover the CPU, bus, devices, HLE BIOS, renderer, session, state codec and rewind.
 Integration tests in [`systems/gba/tests/`](../systems/gba/tests/) drive the machine and the bus from outside, and run the test ROMs and hardware tables.
 
@@ -109,6 +111,7 @@ Run it as `npx vp` unless Vite+ is installed globally.
 ```sh
 npm ci
 npm run build:wasm -w @evenfall/gba
+npm run build:wasm -w @evenfall/present
 vp fmt --check
 vp check
 vp test

@@ -701,7 +701,7 @@ kbd:not(:where([data-ui], [data-ui] *)) {
   width: 180px;
   right: 142px;
 }
-.speed-menu button[aria-pressed="true"] {
+.toolbar-menu button[aria-pressed="true"] {
   color: #6cd4ff;
 }
 .touch-pad {

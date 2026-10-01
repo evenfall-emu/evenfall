@@ -61,6 +61,8 @@ A crate is only extracted once there is real code to share, so there is no place
 - [`evenfall-state`](../crates/state/src/lib.rs) and [`evenfall-state-derive`](../crates/state-derive/src/lib.rs) are the save-state codec, its layout description, the file envelope and rewind storage ([`design/save-states.md`](design/save-states.md)).
 - [`evenfall-audio`](../crates/audio/src/lib.rs) holds the stereo sample type and the resampler.
 - [`evenfall-replay`](../crates/replay/src/lib.rs) records timed scenarios and compares exact observations, independent of any instruction set.
+- [`evenfall-present`](../crates/present/src/lib.rs) draws completed frames for graphical hosts with wgpu, at the source's aspect ratio and with a scaling preset ([`design/presentation.md`](design/presentation.md)).
+  It only reads frames, and headless hosts don't depend on it.
 
 ## The GBA core
 
@@ -136,7 +138,9 @@ Choosing the save file and writing it safely belongs to the native host, in [`ho
 ## Hosts
 
 - [`evenfall-gba`](../systems/gba/src/bin/evenfall-gba.rs) is the command-line runner ([`cli.md`](cli.md)).
+- [`evenfall-gba-desktop`](../desktop/gba/src/main.rs) plays a game in a window, drawn by the presenter ([`desktop.md`](desktop.md)).
 - [`web/gba`](../web/gba/README.md) is the WebAssembly module and the `@evenfall/gba` SDK ([`sdk.md`](sdk.md)).
+- [`web/present`](../web/present/README.md) draws frames into a canvas through WebGPU, as a second WebAssembly module ([`design/presentation.md`](design/presentation.md#in-the-browser)).
   They call `Session` and implement no hardware themselves.
 - [`session_probe`](../systems/gba/src/bin/session_probe.rs) is the native side of the test that compares the native and WebAssembly builds.
 
@@ -149,6 +153,7 @@ Shared crates:
 - [`crates/state`](../crates/state/src/lib.rs), [`crates/state-derive`](../crates/state-derive/src/lib.rs): save-state codec, envelope, layout and rewind storage.
 - [`crates/audio`](../crates/audio/src/lib.rs): samples and resampling.
 - [`crates/replay`](../crates/replay/src/lib.rs): scenarios and observations.
+- [`crates/present`](../crates/present/src/lib.rs): frame presentation for graphical hosts.
 
 The GBA core, in `systems/gba/src/`:
 

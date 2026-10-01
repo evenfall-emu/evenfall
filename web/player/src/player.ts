@@ -26,6 +26,13 @@ import {
 import { acquireSaveLock } from "./storage.js";
 import { type Emulator, type Snapshot, type LoadOptions } from "@evenfall/gba";
 import { AudioOutput, VideoOutput } from "./media";
+import {
+  GameScreen,
+  loadScreenSettings,
+  storeScreenSettings,
+  type ScreenRenderer,
+  type ScreenSettings,
+} from "./screen";
 import { previousRewindCheckpoint } from "./rewind-model";
 import { WriteStats } from "./write-stats";
 import { isLegacyState, LegacyStateError } from "./state-format";
@@ -41,6 +48,7 @@ export class Player {
   private lastInputAt = 0;
   audio = new AudioOutput();
   canvas?: HTMLCanvasElement;
+  private screen?: GameScreen;
   listeners = new Set<() => void>();
   get releaseLock() {
     return this.session?.releaseLock;
@@ -91,6 +99,7 @@ export class Player {
     playthrough?: Playthrough;
     playthroughs: Playthrough[];
     quickSlots: QuickSlotSummary[];
+    screen: { renderer: ScreenRenderer; settings: ScreenSettings };
   } = {
     ready: false,
     playing: false,
@@ -110,6 +119,7 @@ export class Player {
     runs: [],
     playthroughs: [],
     quickSlots: [],
+    screen: { renderer: "starting", settings: loadScreenSettings() },
   };
   subscribe = (f: () => void) => {
     this.listeners.add(f);
@@ -121,6 +131,36 @@ export class Player {
   update(p: Partial<Player["state"]>) {
     this.state = { ...this.state, ...p };
     this.listeners.forEach((f) => f());
+  }
+  /**
+   * Shows frames in `canvas`, or stops showing them when it is null.
+   * `onBroken` asks the page for a fresh canvas after a WebGPU failure.
+   */
+  attachScreen(canvas: HTMLCanvasElement | null, onBroken: () => void) {
+    this.screen?.dispose();
+    this.canvas = canvas ?? undefined;
+    // Before the screen exists: one that falls back to 2D at once reports
+    // its renderer from its constructor.
+    this.update({ screen: { ...this.state.screen, renderer: "starting" } });
+    this.screen = canvas
+      ? new GameScreen(
+          canvas,
+          this.state.screen.settings,
+          (renderer) =>
+            this.update({ screen: { ...this.state.screen, renderer } }),
+          onBroken,
+        )
+      : undefined;
+    return this.screen;
+  }
+  /** The WebGPU screen's pixels, as drawn now; undefined in 2D. */
+  captureScreen() {
+    return this.screen?.capture();
+  }
+  setScreenSettings(settings: ScreenSettings) {
+    storeScreenSettings(settings);
+    this.screen?.configure(settings);
+    this.update({ screen: { ...this.state.screen, settings } });
   }
   error = (e: unknown) =>
     this.update({ message: e instanceof Error ? e.message : String(e) });
@@ -153,7 +193,7 @@ export class Player {
     );
     this.emulator.addEventListener("frame", (e) => {
       const d = (e as CustomEvent).detail;
-      if (this.canvas) this.video.send(this.canvas, d.pixels);
+      if (this.screen) this.video.send(this.screen, d.pixels);
       else this.emulator.recyclePresentation(d.pixels);
       this.audio.send(d.audio);
       this.latest = d.state;

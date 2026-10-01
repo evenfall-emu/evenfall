@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { describe, it, expect, vi } from "vite-plus/test";
-import { AudioOutput, VideoOutput } from "../src/media";
+import { AudioOutput, VideoOutput, draw } from "../src/media";
 function output(audio = new AudioOutput()) {
   const buffers: Float32Array[][] = [];
   const sources: {
@@ -221,12 +221,13 @@ it("presents only the newest frame per refresh and returns every owned buffer", 
     const image = { data: new Uint8ClampedArray(38400 * 4) };
     const ctx = { createImageData: () => image, putImageData: vi.fn() };
     const canvas = { getContext: () => ctx } as unknown as HTMLCanvasElement;
+    const target = { show: (pixels: Uint16Array) => draw(canvas, pixels) };
     const recycled: Uint16Array[] = [];
     const video = new VideoOutput((pixels) => recycled.push(pixels));
     const frames = Array.from({ length: 8 }, (_, i) =>
       new Uint16Array(38400).fill(i === 7 ? 0x7fff : 0),
     );
-    for (const frame of frames) video.send(canvas, frame);
+    for (const frame of frames) video.send(target, frame);
     expect(request).toHaveBeenCalledOnce();
     expect(ctx.putImageData).not.toHaveBeenCalled();
     // Ownership requires the same buffers, not just identical pixel contents.
@@ -239,7 +240,7 @@ it("presents only the newest frame per refresh and returns every owned buffer", 
     frames.forEach((frame, i) => expect(recycled[i]).toBe(frame));
 
     // No refresh while hidden: replacing frames still retains only one.
-    for (const frame of frames) video.send(canvas, frame);
+    for (const frame of frames) video.send(target, frame);
     video.clear();
     expect(cancel).toHaveBeenCalledWith(0);
     expect(refresh).toBeUndefined();
@@ -250,7 +251,7 @@ it("presents only the newest frame per refresh and returns every owned buffer", 
     video.clear();
     expect(recycled).toHaveLength(16);
     expect(ctx.putImageData).toHaveBeenCalledOnce();
-    video.send(canvas, frames[0]);
+    video.send(target, frames[0]);
     video.flush();
     expect([...image.data.slice(0, 4)]).toEqual([0, 0, 0, 255]);
     expect(refresh).toBeUndefined();
