@@ -244,14 +244,26 @@ export class Player {
     await this.persist(flushDuringChange);
   }
   persist(force = false, expectedAccountId?: string) {
-    if ((this.state.changing || this.state.rewinding) && !force)
+    if ((this.state.changing || this.state.rewinding) && !force) {
+      this.writeStats.skip("busy");
       return this.saveTail;
+    }
     const game = this.state.game;
     const ref = this.activeRef;
     const lock = this.releaseLock;
     const epoch = this.persistenceEpoch;
-    if (!game || !ref || !lock || this.state.resumeFailed || this.blocked(ref))
+    if (
+      !game ||
+      !ref ||
+      !lock ||
+      this.state.resumeFailed ||
+      this.blocked(ref)
+    ) {
+      this.writeStats.skip(
+        !game || !ref ? "no game" : !lock ? "no save lock" : "resume blocked",
+      );
       return this.saveTail;
+    }
     this.saveTail = this.saveTail
       .then(async () => {
         if (
@@ -269,8 +281,12 @@ export class Player {
         if (
           cpu.romHash !== game.hash ||
           (!force && cpu.cycle === this.lastResumeCycle)
-        )
+        ) {
+          this.writeStats.skip(
+            cpu.romHash !== game.hash ? "game changed" : "unchanged",
+          );
           return;
+        }
         const data = await this.emulator.exportSave();
         const known =
           this.storedRewind?.epoch === epoch &&
@@ -351,6 +367,7 @@ export class Player {
       .catch((e) => {
         this.storedRewind = undefined;
         this.persistenceError = e;
+        this.writeStats.fail(e);
         this.update({
           saveMessage: `Progress save failed: ${String(e)}. Export save to keep progress.`,
         });

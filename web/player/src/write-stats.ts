@@ -38,6 +38,10 @@ export class WriteStats {
   samples: WriteSample[] = [];
   /** Button-state changes not yet attributed to an autosave. */
   inputs = 0;
+  /** Autosaves that wrote nothing, by reason. */
+  skipped: Record<string, number> = {};
+  failures = 0;
+  lastError?: string;
   private since = Date.now();
 
   record(sample: Omit<WriteSample, "at" | "inputs">) {
@@ -45,9 +49,24 @@ export class WriteStats {
     this.inputs = 0;
     if (this.samples.length > MAX_SAMPLES) this.samples.shift();
   }
+  /**
+   * "unchanged": paused, nothing ran. "no game", "no save lock" (another tab
+   * owns the playthrough), "resume blocked" (a failed resume awaits a
+   * choice), "busy" (a load, reset or rewind is running) and "game changed".
+   */
+  skip(reason: string) {
+    this.skipped[reason] = (this.skipped[reason] ?? 0) + 1;
+  }
+  fail(error: unknown) {
+    this.failures++;
+    this.lastError = String(error);
+  }
   reset() {
     this.samples = [];
     this.inputs = 0;
+    this.skipped = {};
+    this.failures = 0;
+    this.lastError = undefined;
     this.since = Date.now();
   }
   /**
@@ -96,6 +115,14 @@ export class WriteStats {
     const states = samples.map((s) => s.stateRaw).filter(Boolean);
     const summary = {
       saves: samples.length,
+      ...Object.fromEntries(
+        Object.entries(this.skipped).map(([reason, n]) => [
+          `skipped: ${reason}`,
+          n,
+        ]),
+      ),
+      failures: this.failures,
+      ...(this.lastError ? { "last error": this.lastError } : {}),
       "seconds covered": Math.round(seconds),
       "saves while playing": samples.filter((s) => s.playing).length,
       "raw state KiB": +((states.at(-1) ?? 0) / 1024).toFixed(1),

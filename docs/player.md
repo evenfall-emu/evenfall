@@ -226,6 +226,7 @@ Each playthrough keeps its own history, up to the budget, until it is deleted.
 
 The player counts what each autosave writes, in memory only.
 In the browser console, `await evenfallWrites.report()` prints the totals and rates per part (state, previous generation, battery save, rewind index and payloads), what the earlier layout of two raw states per save would have written, and an estimate of an input log at 10 bytes per button change.
+It also counts autosaves that wrote nothing, by reason (`unchanged` while paused, `no game`, `no save lock` when another tab owns the playthrough, `resume blocked`, `busy`), and failed ones with the last error.
 `evenfallWrites.samples` holds one entry per autosave, and `evenfallWrites.reset()` starts over.
 The counts are the bytes handed to IndexedDB, before the browser's own encoding and storage overhead.
 
