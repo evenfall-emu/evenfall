@@ -200,8 +200,12 @@ export class Emulator extends EventTarget {
   /** The content of `saveRewindBundle()`, split into the live state, an index
    * and payloads named by content keys (32 hex digits). A key never changes
    * its content, so pass the keys you already store and only new payloads are
-   * copied out. */
-  saveRewindParts(known?: Iterable<string>): Promise<RewindParts>;
+   * copied out. The history keeps the checkpoints `known` names and others at
+   * least `minGap` captures apart (default 1, every checkpoint). */
+  saveRewindParts(
+    known?: Iterable<string>,
+    minGap?: number,
+  ): Promise<RewindParts>;
   /** `loadRewindBundle()` for parts: needs every payload the index names. */
   loadRewindParts(
     state: Uint8Array,

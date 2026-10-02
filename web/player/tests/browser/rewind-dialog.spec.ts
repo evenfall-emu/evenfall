@@ -221,11 +221,14 @@ test("one checkpoint remains selectable and commits its exact cycle", async ({
 });
 
 /**
- * The autosave stores the history with the resume point, so a reload resumes
- * with every checkpoint, and rewinding still restores their exact states.
+ * The autosave stores the history with the resume point, keeping checkpoints
+ * at least ten captures apart, so a reload resumes with every tenth one, and
+ * rewinding restores its exact state.
  */
-test("rewind history survives a page reload", async ({ page }) => {
-  await prepare(page);
+test("rewind history survives a page reload, ten captures apart", async ({
+  page,
+}) => {
+  await prepare(page, 24);
   const timeline = () =>
     page.evaluate(async () => {
       const { emulator } = (window as unknown as { player: Player }).player;
@@ -233,26 +236,34 @@ test("rewind history survives a page reload", async ({ page }) => {
       return checkpoints.map(({ frame, cycle }) => `${frame}:${cycle}`);
     });
   const before = await timeline();
-  expect(before).toHaveLength(5);
+  expect(before).toHaveLength(24);
   const states = await page.evaluate(async () => {
     const player = (window as unknown as { player: Player }).player;
     await player.checkpointState();
     const { summary, table } = await (
       window as unknown as { evenfallWrites: Player["writeStats"] }
     ).evenfallWrites.report();
+    // Keep autosave from storing the rewound timeline below.
+    const persist = player.persist.bind(player);
+    player.persist = (force, ...rest) =>
+      force ? persist(force, ...rest) : player.saveTail;
     const live = Array.from(await player.emulator.saveState());
-    await player.emulator.rewind(2);
+    const { checkpoints } = await player.emulator.rewindCheckpoints();
+    await player.emulator.rewind(checkpoints[20].steps);
     return {
       live: JSON.stringify(live),
       rewound: JSON.stringify(Array.from(await player.emulator.saveState())),
       saves: summary.saves,
       ratio: summary["compression ratio"],
+      items: summary["history items"],
       payloads: table["rewind payloads"]["total KiB"],
     };
   });
-  // The console statistics saw the save, its compressed state and history.
+  // The console statistics saw the save, its compressed state and the three
+  // kept checkpoints with their anchor.
   expect(states.saves).toBeGreaterThan(0);
   expect(states.ratio).toBeLessThan(0.5);
+  expect(states.items).toBe(4);
   expect(states.payloads).toBeGreaterThan(0);
 
   // A fresh load of /player opens the Library; Home offers the resume.
@@ -274,11 +285,11 @@ test("rewind history survives a page reload", async ({ page }) => {
       }),
     )
     .toBe(states.live);
-  expect(await timeline()).toEqual(before);
+  expect(await timeline()).toEqual([before[0], before[10], before[20]]);
   expect(
     await page.evaluate(async () => {
       const { emulator } = (window as unknown as { player: Player }).player;
-      await emulator.rewind(2);
+      await emulator.rewind(1);
       return JSON.stringify(Array.from(await emulator.saveState()));
     }),
   ).toBe(states.rewound);

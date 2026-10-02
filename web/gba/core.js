@@ -497,13 +497,14 @@ export class WasmCore {
     this.replaceTimeline();
     return this.inspect();
   }
-  saveRewindParts(known = []) {
+  saveRewindParts(known = [], minGap = 1) {
     this.requireLoaded();
+    const gap = uint(minGap, 65535, "rewind persist gap") || 1;
     const held = [...known];
     const packed = new Uint8Array(held.length * 16);
     held.forEach((key, i) => packed.set(keyBytes(key), i * 16));
     this.upload(packed);
-    this.check(this.wasm.ef_write_rewind_parts());
+    this.check(this.wasm.ef_write_rewind_parts(gap));
     const out = this.output();
     const view = new DataView(out.buffer);
     let at = 0;

@@ -31,6 +31,12 @@ import { WriteStats } from "./write-stats";
 import { isLegacyState, LegacyStateError } from "./state-format";
 
 /** Shown when a resume point from the previous core falls back to the battery save. */
+/**
+ * Persisted rewind checkpoints are at least this many captures apart, about
+ * ten seconds of play at any speed, since captures scale with speed. Memory
+ * keeps one per second; a reload keeps one per ten.
+ */
+const REWIND_PERSIST_GAP = 10;
 export const LEGACY_RESUME_MESSAGE =
   "This resume point was saved by an older version of Evenfall and can't be loaded. Started from the in-game save instead; the old resume point is kept.";
 export class Player {
@@ -294,8 +300,12 @@ export class Player {
             ? this.storedRewind.keys
             : await this.library.rewindKeys(ref);
         // One call returns the state and the history that matches it, copying
-        // out only payloads that aren't stored yet.
-        const rewind = await this.emulator.saveRewindParts(known);
+        // out only payloads that aren't stored yet. Stored checkpoints stay,
+        // and new ones are kept REWIND_PERSIST_GAP captures apart.
+        const rewind = await this.emulator.saveRewindParts(
+          known,
+          REWIND_PERSIST_GAP,
+        );
         if (
           !this.matches(ref) ||
           this.releaseLock !== lock ||

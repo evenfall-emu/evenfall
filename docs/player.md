@@ -211,14 +211,16 @@ A save state belongs to one exact ROM.
 
 ### Rewind history
 
-Each autosave also stores the rewind history that matches its resume checkpoint, so resuming after a reload, an update or a switch of playthrough brings back every checkpoint.
+Each autosave also stores the rewind history that matches its resume checkpoint, so resuming after a reload, an update or a switch of playthrough brings back its checkpoints.
+Memory keeps about one checkpoint per second of play, and storage keeps about one per ten seconds: a checkpoint is stored only when it is at least ten captures after the previous stored one, and a stored one stays until the history drops it.
+After a reload, rewinding steps back in ten-second steps until new checkpoints arrive.
 Writing the whole history every five seconds would rewrite up to its 15 MiB budget each time, so the player stores it in parts ([`sdk.md`](sdk.md#storing-history-as-it-grows)):
 
 - The resume checkpoint's latest generation carries the history's index, a few dozen bytes per checkpoint.
 - Each compressed checkpoint and anchor is a record of its own in the `rewind` store, keyed by playthrough and content.
   An autosave writes only the records that are new and deletes those the history dropped, in the resume checkpoint's transaction.
 
-During play the history grows by about 5 to 20 KiB a second, so the autosave writes about that much more, beside a compressed resume checkpoint of 3 to 10 KiB a second.
+Storing one checkpoint in ten writes about 0.5 to 3 KiB a second of history during play, beside a compressed resume checkpoint of 3 to 15 KiB a second.
 Only the latest generation has a history: a resume that falls back to the previous generation, or a history that fails to load, starts without one.
 Each playthrough keeps its own history, up to the budget, until it is deleted.
 

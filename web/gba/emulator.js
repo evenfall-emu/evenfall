@@ -163,8 +163,8 @@ export class Emulator extends EventTarget {
   loadRewindBundle(bytes) {
     return this.request("loadRewindBundle", [bytes]);
   }
-  saveRewindParts(known = []) {
-    return this.request("saveRewindParts", [[...known]]);
+  saveRewindParts(known = [], minGap = 1) {
+    return this.request("saveRewindParts", [[...known], minGap]);
   }
   loadRewindParts(state, index, payloads) {
     return this.request("loadRewindParts", [state, index, payloads]);

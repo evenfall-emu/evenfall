@@ -506,7 +506,7 @@ async function command(method, args) {
     case "saveRewindBundle":
       return core.saveRewindBundle();
     case "saveRewindParts":
-      return core.saveRewindParts(args[0]);
+      return core.saveRewindParts(args[0], args[1]);
     case "exportSave":
       return core.exportSave();
     case "frame":

@@ -525,12 +525,13 @@ pub extern "C" fn ef_load_rewind_bundle() -> i32 {
     })
 }
 
-/// Input: the payload keys the host holds, 16 bytes each. Output: the live
+/// `min_gap` (at least 1) spaces the checkpoints that aren't stored yet, in
+/// captures. Input: the payload keys the host holds, 16 bytes each. Output: the live
 /// state and the index (each a `u32` length and bytes), a `u32` count and the
 /// keys the index names, then a `u32` count of `(key, u32 length, bytes)`
 /// payloads the host lacks.
 #[unsafe(no_mangle)]
-pub extern "C" fn ef_write_rewind_parts() -> i32 {
+pub extern "C" fn ef_write_rewind_parts(min_gap: u32) -> i32 {
     call(|state| {
         state.clear_output();
         let State { session, input, .. } = state;
@@ -543,7 +544,7 @@ pub extern "C" fn ef_write_rewind_parts() -> i32 {
         let parts = session
             .as_mut()
             .ok_or("NoSession")?
-            .write_rewind_parts(|key| known.binary_search(key).is_ok())
+            .write_rewind_parts(|key| known.binary_search(key).is_ok(), u64::from(min_gap.max(1)))
             .map_err(session_error)?;
         *input = Vec::new();
         let len = 16

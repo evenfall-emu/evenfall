@@ -127,7 +127,7 @@ export class WasmCore {
   saveRewindBundle(): Uint8Array;
   loadRewindBundle(bundle: Uint8Array): Snapshot;
   /** A bundle split for incremental storage; copies only unknown payloads. */
-  saveRewindParts(known?: Iterable<string>): RewindParts;
+  saveRewindParts(known?: Iterable<string>, minGap?: number): RewindParts;
   loadRewindParts(
     state: Uint8Array,
     index: Uint8Array,

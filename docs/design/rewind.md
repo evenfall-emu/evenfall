@@ -195,6 +195,13 @@ The key is the first 16 bytes of the payload's BLAKE3 hash, so a key always name
 The buffer computes it once, when a payload is stored, folded into a stand-alone entry, or imported.
 A save therefore only hashes and copies new payloads, and the rest of the history costs one index entry each.
 
+A host can also store fewer checkpoints than the buffer holds.
+`RewindBuffer::select(min_gap, known)` marks the entries to store: every entry whose key the host already stores, and each other entry at least `min_gap` sequence numbers after the previous marked one, oldest first.
+Sequence numbers count captures, about one per second of play at any speed.
+Keeping stored entries makes the selection stable as captures arrive, and after eviction it picks up an unstored entry wherever the stored ones grew too far apart.
+`write_index` and `payloads` take the selection and write only the marked entries and the anchors they need.
+When no marked entry needs the current anchor, the index leaves it out, and the loaded history opens a new anchor at its next capture.
+
 `RewindBuffer::assemble_bundle` rebuilds the exact bundle from the live state, the index and a lookup by key.
 It checks every payload against its key and length, then the bundle loads through the ordinary checks above.
 `Session::write_rewind_parts` and `load_rewind_parts` wrap the two, and take the live state from the same call, so state and history always match.
@@ -216,6 +223,7 @@ No test yet covers rewind under allocation failure, or a full rewind session in 
 
 `bundle_round_trip_and_corrupt_history_rejection` writes and reloads bundles, and checks that corrupt ones are rejected with the live state and history untouched.
 `index_and_keyed_payloads_rebuild_the_exact_bundle` stores payloads by key through eviction, new anchors and folding, and checks that every key keeps its bytes and that the parts rebuild the exact bundle.
+`a_gap_spaces_persisted_checkpoints_and_keeps_stored_ones` checks the selection, and that a sparse index without the current anchor loads and keeps capturing.
 
 ## Known limits
 

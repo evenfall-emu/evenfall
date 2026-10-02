@@ -695,7 +695,7 @@ impl RewindBuffer {
             return Err(INVALID);
         }
         let mut count = Sink::new(None, None);
-        self.write_history(&mut count, false)?;
+        self.write_history(&mut count, None)?;
         let history_len = usize::try_from(count.count).map_err(|_| INVALID)?;
         let len = 16usize
             .checked_add(live.len())
@@ -710,7 +710,7 @@ impl RewindBuffer {
             BUNDLE_VERSION.encode(&mut sink)?;
             (live.len() as u32).encode(&mut sink)?;
             sink.write_all(live)?;
-            self.write_history(&mut sink, false)?;
+            self.write_history(&mut sink, None)?;
         }
         let hash = blake3::hash(&out);
         out.extend_from_slice(hash.as_bytes());
@@ -718,30 +718,72 @@ impl RewindBuffer {
         Ok(out)
     }
 
-    /// A bundle without its live state, with each payload replaced by its key.
-    /// Together with the live state and `payloads()`, it rebuilds the bundle
-    /// through `assemble_bundle`, so a host can store payloads once each.
-    pub fn write_index(&self) -> Result<Vec<u8>> {
+    /// The entries a host persists, one flag per entry, oldest first: every
+    /// entry whose payload `known` names (it is stored already), and each other
+    /// entry at least `min_gap` captures after the previous selected one.
+    /// Keeping stored entries makes the selection stable from save to save, so
+    /// a host writes each payload once. A `min_gap` of 1 selects every entry.
+    pub fn select(&self, min_gap: u64, known: impl Fn(&PayloadKey) -> bool) -> Vec<bool> {
+        let mut last: Option<u64> = None;
+        self.entries
+            .iter()
+            .map(|entry| {
+                let take =
+                    known(&entry.key) || last.is_none_or(|last| entry.sequence - last >= min_gap);
+                if take {
+                    last = Some(entry.sequence);
+                }
+                take
+            })
+            .collect()
+    }
+
+    /// A bundle of the selected entries without its live state, with each
+    /// payload replaced by its key. Together with the live state and
+    /// `payloads(selection)`, it rebuilds that bundle through
+    /// `assemble_bundle`, so a host can store payloads once each.
+    pub fn write_index(&self, selection: &[bool]) -> Result<Vec<u8>> {
+        if selection.len() != self.entries.len() {
+            return Err(INVALID);
+        }
         let mut out = Vec::new();
         {
             let mut sink = Sink::new(Some(&mut out), None);
             sink.write_all(INDEX_MAGIC)?;
             BUNDLE_VERSION.encode(&mut sink)?;
-            self.write_history(&mut sink, true)?;
+            self.write_history(&mut sink, Some(selection))?;
         }
         let hash = blake3::hash(&out);
         out.extend_from_slice(hash.as_bytes());
         Ok(out)
     }
 
-    /// Every stored payload in index order (anchors, then entries oldest
-    /// first), with the key the index names it by.
-    pub fn payloads(&self) -> impl Iterator<Item = (&PayloadKey, &[u8])> {
+    /// Whether a selected entry is stored as a delta from anchor `id`.
+    fn anchor_selected(&self, id: u32, selection: &[bool]) -> bool {
+        self.entries.iter().zip(selection).any(|(entry, &selected)| {
+            selected && entry.encoding.uses_anchor() && entry.anchor == id
+        })
+    }
+
+    /// The payloads of `write_index(selection)` in index order (the anchors
+    /// selected entries need, then the selected entries oldest first), with
+    /// the key the index names each by.
+    pub fn payloads<'a>(
+        &'a self,
+        selection: &'a [bool],
+    ) -> impl Iterator<Item = (&'a PayloadKey, &'a [u8])> {
         let bundle = self.bundle.as_deref().unwrap_or(&[]);
         self.anchors
             .iter()
+            .filter(move |anchor| self.anchor_selected(anchor.id, selection))
             .map(move |anchor| (&anchor.key, anchor.stored.bytes(bundle)))
-            .chain(self.entries.iter().map(move |entry| (&entry.key, entry.state.bytes(bundle))))
+            .chain(
+                self.entries
+                    .iter()
+                    .zip(selection)
+                    .filter(|(_, selected)| **selected)
+                    .map(move |(entry, _)| (&entry.key, entry.state.bytes(bundle))),
+            )
     }
 
     /// Rebuilds the bundle that `write_index` describes. Every payload must
@@ -814,8 +856,13 @@ impl RewindBuffer {
         Ok(out)
     }
 
-    /// With `keys`, each payload is written as its key instead of its bytes.
-    fn write_history(&self, sink: &mut Sink<'_>, keys: bool) -> Result<()> {
+    /// With a selection, only the selected entries and the anchors they need
+    /// are written, each payload as its key instead of its bytes. A current
+    /// anchor no selected entry needs is left out, and loading starts a new one.
+    fn write_history(&self, sink: &mut Sink<'_>, selection: Option<&[bool]>) -> Result<()> {
+        let keys = selection.is_some();
+        let entry_selected = |i: usize| selection.is_none_or(|s| s[i]);
+        let anchor_kept = |id: u32| selection.is_none_or(|s| self.anchor_selected(id, s));
         self.config.budget_bytes.encode(sink)?;
         self.config.interval_frames.encode(sink)?;
         (self.config.compression as u8).encode(sink)?;
@@ -824,12 +871,20 @@ impl RewindBuffer {
         self.next_sequence.encode(sink)?;
         self.last_capture_frame.is_some().encode(sink)?;
         self.last_capture_frame.unwrap_or(0).encode(sink)?;
-        self.current_anchor_raw.is_some().encode(sink)?;
+        (self.current_anchor_raw.is_some() && anchor_kept(self.current_anchor)).encode(sink)?;
         self.current_anchor.encode(sink)?;
         self.next_anchor.encode(sink)?;
-        (self.anchors.len() as u32).encode(sink)?;
-        (self.entries.len() as u32).encode(sink)?;
-        for anchor in &self.anchors {
+        let anchors: Vec<&Anchor> = self.anchors.iter().filter(|a| anchor_kept(a.id)).collect();
+        let entries: Vec<&Entry> = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| entry_selected(*i))
+            .map(|(_, e)| e)
+            .collect();
+        (anchors.len() as u32).encode(sink)?;
+        (entries.len() as u32).encode(sink)?;
+        for anchor in anchors {
             anchor.id.encode(sink)?;
             (anchor.stored.len() as u32).encode(sink)?;
             if keys {
@@ -838,7 +893,7 @@ impl RewindBuffer {
                 sink.write_all(anchor.stored.bytes(self.bundle.as_deref().unwrap_or(&[])))?;
             }
         }
-        for entry in &self.entries {
+        for entry in entries {
             entry.frame.encode(sink)?;
             entry.cycle.encode(sink)?;
             entry.sequence.encode(sink)?;

@@ -239,7 +239,8 @@ fn index_and_keyed_payloads_rebuild_the_exact_bundle() {
             }
             let mut referenced = Vec::new();
             let mut written = 0;
-            for (key, bytes) in history.payloads() {
+            let all = history.select(1, |_| false);
+            for (key, bytes) in history.payloads(&all) {
                 referenced.push(*key);
                 if let Some(stored) = store.get(key) {
                     assert_eq!(stored, bytes, "a key kept its content");
@@ -255,7 +256,7 @@ fn index_and_keyed_payloads_rebuild_the_exact_bundle() {
                 && (0..history.depth())
                     .any(|i| history.info(i).unwrap().encoding == rewind::Encoding::Deflate);
             let live = state(frame + 1);
-            let index = history.write_index().unwrap();
+            let index = history.write_index(&all).unwrap();
             let bundle = RewindBuffer::assemble_bundle(&live, &index, |key| {
                 store.get(key).map(Vec::as_slice)
             })
@@ -266,7 +267,9 @@ fn index_and_keyed_payloads_rebuild_the_exact_bundle() {
         assert_eq!(folded, compression == Compression::Delta, "an anchor was folded");
 
         let live = state(246);
-        let index = history.write_index().unwrap();
+        let all = history.select(1, |_| false);
+        assert!(all.iter().all(|selected| *selected), "a gap of 1 keeps every entry");
+        let index = history.write_index(&all).unwrap();
         let lookup = |key: &PayloadKey| store.get(key).map(Vec::as_slice);
         let validate = |bytes: &[u8]| {
             let frame = u64::from_le_bytes(bytes[..8].try_into().unwrap());
@@ -274,9 +277,15 @@ fn index_and_keyed_payloads_rebuild_the_exact_bundle() {
         };
         let bundle = RewindBuffer::assemble_bundle(&live, &index, lookup).unwrap();
         let (_, loaded) = RewindBuffer::read_bundle_owned(bundle, validate).unwrap();
-        assert!(loaded.payloads().map(|(key, _)| key).eq(history.payloads().map(|(key, _)| key)));
+        let loaded_all = loaded.select(1, |_| false);
+        assert!(
+            loaded
+                .payloads(&loaded_all)
+                .map(|(key, _)| key)
+                .eq(history.payloads(&all).map(|(key, _)| key))
+        );
 
-        let (first, _) = history.payloads().next().unwrap();
+        let (first, _) = history.payloads(&all).next().unwrap();
         let missing = RewindBuffer::assemble_bundle(&live, &index, |key| {
             if key == first { None } else { lookup(key) }
         });
@@ -301,6 +310,67 @@ fn index_and_keyed_payloads_rebuild_the_exact_bundle() {
             "a bundle is not an index"
         );
     }
+}
+
+/// A gap keeps the oldest checkpoint, then each one at least that many
+/// captures after the previous kept one, and always keeps checkpoints the host
+/// stores already. Only the anchors kept checkpoints need are written: here the
+/// current anchor, opened by a scene change, is left out, and the loaded
+/// history decodes every kept checkpoint and opens a new anchor on its next
+/// capture.
+#[test]
+fn a_gap_spaces_persisted_checkpoints_and_keeps_stored_ones() {
+    let state = |step: u64| {
+        // A new scene at step 41 opens a second anchor.
+        let mut seed = if step < 41 { 1u32 } else { 2 };
+        let mut state: Vec<u8> = (0..8192)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                seed as u8
+            })
+            .collect();
+        let at = (step as usize * 977) % 7000;
+        state[at..at + 600].fill(step as u8);
+        state[..8].copy_from_slice(&step.to_le_bytes());
+        state
+    };
+    let labels = |step: u64| ((step + 1) * 60, (step + 1) * 10);
+    let mut history = RewindBuffer::new(RewindConfig::default()).unwrap();
+    for step in 0..45 {
+        let (frame, cycle) = labels(step);
+        history.push(frame, cycle, &state(step)).unwrap();
+    }
+    let picked = |selection: &[bool]| {
+        selection.iter().enumerate().filter(|(_, s)| **s).map(|(i, _)| i).collect::<Vec<_>>()
+    };
+    let selection = history.select(10, |_| false);
+    assert_eq!(picked(&selection), [0, 10, 20, 30, 40]);
+    let store: HashMap<PayloadKey, Vec<u8>> =
+        history.payloads(&selection).map(|(key, bytes)| (*key, bytes.to_vec())).collect();
+    assert_eq!(store.len(), 6, "the first anchor and five checkpoints");
+
+    let index = history.write_index(&selection).unwrap();
+    let bundle =
+        RewindBuffer::assemble_bundle(&state(45), &index, |key| store.get(key).map(Vec::as_slice))
+            .unwrap();
+    let validate = |bytes: &[u8]| Ok(labels(u64::from_le_bytes(bytes[..8].try_into().unwrap())));
+    let (_, mut loaded) = RewindBuffer::read_bundle_owned(bundle, validate).unwrap();
+    assert_eq!(loaded.depth(), 5);
+    for (i, step) in [0, 10, 20, 30, 40].into_iter().enumerate() {
+        assert_eq!(loaded.decode(i).unwrap(), state(step));
+    }
+    let (frame, cycle) = labels(45);
+    loaded.push(frame, cycle, &state(45)).unwrap();
+    assert_eq!(loaded.decode(5).unwrap(), state(45));
+
+    // Entry 5 is stored already, so it stays, and the gap counts from it.
+    let all = history.select(1, |_| false);
+    let keys: Vec<PayloadKey> = history.payloads(&all).map(|(key, _)| *key).collect();
+    assert_eq!(keys.len() - history.depth(), 2, "the scene change opened a second anchor");
+    let fifth = keys[keys.len() - history.depth() + 5];
+    assert_eq!(picked(&history.select(10, |key| *key == fifth)), [0, 5, 15, 25, 35]);
 }
 
 #[test]

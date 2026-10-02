@@ -277,6 +277,12 @@ test("rewind parts restore a bundle's history and copy out only unknown payloads
     run(7);
     const first = core.saveRewindParts();
     assert.deepEqual(first.state, core.saveState());
+    // Checkpoints at frames 2, 4 and 6: a gap of 2 keeps those at 2 and 6.
+    assert.equal(
+      core.saveRewindParts([], 2).keys.length,
+      first.keys.length - 1,
+    );
+    assert.throws(() => core.saveRewindParts([], -1), RangeError);
     assert.deepEqual([...first.payloads.keys()], first.keys);
     const store = new Map(first.payloads);
     run(4);

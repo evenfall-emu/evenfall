@@ -537,18 +537,23 @@ impl Session {
         Ok(self.rewind_history.write_bundle(&live)?)
     }
 
-    /// The same content as [`Self::write_rewind_bundle_fallible`], split so
-    /// that a host storing history incrementally copies out only the payloads
-    /// it doesn't hold. Payloads are named by content and never change.
+    /// The content of [`Self::write_rewind_bundle_fallible`], split so that a
+    /// host storing history incrementally copies out only the payloads it
+    /// doesn't hold. Payloads are named by content and never change. The
+    /// history keeps the checkpoints the host stores already and others at
+    /// least `min_gap` captures apart ([`RewindBuffer::select`]); a `min_gap`
+    /// of 1 keeps every checkpoint.
     pub fn write_rewind_parts(
         &mut self,
         known: impl Fn(&RewindPayloadKey) -> bool,
+        min_gap: u64,
     ) -> Result<RewindParts, Error> {
         let state = self.write_state_fallible()?;
-        let index = self.rewind_history.write_index()?;
+        let selection = self.rewind_history.select(min_gap, &known);
+        let index = self.rewind_history.write_index(&selection)?;
         let mut keys = Vec::with_capacity(self.rewind_history.depth());
         let mut payloads: Vec<(RewindPayloadKey, Vec<u8>)> = Vec::new();
-        for (key, bytes) in self.rewind_history.payloads() {
+        for (key, bytes) in self.rewind_history.payloads(&selection) {
             keys.push(*key);
             if !known(key) && !payloads.iter().any(|(k, _)| k == key) {
                 payloads.push((*key, bytes.to_vec()));
@@ -1121,7 +1126,7 @@ mod tests {
         for _ in 0..5 {
             a.advance(a.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
         }
-        let first = a.write_rewind_parts(|_| false).unwrap();
+        let first = a.write_rewind_parts(|_| false, 1).unwrap();
         assert_eq!(first.state, a.write_state().unwrap());
         assert_eq!(first.payloads.iter().map(|(key, _)| *key).collect::<Vec<_>>(), first.keys);
         let mut store = first.payloads;
@@ -1142,7 +1147,7 @@ mod tests {
         for _ in 0..2 {
             a.advance(a.machine.now() + Machine::CYCLES_PER_FRAME).unwrap();
         }
-        let next = a.write_rewind_parts(|key| store.iter().any(|(k, _)| k == key)).unwrap();
+        let next = a.write_rewind_parts(|key| store.iter().any(|(k, _)| k == key), 1).unwrap();
         assert_eq!(next.payloads.len(), 2, "two new captures, no anchor");
         store.extend(next.payloads);
         let owned: Vec<_> = next.keys.iter().map(|key| find(&store, key)).collect();

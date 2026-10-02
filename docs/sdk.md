@@ -194,17 +194,17 @@ Every method returns a promise, and calls run in order through the session's que
 Returned bytes, pixels and samples are always copies you own, never views into WebAssembly memory.
 Cycles are unsigned 64-bit `bigint` values, so don't convert long-running counters to `number`.
 
-| Group                   | Methods                                                                                                                                                                                                                       |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Lifecycle               | `Emulator.create(options?)`, `load(image, options?)`, `dispose()`, `terminate(message?)`                                                                                                                                      |
-| Playing                 | `play()`, `pause()`, `setSpeed(multiplier)`, `setKeys(mask)`                                                                                                                                                                  |
-| Running by hand         | `runUntil(deadline, inputs?)`, `step()`                                                                                                                                                                                       |
-| Cheats                  | `setCheats(cheats)`, `cheats()`, `parseCheat(code, format?)`                                                                                                                                                                  |
-| Looking inside          | `inspect()`, `frame()`, `readMemory(address, length)`, `captureMemory()`, `exportRom()`                                                                                                                                       |
-| Saves and states        | `exportSave()`, `reset()`, `resetWithSave(save)`, `saveState()`, `loadState(bytes)`                                                                                                                                           |
-| Rewind                  | `setRewindConfig(...)`, `rewind(steps?)`, `rewindDepth()`, `rewindCheckpoints()`, `rewindFrame(index)`, `saveRewindBundle()`, `loadRewindBundle(bytes)`, `saveRewindParts(known?)`, `loadRewindParts(state, index, payloads)` |
-| Recording and scenarios | `recording(enabled?)`, `newSegment()`, `checkpoint(name)`, `capture(note?)`, `exportScenario(name?)`, `runScenario(manifest, assets)`, `replay(bundle)`, `cancel()`                                                           |
-| Buffers                 | `recyclePresentation(pixels?, audio?)`                                                                                                                                                                                        |
+| Group                   | Methods                                                                                                                                                                                                                                |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lifecycle               | `Emulator.create(options?)`, `load(image, options?)`, `dispose()`, `terminate(message?)`                                                                                                                                               |
+| Playing                 | `play()`, `pause()`, `setSpeed(multiplier)`, `setKeys(mask)`                                                                                                                                                                           |
+| Running by hand         | `runUntil(deadline, inputs?)`, `step()`                                                                                                                                                                                                |
+| Cheats                  | `setCheats(cheats)`, `cheats()`, `parseCheat(code, format?)`                                                                                                                                                                           |
+| Looking inside          | `inspect()`, `frame()`, `readMemory(address, length)`, `captureMemory()`, `exportRom()`                                                                                                                                                |
+| Saves and states        | `exportSave()`, `reset()`, `resetWithSave(save)`, `saveState()`, `loadState(bytes)`                                                                                                                                                    |
+| Rewind                  | `setRewindConfig(...)`, `rewind(steps?)`, `rewindDepth()`, `rewindCheckpoints()`, `rewindFrame(index)`, `saveRewindBundle()`, `loadRewindBundle(bytes)`, `saveRewindParts(known?, minGap?)`, `loadRewindParts(state, index, payloads)` |
+| Recording and scenarios | `recording(enabled?)`, `newSegment()`, `checkpoint(name)`, `capture(note?)`, `exportScenario(name?)`, `runScenario(manifest, assets)`, `replay(bundle)`, `cancel()`                                                                    |
+| Buffers                 | `recyclePresentation(pixels?, audio?)`                                                                                                                                                                                                 |
 
 `Emulator.create(options)` accepts `workerUrl` and `wasmUrl`, and `diagnosticsIntervalMs`.
 The last one sets how often a frame event carries a fresh CPU snapshot: the default, 0, means every frame, and larger values reuse a cached one.
@@ -441,7 +441,7 @@ WebAssembly memory starts at 16 MiB and can grow to 512 MiB, and neither number 
 ### Storing history as it grows
 
 Writing a whole bundle on every autosave rewrites up to the full budget each time, although only a few checkpoints changed.
-`saveRewindParts(known)` returns the same content split so that a page can store it incrementally:
+`saveRewindParts(known, minGap)` returns the same content split so that a page can store it incrementally:
 
 - `state` is the exact live state, the same bytes as `saveState()`.
 - `index` holds the settings and the checkpoint list, a few dozen bytes per checkpoint.
@@ -453,8 +453,13 @@ Store the index each time, write the new payloads, and delete stored payloads th
 At one checkpoint a second, that writes about what the history grows by, a few kilobytes a second, instead of the whole history.
 State and history come from one call, so they always match, even while the game plays.
 
+`minGap` (default 1) stores a sparser history than the one in memory.
+The parts keep every checkpoint whose key is in `known`, and of the others only those at least `minGap` checkpoints after the previous one kept, counting from the oldest.
+Keeping stored checkpoints makes the choice stable from save to save, so each payload is still written once.
+Checkpoints are taken about once a second of play at any speed, so a `minGap` of 10 stores one about every ten seconds and writes about a tenth as much.
+
 ```ts
-const parts = await emulator.saveRewindParts(storedKeys);
+const parts = await emulator.saveRewindParts(storedKeys, 10);
 // One transaction: parts.state and parts.index, the new parts.payloads,
 // and deleting stored payloads that parts.keys no longer names.
 await emulator.loadRewindParts(parts.state, parts.index, storedPayloads);
