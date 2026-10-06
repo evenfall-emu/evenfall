@@ -120,4 +120,7 @@ if [[ -f package-lock.json ]]; then
     (cd web/player && npx playwright install chromium-headless-shell)
 fi
 
+# The same as .agents/resume: lets Oxlint reserve its memory.
+sudo sysctl -q -w vm.overcommit_memory=1
+
 step "Complete"

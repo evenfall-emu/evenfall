@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
-# Nothing to reconnect: the toolchains and references installed by setup are
-# local files. Kept so a later service can add fast, idempotent repairs here.
+# Fast, idempotent repairs after an orb resumes. The toolchains and references
+# installed by setup are local files and need nothing.
 set -euo pipefail
+
+# Oxlint, behind vp check and vp lint, reserves more virtual memory than the
+# kernel's default overcommit heuristic allows here and panics before linting.
+sudo sysctl -q -w vm.overcommit_memory=1
