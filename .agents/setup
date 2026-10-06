@@ -111,6 +111,13 @@ fi
 if [[ -f package-lock.json ]]; then
     step "Installing npm workspaces"
     npm ci --no-audit --no-fund
+
+    # The player needs the WebAssembly core to become ready, so its browser
+    # tests fail until it is built; Playwright needs its own Chromium.
+    step "Building the WebAssembly core"
+    npm run build:wasm -w @evenfall/gba
+    step "Installing Playwright's Chromium"
+    (cd web/player && npx playwright install chromium-headless-shell)
 fi
 
 step "Complete"
