@@ -1,10 +1,4 @@
 import { useEffect, useState, type ReactNode } from "react";
-import cover1 from "../../assets/landing/covers/cover1.png";
-import cover2 from "../../assets/landing/covers/cover2.png";
-import cover3 from "../../assets/landing/covers/cover3.png";
-import cover4 from "../../assets/landing/covers/cover4.png";
-import cover5 from "../../assets/landing/covers/cover5.png";
-import cover6 from "../../assets/landing/covers/cover6.png";
 import bat from "../../assets/landing/creatures/bat.png";
 import fox from "../../assets/landing/creatures/fox.png";
 import golem from "../../assets/landing/creatures/golem.png";
@@ -47,24 +41,6 @@ function Sprite({
   );
 }
 
-/** One original "base game" cartridge, drawn in the brand's pixel style. */
-const CARTRIDGE = [
-  "..cccccccccccccc..",
-  ".cllllllllllllllc.",
-  ".cl............lc.",
-  ".cl.mmmmmmmmmm.lc.",
-  ".cl.mppppppppm.lc.",
-  ".cl.mpyyyyyypm.lc.",
-  ".cl.mpyyyyyypm.lc.",
-  ".cl.mtttttttm..lc.",
-  ".cl.mmmmmmmmmm.lc.",
-  ".cl............lc.",
-  ".cllllllllllllllc.",
-  ".cllllllllllllllc.",
-  ".cl.l.l.l.l.l.llc.",
-  ".cccccccccccccccc.",
-];
-
 function PixelRows({
   rows,
   inks,
@@ -104,80 +80,6 @@ function PixelRows({
     >
       {rects}
     </svg>
-  );
-}
-
-const COVERS = [cover1, cover2, cover3, cover4, cover5, cover6];
-
-/**
- * One base game on the left; a fanned stack of community adventures on the
- * right, cycling slowly so a different one comes forward. The covers step
- * by whole pixels and never rotate, so their art pixels stay square.
- */
-export function RomhackFan({ still = false }: { still?: boolean }) {
-  const [front, setFront] = useState(0);
-  useEffect(() => {
-    if (still) return;
-    const timer = setInterval(
-      () => setFront((current) => (current + 1) % COVERS.length),
-      2200,
-    );
-    return () => clearInterval(timer);
-  }, [still]);
-  // The stack spans the front cover plus `step` pixels per cover behind it.
-  // The ROM sits beside the stack from 480px, where the row (394 px plus
-  // its gaps) fits every column: 432 px at 480, 456 px per lg half.
-  const behind = 4;
-  const step = 28;
-  return (
-    <div
-      className="flex flex-col items-center gap-4 min-[480px]:flex-row sm:gap-6"
-      aria-hidden="true"
-    >
-      <div className="flex flex-col items-center gap-3">
-        <PixelRows
-          rows={CARTRIDGE}
-          inks={{
-            c: "#70879a",
-            l: "#223747",
-            m: "#3a4e60",
-            p: "#f5aa82",
-            y: "#fbde8f",
-            t: "#034579",
-          }}
-          scale={5}
-        />
-        <span className="text-1x5 whitespace-nowrap text-muted">Your ROM</span>
-      </div>
-      <PixelRows
-        rows={["#....", "##...", "#####", "##...", "#...."]}
-        inks={{ "#": "#8cdbbe" }}
-        scale={4}
-      />
-      <div
-        className="relative"
-        style={{ width: 166 + behind * step, height: 250 + behind * 8 }}
-      >
-        {COVERS.map((cover, i) => {
-          // Position in the stack, counted from the front cover.
-          const slot = (i - front + COVERS.length) % COVERS.length;
-          const shown = slot <= behind;
-          return (
-            <div
-              key={cover}
-              className="absolute bottom-0 left-0 border-2 border-[#101c2a] shadow-[4px_4px_0_#0b1a26] motion-safe:transition-all motion-safe:duration-700"
-              style={{
-                zIndex: COVERS.length - slot,
-                opacity: shown ? 1 - slot * 0.14 : 0,
-                transform: `translate(${Math.min(slot, behind) * step}px, ${-Math.min(slot, behind) * 8}px)`,
-              }}
-            >
-              <Sprite src={cover} width={54} height={80} scale={3} />
-            </div>
-          );
-        })}
-      </div>
-    </div>
   );
 }
 

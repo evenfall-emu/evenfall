@@ -31,11 +31,11 @@ The product sections' other illustrations are sprites with binary
 transparency, cut from generated sheets by `sprite.py`. They depict no
 existing game, and none carries text or a logo:
 
-| Folder       | Size         | Contents                                                                                                                                               |
-| ------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `covers/`    | 54 × 80 each | Six box covers for the romhack stack: a mountain valley, a crystal cave, a sunset lake, desert ruins, an aurora over snowy forest, snowy coastal ruins |
-| `creatures/` | 27–41 × 40   | The invented team of the game-panel illustration: a fire fox, a moss turtle, a bat, an owl, a seahorse, a stone golem                                  |
-| `icons/`     | 40–96 wide   | The account illustration: a laptop (96 × 80), a phone (46 × 74), a cloud (40 × 44) and a link (60 × 50)                                                |
+| Folder       | Size         | Contents                                                                                                                                                           |
+| ------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `covers/`    | 54 × 80 each | Six labels the romhack cartridge is patched with: a mountain valley, a crystal cave, a sunset lake, desert ruins, an aurora over snowy forest, snowy coastal ruins |
+| `creatures/` | 27–41 × 40   | The invented team of the game-panel illustration: a fire fox, a moss turtle, a bat, an owl, a seahorse, a stone golem                                              |
+| `icons/`     | 40–96 wide   | The account illustration: a laptop (96 × 80), a phone (46 × 74), a cloud (40 × 44) and a link (60 × 50)                                                            |
 
 The page draws each at a whole multiple of its size. The rewind thumbnails
 keep their scale from their height and, where three full frames do not fit,

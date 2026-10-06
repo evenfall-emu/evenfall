@@ -5,7 +5,8 @@ import { button, cx, focusRing } from "../../ui/styles";
 import { createFresco, type Fresco, type LayerName } from "./fresco";
 import { prefersStill, watchSceneMotion } from "./motion";
 import { RewindDemo } from "./rewind-demo";
-import { AccountDevices, GamePanels, RomhackFan, SpeedMeter } from "./showcase";
+import { RomhackDemo } from "./romhack-demo";
+import { AccountDevices, GamePanels, SpeedMeter } from "./showcase";
 
 // Optional instance privacy notice supplied by the deployment build.
 const privacyUrl = import.meta.env.VITE_PRIVACY_URL;
@@ -300,17 +301,17 @@ export function LandingPage({
             <Section
               title="One ROM."
               accent="Dozens of adventures."
-              illustration={<RomhackFan still={still} />}
+              illustration={<RomhackDemo still={still} />}
             >
+              <p className="text-heading">
+                Bring the original game you own. Evenfall handles the rest.
+              </p>
               <p>
-                Bring the game you own. The Library turns it into community
-                romhacks: new regions, new campaigns, harder challenges. Pick
-                one and Evenfall patches your ROM on your device, then plays.
+                Pick a community romhack in the Library: new regions, new
+                campaigns, harder challenges. One click, and your new
+                playthrough begins.
               </p>
-              <p className="text-muted">
-                Your ROM never leaves your device, and patched games are checked
-                against the exact release before they run.
-              </p>
+              <p className="text-muted">Your ROM never leaves your device.</p>
             </Section>
 
             <Section
