@@ -12,7 +12,7 @@ import type {
   CatalogVersion,
 } from "../library/catalog";
 import { ManageError, patchVersion, putVersion, uploadPatch } from "./api";
-import { CheckboxRow, FormError, TextField } from "./fields";
+import { CheckboxRow, FormError, TextField } from "../../ui/fields";
 import {
   releaseChanges,
   releaseDraft,

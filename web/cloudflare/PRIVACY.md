@@ -11,13 +11,15 @@ privacy notice. This notice does not describe those instances.
 ## Summary
 
 - You can play without an account. Games, saves and progress stay in your
-  browser unless you sign in and keep cloud backups enabled, or share a
-  state.
+  browser unless you sign in and keep cloud backups enabled, share a state or
+  send a bug report.
 - Evenfall never uploads BIOS images, and never uploads ROM files except when
   an admin account, designated by the operator, includes one with its own
   [share link](#shared-states).
 - Analytics (page views and share counts) are cookieless and contain no
   account, game or gameplay information.
+- A [bug report](#bug-reports) you send is kept for 90 days, and its message
+  and details also go to PostHog.
 - An optional account stores your email address (and, with Discord sign-in,
   your Discord identity) plus your cloud backups.
 - Deleting your account removes the account immediately and cloud backups
@@ -37,8 +39,8 @@ play.evenfall-emu.org origin:
 A service worker caches the application files for offline use. It never caches
 API responses, credentials, ROMs or saves.
 
-This data is not sent to the server except for the cloud backups described
-below. Clearing site data in your browser deletes it permanently; export saves
+This data is not sent to the server except for the cloud backups, shared states
+and bug reports described below. Clearing site data in your browser deletes it permanently; export saves
 you want to keep first. Deleting your account does not touch it.
 
 ## Analytics
@@ -88,8 +90,9 @@ is stored in a Cloudflare D1 database.
   on a schedule; they are removed when next presented, at sign-out or when the
   account is deleted.
 - **Abuse limits:** request counters are keyed by IP address and endpoint, by a
-  SHA-256 hash of the email address (sign-in emails) or by account ID (cloud
-  uploads). A counter is reset when its time window restarts.
+  SHA-256 hash of the email address (sign-in emails), by a SHA-256 hash of the
+  IP address (bug reports) or by account ID (cloud uploads). A counter is reset
+  when its time window restarts.
 
 Signing in does not grant access to any other account's data or to catalog
 management.
@@ -156,6 +159,39 @@ link never uploads your ROM files. The state is saved in your browser as a new p
 any other local progress; if you are signed in with cloud backups enabled,
 that playthrough is then backed up like your others.
 
+## Bug reports
+
+**Report a bug** in the player sends a report to Evenfall's maintainers. You
+don't need an account. A report contains:
+
+- the message you write;
+- unless you untick it, the current save state of the game you are playing (a
+  compressed emulator snapshot, which includes the in-game save) and its
+  in-game save, with the game's title label and the ROM's SHA-1 hash. The ROM
+  itself is never sent. A snapshot contains the game's memory, which can
+  include names or other text you entered in the game;
+- your browser's user-agent string and the version of the player;
+- only if you are signed in and tick **Include my account**, your account ID.
+  Otherwise the report is sent without your cookies and is not linked to any
+  account.
+
+The report is stored in the same EU-jurisdiction R2 bucket as cloud backups,
+under a random ID with no public URL. Only accounts the operator has made admin
+can download it. A storage rule deletes it once it is 90 days old, typically
+within a day after that.
+
+To notify the maintainers, the server then sends a `bug_report` event to
+PostHog's EU cloud (`eu.i.posthog.com`) with the message, the game's title, the
+ROM hash, the user-agent string, the player version, the account ID if you
+included it, and links to the stored report. The files themselves never go to
+PostHog. The server sends this event, not your browser, so PostHog does not
+receive your IP address with it, and the event creates no person profile.
+Retention of these events follows the PostHog project's settings.
+
+To limit abuse, the server counts reports per SHA-256 hash of your IP address
+(see [Abuse limits](#accounts-optional)). Your IP address itself is not stored
+with the report.
+
 ## Deleting your account
 
 **Account > Delete my account** (one confirmation) does the following:
@@ -168,7 +204,10 @@ that playthrough is then backed up like your others.
 3. Deletes every cloud object stored under the account.
 
 Shared-state links stop working as soon as step 1 is recorded, and their
-snapshots are deleted by the storage rule described above.
+snapshots are deleted by the storage rule described above. Bug reports in which
+you included your account keep its account ID until they expire, in R2 and in
+PostHog. Once the account is deleted, that ID no longer leads to an email
+address or any other account data.
 
 Step 3 is attempted immediately and repeated by a scheduled job: every five
 minutes during the first hour, then daily. The repeats remove any upload that
@@ -187,7 +226,7 @@ Cloudflare. The cloud-backup bucket uses Cloudflare's EU jurisdiction and the
 database has a Western Europe location hint, but Workers requests, email
 delivery and Cloudflare's own operational logs are not restricted to the EU.
 Discord processes your sign-in if you choose it, and PostHog processes page
-views as described above. Each provider also handles data under its own
+views and bug report events as described above. Each provider also handles data under its own
 privacy policy.
 
 The Worker configuration in this repository does not enable Cloudflare Workers

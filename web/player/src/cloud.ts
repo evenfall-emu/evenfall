@@ -164,6 +164,67 @@ export async function fetchSharedRom(id: string): Promise<File> {
   return new File([rom], "shared.gba", { type: "application/octet-stream" });
 }
 
+/** The game a bug report carries: its ROM's identity, state and battery save. */
+export type BugReportGame = {
+  hash: string;
+  title: string;
+  state: Uint8Array;
+  /** Empty when the game has no battery save. */
+  battery: Uint8Array;
+};
+
+/**
+ * Sends a bug report and returns its ID. Needs no account: the session cookie
+ * goes along only with `includeAccount`, which attaches the signed-in account.
+ */
+export async function sendBugReport(report: {
+  message: string;
+  includeAccount: boolean;
+  game?: BugReportGame;
+  build?: string;
+}): Promise<string> {
+  const form = new FormData();
+  form.append("message", report.message);
+  if (report.includeAccount) form.append("includeAccount", "1");
+  if (report.build) form.append("build", report.build);
+  const game = report.game;
+  if (game) {
+    form.append("rom", game.hash);
+    const title = privateLabel(game.title);
+    if (title) form.append("title", title);
+    form.append("state", new Blob([await gzip(game.state)]), "game.state.gz");
+    if (game.battery.byteLength)
+      form.append(
+        "battery",
+        new Blob([new Uint8Array(game.battery)]),
+        "game.sav",
+      );
+  }
+  let response: Response;
+  try {
+    response = await fetch("/api/reports", {
+      method: "POST",
+      credentials: report.includeAccount ? "same-origin" : "omit",
+      cache: "no-store",
+      body: form,
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch {
+    throw new Error("Could not reach the server. Check your connection.");
+  }
+  if (!response.ok)
+    throw new Error(
+      response.status === 429
+        ? "Too many reports from this connection. Try again later."
+        : response.status === 413
+          ? "The game state is too large to attach. Send the report without it."
+          : "The report could not be sent. Try again.",
+    );
+  const { id } = (await response.json()) as { id?: string };
+  if (!id) throw new Error("The server returned an invalid report.");
+  return id;
+}
+
 export type QuickPlan =
   | { type: "none" }
   | { type: "download" }

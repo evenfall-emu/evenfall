@@ -11,7 +11,7 @@ import { Icon, type IconName } from "../../ui/icons";
 import { button, chip, cx, focusRing } from "../../ui/styles";
 import { Cover } from "../library/cover";
 import { loadAdminCatalog, putGame, type AdminCatalog } from "./api";
-import { FormError, TextField } from "./fields";
+import { FormError, TextField } from "../../ui/fields";
 import { GamePanel, type PanelTab } from "./game-panel";
 import {
   countFindings,

@@ -1,6 +1,6 @@
 # Server
 
-The server is the Cloudflare Worker behind the hosted [player](player.md): a metadata-only game catalog, optional accounts, private cloud backups of game progress, and shareable save-state links.
+The server is the Cloudflare Worker behind the hosted [player](player.md): a metadata-only game catalog, optional accounts, private cloud backups of game progress, shareable save-state links and bug reports.
 The player works without it, and sign-in and cloud backups report themselves unavailable when the server's bindings or secrets are missing.
 It never serves ROMs, BIOS images or game images, and signing in grants no catalog rights.
 
@@ -18,6 +18,7 @@ It uses [Hono](https://hono.dev/), Drizzle's D1 adapter, [Better Auth](https://w
 | [`src/catalog.ts`](../web/server/src/catalog.ts), [`src/schema.ts`](../web/server/src/schema.ts), [`src/seed.ts`](../web/server/src/seed.ts) | Catalog queries, Drizzle schema, seed data                                       |
 | [`src/auth.ts`](../web/server/src/auth.ts), [`src/auth-schema.ts`](../web/server/src/auth-schema.ts)                                         | Better Auth configuration and generated tables                                   |
 | [`src/cloud-saves.ts`](../web/server/src/cloud-saves.ts)                                                                                     | Cloud progress, quick slots, state shares, account deletion and the cleanup cron |
+| [`src/bug-reports.ts`](../web/server/src/bug-reports.ts)                                                                                     | Bug reports, their admin downloads and their PostHog event                       |
 | [`migrations/`](../web/server/migrations/)                                                                                                   | Generated D1 migrations                                                          |
 | [`wrangler.jsonc`](../web/server/wrangler.jsonc)                                                                                             | Local development only                                                           |
 | [`scripts/catalog/`](../web/server/scripts/catalog/README.md)                                                                                | No-Intro lookups, the romhack seed and patch publication                         |
@@ -241,10 +242,60 @@ Included ROMs are stored at `share/rom/<id>`, under the same lifecycle rule.
 3. An immediate best-effort sweep deletes every R2 key under the account prefix, whatever its layout.
 
 Shares sit outside the account prefix: the tombstone hides them from step 1, and the lifecycle rule deletes them.
+[Bug reports](#bug-reports) that include the account keep its ID until their own lifecycle rule deletes them.
 A five-minute cron trigger repairs a crash between steps 1 and 2 and retries R2 failures.
 It sweeps each tombstone every five minutes for the first hour and daily afterwards.
 Tombstones are never retired, because an R2 `PUT` issued before deletion can land later, and the next sweep removes it.
 R2 and D1 are not transactional together, so cloud erasure is eventually consistent, and device-local data is untouched.
+
+## Bug reports
+
+Anyone can send a bug report from the player, with or without an account ([Reporting a bug](player.md#reporting-a-bug)).
+The Worker stores each report in the `SAVES` bucket and announces it with a PostHog event, so maintainers see the message in PostHog and download the files from the Worker.
+The files never pass through PostHog, which receives only text and links.
+
+`POST /api/reports` takes a `multipart/form-data` body of at most 2.19 MiB from the exact page origin, and answers `413 report_too_large` past that:
+
+| Field            | Contents                                                                                         |
+| ---------------- | ------------------------------------------------------------------------------------------------ |
+| `message`        | Required. At most 2000 characters after trimming.                                                |
+| `state`          | Optional file. A gzip save state of at most 2 MiB compressed and decoded, checked for its magic. |
+| `battery`        | Optional file. A raw battery save of a supported size, as for [cloud saves](#limits).            |
+| `rom`            | The ROM's SHA-1. Required with either file.                                                      |
+| `title`          | Optional game label of at most 160 characters.                                                   |
+| `build`          | Optional player build of at most 64 characters, such as a commit hash.                           |
+| `includeAccount` | `1` attaches the session's account ID. Without a valid session the report stays anonymous.       |
+
+Any other invalid field answers `400 invalid_report`.
+A valid report answers `201 {id}`, where `id` is a random UUID.
+The Worker writes `report/<id>/state` and `report/<id>/battery` first, then `report/<id>/report.json` with the text fields, the request's `User-Agent`, the account ID if attached, and which files exist.
+A report is complete once its `report.json` exists.
+
+Reports are rate-limited before anything is stored, and only valid reports count:
+
+- each client IP address may send 10 per day, counted under its SHA-256 hash with the cloud uploads' fixed-window counters,
+- the instance accepts 500 per day in total, which bounds storage whatever the number of addresses.
+
+Past a limit the Worker answers `429 reports_rate_limited`.
+
+### The PostHog event
+
+With `POSTHOG_KEY` and `POSTHOG_HOST` set, the Worker sends a `bug_report` event to PostHog's capture API after storing the report.
+It carries the message, ROM SHA-1, title, build, user agent and account ID, and the URLs of the report's admin routes.
+The Worker sends the event itself, so ad blockers can't drop it, and PostHog sees the Worker's address rather than the reporter's.
+The event's distinct ID is the report's, with person processing and GeoIP lookup off.
+A failed event is logged and never fails the report, and without the two variables no event is sent.
+
+### Reading reports
+
+The admin routes take an admin session or the `ADMIN_SECRET` bearer token, like [catalog management](#catalog-api):
+
+- `GET /api/admin/reports/:id` returns `report.json`.
+- `GET /api/admin/reports/:id/state` downloads the state decompressed as `report-<id>.state`, which the player's **Import state** loads as-is.
+- `GET /api/admin/reports/:id/battery` downloads the battery save as `report-<id>.sav`.
+
+The event's links open these routes, so a signed-in admin downloads a report's files from PostHog with one click.
+The Worker never checks a report's age: an R2 lifecycle rule on `report/` deletes reports after 90 days ([Self-hosting](#self-hosting)).
 
 ## Patch hosting
 
@@ -305,8 +356,8 @@ Discord sign-in needs your own Discord application, with its client ID in `wrang
 ### Tests
 
 `vp test --project server` runs the Worker under workerd with disposable Miniflare D1 databases and the generated migrations.
-The tests cover catalog reads and writes, seeding, validation, auth configuration, cookies, single-use links, rate-limit windows, email failures, Discord linking, cloud saves, quotas, shares, account erasure and objects saved by the previous core.
-Only external services are mocked: no mail is sent and Discord is never contacted.
+The tests cover catalog reads and writes, seeding, validation, auth configuration, cookies, single-use links, rate-limit windows, email failures, Discord linking, cloud saves, quotas, shares, bug reports, account erasure and objects saved by the previous core.
+Only external services are mocked: no mail is sent, and neither Discord nor PostHog is contacted.
 
 ## Schema changes
 
@@ -399,6 +450,7 @@ Replace every instance-specific value before the first deploy:
 | R2 bucket         | `r2_buckets[]` for `SAVES`                                       | Create with `wrangler r2 bucket create <name> --jurisdiction eu`, with public access off.                    |
 | Patch bucket      | the `PATCHES` binding, `vars.PATCHES_URL`                        | A bucket with a public custom domain and the [CORS policy](#patch-hosting) for your origin, and that domain. |
 | Analytics         | `VITE_POSTHOG_KEY`, `VITE_POSTHOG_HOST`, `VITE_POSTHOG_HOSTNAME` | Exported before `build.sh`, which otherwise uses the official instance's. Empty values disable analytics.    |
+| Bug report events | `vars.POSTHOG_KEY`, `vars.POSTHOG_HOST`                          | The PostHog project that receives `bug_report` events. Remove both to store reports without an event.        |
 | Privacy notice    | `web/cloudflare/PRIVACY.md`, `VITE_PRIVACY_URL`                  | Published as `/privacy.txt`. Replace it, or point `VITE_PRIVACY_URL` elsewhere.                              |
 
 Then, with Wrangler authenticated against your account:
@@ -406,10 +458,11 @@ Then, with Wrangler authenticated against your account:
 1. Set the secrets `BETTER_AUTH_SECRET` (at least 32 random bytes) and `DISCORD_CLIENT_SECRET` with `npx wrangler secret put <NAME> --config web/cloudflare/wrangler.jsonc`.
    `ADMIN_SECRET` is optional and enables bearer-token catalog management.
 2. Apply the migrations with `npm run db:migrate:remote -w @evenfall/server`.
-3. Add the lifecycle rule that deletes shares:
+3. Add the lifecycle rules that delete shares and bug reports:
 
    ```sh
    npx wrangler r2 bucket lifecycle add <bucket> share-expiry share/ --expire-days 1 --jurisdiction eu
+   npx wrangler r2 bucket lifecycle add <bucket> report-expiry report/ --expire-days 90 --jurisdiction eu
    ```
 
 4. Build and deploy as above.
@@ -431,4 +484,6 @@ Renaming one needs a migration of the resource or the data behind it, not an edi
 
 - Tombstone retention and the sweep cadence are coupled, and there is no policy for retiring tombstones.
 - A state share cannot be revoked before it expires, except by deleting the account.
+- A bug report cannot be deleted before it expires except in R2, and deleting the account does not remove its ID from reports or PostHog events.
+- Bug reports have no admin listing: maintainers find them through PostHog, or by listing `report/` in R2.
 - The upload check reads only a state's magic, so a damaged `EVENFALL` state is caught only when a player loads it.

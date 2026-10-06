@@ -13,7 +13,8 @@ import {
   patchGame,
   patchVersion,
 } from "./api";
-import { ConfirmDialog, TagEditor, TextField } from "./fields";
+import { TextField } from "../../ui/fields";
+import { ConfirmDialog, TagEditor } from "./fields";
 import {
   gameChanges,
   gameDraft,

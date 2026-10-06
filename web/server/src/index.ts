@@ -26,8 +26,10 @@ import {
   sweepDeletedAccounts,
   type CloudSaveBindings,
 } from "./cloud-saves";
+import { registerBugReportRoutes, type BugReportBindings } from "./bug-reports";
 
-export interface Bindings extends AuthBindings, CloudSaveBindings {
+export interface Bindings
+  extends AuthBindings, CloudSaveBindings, BugReportBindings {
   ADMIN_SECRET?: string;
   PATCHES?: R2Bucket;
   PATCHES_URL?: string;
@@ -233,6 +235,8 @@ app.use("/api/admin/*", async (c, next) => {
   c.header("Cache-Control", "no-store");
   c.header("Referrer-Policy", "no-referrer");
 });
+
+registerBugReportRoutes(app);
 
 // Local development only. The deployed patches are served by the bucket's R2
 // custom domain; without it, `wrangler dev` serves the local bucket here, and

@@ -43,7 +43,7 @@ const id = z
   .regex(/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/);
 const name = z.string().trim().min(1).max(160);
 const nullableText = z.string().trim().min(1).max(2_000).nullable();
-const sha1 = z.string().regex(/^[0-9a-f]{40}$/);
+export const sha1 = z.string().regex(/^[0-9a-f]{40}$/);
 const crc32 = z.string().regex(/^[0-9a-f]{8}$/);
 const httpUrl = z
   .url()

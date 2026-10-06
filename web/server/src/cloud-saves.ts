@@ -3,7 +3,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { createAuth, type AuthBindings } from "./auth";
 
 const MAX_COMPRESSED = 2 * 1024 * 1024;
-const MAX_RESUME = 2 * 1024 * 1024;
+export const MAX_RESUME = 2 * 1024 * 1024;
 const MAX_BATTERY = 128 * 1024;
 const PLAYTHROUGH_LIMIT = 100;
 // Quick slots are numbered 1..limit per playthrough. The default lives here;
@@ -14,7 +14,7 @@ const QUICK_SLOT = /^[1-9][0-9]?$/;
 // Uploaded states must be the core's own save states. Stored objects are never
 // checked again, so states in an older format still list, download, delete
 // and erase like any other object; the player decides what it can load.
-const STATE_MAGIC = new TextEncoder().encode("EVENFALL");
+export const STATE_MAGIC = new TextEncoder().encode("EVENFALL");
 /** The cloud protocol's headers, on requests and responses. */
 const HEADER = {
   account: "X-Evenfall-Account",
@@ -65,7 +65,7 @@ function cloudHeaders(
   }
   return headers;
 }
-const BATTERY_SIZES = new Set([
+export const BATTERY_SIZES = new Set([
   512,
   8 * 1024,
   32 * 1024,
@@ -835,10 +835,7 @@ async function receiveUpload(
     );
 
   try {
-    const stream = new Blob([compressed.buffer])
-      .stream()
-      .pipeThrough(new DecompressionStream("gzip"));
-    const decoded = await readBounded(stream, decodedLimit);
+    const decoded = await gunzipBounded(compressed, decodedLimit);
     return { compressed, decoded, digest };
   } catch (error) {
     const oversized = error instanceof RangeError;
@@ -849,6 +846,17 @@ async function receiveUpload(
       oversized ? "Decoded save is too large" : "Save body is not valid gzip",
     );
   }
+}
+
+/** Inflates gzip `bytes`, throwing a RangeError past `limit` decoded bytes. */
+export function gunzipBounded(
+  bytes: Uint8Array<ArrayBuffer>,
+  limit: number,
+): Promise<Uint8Array<ArrayBuffer>> {
+  return readBounded(
+    new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip")),
+    limit,
+  );
 }
 
 async function readSave(c: Context<Env>, key: string) {
@@ -1217,9 +1225,10 @@ async function consumeBudget(
 /**
  * Atomically adds each positive amount to the account's fixed-window counter
  * of that name unless it would pass the maximum. The `cloud-save:` keys hold
- * the user ID, so account deletion removes them.
+ * the user ID, so account deletion removes them. Other callers pass their own
+ * identity in its place, such as a hashed address.
  */
-async function consumeLimits(
+export async function consumeLimits(
   db: D1Database,
   userId: string,
   window: number,
@@ -1300,8 +1309,8 @@ function putSuccess(c: Context<Env>, object: R2Object, revision: string) {
   });
 }
 
-function failure(
-  c: Context<Env>,
+export function failure(
+  c: Context,
   status: ContentfulStatusCode,
   code: string,
   message: string,
@@ -1309,14 +1318,16 @@ function failure(
   return c.json({ error: { code, message } }, status);
 }
 
-async function sha256Hex(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
+export async function sha256Hex(
+  bytes: Uint8Array<ArrayBuffer>,
+): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(digest), (byte) =>
     byte.toString(16).padStart(2, "0"),
   ).join("");
 }
 
-function startsWith(bytes: Uint8Array, prefix: Uint8Array): boolean {
+export function startsWith(bytes: Uint8Array, prefix: Uint8Array): boolean {
   return (
     bytes.length >= prefix.length &&
     prefix.every((byte, index) => bytes[index] === byte)

@@ -18,6 +18,7 @@ import {
 } from "./library";
 import {
   CloudSync,
+  type BugReportGame,
   type CloudResume,
   type CloudStatus,
   type QuickConflict,
@@ -612,6 +613,21 @@ export class Player {
     const rom = await this.library.rom(hash);
     if (!rom) throw new Error("This game's ROM is no longer on this device.");
     await this.cloud.includeRom(id, rom);
+  }
+  /**
+   * The running game for a bug report, paused so that its state and battery
+   * save show the same moment. Undefined while no game is open.
+   */
+  async bugReportGame(): Promise<BugReportGame | undefined> {
+    const game = this.state.game;
+    if (!game || this.state.changing) return undefined;
+    await this.pause();
+    return {
+      hash: game.hash,
+      title: game.title,
+      state: await this.emulator.saveState(),
+      battery: await this.emulator.exportSave(),
+    };
   }
   /**
    * Starts a shared state as a new local playthrough called `name`, from the

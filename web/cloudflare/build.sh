@@ -52,6 +52,9 @@ export VITE_POSTHOG_HOST="${VITE_POSTHOG_HOST-https://eu.i.posthog.com}"
 export VITE_POSTHOG_HOSTNAME="${VITE_POSTHOG_HOSTNAME-play.evenfall-emu.org}"
 # The player links this privacy notice; ./privacy.txt publishes PRIVACY.md.
 export VITE_PRIVACY_URL="${VITE_PRIVACY_URL-./privacy.txt}"
+# Bug reports name the player build that sent them: the commit Workers Builds
+# checked out, else the local checkout's.
+export VITE_BUILD_COMMIT="${VITE_BUILD_COMMIT-${WORKERS_CI_COMMIT_SHA:-$(git rev-parse HEAD 2>/dev/null || true)}}"
 output="$temporary/output"
 EVENFALL_PLAYER_DIR="$output" npm run build -w @evenfall/player
 

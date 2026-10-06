@@ -54,6 +54,7 @@ import { Account } from "./account";
 import {
   fetchSharedRom,
   fetchSharedState,
+  sendBugReport,
   type CloudResume,
   type SharedState,
 } from "./cloud";
@@ -65,6 +66,8 @@ import {
   type PatchedRelease,
   type ShareProgress,
 } from "./share-state";
+import { BugReportDialog } from "./bug-report";
+import { PixelIcon } from "./ui/icons";
 import {
   playthroughLockKey,
   QUICK_SLOTS,
@@ -294,6 +297,8 @@ function App() {
   const launchPending = useRef(false);
   const [share, setShare] = useState<ShareProgress | null>(null);
   const shareResume = useRef(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const reportResume = useRef(false);
   const [sharedOpen, setSharedOpen] = useState<{
     id: string;
     shared?: SharedState;
@@ -591,6 +596,29 @@ function App() {
   function closeShare() {
     setShare(null);
     if (shareResume.current && !player.state.changing) act(() => player.play());
+  }
+  function openReport() {
+    reportResume.current = player.state.playing;
+    setMenu(null);
+    setReportOpen(true);
+    act(() => player.pause());
+  }
+  function closeReport() {
+    setReportOpen(false);
+    if (reportResume.current && !player.state.changing)
+      act(() => player.play());
+  }
+  async function submitReport(input: {
+    message: string;
+    attachGame: boolean;
+    includeAccount: boolean;
+  }) {
+    return sendBugReport({
+      message: input.message,
+      includeAccount: input.includeAccount,
+      game: input.attachGame ? await player.bugReportGame() : undefined,
+      build: import.meta.env.VITE_BUILD_COMMIT,
+    });
   }
   /** Names the user already sees for a game: local runs and cloud-only runs. */
   function playthroughNames(hash: string) {
@@ -1240,6 +1268,15 @@ function App() {
       <div className="console-toolbar" ref={toolbar}>
         <button
           className="icon-button"
+          aria-label="Report a bug"
+          title="Report a bug"
+          aria-haspopup="dialog"
+          onClick={openReport}
+        >
+          <PixelIcon name="bug" />
+        </button>
+        <button
+          className="icon-button"
           aria-label="Share state"
           title="Share state"
           aria-haspopup="dialog"
@@ -1844,6 +1881,17 @@ function App() {
               }
             />
           </Modal>
+        )}
+        {reportOpen && (
+          <BugReportDialog
+            hasGame={Boolean(state.game)}
+            signedIn={Boolean(state.cloud.accountId)}
+            container={
+              (document.fullscreenElement as HTMLElement | null) ?? undefined
+            }
+            send={submitReport}
+            onClose={closeReport}
+          />
         )}
         {sharedOpen && sharedOpen.id === shareId && (
           <Modal

@@ -14,6 +14,7 @@ export function Dialog({
   subtitle,
   leading,
   busy = false,
+  container,
   children,
 }: {
   open: boolean;
@@ -23,6 +24,11 @@ export function Dialog({
   /** Artwork or an icon before the title. */
   leading?: ReactNode;
   busy?: boolean;
+  /**
+   * Where the dialog mounts, by default the document body. Pass the
+   * fullscreen element so the dialog shows over a fullscreen player.
+   */
+  container?: HTMLElement;
   children: ReactNode;
 }) {
   return (
@@ -33,7 +39,7 @@ export function Dialog({
         else onOpenChange(next);
       }}
     >
-      <BaseDialog.Portal>
+      <BaseDialog.Portal container={container}>
         <BaseDialog.Backdrop
           data-ui
           className="fixed inset-0 z-40 bg-canvas/75 transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0"

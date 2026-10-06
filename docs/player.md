@@ -3,7 +3,7 @@
 The player is Evenfall's web application: a game library and a GBA player that run entirely in the visitor's browser.
 It is built on the [`@evenfall/gba` SDK](sdk.md), like any other page would be, and adds what a person playing games needs: a library, several playthroughs per game, autosave, quick slots, rewind, touch controls, offline use and optional cloud backups.
 ROMs stay user-supplied and on the device, and gameplay needs no account or server.
-When the [server](server.md) is available, a signed-in player also gets private cloud backups and shareable save-state links.
+When the [server](server.md) is available, a signed-in player also gets private cloud backups and shareable save-state links, and anyone can send a bug report.
 
 The source is [`web/player/`](../web/player/), the `@evenfall/player` workspace: TypeScript and React, built with Vite, styled with Tailwind CSS 4, with Effect 3 for services and IndexedDB (through `idb`) for storage.
 Vite bundles the SDK's Worker, audio worklet and both WebAssembly cores as hashed files under `assets/`.
@@ -28,7 +28,7 @@ npm run dev -w @evenfall/player         # http://127.0.0.1:5173, with hot reload
 ```
 
 The development server proxies `/api` to the [local server](server.md#local-development) on port 8787.
-Without it, everything but sign-in, cloud backups, shares and the catalog works.
+Without it, everything but sign-in, cloud backups, shares, bug reports and the catalog works.
 Open exactly `http://127.0.0.1:5173` to sign in, so cookies and OAuth callbacks stay on one origin.
 
 A production build writes the static site into `web/player/dist`, or into `EVENFALL_PLAYER_DIR` when set:
@@ -99,7 +99,7 @@ Game keys work without canvas focus, but fields, open dialogs and widgets that h
 Moving into a field or losing window focus releases the buttons, and hiding the page pauses.
 **How to play**, from the toolbar's gamepad button or the screen's `?`, shows the keys and toggles the touch controls.
 
-- **Toolbar.** [Share state](#sharing-a-state), **Back up now** (with cloud backups on), fullscreen, sound and speed.
+- **Toolbar.** [Report a bug](#reporting-a-bug), [Share state](#sharing-a-state), **Back up now** (with cloud backups on), fullscreen, sound and speed.
   Volume is stored on the device, and mute does not reset it.
   Speed changes wall-clock pacing, not guest cycles, and the audio follows with a matching pitch.
 - **Reset** restarts emulation from the current playthrough's battery save and clears rewind history.
@@ -321,6 +321,23 @@ It uses the shared ROM if the device has it, builds the release from its base an
 It validates the state against the ROM in an isolated emulator, then starts it as a new playthrough under the shared name, never replacing an existing one.
 It asks first only for a missing ROM, or a new name when a playthrough of the game already has the shared one.
 
+## Reporting a bug
+
+**Report a bug**, the beetle at the start of the toolbar, sends a message to the maintainers with the game as it stands ([`src/bug-report.tsx`](../web/player/src/bug-report.tsx)).
+It needs no account, and on phones it sits in the Player menu with the rest of the toolbar.
+
+Opening the dialog pauses the game, so the report describes the moment the reporter saw the problem, and closing it resumes play.
+A report holds:
+
+- the reporter's message, of at most 2000 characters,
+- with a game open, unless the reporter unticks it, the exact current state (gzip-compressed, as for a share) and the battery save, with the ROM's SHA-1 and the game's title, never the ROM itself,
+- for a signed-in reporter who ticks **Include my account**, the account ID, which is otherwise left out along with the session cookie,
+- the player build from `VITE_BUILD_COMMIT`, which `build.sh` sets to the deployed commit.
+
+The [server](server.md#bug-reports) stores the files and notifies the maintainers through PostHog, and the dialog says so when the build has a PostHog key.
+A failed send keeps the message, so the reporter can try again.
+The state already contains the in-game save, and the separate `.sav` is there so that other emulators can load it directly.
+
 ## Offline play and updates
 
 The player has a web-app manifest, so it installs as an app (in Android Chrome, **Add to home screen → Install**).
@@ -412,3 +429,4 @@ No user asset is committed.
 - Battery saves have no compatibility policy between releases of the same game, beyond what the catalog declares.
 - States from the previous core stay unloadable: the player keeps them but cannot convert them.
 - Rewind history stays on the device: cloud backups and shared states carry none, so a playthrough restored from them starts without history.
+- A bug report carries the state after the problem, not the inputs that led to it, because the player records no input log.
