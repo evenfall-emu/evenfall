@@ -162,7 +162,7 @@ export function BugReportDialog({
               className={button("primary")}
               disabled={sending || !ready}
             >
-              {sending ? "Sending…" : "Send report"}
+              {sending ? "Sending…" : "Send"}
             </button>
           </DialogActions>
         </form>
