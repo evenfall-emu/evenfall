@@ -704,7 +704,9 @@ test("Elite Redux Beta3 opens as a reviewed build with its own ability records",
   await ready(page);
   await page.getByLabel("Open ROM", { exact: true }).setInputFiles(rom!);
   await expect(page.locator('[data-game-layout="pokemon"]')).toBeVisible();
-  await expect(page.getByText("Detected build · not reviewed")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "HUD compatibility warning" }),
+  ).toHaveCount(0);
   await importState(page, state!);
   const team = page.getByRole("complementary", {
     name: "Your Pokémon",

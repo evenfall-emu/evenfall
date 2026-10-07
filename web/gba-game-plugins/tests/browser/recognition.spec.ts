@@ -11,14 +11,14 @@ const builds = [
     family: "pokemon/heart-n-soul",
     hash: "b8a4b491ca67a76f079a8e7c19fd5512a2147dd2",
     rom: process.env.EVENFALL_HNS_120_ROM,
-    unconfirmed: /Unconfirmed: rom\.catalog\.moveDescriptions\.count/,
+    warning: true,
   },
   {
     name: "Elite Redux 2.65.4.1b",
     family: "pokemon/elite-redux",
     hash: "2f3e17e55c6afe23da97ec0f96a067eeb142ad15",
     rom: process.env.EVENFALL_REDUX_26541_ROM,
-    unconfirmed: null,
+    warning: false,
   },
 ];
 
@@ -66,11 +66,13 @@ for (const build of builds)
     await page.getByLabel("Open ROM", { exact: true }).setInputFiles(rom!);
     const dashboard = page.locator('[data-game-layout="pokemon"]');
     await expect(dashboard).toBeVisible({ timeout: 30_000 });
-    const badge = page.getByText("Detected build · not reviewed");
-    await expect(badge).toBeVisible();
-    if (build.unconfirmed)
-      await expect(badge).toHaveAttribute("title", build.unconfirmed);
-    else await expect(badge).not.toHaveAttribute("title", /Unconfirmed:/);
+    const warning = page.getByRole("button", {
+      name: "HUD compatibility warning",
+    });
+    await expect(warning).toHaveCount(build.warning ? 1 : 0);
+    await expect(page.getByText("Detected build · not reviewed")).toHaveCount(
+      0,
+    );
     expect(await cachedBuilds(page)).toEqual([
       expect.stringMatching(
         new RegExp(`^${build.family}:${build.hash}:[0-9a-f]{16}$`),
@@ -125,6 +127,6 @@ for (const build of builds)
     await ready(page);
     await page.getByLabel("Open ROM", { exact: true }).setInputFiles(rom!);
     await expect(dashboard).toBeVisible({ timeout: 10_000 });
-    await expect(badge).toBeVisible();
+    await expect(warning).toHaveCount(build.warning ? 1 : 0);
     expect(errors).toEqual([]);
   });

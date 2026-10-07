@@ -128,3 +128,70 @@ test("touch opens long details at the viewport edge and permits content scrollin
   await expect(tip).toHaveCount(0);
   await context.close();
 });
+
+test("only unconfirmed auto-detected HUDs show an icon with accessible help", async ({
+  browser,
+}, testInfo) => {
+  const context = await browser.newContext({
+    hasTouch: true,
+    viewport: { width: 1200, height: 800 },
+  });
+  const page = await context.newPage();
+  await openFixture(page);
+  const label = "HUD compatibility warning";
+  for (const name of ["Fully located HUD", "Reviewed HUD"])
+    await expect(
+      page.getByRole("region", { name }).getByRole("button", { name: label }),
+    ).toHaveCount(0);
+  await expect(page.getByText("Detected build · not reviewed")).toHaveCount(0);
+  const heading = page.getByRole("region", { name: "Partially located HUD" });
+  const warning = heading.getByRole("button", { name: label });
+  await expect(warning).toBeVisible();
+  await expect(warning).toHaveText("");
+  const glyph = await warning.locator("svg").boundingBox();
+  expect(glyph!.width).toBe(16);
+  expect(glyph!.height).toBe(16);
+  const fullHeading = await page
+    .getByRole("region", { name: "Fully located HUD" })
+    .boundingBox();
+  expect((await heading.boundingBox())!.height).toBe(fullHeading!.height);
+  await heading.screenshot({ path: testInfo.outputPath("warning-icon.png") });
+  await warning.hover();
+  expect(
+    await warning.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return [style.backgroundColor, style.borderWidth];
+    }),
+  ).toEqual(["rgba(0, 0, 0, 0)", "0px"]);
+  const tip = page.getByRole("tooltip");
+  await expect(tip).toContainText(
+    "This HUD was auto-detected with some unconfirmed values and may not work perfectly. Please report any bugs you find.",
+  );
+  await page.screenshot({ path: testInfo.outputPath("warning-hover.png") });
+  await page.keyboard.press("Escape");
+  await expect(tip).toHaveCount(0);
+  await warning.focus();
+  await expect(tip).toBeVisible();
+  await expect(warning).toHaveAccessibleDescription(/Please report any bugs/);
+  await page.screenshot({ path: testInfo.outputPath("warning-focus.png") });
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Outside", exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const target = await warning.boundingBox();
+  // Meet the 24px inline target minimum without inflating the heading.
+  expect(target!.width).toBeGreaterThanOrEqual(24);
+  expect(target!.height).toBeGreaterThanOrEqual(24);
+  expect((await heading.boundingBox())!.height).toBe(
+    (await page
+      .getByRole("region", { name: "Fully located HUD" })
+      .boundingBox())!.height,
+  );
+  // The invisible hit target remains usable outside the 16px glyph.
+  await page.touchscreen.tap(target!.x + 3, target!.y + 3);
+  await expect(tip).toBeVisible();
+  const bounds = await tip.boundingBox();
+  expect(bounds!.x).toBeGreaterThanOrEqual(11);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(379);
+  await page.screenshot({ path: testInfo.outputPath("warning-touch.png") });
+  await context.close();
+});

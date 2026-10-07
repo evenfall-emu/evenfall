@@ -1001,9 +1001,40 @@ table {
   gap: 6px;
   padding-bottom: 10px;
 }
-.arena-heading .build-warning {
+.arena-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.build-warning {
+  display: flex;
+}
+.build-warning .info-trigger,
+.build-warning .info-trigger:hover,
+.build-warning .info-trigger:focus {
+  position: relative;
   color: #e7c780;
-  font-size: 0.86rem;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: -2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+}
+.build-warning svg {
+  width: 16px;
+  height: 16px;
+}
+.build-warning .info-trigger:focus-visible::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 0;
+  height: 2px;
+  background: var(--blue);
 }
 .arena-status {
   display: flex;

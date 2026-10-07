@@ -1,6 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { InfoTip } from "../../ui/info-tip";
+import { ArenaStatus } from "../../ui/pokemon-dashboard";
 import "../../../player/src/console.css";
 import "../../ui/dashboard.css";
 
@@ -41,5 +42,26 @@ createRoot(document.body.appendChild(document.createElement("div"))).render(
       </InfoTip>
     </section>
     <button style={{ marginTop: 60 }}>Outside</button>
+    <section aria-label="Fully located HUD">
+      <ArenaStatus
+        arena={{ title: "Elite Redux", fields: [] }}
+        build={{ provenance: "located", review: [] }}
+      />
+    </section>
+    <section aria-label="Partially located HUD">
+      <ArenaStatus
+        arena={{ title: "Heart & Soul", fields: [] }}
+        build={{
+          provenance: "located",
+          review: ["rom.catalog.moveDescriptions.count"],
+        }}
+      />
+    </section>
+    <section aria-label="Reviewed HUD">
+      <ArenaStatus
+        arena={{ title: "Elite Redux Beta2", fields: [] }}
+        build={{ provenance: "reviewed", review: [] }}
+      />
+    </section>
   </main>,
 );

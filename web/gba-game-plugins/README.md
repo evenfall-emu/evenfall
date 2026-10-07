@@ -56,7 +56,8 @@ not enough.
 Every game carries shared locators seeded from its reviewed build.
 When the player loads another build, it runs them.
 A build is accepted only if every address is found without disagreement and the ROM probes pass.
-Its dashboard is marked as not reviewed.
+The dashboard shows a warning icon only when some values remain inferred or unconfirmed.
+Hover, focus or tap the icon for compatibility advice.
 Redux also locates its ability record size and suppression flags offset from code, so those values need not match the template.
 Other record layouts still come from the template.
 Other revisions, such as Elite Redux 2.65 Beta1, are recognized only if their locators and probes still match.
