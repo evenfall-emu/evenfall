@@ -366,8 +366,8 @@ A ROM that matches no reviewed build goes through `gameRegistry.recognize`: the 
 A recognized build gets the game's layout with `build.provenance` set to `located`.
 A located build whose views keep failing is forgotten, and the generic layout returns.
 
-The default build installs [`@evenfall/gba-game-plugins`](../web/gba-game-plugins/README.md), with the Heart & Soul, Elite Redux and Fire Red Upgrade (Pokémon Unbound) dashboards.
-To build without it, remove its import and `installed` entry from `games.ts` and its dependency from `package.json`.
+The default build installs [`@evenfall/gba-game-plugins`](../web/gba-game-plugins/README.md), with the Heart & Soul, Elite Redux, Fire Red Upgrade (Pokémon Unbound) and Golden Sun dashboards.
+To build without it, remove its import and `installed` entries from `games.ts` and its dependency from `package.json`.
 To add a game, export another `GamePlugin` from a workspace package and append it to `installed`.
 
 ## Analytics

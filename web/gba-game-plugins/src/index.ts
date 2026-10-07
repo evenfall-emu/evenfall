@@ -7,6 +7,7 @@ export * from "./cfru";
 export * from "./elite-redux";
 export * from "./game-party";
 export * from "./gen3-record";
+export * from "./golden-sun";
 export * from "./heart-n-soul";
 export * from "./locators";
 export * from "./model";

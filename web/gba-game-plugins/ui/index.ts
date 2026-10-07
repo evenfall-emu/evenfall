@@ -2,6 +2,7 @@
 // Unofficial; see ../README.md for supported builds and the disclaimer.
 import { fireRedUpgrade } from "../src/cfru";
 import { eliteRedux } from "../src/elite-redux";
+import { goldenSun } from "../src/golden-sun";
 import { heartNSoul } from "../src/heart-n-soul";
 
 export type {
@@ -21,4 +22,12 @@ export const pokemonPlugin = {
   id: "@evenfall/gba-game-plugins",
   games: [heartNSoul, eliteRedux, fireRedUpgrade],
   dashboards: () => import("./dashboards").then((module) => module.dashboards),
+};
+
+/** The Golden Sun battle dashboard, a separate plugin with its own chunk. */
+export const goldenSunPlugin = {
+  id: "@evenfall/gba-game-plugins/golden-sun",
+  games: [goldenSun],
+  dashboards: () =>
+    import("./golden-sun-dashboards").then((module) => module.dashboards),
 };

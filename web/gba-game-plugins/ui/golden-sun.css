@@ -1,0 +1,366 @@
+/* The Golden Sun dashboard, on the shared grid, strips and headings of
+   dashboard.css. Loaded with ./golden-sun-dashboards.ts. */
+.gs-dashboard {
+  --gs-venus: #d9a441;
+  --gs-mercury: #3fa9f5;
+  --gs-mars: #f0503c;
+  --gs-jupiter: #b26ef0;
+  --gs-enemy: #c0392b;
+}
+/* Narrower side columns than the Pokémon panels, so the screen grows. */
+@media (min-width: 1001px), (orientation: landscape) {
+  .gs-dashboard {
+    grid-template-columns:
+      clamp(250px, 18vw, 340px) minmax(0, 1fr)
+      clamp(250px, 18vw, 340px);
+  }
+}
+.gs-venus {
+  --gem: var(--gs-venus, #d9a441);
+}
+.gs-mercury {
+  --gem: var(--gs-mercury, #3fa9f5);
+}
+.gs-mars {
+  --gem: var(--gs-mars, #f0503c);
+}
+.gs-jupiter {
+  --gem: var(--gs-jupiter, #b26ef0);
+}
+.gs-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.gs-column {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+.gs-column > h2 {
+  font-size: 1.05rem;
+}
+.gs-message {
+  margin: 4px 8px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+/* One unit: name, bars, stats, statuses and elements, with an element edge. */
+.gs-unit {
+  --edge: var(--gs-enemy, #c0392b);
+  display: grid;
+  gap: 3px;
+  padding: 5px 7px 6px 10px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--edge);
+  background: linear-gradient(135deg, #10262e, #0c1d24);
+  font-size: 0.86rem;
+  line-height: 1;
+}
+.gs-unit[data-downed] {
+  opacity: 0.45;
+}
+.gs-edge-venus {
+  --edge: var(--gs-venus);
+}
+.gs-edge-mercury {
+  --edge: var(--gs-mercury);
+}
+.gs-edge-mars {
+  --edge: var(--gs-mars);
+}
+.gs-edge-jupiter {
+  --edge: var(--gs-jupiter);
+}
+.gs-unit > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.gs-unit h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: normal;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gs-unit > header > span:not(.gs-djinn) {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.gs-djinn {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 3px;
+  margin-left: auto;
+}
+.gs-pip,
+.gs-gem {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff8 0 18%, var(--gem) 45%);
+  box-shadow: 0 0 0 1px #0008;
+  flex-shrink: 0;
+}
+.gs-gem {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  transform: rotate(45deg);
+}
+.gs-pip.gs-standby {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--gem);
+}
+.gs-bar {
+  display: grid;
+  grid-template-columns: 1.4em minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+.gs-bar > span {
+  color: var(--muted);
+}
+.gs-bar strong {
+  font-weight: normal;
+  min-width: 6.2em;
+  text-align: right;
+  white-space: nowrap;
+}
+.gs-bar progress {
+  appearance: none;
+  width: 100%;
+  height: 11px;
+  border: 1px solid #467b90;
+  border-radius: 4px;
+  background: #15313f;
+  overflow: hidden;
+}
+.gs-bar progress::-webkit-progress-bar {
+  background: linear-gradient(#173543, #1c4355);
+}
+.gs-bar progress::-webkit-progress-value {
+  background: linear-gradient(#39ff81, #24eb57);
+}
+.gs-bar progress::-moz-progress-bar {
+  background: #28f566;
+}
+.gs-bar progress.warning::-webkit-progress-value {
+  background: #efcf24;
+}
+.gs-bar progress.warning::-moz-progress-bar {
+  background: #efcf24;
+}
+.gs-bar progress.critical::-webkit-progress-value {
+  background: #ff5534;
+}
+.gs-bar progress.critical::-moz-progress-bar {
+  background: #ff5534;
+}
+.gs-bar progress.pp::-webkit-progress-value {
+  background: linear-gradient(#5ec6ff, #2f8fe0);
+}
+.gs-bar progress.pp::-moz-progress-bar {
+  background: #3d9ff0;
+}
+.gs-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 2px 0 0;
+  border-top: 1px solid var(--line);
+  padding-top: 3px;
+}
+.gs-stats > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 0 5px;
+}
+.gs-stats > div + div {
+  border-left: 1px solid var(--line);
+}
+.gs-stats dt {
+  color: var(--muted);
+}
+.gs-stats dd {
+  margin: 0;
+}
+
+/* Status pills: icon, optional direction, turns; one row. */
+.gs-statuses {
+  display: flex;
+  gap: 4px;
+  margin: 1px 0;
+  padding: 0;
+  list-style: none;
+  overflow: hidden;
+}
+.gs-status {
+  --tone: #59b7e8;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 5px;
+  border: 1px solid var(--tone);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--tone) 18%, transparent);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+.gs-toxin {
+  --tone: #4cd964;
+}
+.gs-mind {
+  --tone: #c58cff;
+}
+.gs-good {
+  --tone: #7fd8ff;
+}
+.gs-doom {
+  --tone: #ff5534;
+}
+
+/* Power/resist: a gem above each column, one row of values. */
+.gs-elements {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  border-top: 1px solid var(--line);
+}
+.gs-elements th,
+.gs-elements td {
+  padding: 2px 0;
+  text-align: center;
+  font-weight: normal;
+}
+.gs-elements thead th {
+  padding-top: 4px;
+  line-height: 0;
+}
+.gs-elements tbody th {
+  width: 3.9em;
+  text-align: left;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.gs-elements td + td {
+  border-left: 1px solid var(--line);
+}
+.gs-elements td.gs-weak {
+  background: #1f6b3a;
+}
+.gs-elements td.gs-resists {
+  background: #7a2a26;
+}
+
+.gs-summons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  font-size: 0.86rem;
+}
+.gs-summons h3 {
+  margin: 0 auto 0 0;
+  font-size: 0.86rem;
+  font-weight: normal;
+  text-transform: uppercase;
+}
+.gs-summons > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Above and below the screen. */
+.gs-heading {
+  height: auto;
+  min-height: 40px;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 24px;
+  padding-bottom: 8px;
+}
+.gs-heading .gs-coins {
+  font-size: 1rem;
+  color: var(--muted);
+}
+.gs-heading .gs-coins strong {
+  color: #fff0c8;
+  font-weight: normal;
+}
+.gs-turns {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  min-width: 0;
+}
+/* In a side panel, the label sits above the chips. */
+.gs-column + .gs-turns {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: 10px;
+}
+.gs-turns h2 {
+  flex-shrink: 0;
+  margin: 0;
+  font-size: 0.86rem;
+  font-weight: normal;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.gs-turns ol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.gs-turn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.gs-turn:not(:last-child)::after {
+  content: "→";
+  color: var(--blue);
+}
+.gs-turn > b {
+  padding: 2px 8px;
+  font-weight: normal;
+  border: 1px solid #3c86b0;
+  background: #0f2c44;
+  font-size: 0.9rem;
+}
+.gs-turn.gs-enemy > b {
+  border-color: #b8463b;
+  background: #3a1518;
+}
+.gs-turn span {
+  color: var(--muted);
+}
+.gs-turn[data-skips] > b {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+.gs-handheld {
+  display: flex;
+  gap: 10px;
+  overflow: hidden;
+  white-space: nowrap;
+}

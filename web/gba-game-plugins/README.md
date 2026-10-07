@@ -2,8 +2,9 @@
 
 Game plugins for the [Evenfall player](../../docs/player.md). They read a
 running game's memory and show what it holds beside the screen. Today the
-package holds unofficial Pokémon panels: the current party, PC storage, battle
-state, trainer previews and species details. It is also a complete example of
+package holds unofficial Pokémon panels (the current party, PC storage, battle
+state, trainer previews and species details) and an unofficial Golden Sun
+battle dashboard ([below](#golden-sun)). It is also a complete example of
 a game package built on the SDK's [game bridges](../../docs/game-bridges.md).
 
 ## Disclaimer
@@ -11,7 +12,8 @@ a game package built on the SDK's [game bridges](../../docs/game-bridges.md).
 > **Evenfall and this package are not affiliated with, endorsed by, or
 > sponsored by Nintendo, Creatures Inc., GAME FREAK inc. or The Pokémon
 > Company.** Pokémon and Pokémon character names are trademarks of Nintendo,
-> Creatures Inc. and GAME FREAK inc. The ROM hacks named below are
+> Creatures Inc. and GAME FREAK inc. Nor are they affiliated with Camelot
+> Software Planning; Golden Sun is a trademark of Nintendo. The ROM hacks named below are
 > third-party works by their own authors and are not part of Evenfall. This
 > package contains no game code, data or artwork: you must supply your own
 > legally obtained ROMs.
@@ -43,15 +45,17 @@ Reviewed support is per **exact build**, identified by the SHA-1 of the raw
 ROM (the `.gba`, or the single ROM inside a ZIP). Title and header codes are
 not enough.
 
-| Game                            | Build                  | Raw ROM SHA-1                              | Support               |
-| ------------------------------- | ---------------------- | ------------------------------------------ | --------------------- |
-| Pokémon Heart & Soul (ROM hack) | 1.2.1 release          | `a4be81f8330d7f223a3ab847c3da822fe6f8a2e0` | reviewed manifest     |
-| Pokémon Heart & Soul (ROM hack) | 1.2.0 release          | `b8a4b491ca67a76f079a8e7c19fd5512a2147dd2` | located in the player |
-| Pokémon Elite Redux (ROM hack)  | 2.65 Beta2             | `f1323126bc043f3ce931bcc670957930559eb515` | reviewed manifest     |
-| Pokémon Elite Redux (ROM hack)  | 2.65 Beta2 debug build | `299165fb56e19ac8afe5d66f83dd5bada823d58c` | located in the player |
-| Pokémon Elite Redux (ROM hack)  | 2.65 Beta3 (2.65.3b)   | `5b38a681b6924ef3e0bb9f6cfbf22426c4c4e523` | reviewed manifest     |
-| Pokémon Elite Redux (ROM hack)  | 2.65.4.1b              | `2f3e17e55c6afe23da97ec0f96a067eeb142ad15` | located in the player |
-| Pokémon Unbound (ROM hack)      | 2.1.1.1 release        | `b4776b82a4c7915d0fadeaa27e013523f99dfd94` | reviewed manifest     |
+| Game                              | Build                  | Raw ROM SHA-1                              | Support               |
+| --------------------------------- | ---------------------- | ------------------------------------------ | --------------------- |
+| Pokémon Heart & Soul (ROM hack)   | 1.2.1 release          | `a4be81f8330d7f223a3ab847c3da822fe6f8a2e0` | reviewed manifest     |
+| Pokémon Heart & Soul (ROM hack)   | 1.2.0 release          | `b8a4b491ca67a76f079a8e7c19fd5512a2147dd2` | located in the player |
+| Pokémon Elite Redux (ROM hack)    | 2.65 Beta2             | `f1323126bc043f3ce931bcc670957930559eb515` | reviewed manifest     |
+| Pokémon Elite Redux (ROM hack)    | 2.65 Beta2 debug build | `299165fb56e19ac8afe5d66f83dd5bada823d58c` | located in the player |
+| Pokémon Elite Redux (ROM hack)    | 2.65 Beta3 (2.65.3b)   | `5b38a681b6924ef3e0bb9f6cfbf22426c4c4e523` | reviewed manifest     |
+| Pokémon Elite Redux (ROM hack)    | 2.65.4.1b              | `2f3e17e55c6afe23da97ec0f96a067eeb142ad15` | located in the player |
+| Pokémon Unbound (ROM hack)        | 2.1.1.1 release        | `b4776b82a4c7915d0fadeaa27e013523f99dfd94` | reviewed manifest     |
+| Golden Sun: Golden Age (ROM hack) | Golden Age 1           | `1864e0f1ae44e07f10c2d0ac826e6104c69ca5e9` | reviewed manifest     |
+| Golden Sun: The Lost Age          | USA, Europe            | `b500663220cb9bf56b9f8e8c0c544f1d6fa3a824` | located in the player |
 
 Every game carries shared locators seeded from its reviewed build.
 When the player loads another build, it runs them.
@@ -75,8 +79,8 @@ installs this package through one import in
 [`web/player/src/games.ts`](../player/src/games.ts):
 
 ```ts
-import { pokemonPlugin } from "@evenfall/gba-game-plugins/ui";
-const installed: readonly GamePlugin[] = [pokemonPlugin];
+import { goldenSunPlugin, pokemonPlugin } from "@evenfall/gba-game-plugins/ui";
+const installed: readonly GamePlugin[] = [pokemonPlugin, goldenSunPlugin];
 ```
 
 `pokemonPlugin` lists the headless game definitions and lazily loads their
@@ -135,6 +139,22 @@ party types and abilities, turn count, live battle weather, most map names
 and some rare shiny palettes. Spinda and Deoxys portraits and Japanese text
 are unsupported. PC records do not keep current PP, so the
 inspector shows a dash.
+
+### Golden Sun
+
+`goldenSunPlugin` adds a battle dashboard for Golden Sun and The Lost Age builds that keep the retail engine, in its own chunk ([`ui/golden-sun-dashboard.tsx`](ui/golden-sun-dashboard.tsx)).
+It reads only work RAM, and [`docs/golden-sun.md`](docs/golden-sun.md) records the evidence.
+
+- The left column lists the party.
+  Each row has a stripe in the adept's element, djinn pips (hollow on Standby), HP and PP, current Attack, Defense, Agility and Luck, the statuses, and one Pwr/Rst row with a gem above each element.
+- The right column lists the enemies in the same rows, without djinn.
+  Their Pwr/Rst cells are green for an element they are weak to and red for one they resist.
+- Statuses are small pills in one row: an icon, an arrow for a stat change, and the turns left.
+  Hover a pill for its name.
+- Above the screen are the coins, and below it the living units by Agility, labelled as an estimate.
+- Summons ready counts the party's djinn on Standby per element.
+- On narrower pages the dock holds Party and Battle tabs, and a battle opens the Battle tab.
+  On phones, a line under the screen shows each adept's HP.
 
 ## As a library
 
@@ -205,17 +225,20 @@ Unit tests use synthetic records. Tests that need real games skip unless you
 point these variables at files you supply; they verify the documented hashes
 before use:
 
-| Variable                                             | File                                                                                              |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `EVENFALL_HNS_ROM`                                   | Heart & Soul 1.2.1 raw ROM                                                                        |
-| `EVENFALL_HNS_120_ROM`                               | Heart & Soul 1.2.0 raw ROM, with `EVENFALL_HNS_ROM`                                               |
-| `EVENFALL_HNS_STATE`, `EVENFALL_HNS_BATTLE`          | `game2.state` and `battle.state` ([hashes](docs/profiles.md#test-fixtures))                       |
-| `EVENFALL_REDUX_ROM`                                 | Elite Redux 2.65 Beta2 raw ROM                                                                    |
-| `EVENFALL_REDUX_DEBUG_ROM`                           | Elite Redux 2.65 Beta2 debug build raw ROM, with `EVENFALL_REDUX_ROM`                             |
-| `EVENFALL_REDUX_STATE`, `EVENFALL_REDUX_STAGE_STATE` | `redux.state` and `redux-stage-buff.state` ([hashes](docs/profiles.md#test-fixtures))             |
-| `EVENFALL_REDUX_BETA3_ROM`                           | Elite Redux 2.65 Beta3 raw ROM                                                                    |
-| `EVENFALL_REDUX_BETA3_STATE`                         | a Beta3 overworld state, with `EVENFALL_REDUX_BETA3_ROM` ([hash](docs/profiles.md#test-fixtures)) |
-| `EVENFALL_REDUX_26541_ROM`                           | Elite Redux 2.65.4.1b raw ROM                                                                     |
+| Variable                                                       | File                                                                                              |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `EVENFALL_HNS_ROM`                                             | Heart & Soul 1.2.1 raw ROM                                                                        |
+| `EVENFALL_HNS_120_ROM`                                         | Heart & Soul 1.2.0 raw ROM, with `EVENFALL_HNS_ROM`                                               |
+| `EVENFALL_HNS_STATE`, `EVENFALL_HNS_BATTLE`                    | `game2.state` and `battle.state` ([hashes](docs/profiles.md#test-fixtures))                       |
+| `EVENFALL_REDUX_ROM`                                           | Elite Redux 2.65 Beta2 raw ROM                                                                    |
+| `EVENFALL_REDUX_DEBUG_ROM`                                     | Elite Redux 2.65 Beta2 debug build raw ROM, with `EVENFALL_REDUX_ROM`                             |
+| `EVENFALL_REDUX_STATE`, `EVENFALL_REDUX_STAGE_STATE`           | `redux.state` and `redux-stage-buff.state` ([hashes](docs/profiles.md#test-fixtures))             |
+| `EVENFALL_REDUX_BETA3_ROM`                                     | Elite Redux 2.65 Beta3 raw ROM                                                                    |
+| `EVENFALL_REDUX_BETA3_STATE`                                   | a Beta3 overworld state, with `EVENFALL_REDUX_BETA3_ROM` ([hash](docs/profiles.md#test-fixtures)) |
+| `EVENFALL_REDUX_26541_ROM`                                     | Elite Redux 2.65.4.1b raw ROM                                                                     |
+| `EVENFALL_GOLDEN_SUN_ROM`                                      | Golden Age 1 raw ROM                                                                              |
+| `EVENFALL_GOLDEN_SUN_BATTLE`, `_BUFF`, `_DELUSION`, `_FIELD`   | four Golden Age 1 states ([hashes](docs/golden-sun.md#test-fixtures))                             |
+| `EVENFALL_GOLDEN_SUN_TLA_ROM`, `EVENFALL_GOLDEN_SUN_TLA_FIELD` | The Lost Age raw ROM and an opening state ([hash](docs/golden-sun.md#test-fixtures))              |
 
 No ROM, save or state is committed, and none is needed for the default suites.
 The state fixtures above were captured with the player's previous core and
