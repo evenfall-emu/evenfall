@@ -1003,7 +1003,9 @@ describe("playthrough quota and account erasure", () => {
   });
 
   it("reserves one slot per run, not per kind or upload; rejects the 101st under concurrency", async () => {
-    const first = crypto.randomUUID();
+    // R2 sorts keys, not uploads. Put this run after the concurrent runs so
+    // its resume is beyond the first page, which also includes its battery.
+    const first = "ffffffff-ffff-4fff-bfff-ffffffffffff";
     const created = await upload(owner, first);
     expect(created.status).toBe(200);
     const { etag } = (await created.json()) as { etag: string };
@@ -1102,17 +1104,32 @@ describe("playthrough quota and account erasure", () => {
       });
     }
     expect((await upload(other, ids[0])).status).toBe(200);
-    const listing = await miniflare.dispatchFetch(`${origin}/api/saves`, {
-      headers: owner,
-    });
-    expect(listing.status).toBe(200);
-    const page = (await listing.json()) as {
-      saves: { playthroughId: string; playthroughName: string }[];
-      usage: { playthroughs: number; limit: number };
-    };
-    expect(page.usage).toEqual({ playthroughs: 100, limit: 100 });
+    const entries: { playthroughId: string; playthroughName: string }[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const listing = await miniflare.dispatchFetch(
+        `${origin}/api/saves${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+        { headers: owner },
+      );
+      expect(listing.status).toBe(200);
+      const page = (await listing.json()) as {
+        saves: typeof entries;
+        cursor: string | null;
+        usage: { playthroughs: number; limit: number };
+      };
+      expect(page.usage).toEqual({ playthroughs: 100, limit: 100 });
+      if (pages === 0)
+        expect(page.saves.some((save) => save.playthroughId === first)).toBe(
+          false,
+        );
+      entries.push(...page.saves);
+      cursor = page.cursor;
+      expect(++pages).toBeLessThan(5);
+    } while (cursor);
+    expect(pages).toBeGreaterThan(1);
     expect(
-      page.saves.find((save) => save.playthroughId === first)?.playthroughName,
+      entries.find((save) => save.playthroughId === first)?.playthroughName,
     ).toBe("At cap");
     const forbidden = await miniflare.dispatchFetch(
       `${origin}/api/saves/${hash}/${first}/resume`,
