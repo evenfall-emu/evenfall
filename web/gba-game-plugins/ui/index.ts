@@ -1,5 +1,6 @@
 // `@evenfall/gba-game-plugins/ui`: the player plugin plus the React panels it renders.
 // Unofficial; see ../README.md for supported builds and the disclaimer.
+import { fireRedUpgrade } from "../src/cfru";
 import { eliteRedux } from "../src/elite-redux";
 import { heartNSoul } from "../src/heart-n-soul";
 
@@ -18,6 +19,6 @@ export type {
  */
 export const pokemonPlugin = {
   id: "@evenfall/gba-game-plugins",
-  games: [heartNSoul, eliteRedux],
+  games: [heartNSoul, eliteRedux, fireRedUpgrade],
   dashboards: () => import("./dashboards").then((module) => module.dashboards),
 };

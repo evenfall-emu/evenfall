@@ -142,6 +142,12 @@ export const detailedGameBattle = defineBridge({
     );
     if (opponentParty.status !== "ready") return opponentParty;
 
+    // Multi and in-game partner battles (bits 6 and 22 in Emerald, FireRed
+    // and CFRU) put the partner's team after the player's, in slots 3 to 5.
+    const playerSlots =
+      typeFlags & ((1 << 6) | (1 << 22))
+        ? symbols.gPlayerParty.length
+        : playerCount;
     const absent = memory.read(symbols.gAbsentBattlerFlags);
     const battlers: Extract<
       PokemonBattleView,
@@ -155,7 +161,7 @@ export const detailedGameBattle = defineBridge({
         side === "player" ? symbols.gPlayerParty : symbols.gEnemyParty;
       if (
         side === "player"
-          ? partySlot >= playerCount
+          ? partySlot >= playerSlots
           : !opponentSlots.includes(partySlot)
       )
         return unavailable(`Battler ${battler} has an invalid party slot`);

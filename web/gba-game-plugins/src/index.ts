@@ -3,6 +3,7 @@
 export * from "./artwork";
 export * from "./bridges";
 export * from "./catalog";
+export * from "./cfru";
 export * from "./elite-redux";
 export * from "./game-party";
 export * from "./gen3-record";

@@ -73,6 +73,7 @@ omitted trailing colors zero-filled as the game does).
 | Heart & Soul 1.2.1     | `0x08907368` | 398     | `0x08907fd8` |
 | Elite Redux 2.65 Beta2 | `0x08ae4b40` | 1023    | `0x08ae6b38` |
 | Elite Redux 2.65 Beta3 | `0x08ae4b0c` | 1023    | `0x08ae6b04` |
+| Unbound 2.1.1.1        | `0x0825a554` | 729     | `0x0825bc1c` |
 
 The roots were located by scanning for runs of pointer pairs and checked in
 each identity-pinned ROM: every tile stream decodes to 288 bytes and every
@@ -614,6 +615,161 @@ The decoded flags distinguish Multitype and Neutralizing Gas, which are unsuppre
 Ability 1016's name contains glyph `0x86`, which the text decoder rejects.
 A view that needs that ability cannot decode it.
 The ROM probes cover selected catalog entries, not every name or a complete gameplay session.
+
+## Pokémon Unbound 2.1.1.1 (Complete Fire Red Upgrade)
+
+### Build identity
+
+| Property      | Value                                                                   |
+| ------------- | ----------------------------------------------------------------------- |
+| Release       | Pokémon Unbound 2.1.1.1                                                 |
+| Raw ROM size  | 33,554,432 bytes                                                        |
+| Raw ROM SHA-1 | `b4776b82a4c7915d0fadeaa27e013523f99dfd94`                              |
+| Header        | `POKEMON FIRE`, game code `BPRE`                                        |
+| Engine        | Complete Fire Red Upgrade; Unbound's own revision is unpublished        |
+| Manifest      | `unbound2111`, reviewed, the template for other CFRU builds (`cfru.ts`) |
+
+Sources are the public
+[CFRU](https://github.com/Skeli789/Complete-Fire-Red-Upgrade/tree/b637a27898b14e25dd24d0f69a3e302f0069deb8)
+and [pokefirered](https://github.com/pret/pokefirered/tree/037335f4c725d7c9aecdac87066f2002b4bd7e14)
+at those commits. Every species, move, ability and item ID read from the
+state matches CFRU's constants, and every table count below equals its
+public count.
+
+### How CFRU differs from a decompilation hack
+
+CFRU is not a decompilation build. It compiles new C code into free space of
+a FireRed 1.0 ROM, hooks and byte-patches FireRed's code in place, and
+repoints the tables it expands. Three consequences shape the family:
+
+- FireRed's RAM globals keep their addresses. CFRU's `BPRE.ld` names them,
+  and the state confirms each one below.
+- FireRed's code stays at its addresses. CFRU's `repoints` and `repointall`
+  lists rewrite the literal pools and the Game Freak ROM header fields that
+  name a moved table, so FireRed's code still loads every table's address.
+- The record formats are CFRU's own, not FireRed's, and are the same in
+  every CFRU hack: they are code in [`cfru.ts`](../src/cfru.ts), not
+  manifest data.
+
+### Record layout
+
+- Party records keep FireRed's 100 bytes, in the clear. CFRU's
+  `bytereplacement` "Decryption" entries remove the XOR from
+  `EncryptBoxMon`/`DecryptBoxMon` and force substructure order 0 at
+  `0x0803f94c`; the field FireRed uses for the checksum holds 0 in the
+  state. Growth byte 10 is the Poké Ball. Misc word 1 bit 30 is the egg
+  flag and bit 31 the hidden-ability flag.
+- The ability follows `GetMonAbility`: the hidden ability when the flag is
+  set and the species has one, else the second ability when the
+  personality is odd and the species has one, else the first. The catalog
+  publishes four slots per species, selected by `2 * flag + (personality & 1)`.
+- The nature is `personality % 25`.
+- PC records are the packed 58-byte `CompressedPokemon`: the party record's
+  header, growth without its last byte, four 10-bit moves in five bytes, the
+  EVs and the first eight bytes of Misc. They keep no PP, contest data or
+  ribbons; withdrawing restores full PP, so PC PP is `null`. The 25 boxes
+  live at RAM addresses the ROM's `sPokemonBoxPtrs` and
+  `sPokemonBoxNamePtrs` tables give: boxes 1-19 continue FireRed's storage
+  past its fourteenth box, and the rest reuse other RAM. The current box is
+  byte 0 of `gPokemonStoragePtr`'s target. The 25th box is Unbound's
+  "Preset" box.
+- `BattlePokemon` keeps FireRed's 0x58-byte layout except byte 0x18:
+  FireRed's unused HP stage becomes a third type (0x14, `TYPE_BLANK`, when
+  empty), so the stage check skips it. The seven stages from Attack to
+  evasion stay at 0x19-0x1f, and the ability is the byte at 0x20.
+- `BaseStats` keeps 28 bytes and adds the hidden ability at `+26`.
+  `BattleMove` keeps 12 bytes: priority at `+7`, the physical, special or
+  status split at `+10`. Items keep 44 bytes; a name whose fourth byte is
+  0x08 or 0x09 is a pointer to a longer name (`ItemId_GetName`), as for
+  Wishing Piece. Experience is `[6][256]` words, a 1024-byte stride.
+- `IsShinyOtIdPersonality` at `0x0804449c` compares with `cmp r2, #15`, so
+  Unbound's shiny threshold is 16, not FireRed's 8.
+
+### RAM roots
+
+| Root                   | Address      | Notes                                      |
+| ---------------------- | ------------ | ------------------------------------------ |
+| `gPlayerPartyCount`    | `0x02024029` |                                            |
+| `gPlayerParty`         | `0x02024284` | six 100-byte records                       |
+| `gEnemyParty`          | `0x0202402c` | six 100-byte records                       |
+| `gSaveBlock1Ptr`       | `0x03005008` | position and map at `+0`/`+4`              |
+| `gSaveBlock2Ptr`       | `0x0300500c` | read only to wait for a loaded save        |
+| `gPokemonStoragePtr`   | `0x03005010` | current box at `+0`                        |
+| `gMain.inBattle`       | `0x03003529` | `gMain` `0x030030f0`, byte `+0x439`, bit 1 |
+| `gBattleTypeFlags`     | `0x02022b4c` | CFRU's FireRed flag set                    |
+| `gBattlersCount`       | `0x02023bcc` |                                            |
+| `gBattlerPartyIndexes` | `0x02023bce` |                                            |
+| `gBattleMons`          | `0x02023be4` | four 0x58-byte records                     |
+| `gAbsentBattlerFlags`  | `0x02023d70` |                                            |
+| `gMapHeader`           | `0x02036dfc` | `regionMapSectionId` at `+0x14`            |
+
+### ROM tables
+
+| Table                                          | Address                                    | Count x stride        |
+| ---------------------------------------------- | ------------------------------------------ | --------------------- |
+| Species names / base stats                     | `0x0966a98c` / `0x099e0c9c`                | 1294 x 11 / 1294 x 28 |
+| Move names / moves                             | `0x08a40a10` / `0x08a769af`                | 923 x 13 / 923 x 12   |
+| Move descriptions                              | `0x0899f194`                               | 922 x 4, from move 1  |
+| Ability names / descriptions                   | `0x08a36398` / `0x0896de04`                | 255 x 17 / 255 x 4    |
+| Types / natures                                | `0x08a4ead4` / `0x08463e60`                | 24 x 7 / 25 x 4       |
+| Items / experience                             | `0x08876200` / `0x08a79560`                | 729 x 44 / 6 x 1024   |
+| Front pictures / palettes / shiny palettes     | `0x09a1d5b4` / `0x09a32bdc` / `0x09a3f77c` |                       |
+| Icons / icon palette indices / icon palettes   | `0x09a217fc` / `0x09a212ec` / `0x083d4038` |                       |
+| PC box / box-name pointers                     | `0x08a6cb2c` / `0x08a6cb90`                | 25 x 4 each           |
+| Map section names (`GetMapName`'s `sMapNames`) | `0x083f1cac`                               | 109, from section 88  |
+
+The moves table is byte-aligned: `BattleMove` has only byte fields. Egg,
+Unown, Unown B, Spinda and Deoxys are species 412, 201, 413, 308 and 410.
+Every species name, move, ability, description and item name decodes. Item
+366's description has the unsupported glyph 0xf8 and is unavailable, and
+item 503's icon is not LZ77 data.
+
+### Locators
+
+[`cfru.locators.ts`](../src/cfru.locators.ts) holds the locators, written
+for any CFRU hack rather than for Unbound alone:
+
+- Every RAM source and most ROM tables have up to three `thumbLiteral` or
+  `thumbAccess` patterns of FireRed's own code, generated by
+  `codeSignatures` and `accessSignatures` over FireRed's code (the first
+  0x1e0000 bytes), kept only when unique in the whole ROM and when their
+  fixed bytes hold no ROM pointer a hack could repoint.
+- Tables the Game Freak header names (species names and base stats, moves
+  and their names, abilities and their descriptions, items, pictures,
+  palettes and icons) are also read from the header, found by its
+  "pokemon red version" string. Ability names, ability descriptions and the
+  palettes rely on the header alone.
+- The PC tables are found by their first four pointers, which CFRU fixes
+  in RAM. The map-section count and the shiny threshold are read from the
+  `cmp` immediates of `GetMapName` and `IsShinyOtIdPersonality`.
+- Detection requires `BPRE` and three markers only CFRU writes: the two
+  decryption patches and the PC box table.
+
+On Unbound's ROM, `locateGame` without the catalog's help reproduces the
+reviewed manifest value for value with nothing to review. No other CFRU ROM
+has been checked.
+
+### Partner battles
+
+In multi and in-game partner battles, FireRed, Emerald and CFRU put the
+partner's team in player slots 3-5, after the player's party, which
+`gPlayerPartyCount` does not count. The shared battle view accepts a
+player-side battler in any of the six slots when battle type bit 6 (multi)
+or 22 (in-game partner) is set; the identity check against the live record
+still applies. In the state, the player's Gible (slot 0) fights beside the
+partner's Larvitar (slot 3) against Inkay and Skorupi, with type flags
+`0x40000d`.
+
+### Unresolved values
+
+- PC decoding is unchecked on real records: every box in the state is
+  empty.
+- Record bounds and table counts are Unbound's (1294 species, 923 moves,
+  255 abilities, 729 items, 25 boxes); no locator reads them. A CFRU hack
+  with larger tables reports its extra species and moves as inconsistent
+  records, and one with smaller tables passes probes on Unbound's counts.
+- Battle turn, live battle weather and trainer identity are not read.
+- Spinda's and Deoxys's front portraits are unsupported, as in FireRed.
 
 ## pokeemerald-expansion
 

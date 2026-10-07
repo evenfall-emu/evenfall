@@ -66,6 +66,11 @@ export interface Gen3CatalogConfig {
   readonly priorityOffset?: number;
   readonly itemDescriptionOffset?: number;
   readonly itemDescriptionMaxLength?: number;
+  /**
+   * An item name whose fourth byte is 0x08 or 0x09 is a pointer to the full
+   * name instead, for names longer than the record's 14 bytes (CFRU).
+   */
+  readonly itemNamePointers?: boolean;
   readonly legacyStatsOffset?: number;
   readonly legacyTypesOffset?: number;
   readonly alternateTypesOffset?: number;
@@ -98,6 +103,13 @@ export function createGen3Catalog(
     length = table.stride,
   ): NamedValue {
     return Object.freeze({ id, name: text(entry(table, id), length) });
+  }
+  function itemName(id: number): NamedValue {
+    const address = entry(config.items, id);
+    const high = rom.u8(address + 3);
+    if (config.itemNamePointers && (high === 0x08 || high === 0x09))
+      return Object.freeze({ id, name: text(rom.u32(address), 32) });
+    return named(config.items, id, 14);
   }
   function terminatedText(address: number, maxLength: number) {
     const bytes: number[] = [];
@@ -206,7 +218,7 @@ export function createGen3Catalog(
       const address = entry(config.items, id);
       if (config.itemDescriptionOffset === undefined)
         return Object.freeze({
-          ...named(config.items, id, 14),
+          ...itemName(id),
           artwork: romHash
             ? { kind: "item" as const, romHash, item: id }
             : undefined,
@@ -219,7 +231,7 @@ export function createGen3Catalog(
         config.itemDescriptionMaxLength ?? 256,
       );
       return Object.freeze({
-        ...named(config.items, id, 14),
+        ...itemName(id),
         artwork: romHash
           ? { kind: "item" as const, romHash, item: id }
           : undefined,

@@ -15,6 +15,7 @@ import type { BridgeState, GameArenaStatus } from "@evenfall/gba/bridge";
 import type { Gen3Game } from "../src/gen3";
 import { heartNSoul } from "../src/heart-n-soul";
 import { eliteRedux } from "../src/elite-redux";
+import { fireRedUpgrade } from "../src/cfru";
 import { searchKey } from "../src/search";
 import type { PokemonResources } from "../src/bridges";
 import { defaultTypeSystem, type PokemonTypeSystem } from "../src/type-system";
@@ -1363,6 +1364,26 @@ export function EliteReduxDashboard({
     <Gen3Overlay
       game={eliteRedux}
       gameName="Elite Redux"
+      build={build}
+      handheld={handheld}
+      docked={docked}
+    >
+      {children}
+    </Gen3Overlay>
+  );
+}
+
+/** Pokémon Unbound and the other Complete Fire Red Upgrade hacks. */
+export function FireRedUpgradeDashboard({
+  build,
+  children,
+  handheld,
+  docked,
+}: GameLayoutProps) {
+  return (
+    <Gen3Overlay
+      game={fireRedUpgrade}
+      gameName="Fire Red Upgrade"
       build={build}
       handheld={handheld}
       docked={docked}

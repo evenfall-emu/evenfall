@@ -51,14 +51,17 @@ not enough.
 | Pokémon Elite Redux (ROM hack)  | 2.65 Beta2 debug build | `299165fb56e19ac8afe5d66f83dd5bada823d58c` | located in the player |
 | Pokémon Elite Redux (ROM hack)  | 2.65 Beta3 (2.65.3b)   | `5b38a681b6924ef3e0bb9f6cfbf22426c4c4e523` | reviewed manifest     |
 | Pokémon Elite Redux (ROM hack)  | 2.65.4.1b              | `2f3e17e55c6afe23da97ec0f96a067eeb142ad15` | located in the player |
+| Pokémon Unbound (ROM hack)      | 2.1.1.1 release        | `b4776b82a4c7915d0fadeaa27e013523f99dfd94` | reviewed manifest     |
 
-Both games carry shared locators seeded from their reviewed builds.
+Every game carries shared locators seeded from its reviewed build.
 When the player loads another build, it runs them.
 A build is accepted only if every address is found without disagreement and the ROM probes pass.
 Its dashboard is marked as not reviewed.
 Redux also locates its ability record size and suppression flags offset from code, so those values need not match the template.
 Other record layouts still come from the template.
 Other revisions, such as Elite Redux 2.65 Beta1, are recognized only if their locators and probes still match.
+Unbound is built on Complete Fire Red Upgrade (CFRU), which is inserted into a FireRed ROM rather than rebuilt from a decompilation.
+Its locators are FireRed's own code and Game Freak header, which every CFRU hack keeps, so other CFRU hacks are located the same way, with Unbound as their template.
 Other pokeemerald-expansion hacks and retail Pokémon games have no family, and
 unknown ROMs keep the generic player.
 [`docs/profiles.md`](docs/profiles.md) records the evidence behind every
@@ -115,6 +118,9 @@ refreshes it.
   standing foes, and its tooltip names that foe. Status moves are not rated.
   This is the type chart alone: abilities such as Levitate, items, weather
   and type-changing moves are excluded.
+- In a multi or in-game partner battle, the partner's active Pokémon counts
+  as one of your side's battlers for the opponent's move ratings, but stays
+  out of your team list, which shows only your own party.
 - Condition colors are interface conventions, not ROM data: burn is orange,
   paralysis yellow, freeze ice-blue, bleed red, sleep white, poison and
   unknown ailments purple.
@@ -150,8 +156,8 @@ store.subscribe(() => {
 Games are families over the shared Gen III views
 ([`src/gen3.ts`](src/gen3.ts)): `pokemonGen3(format)` supplies the standard
 sources, views and resources, Heart & Soul spreads it with its layout and map
-context, and Elite Redux defines its own sources and views for the same
-overlay. A build is a manifest; `createGame(family, manifests)` registers
+context, and Elite Redux and CFRU ([`src/cfru.ts`](src/cfru.ts)) define their
+own sources and views for the same overlay. A build is a manifest; `createGame(family, manifests)` registers
 further verified builds.
 
 Types are keys such as `fire` or `electric`, parsed from the ROM's type

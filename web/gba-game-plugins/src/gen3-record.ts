@@ -18,6 +18,16 @@ export interface Gen3RecordFormat {
   readonly abilityOffset: 4 | 8;
   readonly abilityShift: number;
   readonly hiddenNature: boolean;
+  /**
+   * False when the game stores records in the clear, with no checksum and
+   * the substructures in their declared order (CFRU). Defaults to true.
+   */
+  readonly encrypted?: boolean;
+  /**
+   * The ability bit selects a hidden ability, and the personality's low bit
+   * picks between the first two (CFRU): the slot is `2 * bit + (personality & 1)`.
+   */
+  readonly personalityAbility?: boolean;
 }
 
 export interface Gen3BattlePokemon {
@@ -50,7 +60,15 @@ export function gen3BattlePokemon(format: {
   readonly moveLimit: number;
   readonly typeLimit: number;
   readonly abilityLimit: number;
+  /**
+   * Byte 0x18 holds a third type instead of the unused HP stage (CFRU), and
+   * this type ID means it is empty.
+   */
+  readonly thirdTypeNone?: number;
+  /** As in `Gen3RecordFormat`: bit 31 of the IV word selects a hidden ability. */
+  readonly personalityAbility?: boolean;
 }): MemoryLayout<DecodeResult<Gen3BattlePokemon>> {
+  const thirdType = format.thirdTypeNone !== undefined;
   return {
     byteLength: 0x58,
     decode(memory, address) {
@@ -64,6 +82,8 @@ export function gen3BattlePokemon(format: {
       const rawStages = memory.bytes(address + 0x18, 8);
       const ability = memory.u8(address + 0x20);
       const typeIds = [memory.u8(address + 0x21), memory.u8(address + 0x22)];
+      if (thirdType && rawStages[0] !== format.thirdTypeNone)
+        typeIds.push(rawStages[0]);
       if (
         !species ||
         species >= format.speciesLimit ||
@@ -74,10 +94,11 @@ export function gen3BattlePokemon(format: {
         level > 100 ||
         !maxHp ||
         hp > maxHp ||
-        rawStages.some((stage) => stage > 12)
+        rawStages.subarray(thirdType ? 1 : 0).some((stage) => stage > 12)
       )
         return unavailable("Battle Pokémon is inconsistent or being updated");
       const ivWord = memory.u32(address + 0x14);
+      const personality = memory.u32(address + 0x48);
       const stage = (index: number) => rawStages[index] - 6;
       return {
         status: "ready",
@@ -95,7 +116,9 @@ export function gen3BattlePokemon(format: {
           pp: [...memory.bytes(address + 0x24, 4)],
           ivs: statsFrom((index) => (ivWord >>> (index * 5)) & 31),
           isEgg: Boolean(ivWord & (1 << 30)),
-          abilitySlot: ivWord >>> 31,
+          abilitySlot: format.personalityAbility
+            ? 2 * (ivWord >>> 31) + (personality & 1)
+            : ivWord >>> 31,
           statStages: {
             attack: stage(1),
             defense: stage(2),
@@ -114,7 +137,7 @@ export function gen3BattlePokemon(format: {
           heldItem: memory.u16(address + 0x2e),
           ppBonuses: memory.u8(address + 0x3b),
           experience: memory.u32(address + 0x44),
-          personality: memory.u32(address + 0x48),
+          personality,
           status: memory.u32(address + 0x4c),
           volatileStatus: memory.u32(address + 0x50),
           trainerId: memory.u32(address + 0x54),
@@ -124,7 +147,8 @@ export function gen3BattlePokemon(format: {
   };
 }
 
-interface DecryptedRecord {
+/** A record's header fields and its four 12-byte substructures in the clear. */
+export interface DecryptedRecord {
   readonly personality: number;
   readonly trainerId: number;
   readonly flags: number;
@@ -164,9 +188,12 @@ function recordLayout(
   return {
     byteLength,
     decode(memory, address) {
-      const decrypted = decryptGen3Record(memory, address);
+      const decrypted =
+        format.encrypted === false
+          ? plainGen3Record(memory, address)
+          : decryptGen3Record(memory, address);
       if (decrypted.status === "unavailable") return decrypted;
-      const decoded = decodeBox(decrypted.data, format);
+      const decoded = decodeGen3Box(decrypted.data, format);
       if (decoded.status === "unavailable" || !party) return decoded;
 
       const hp = memory.u16(address + 0x56);
@@ -196,7 +223,8 @@ function recordLayout(
   };
 }
 
-function decodeBox(
+/** The box fields of a record whose substructures are in the clear. */
+export function decodeGen3Box(
   record: DecryptedRecord,
   format: Gen3RecordFormat,
 ): DecodeResult<BoxPokemon> {
@@ -223,6 +251,8 @@ function decodeBox(
     (index) => (ivWord >>> (format.ivShift + index * 5)) & 31,
   );
   const evs = statsFrom((index) => evBlock.getUint8(index));
+  const abilityBit =
+    (misc.getUint32(format.abilityOffset, true) >>> format.abilityShift) & 1;
   return {
     status: "ready",
     data: {
@@ -243,9 +273,9 @@ function decodeBox(
       ivs,
       evs,
       isEgg,
-      abilitySlot:
-        (misc.getUint32(format.abilityOffset, true) >>> format.abilityShift) &
-        1,
+      abilitySlot: format.personalityAbility
+        ? 2 * abilityBit + (record.personality & 1)
+        : abilityBit,
     },
   };
 }
@@ -296,6 +326,33 @@ export function decryptGen3Record(
     data: {
       personality,
       trainerId,
+      flags,
+      language: memory.u8(address + 0x12),
+      nickname: memory.bytes(address + 8, 10),
+      trainerName: memory.bytes(address + 0x14, 7),
+      blocks: [block(0), block(1), block(2), block(3)],
+    },
+  };
+}
+
+/**
+ * A record stored in the clear: CFRU removes the XOR and the substructure
+ * shuffle, and reuses the checksum field, so nothing checks the data.
+ */
+function plainGen3Record(
+  memory: MemoryReader,
+  address: number,
+): DecodeResult<DecryptedRecord> {
+  const flags = memory.u8(address + 0x13);
+  if (!(flags & 2) || flags & 1) return unavailable("Empty or bad-egg record");
+  const plain = memory.bytes(address + 0x20, 48);
+  const block = (kind: number) =>
+    new DataView(plain.buffer, plain.byteOffset + kind * 12, 12);
+  return {
+    status: "ready",
+    data: {
+      personality: memory.u32(address),
+      trainerId: memory.u32(address + 4),
       flags,
       language: memory.u8(address + 0x12),
       nickname: memory.bytes(address + 8, 10),
