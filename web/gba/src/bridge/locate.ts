@@ -1172,8 +1172,9 @@ export interface Detection {
 }
 /**
  * A cheap check: the cartridge header's game code, then a few of the
- * family's own locators (its `detect.markers`, or the first locator of its
- * first `markers` sources) must find something.
+ * family's own locators. Explicit `detect.markers` each count once. Otherwise
+ * each of the first `markers` sources counts once when any of its direct
+ * locators finds something, regardless of the order of its alternatives.
  */
 export function detectFamily(
   family: Family<any, any, any, any>,
@@ -1186,17 +1187,16 @@ export function detectFamily(
   if (header === false)
     return { family: family.id, score: 0, header, markers: [] };
   const chosen =
-    family.detect?.markers ??
+    family.detect?.markers?.map((locator) => [locator]) ??
     Object.values(family.sources as Sources)
-      .flatMap((source) =>
-        (source.locate ?? [])
-          .filter((locator) => !locator.inferred)
-          .slice(0, 1),
+      .map((source) =>
+        (source.locate ?? []).filter((locator) => !locator.inferred),
       )
+      .filter((locators) => locators.length)
       .slice(0, options.markers ?? 6);
-  const markers = chosen.map((locator) => ({
-    locator: locator.id,
-    found: locator.find(rom).length > 0,
+  const markers = chosen.map((locators) => ({
+    locator: locators.map((locator) => locator.id).join(" | "),
+    found: locators.some((locator) => locator.find(rom).length > 0),
   }));
   const score = markers.length
     ? markers.filter(({ found }) => found).length / markers.length

@@ -50,15 +50,15 @@ not enough.
 | Pokémon Elite Redux (ROM hack)  | 2.65 Beta2             | `f1323126bc043f3ce931bcc670957930559eb515` | reviewed manifest     |
 | Pokémon Elite Redux (ROM hack)  | 2.65 Beta2 debug build | `299165fb56e19ac8afe5d66f83dd5bada823d58c` | located in the player |
 | Pokémon Elite Redux (ROM hack)  | 2.65 Beta3 (2.65.3b)   | `5b38a681b6924ef3e0bb9f6cfbf22426c4c4e523` | reviewed manifest     |
+| Pokémon Elite Redux (ROM hack)  | 2.65.4.1b              | `2f3e17e55c6afe23da97ec0f96a067eeb142ad15` | located in the player |
 
-Both games carry locators generated from their reviewed builds. When the
-player loads another build of either game, it runs them; a build is accepted
-only if every address is found without disagreement and the ROM probes pass,
-and its dashboard is marked as not reviewed. The two located builds above are
-checked against relocation from the reviewed builds. Other revisions, such as
-Elite Redux 2.65 Beta1, are recognized only if their locators still match.
-Locators find addresses, not layouts: Elite Redux Beta3 changed its ability
-record, so it has its own manifest rather than being located from Beta2's.
+Both games carry shared locators seeded from their reviewed builds.
+When the player loads another build, it runs them.
+A build is accepted only if every address is found without disagreement and the ROM probes pass.
+Its dashboard is marked as not reviewed.
+Redux also locates its ability record size and suppression flags offset from code, so those values need not match the template.
+Other record layouts still come from the template.
+Other revisions, such as Elite Redux 2.65 Beta1, are recognized only if their locators and probes still match.
 Other pokeemerald-expansion hacks and retail Pokémon games have no family, and
 unknown ROMs keep the generic player.
 [`docs/profiles.md`](docs/profiles.md) records the evidence behind every
@@ -208,6 +208,7 @@ before use:
 | `EVENFALL_REDUX_STATE`, `EVENFALL_REDUX_STAGE_STATE` | `redux.state` and `redux-stage-buff.state` ([hashes](docs/profiles.md#test-fixtures))             |
 | `EVENFALL_REDUX_BETA3_ROM`                           | Elite Redux 2.65 Beta3 raw ROM                                                                    |
 | `EVENFALL_REDUX_BETA3_STATE`                         | a Beta3 overworld state, with `EVENFALL_REDUX_BETA3_ROM` ([hash](docs/profiles.md#test-fixtures)) |
+| `EVENFALL_REDUX_26541_ROM`                           | Elite Redux 2.65.4.1b raw ROM                                                                     |
 
 No ROM, save or state is committed, and none is needed for the default suites.
 The state fixtures above were captured with the player's previous core and

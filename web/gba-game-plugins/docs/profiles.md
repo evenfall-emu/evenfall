@@ -570,7 +570,7 @@ encounter labels still apply: each labelled trainer ID names the same
 trainer, and no map script that battles Roxanne, May or Brendan changes
 between Beta2's revision and the battle-skill rework, which Beta3 predates.
 
-Values the Beta2 locators do not find, and their evidence:
+Additional evidence for the reviewed values:
 
 - `playerParty` and `enemyParty`, `0x02039908` and `0x02039ad0`: 639 and 227
   literal-pool words name them, and the party decodes from a Beta3 state.
@@ -587,16 +587,33 @@ Values the Beta2 locators do not find, and their evidence:
 The header's other front-picture, palette, icon, species-name and move-name
 pointers (`0x08000128`-`0x08000148`) also equal the manifest's.
 
-### Locators on Beta3
+### Shared locators
 
-`tools/bridge.mjs detect` scores Beta3 0.50 as Elite Redux, below the 0.75
-the player requires: the first locators of `playerParty`, `enemyParty` and
-`settings` miss. Past detection, the Beta2 locators leave the six values
-above unresolved and the probes reject the ability records, so the player
-cannot locate Beta3 from Beta2. Every value they do resolve equals the
-reviewed manifest's. Some Beta2 code patterns begin with the end of the
-preceding literal pool, a ROM address that moves with every build:
-`enemyParty`'s first pattern starts with Beta2's trainer-table pointer.
+The Redux family uses one locator setup for reviewed and unseen builds.
+Detection tries every non-inferred alternative for each source, and each source counts once.
+Full locating rejects ambiguous or disagreeing values.
+Patterns for changed functions start at their loads rather than including data from preceding literal pools.
+The ability table locator excludes the index multiplication, which changes with the record size.
+Separate immediate locators read the record size and suppression flags offset from the release code.
+The reviewed Beta3 manifest still selects this build without runtime locating.
+
+## Elite Redux 2.65.4.1b
+
+The raw ROM SHA-1 is `2f3e17e55c6afe23da97ec0f96a067eeb142ad15`.
+The player locates this build with the shared Redux locators and no committed version manifest.
+All RAM sources and ROM addresses resolve without disagreement, and the ROM probes pass.
+
+Literal-pool relocation corroborates the RAM globals, including the player party at `0x02039910` and enemy party at `0x02039ad8`.
+The Game Freak header's icon pointer at `0x08000138` corroborates the located icon table at `0x08e31fa0`.
+Code that indexes abilities names the table at `0x08fd95e8` and a 196-byte record size.
+The suppression check adds `0xbc` to the indexed record.
+The decoded flags distinguish Multitype and Neutralizing Gas, which are unsuppressable, from Illusion, which is suppressable.
+
+### Known limits
+
+Ability 1016's name contains glyph `0x86`, which the text decoder rejects.
+A view that needs that ability cannot decode it.
+The ROM probes cover selected catalog entries, not every name or a complete gameplay session.
 
 ## pokeemerald-expansion
 
@@ -629,6 +646,7 @@ current core cannot load, so the tests that use them need new captures.
 | `EVENFALL_REDUX_STAGE_STATE` | `redux-stage-buff.state`                   | `d092f7bd0f323b1720321f16b72291753748c03fba63454fe8d19455ec7b472d` | Mudkip at Attack/Defense +1/+1: raw 41/31, totals 61/46; max HP 58 and Speed 29 unchanged                                                                                                                                                                         |
 | `EVENFALL_REDUX_BETA3_ROM`   | Elite Redux 2.65 Beta3 raw ROM             | `5b38a681b6924ef3e0bb9f6cfbf22426c4c4e523`                         | Probes pass; the Beta2 locators give no value that differs from the manifest                                                                                                                                                                                      |
 | `EVENFALL_REDUX_BETA3_STATE` | a Beta3 state (raw, not gzipped)           | `74a207b19b09a228cef36f5122d7f229945d8693192eaf1b75796a347445c359` | Overworld on Ace. Party: Zoroark, Gimmighoul, Flygon, Dipplin, Coalossal and Pawmot, all Lv40 at full HP; Zoroark 110/110 with Opportunist and innates Illusion, Exploit Weakness and Ambush. 26 boxes hold 232 Pokémon, the first a Drilbur Lv25                 |
+| `EVENFALL_REDUX_26541_ROM`   | Elite Redux 2.65.4.1b raw ROM              | `2f3e17e55c6afe23da97ec0f96a067eeb142ad15`                         | Runtime locating, moved RAM globals and ability record layout                                                                                                                                                                                                     |
 
 Coverage by suite:
 

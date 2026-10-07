@@ -2,6 +2,9 @@ import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  createMemoryReader,
+  detectFamily,
+  locateBuild,
   locateGame,
   relocateManifest,
   resolveGame,
@@ -100,3 +103,94 @@ for (const build of builds)
       }, 30_000);
     },
   );
+
+describe.skipIf(!process.env.EVENFALL_REDUX_ROM)(
+  "private shared Redux locators on reviewed Beta2",
+  () => {
+    it("finds the reviewed values, including the ability record layout", async () => {
+      const rom = new Uint8Array(
+        await readFile(process.env.EVENFALL_REDUX_ROM!),
+      );
+      expect(createHash("sha1").update(rom).digest("hex")).toBe(
+        eliteReduxBeta2.romHash,
+      );
+      const located = locateBuild(eliteReduxFamily, rom);
+      for (const result of located.sources)
+        expect([result.source, result.address]).toEqual([
+          result.source,
+          valueAt(eliteReduxBeta2, `addresses.${result.source}`),
+        ]);
+      for (const result of located.rom)
+        expect([result.source, result.address]).toEqual([
+          result.source,
+          valueAt(eliteReduxBeta2, `rom.${result.source}`),
+        ]);
+      const outcome = await locateGame(eliteRedux, rom);
+      expect(outcome.status).toBe("located");
+    }, 30_000);
+  },
+);
+
+describe.skipIf(!process.env.EVENFALL_REDUX_26541_ROM)(
+  "private located Redux 2.65.4.1b",
+  () => {
+    it("locates moved globals and the changed ability layout without a version manifest", async () => {
+      const rom = new Uint8Array(
+        await readFile(process.env.EVENFALL_REDUX_26541_ROM!),
+      );
+      const romHash = "2f3e17e55c6afe23da97ec0f96a067eeb142ad15";
+      expect(createHash("sha1").update(rom).digest("hex")).toBe(romHash);
+      expect(detectFamily(eliteReduxFamily, rom).score).toBe(1);
+      expect(resolveGame([eliteRedux], romHash)).toBeNull();
+      const outcome = await locateGame(eliteRedux, rom);
+      if (outcome.status !== "located")
+        throw new Error(
+          outcome.status === "rejected" ? outcome.reason : outcome.status,
+        );
+      const { manifest, review } = outcome.build;
+      // Literal-pool relocation corroborates these globals. The ROM header
+      // corroborates the icon table. Ability indexing/flag accesses in the
+      // release code give the base, 196-byte stride and +0xbc flags.
+      expect(manifest.addresses).toEqual({
+        playerCount: 0x0203990d,
+        playerParty: 0x02039910,
+        enemyParty: 0x02039ad8,
+        settings: 0x03003410,
+        thirdBadge: 0x0300340c,
+        storage: 0x03003414,
+        battleActive: 0x03003859,
+        battleFlags: 0x0201c3f4,
+        battlerCount: 0x0201c484,
+        partyIndexes: 0x0201c488,
+        battlers: 0x0201c514,
+        absent: 0x0201c6e3,
+        statuses3: 0x0201c7b4,
+        neutralizingGas: 0x0201cb71,
+        enigmaBerries: 0x0201ca30,
+      });
+      expect(manifest.rom.catalog).toMatchObject({
+        abilities: 0x08fd95e8,
+        abilityStride: 196,
+        abilityFlagsOffset: 0xbc,
+        experience: 0x08c02744,
+        itemCount: 1023,
+      });
+      expect(manifest.rom.trainers).toMatchObject({
+        hellSkills: 0x0850cd28,
+        trainerCount: 932,
+      });
+      expect(manifest.rom.artwork.iconTable).toBe(0x08e31fa0);
+      expect(review).toEqual([]);
+      const { catalog } = eliteReduxFamily.resources({
+        rom: createMemoryReader([{ address: 0x08000000, bytes: rom }]),
+        romHash,
+        config: manifest.rom,
+      });
+      expect(catalog.ability(1).name).toBe("Stench");
+      expect(catalog.ability(149).name).toBe("Illusion");
+      expect(catalog.abilityFlags(121).unsuppressable).toBe(true);
+      expect(catalog.abilityFlags(256).unsuppressable).toBe(true);
+      expect(catalog.abilityFlags(149).unsuppressable).toBe(false);
+    }, 30_000);
+  },
+);

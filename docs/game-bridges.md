@@ -208,8 +208,10 @@ A value found only by inferred locators is flagged for review.
 ### Detection and probes
 
 `detectFamily(family, rom)` checks cheaply whether a ROM looks like one of a family's builds, before locating everything.
-It compares the header's game code with the family's `detect.gameCodes`, then runs a few locators (the family's `detect.markers`, or one locator from each of its first six sources).
-The score is the share of those that find something.
+It compares the header's game code with the family's `detect.gameCodes`, then checks its explicit `detect.markers` or its first six sources with non-inferred locators.
+Each source counts once when any of its non-inferred alternatives finds something.
+The score is the share of markers or sources that match, not the share of individual signatures.
+Full locating still rejects ambiguous or disagreeing results.
 
 A family can also list `probes`: named checks of a build's ROM data that throw when its resources don't decode as expected, for example well-known catalog entries.
 

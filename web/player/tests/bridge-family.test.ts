@@ -568,6 +568,30 @@ describe("family detection", () => {
       score: 0,
     });
   });
+
+  it("counts sources, trying their non-inferred alternatives before calling them missing", () => {
+    const missing = content("de ad be ef 01 02 03 04");
+    const alternatives = {
+      ...detected,
+      sources: {
+        count: ram(u8, { locate: [missing, marker] }),
+        party: ram(u8, { locate: [missing, inferred(marker)] }),
+        battle: ram(u8, { locate: [marker, marker, marker] }),
+      },
+    };
+    const result = detectFamily(alternatives, rom);
+    expect(result.score).toBe(2 / 3);
+    expect(result.markers.map(({ found }) => found)).toEqual([
+      true,
+      false,
+      true,
+    ]);
+    expect(detectFamily(alternatives, rom, { markers: 1 }).score).toBe(1);
+    expect(
+      detectFamily({ ...alternatives, detect: { markers: [missing] } }, rom)
+        .score,
+    ).toBe(0);
+  });
 });
 
 describe("computed addresses", () => {
