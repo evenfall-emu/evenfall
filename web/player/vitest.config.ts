@@ -13,6 +13,9 @@ export default defineConfig({
     // https://viteplus.dev/guide/vitest-v5#remove-unneeded-compatibility-settings
     // https://vitest.dev/guide/migration/#clearmocks-is-enabled-by-default
     clearMocks: false,
+    // Same 30s budget as the root config: file-based projects do not inherit
+    // it, and Cloudflare build runners throttle the CPU across every isolate.
+    testTimeout: 30_000,
     include: ["tests/*.test.{ts,tsx}"],
   },
 });

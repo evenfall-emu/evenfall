@@ -29,6 +29,10 @@ export default defineConfig({
     options: { typeAware: true, typeCheck: true },
   },
   test: {
+    // Build runners (Cloudflare Workers Builds) share a throttled CPU across
+    // every test-file isolate, so wall-clock per test runs ~10x a dev
+    // machine's. Vitest's 5s default fails healthy tests there.
+    testTimeout: 30_000,
     projects: [
       "web/gba",
       "web/player/vitest.config.ts",
