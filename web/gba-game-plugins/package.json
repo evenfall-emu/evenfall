@@ -1,27 +1,52 @@
 {
   "name": "@evenfall/gba-game-plugins",
   "version": "0.1.0",
-  "private": true,
   "description": "Unofficial Pokémon party, storage and battle bridges plus player panels for the Evenfall player. Decodes the user's own ROM at runtime; bundles no game data beyond the standard type chart. Not affiliated with Nintendo, Creatures Inc., GAME FREAK inc. or The Pokémon Company.",
   "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/evenfall-emu/evenfall.git",
+    "directory": "web/gba-game-plugins"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
+    ".": {
+      "evenfall-source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
     "./ui": "./ui/index.ts",
     "./package.json": "./package.json"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
+    "build": "vp pack",
+    "prepack": "npm run build",
     "test": "vp test",
     "test:browser": "playwright test"
   },
   "dependencies": {
-    "@base-ui/react": "1.8.0",
     "@evenfall/gba": "^0.2.0"
   },
   "peerDependencies": {
     "react": "^19.0.0"
   },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@base-ui/react": "1.8.0",
     "@playwright/test": "1.63.0",
     "@types/node": "24.3.0",
     "@types/react": "19.1.12",
