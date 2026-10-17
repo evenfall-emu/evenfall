@@ -4,8 +4,8 @@ The JavaScript and TypeScript SDK for Evenfall's Game Boy Advance core.
 `Emulator` runs the core in a browser Worker, and `WasmCore` runs it synchronously in Node and other hosts.
 The SDK creates no canvas or audio device and stores nothing: the host draws, plays sound and keeps saves.
 
-[`docs/sdk.md`](../../docs/sdk.md) is the full guide, starting with a complete player in a page.
-[`docs/design/web-runtime.md`](../../docs/design/web-runtime.md) explains how the Worker, the WebAssembly module and memory fit together.
+[`docs/sdk.md`](https://github.com/evenfall-emu/evenfall/blob/main/docs/sdk.md) is the full guide, starting with a complete player in a page.
+[`docs/design/web-runtime.md`](https://github.com/evenfall-emu/evenfall/blob/main/docs/design/web-runtime.md) explains how the Worker, the WebAssembly module and memory fit together.
 
 ```js
 import { Emulator, CYCLES_PER_FRAME, KEYS } from "@evenfall/gba";
@@ -34,8 +34,8 @@ Other entry points: `@evenfall/gba/core`, `@evenfall/gba/devtools/scenario`, `@e
   The default URL picks one with `WebAssembly.validate`, and `core.js` exports the result as `wasmSimd`.
 - `scripts/`: the WebAssembly build script, the scenario and replay command-line tools, and package checks.
 
-The package is private and isn't published to npm.
-It is used from this repository's `web/*` npm workspace.
+The package is published to npm as `@evenfall/gba`.
+Each release's tarball is also attached to its GitHub release.
 
 ## Development
 
@@ -54,9 +54,9 @@ Among them, the native-against-WebAssembly test builds the native `session_probe
 
 `npm run build -w @evenfall/gba` compiles the bridge sources into `web/gba/bridge/`, also kept out of Git.
 The `evenfall-source` export condition lets code in this repository use the bridge's TypeScript sources without compiling first.
-`prepack` refuses a missing, debug or incompatible binary, although the package isn't published.
+`prepack` refuses a missing, debug or incompatible binary.
 
-The scenario and replay tools are `scripts/run-scenario.mjs` and `scripts/replay-capture.mjs` ([`docs/devtools.md`](../../docs/devtools.md)).
+The scenario and replay tools are `scripts/run-scenario.mjs` and `scripts/replay-capture.mjs` ([`docs/devtools.md`](https://github.com/evenfall-emu/evenfall/blob/main/docs/devtools.md)).
 Both use the same default binary and accept a WebAssembly path as their last argument.
 
 ## License and disclaimer

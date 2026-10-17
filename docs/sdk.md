@@ -10,7 +10,7 @@ It creates no canvas or audio device, stores nothing, and has no runtime depende
 Your page draws the frames, plays the sound and keeps the saves.
 [`design/web-runtime.md`](design/web-runtime.md) explains how the pieces fit together inside.
 
-The package is private, used from this repository's `web/*` npm workspace, and not published to npm.
+The package is published to npm as `@evenfall/gba`, and each release's tarball is attached to its GitHub release.
 It is experimental and versioned 0.x, so a minor release can change the interface ([Versioning](#versioning)).
 
 ## Playing a game in a page
@@ -567,7 +567,7 @@ npm test
 The Rust build writes `web/gba/evenfall-gba.wasm`, kept out of Git.
 `npm run build -w @evenfall/gba` compiles the bridge's TypeScript (`web/gba/src/bridge`) into `web/gba/bridge/`.
 The package's `evenfall-source` export condition gives code in this repository the bridge's sources.
-Its `prepack` step checks that the WebAssembly file is present, stripped and compatible, although the package isn't published.
+Its `prepack` step checks that the WebAssembly file is present, stripped and compatible before the package is packed.
 
 [`testing.md`](testing.md) lists the SDK's tests, including the native-against-WebAssembly comparison that can run on your own ROMs.
 

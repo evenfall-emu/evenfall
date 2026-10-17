@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",
-    "@evenfall/gba": "^0.1.1"
+    "@evenfall/gba": "^0.2.0"
   },
   "peerDependencies": {
     "react": "^19.0.0"

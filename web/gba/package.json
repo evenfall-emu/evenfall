@@ -1,7 +1,6 @@
 {
   "name": "@evenfall/gba",
-  "version": "0.1.1",
-  "private": true,
+  "version": "0.2.0",
   "description": "Deterministic, cycle-aware Game Boy Advance emulator as WebAssembly, with a worker-based browser SDK and a synchronous core for Node",
   "keywords": [
     "gba",
@@ -13,6 +12,14 @@
     "rust"
   ],
   "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/evenfall-emu/evenfall.git",
+    "directory": "web/gba"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./emulator.js",
   "types": "./emulator.d.ts",
